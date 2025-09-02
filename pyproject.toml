@@ -5,20 +5,29 @@ description = "SRM"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "bokeh>=3.7.3",
-    "coiled>=1.118.2",
+    "arro3-core>=0.6.1",
+    "bokeh>=3.8.0",
+    "cloudpathlib>=0.22.0",
+    "coiled>=1.118.3",
+    "dask>=2025.7.0",
     "distributed>=2025.7.0",
     "gcsfs>=2025.7.0",
     "h5netcdf>=1.6.4",
-    "icechunk>=1.1.3",
-    "ipython>=9.4.0",
+    "icechunk>=1.1.4",
+    "ipython>=9.5.0",
     "jupyter>=1.1.1",
     "jupyter-server-proxy>=4.4.0",
+    "matplotlib>=3.10.6",
     "netcdf4>=1.7.2",
-    "obstore>=0.8.0",
+    "obstore>=0.8.1",
     "pre-commit>=4.3.0",
+    "pyarrow>=21.0.0",
     "s3fs>=2025.7.0",
     "virtualizarr[hdf,icechunk]>=2.1.1",
     "xarray>=2025.8.0",
+    "zarr>=3.1.2",
 ]
 
+[build-system]
+requires = ["uv_build>=0.8.14,<0.9.0"]
+build-backend = "uv_build"
