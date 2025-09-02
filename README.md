@@ -1,12 +1,10 @@
 # SRM
 
-
-
 ## Development
 
 **Clone the repo**
 
-git clone https://github.com/carbonplan/carbonplan-srm.git
+`git clone https://github.com/carbonplan/carbonplan-srm.git`
 
 **Install uv**
 
