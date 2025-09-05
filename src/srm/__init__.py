@@ -1,1 +1,1 @@
-from srm.datasets import catalog
+from srm.datasets import catalog as catalog

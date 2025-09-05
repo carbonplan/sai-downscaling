@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import typing
 from cloudpathlib import CloudPath
 
+
 @dataclass
 class Dataset:
     """base class for dataset object. Keeping it simple"""
