@@ -16,9 +16,6 @@ class Dataset:
         if isinstance(self.path, str):
             self.path = CloudPath(self.path)
 
-        # if not self.path.exists():
-        #     print(f"Warning: Path {self.path} does not exist")
-
     @property
     def uri(self) -> str:
         return str(self.path)
@@ -53,6 +50,11 @@ class Catalog:
             "CESM2-WACCM-SSP245-virtual": Dataset(
                 name="CESM2-WACCM-SSP245-virtual",
                 path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/virtual_icechunk",
+                format="icechunk",
+            ),
+            "ERA5": Dataset(
+                name="ERA5",
+                path="s3://carbonplan-srm/input/tensor/era5_rechunked_resampled.icechunk",
                 format="icechunk",
             ),
         }
