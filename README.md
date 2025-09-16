@@ -91,4 +91,4 @@ print(ds)
 
 **Install the dependencies**:
 
-`uv sync`
+`uv sync --all-extras`

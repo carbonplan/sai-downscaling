@@ -27,6 +27,7 @@ dependencies = [
     "pandas>=2.3.2",
     "pooch>=1.8.2",
     "pre-commit>=4.3.0",
+    "rasterix>=0.1a4",
     "s3fs>=2025.7.0",
     "scikit-learn>=1.7.2",
     "scipy>=1.16.1",
@@ -60,6 +61,10 @@ plot = [
     "hvplot>=0.12.1",
     "matplotlib>=3.10.6",
 ]
+
+
+
+
 
 [build-system]
 requires = ["uv_build>=0.8.14,<0.9.0"]
