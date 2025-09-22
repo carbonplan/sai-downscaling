@@ -16,12 +16,15 @@ dependencies = [
     "flox>=0.10.6",
     "gcsfs>=2025.7.0",
     "h5netcdf>=1.6.4",
+    "ibicus>=1.2.0",
     "icechunk>=1.1.4",
     "intake-esm>=2025.7.9",
     "intake-xarray>=2.0.0",
+    "ipykernel>=6.30.1",
     "ipython>=9.5.0",
     "jupyter>=1.1.1",
     "jupyter-server-proxy>=4.4.0",
+    "nc-time-axis>=1.4.1",
     "netcdf4>=1.7.2",
     "obstore>=0.8.1",
     "pandas>=2.3.2",
@@ -61,7 +64,6 @@ plot = [
     "hvplot>=0.12.1",
     "matplotlib>=3.10.6",
 ]
-
 
 
 
