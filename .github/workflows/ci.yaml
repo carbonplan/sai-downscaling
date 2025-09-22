@@ -37,7 +37,7 @@ jobs:
         run: uv sync
         
       - name: run pre-commit
-        run: pre-commit run --all-files
+        run: uv run pre-commit run --all-files
 
       ## for when we have tests
       # - name: Run tests
