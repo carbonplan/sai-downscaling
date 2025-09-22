@@ -154,8 +154,6 @@ def load_dataset(variables: ERA5_VARS, start_year: int = 1950, end_year: int = 2
 
     ds = xr.open_zarr(INPUT_ZARR_STORE_CONFIG["url"])[[variables]]
 
-
-
     # subset time
     ds = ds.sel(time=slice(f"{start_year}", f"{end_year}"))
 

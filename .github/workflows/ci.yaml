@@ -37,6 +37,9 @@ jobs:
 
       - name: Install dependencies with uv
         run: uv sync
+        
+      - name: run pre-commit
+        run: pre-commit run --all-files
 
       ## for when we have tests
       # - name: Run tests
