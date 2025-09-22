@@ -15,7 +15,7 @@ print(catalog)
 ```bash 
 
 | CESM-WACCM-Historical-icechunk | icechunk | s3://carbonplan-srm/input/tensor/CESM2-WACCM-Historical/icechunk/icechunk         |
-| CESM-WACCM-Historical-virtual  | icechunk |-s3://carbonplan-srm/input/tensor/CESM2-WACCM-Historical/icechunk/virtual_icechunk |
+| CESM-WACCM-Historical-virtual  | icechunk | s3://carbonplan-srm/input/tensor/CESM2-WACCM-Historical/icechunk/virtual_icechunk |
 | CESM-WACCM-G6-1.5K-icechunk    | icechunk | s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/icechunk             |
 | CESM-WACCM-G6-1.5K-virtual     | icechunk | s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/virtual_icechunk     |
 | CESM2-WACCM-SSP245-icechunk    | icechunk | s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/icechunk             |
