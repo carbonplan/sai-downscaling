@@ -8,20 +8,27 @@ from typing import Literal, get_args
 import icechunk
 from icechunk.xarray import to_icechunk
 import zarr
+# from dataclasses import dataclass
+
+# @dataclass
+# class VAR:
+#     resampling_method: Literal['mean','max','min']
+
 
 zarr.config.set({"async.concurrency": 128})
 
+
+WIND_VARS = Literal[["10m_u_component_of_wind", "10m_v_component_of_wind"]]
 MAX_RESAMPLING = Literal["maximum_2m_temperature_since_previous_post_processing"]
 MIN_RESAMPLING = Literal["minimum_2m_temperature_since_previous_post_processing"]
 MEAN_RESAMPLING = Literal[
     "mean_total_precipitation_rate",
     "2m_temperature",
+    # "surface_pressure"  # TBD
     # "2m_dewpoint_temperature", # TBD
     "mean_surface_downward_short_wave_radiation_flux",
     "mean_surface_downward_long_wave_radiation_flux",
-    # "10m_u_component_of_wind",# TBD
-    # "10m_v_component_of_wind",# TBD
-    # "surface_pressure"  # TBD
+    WIND_VARS,
 ]
 ERA5_VARS = Literal[MAX_RESAMPLING, MIN_RESAMPLING, MEAN_RESAMPLING]
 
@@ -147,6 +154,8 @@ def load_dataset(variables: ERA5_VARS, start_year: int = 1950, end_year: int = 2
 
     ds = xr.open_zarr(INPUT_ZARR_STORE_CONFIG["url"])[[variables]]
 
+
+
     # subset time
     ds = ds.sel(time=slice(f"{start_year}", f"{end_year}"))
 
@@ -204,10 +213,7 @@ def write_dataset(ds: xr.Dataset, variable: ERA5_VARS, session: icechunk.session
     session.commit(f"{variable}")
 
 
-def main(variable: ERA5_VARS, start_year: int, end_year: int):
-    _, session = setup_repository(DEFAULT_STORAGE_CONFIG)
-
-    ds = load_dataset(variables=variable, start_year=start_year, end_year=end_year)
+def main(ds: xr.Dataset, variable: ERA5_VARS, start_year: int, end_year: int):
     # TODO add step to derive vars (wind_speed, rh etc.)
     ds = process_dataset(
         ds, variable=variable, start_year=start_year, end_year=end_year
@@ -217,8 +223,16 @@ def main(variable: ERA5_VARS, start_year: int, end_year: int):
 
 if __name__ == "__main__":
     client = setup_cluster(DEFAULT_CLUSTER_ARGS)
+    _, session = setup_repository(DEFAULT_STORAGE_CONFIG)
 
-    for variable in get_args(ERA5_VARS):
-        main(variable=variable, start_year=1950, end_year=2014)
+    # for variable in get_args(ERA5_VARS):
+    #     ds = load_dataset(variables=variable, start_year=start_year, end_year=end_year)
+    #     main(variable=variable, start_year=1950, end_year=2014)
 
-    client.cluster.close()
+    # import xclim
+
+    # # winds = xclim.indicators.convert.wind_speed_from_vector(
+    # #     uas=ds_u["10m_u_component_of_wind"], vas=ds_v["10m_v_component_of_wind"]
+    # # )
+    # wind_ds = xr.merge(winds)["sfcWind"]
+    # client.cluster.close()

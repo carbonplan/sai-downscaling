@@ -3,7 +3,7 @@
 
 ## Data transfer
 NetCDF files for G6-1.5K and WACCM-SSP245 was moved from NCAR Derecho to s3 using rclone.
-- s3://carbonplan-srm/input/tensor/CESM-G6-1.5K/*.nc
+- s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/*.nc
 - s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/*.nc
 
 ## Virtualization and rechunked Icechunk store
@@ -13,12 +13,12 @@ Those data can be found:
 
 ### Virtual
 - `'s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/virtual_icechunk'`
-- `'s3://carbonplan-srm/input/tensor/CESM-G6-1.5K/icechunk/virtual_icechunk'`
+- `'s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/virtual_icechunk'`
 
 
 ### Icechunk
 - `'s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/icechunk'`
-- `'s3://carbonplan-srm/input/tensor/CESM-G6-1.5K/icechunk/icechunk'`
+- `'s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/icechunk'`
 
 
 
