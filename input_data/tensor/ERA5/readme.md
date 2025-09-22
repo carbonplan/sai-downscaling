@@ -1,0 +1,14 @@
+mean_total_precipitation_rate 
+2m_temperature
+2m_dewpoint_temperature
+maximum_2m_temperature_since_previous_post_processing
+minimum_2m_temperature_since_previous_post_processing
+mean_surface_downward_short_wave_radiation_flux
+mean_surface_downward_long_wave_radiation_flux
+10m_u_component_of_wind 
+10m_v_component_of_wind
+surface_pressure
+
+10m_u_component_of_wind + 10m_v_component_of_wind -> wind_speed
+https://xclim.readthedocs.io/en/stable/indices.html#xclim.indices.uas_vas_to_sfcwind
+2m_dewpoint_temperature + surface pressure -> relative and absolute humidity

@@ -16,8 +16,8 @@ print(catalog)
 
 Dataset Catalog (4 datasets)
 --------------------------------------------------------------------------------
-CESM-G6-1.5K-icechunk | icechunk   | s3://carbonplan-srm/input/tensor/CESM-G6-1.5K/icechunk/icechunk
-CESM-G6-1.5K-virtual | icechunk   | s3://carbonplan-srm/input/tensor/CESM-G6-1.5K/icechunk/virtual_icechunk
+CESM-WACCM-G6-1.5K-icechunk | icechunk   | s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/icechunk
+CESM-WACCM-G6-1.5K-virtual | icechunk   | s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/virtual_icechunk
 CESM2-WACCM-SSP245-icechunk | icechunk   | s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/icechunk
 CESM2-WACCM-SSP245-virtual | icechunk   | s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/virtual_icechunk
 ```
@@ -41,16 +41,16 @@ ds = xr.open_zarr(session.store, consolidated=False)
 print(ds)
 ```
 
-#### CESM-G6-1.5K
+#### CESM-WACCM-G6-1.5K
 ```python
 
 #!pip install icechunk xarray
 import icechunk
 import xarray as xr
 
-# Load CESM-G6-1.5K
+# Load CESM-WACCM-G6-1.5K
 storage = icechunk.s3_storage(
-    bucket='carbonplan-srm', prefix='input/tensor/CESM-G6-1.5K/icechunk/icechunk', from_env=True
+    bucket='carbonplan-srm', prefix='input/tensor/CESM-WACCM-G6-1.5K/icechunk/icechunk', from_env=True
 )
 repo = icechunk.Repository.open(storage)
 session = repo.readonly_session("main")
@@ -66,7 +66,7 @@ print(ds)
 import icechunk
 import xarray as xr
 
-# Load CESM-G6-1.5K
+# Load CESM-WACCM-G6-1.5K
 storage = icechunk.s3_storage(
     bucket='carbonplan-srm', prefix='input/tensor/era5_rechunked_resampled.icechunk', from_env=True
 )
