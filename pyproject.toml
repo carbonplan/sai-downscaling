@@ -5,6 +5,7 @@ description = "SRM"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "cartopy>=0.25.0",
     "cf-xarray>=0.10.9",
     "cloudpathlib>=0.22.0",
     "coiled>=1.118.3",
@@ -12,7 +13,6 @@ dependencies = [
     "cubed-xarray>=0.0.7",
     "dask[complete]>=2025.7.0",
     "distributed>=2025.7.0",
-    "exactextract>=0.2.2",
     "flox>=0.10.6",
     "gcsfs>=2025.7.0",
     "h5netcdf>=1.6.4",
