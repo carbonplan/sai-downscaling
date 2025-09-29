@@ -39,21 +39,9 @@ class Catalog:
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------
-            "CESM-WACCM-Historical-virtual": Dataset(
-                name="CESM-WACCM-Historical-virtual",
-                path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-Historical/icechunk/virtual_icechunk",
-                format="icechunk",
-            ),
-            # -----------------------------------------------------------------------------------------------
             "CESM-WACCM-G6-1.5K-icechunk": Dataset(
                 name="CESM-WACCM-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/icechunk",
-                format="icechunk",
-            ),
-            # -----------------------------------------------------------------------------------------------
-            "CESM-WACCM-G6-1.5K-virtual": Dataset(
-                name="CESM-WACCM-G6-1.5K-virtual",
-                path="s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/virtual_icechunk",
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------
