@@ -1,5 +1,3 @@
-# Easily run on an m8g.4xlarge
-
 import xarray as xr
 import zarr
 from obstore.store import from_url
@@ -8,16 +6,16 @@ from virtualizarr import open_virtual_mfdataset
 from virtualizarr.parsers import HDFParser
 from virtualizarr.registry import ObjectStoreRegistry
 import icechunk
+import coiled
 from icechunk.xarray import to_icechunk
 
-import coiled
 
 zarr.config.set({"async.concurrency": 128})
 
 
 cluster = coiled.Cluster(
-    name="CESM-G6",
-    n_workers=[10, 300],
+    name="CESM-historical",
+    n_workers=[10, 100],
     region="us-west-2",
     worker_vm_types="r8g.medium",
     scheduler_vm_types=["c8g.4xlarge"],
@@ -30,11 +28,10 @@ client = cluster.get_client()
 print(cluster.dashboard_link)
 print(cluster._dashboard_address)
 
-# setup VZ config + bucket and prefix info
 bucket = "s3://carbonplan-srm/"
-prefix = "input/tensor/CESM-G6-1.5K/netcdf"
-virtual_ic_prefix = "input/tensor/CESM-WACCM-G6-1.5K/icechunk/virtual_icechunk"
-ic_prefix = "input/tensor/CESM-WACCM-G6-1.5K/icechunk/icechunk"
+prefix = "input/tensor/CESM2-WACCM-Historical/netcdf"
+virtual_ic_prefix = "input/tensor/CESM2-WACCM-Historical/icechunk/virtual_icechunk"
+ic_prefix = "input/tensor/CESM2-WACCM-Historical/icechunk/icechunk"
 store = from_url(bucket, region="us-west-2")
 registry = ObjectStoreRegistry({bucket: store})
 drop_variables = [
@@ -71,32 +68,17 @@ netcdf_list = list(stream["objects"]["path"].to_numpy())
 netcdf_list.remove(prefix)
 netcdf_urls = [bucket + netcdf_path for netcdf_path in netcdf_list]
 
-
-def preprocess(ds):
-    """
-    get ensemble member from ds attrs filename
-    """
-    ensemble = ds.attrs["case"].rsplit(".")[-1]
-
-    ds = ds.expand_dims({"ensemble_member": [ensemble]})
-    return ds
-
-
-# Merge virtual datasets
 combined_vds = open_virtual_mfdataset(
     netcdf_urls,
     registry=registry,
     parser=parser,
-    preprocess=preprocess,
     combine="by_coords",
     combine_attrs="drop_conflicts",
     loadable_variables=["lat", "lev", "ilev", "time", "nbnd", "lon"],
-    drop_variables=drop_variables,
     parallel="dask",
 )
 combined_vds = combined_vds.drop_vars(["ilev", "lev"])
 
-# Write virtual dataset
 config = icechunk.RepositoryConfig.default()
 config.set_virtual_chunk_container(
     icechunk.VirtualChunkContainer(
@@ -104,17 +86,20 @@ config.set_virtual_chunk_container(
         store=icechunk.s3_store(region="us-west-2"),
     ),
 )
+
+
 storage = icechunk.s3_storage(
     bucket="carbonplan-srm", prefix=virtual_ic_prefix, from_env=True
 )
 repo = icechunk.Repository.open_or_create(storage, config)
 session = repo.writable_session("main")
+
 combined_vds.vz.to_icechunk(session.store)
-snapshot_id = session.commit("virtual_CESM-WACCM-G6-1.5K")
+snapshot_id = session.commit("virtual_CESM2-WACCM-Historical")
 print(snapshot_id)
 repo.save_config()
 
-# Read Virtual Dataset
+
 credentials = icechunk.containers_credentials(
     {
         "s3://carbonplan-srm": icechunk.s3_credentials(),
@@ -135,18 +120,15 @@ ds = xr.open_zarr(
     chunks={},
 )
 
-# Create Icechunk storage config
 write_storage_config = icechunk.s3_storage(bucket="carbonplan-srm", prefix=ic_prefix)
 write_repo = icechunk.Repository.open_or_create(write_storage_config)
 write_session = write_repo.writable_session("main")
 
-# Write Icechunk
-ds.coords["lon"] = (ds.coords["lon"] + 180) % 360 - 180
-ds = ds.sortby(ds.lon)
-ds = ds.chunk({"ensemble_member": 1, "time": -1, "lat": 32, "lon": 48})
+ds = ds.chunk({"time": -1, "lat": 32, "lon": 48})
 ds = ds.drop_encoding()
 
 to_icechunk(ds, write_session)
+
 first_snapshot = write_session.commit(
-    "create spatially chunked store: {'ensemble_member':1,'time':-1,'lat':32,'lon':48}"
+    "create spatially chunked store: {'time':-1,'lat':32,'lon':48}"
 )
