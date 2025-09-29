@@ -1,7 +1,5 @@
 # SRM
 
-
-
 ## Development
 
 **Clone the repo**:
@@ -34,6 +32,7 @@ In this repository run:
 `uv run coiled notebook start --vm-type m8g.large --region 'us-west-2` 
 
 That should sync the software environment and start a JupyterLab session with that environment. 
+
 
 ## Data usage
 
@@ -112,10 +111,3 @@ print(ds)
 
 
 
-
-
-
-# git clone repo (if not already)
-# install uv (if not already)
-# open repo
-# run `uv run coiled`

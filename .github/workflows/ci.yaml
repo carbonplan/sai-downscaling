@@ -34,7 +34,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: Install dependencies with uv
-        run: uv sync
+        run: uv sync --all-groups
         
       - name: run pre-commit
         run: uv run pre-commit run --all-files
