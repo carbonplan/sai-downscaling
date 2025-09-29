@@ -32,42 +32,43 @@ class Dataset:
 class Catalog:
     def __init__(self):
         self.datasets = {
+            # -----------------------------------------------------------------------------------------------
             "CESM-WACCM-Historical-icechunk": Dataset(
                 name="CESM-WACCM-Historical-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-Historical/icechunk/icechunk",
                 format="icechunk",
             ),
+            # -----------------------------------------------------------------------------------------------
             "CESM-WACCM-Historical-virtual": Dataset(
                 name="CESM-WACCM-Historical-virtual",
                 path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-Historical/icechunk/virtual_icechunk",
                 format="icechunk",
             ),
+            # -----------------------------------------------------------------------------------------------
             "CESM-WACCM-G6-1.5K-icechunk": Dataset(
                 name="CESM-WACCM-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/icechunk",
                 format="icechunk",
             ),
+            # -----------------------------------------------------------------------------------------------
             "CESM-WACCM-G6-1.5K-virtual": Dataset(
                 name="CESM-WACCM-G6-1.5K-virtual",
                 path="s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/virtual_icechunk",
                 format="icechunk",
             ),
+            # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-SSP245-icechunk": Dataset(
                 name="CESM2-WACCM-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/icechunk",
                 format="icechunk",
             ),
-            # WIP!
-            # "CESM2-WACCM-SSP245-virtual": Dataset(
-            #     name="CESM2-WACCM-SSP245-virtual",
-            #     path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/virtual_icechunk",
-            #     format="icechunk",
-            # ),
+            # -----------------------------------------------------------------------------------------------
             "ERA5": Dataset(
                 name="ERA5",
                 path="s3://carbonplan-srm/input/tensor/era5_rechunked_resampled.icechunk",
                 format="icechunk",
             ),
+            # -----------------------------------------------------------------------------------------------
         }
 
     def get(self, name: str) -> Dataset:
@@ -93,7 +94,6 @@ class Catalog:
         lines = [f"Dataset Catalog ({len(self.datasets)} datasets)"]
         lines.append("-" * 80)
         for ds in self.datasets.values():
-            # creates nice equal spacing
             lines.append(f"{ds.name:<20} | {ds.format:<10} | {ds.uri}")
         return "\n".join(lines)
 

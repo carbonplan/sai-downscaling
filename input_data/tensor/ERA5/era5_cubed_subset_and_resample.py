@@ -78,7 +78,7 @@ spec = cubed.Spec(
 def resample_time(ds: xr.Dataset, variable: ERA5_VARS) -> xr.Dataset:
     """Resample time dimension based on variable type."""
     try:
-        import flox
+        import flox  # noqa: F401
     except ImportError:
         raise ImportWarning(
             "flox is not installed. Add it to greatly speedup resampling operations."
