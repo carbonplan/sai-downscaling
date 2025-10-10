@@ -3,7 +3,7 @@ name = "srm"
 version = "0.1.0"
 description = "SRM"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13, <3.14"
 dependencies = [
     "arro3-core>=0.6.3",
     "boto3>=1.40.18",
@@ -48,7 +48,6 @@ dev = [
 ]
 geo = [
     "arro3-core>=0.6.3",
-    "cartopy>=0.25.0",
     "duckdb>=1.4.0",
     "folium>=0.20.0",
     "geodatasets>=2024.8.0",
