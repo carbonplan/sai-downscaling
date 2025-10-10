@@ -15,7 +15,7 @@ dependencies = [
     "h5netcdf>=1.6.4",
     "ibicus>=1.2.0",
     "icechunk>=1.1.4",
-
+    "ipython>=9.6.0",
     "nc-time-axis>=1.4.1",
     "netcdf4>=1.7.2",
     "obstore>=0.8.1",
@@ -48,6 +48,7 @@ dev = [
 ]
 geo = [
     "arro3-core>=0.6.3",
+    "cartopy>=0.25.0",
     "duckdb>=1.4.0",
     "folium>=0.20.0",
     "geodatasets>=2024.8.0",
