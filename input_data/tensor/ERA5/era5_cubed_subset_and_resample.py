@@ -1,6 +1,7 @@
-import xarray as xr
-import cubed
 from typing import Literal, get_args
+
+import cubed
+import xarray as xr
 import zarr
 
 zarr.config.set({"async.concurrency": 128})

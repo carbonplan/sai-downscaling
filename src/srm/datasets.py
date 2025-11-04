@@ -1,5 +1,6 @@
-from dataclasses import dataclass
 import typing
+from dataclasses import dataclass
+
 from cloudpathlib import CloudPath
 
 

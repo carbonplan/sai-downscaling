@@ -1,13 +1,15 @@
 # adapted from ocr/input_data/tensor/conus404/subset_conus404.py
 
 
-import xarray as xr
-from distributed import Client
-import coiled
 from typing import Literal, get_args
+
+import coiled
 import icechunk
-from icechunk.xarray import to_icechunk
+import xarray as xr
 import zarr
+from distributed import Client
+from icechunk.xarray import to_icechunk
+
 # from dataclasses import dataclass
 
 # @dataclass
@@ -18,7 +20,7 @@ import zarr
 zarr.config.set({"async.concurrency": 128})
 
 
-WIND_VARS = Literal[["10m_u_component_of_wind", "10m_v_component_of_wind"]]
+WIND_VARS = Literal["10m_u_component_of_wind", "10m_v_component_of_wind"]
 MAX_RESAMPLING = Literal["maximum_2m_temperature_since_previous_post_processing"]
 MIN_RESAMPLING = Literal["minimum_2m_temperature_since_previous_post_processing"]
 MEAN_RESAMPLING = Literal[
@@ -28,9 +30,10 @@ MEAN_RESAMPLING = Literal[
     # "2m_dewpoint_temperature", # TBD
     "mean_surface_downward_short_wave_radiation_flux",
     "mean_surface_downward_long_wave_radiation_flux",
-    WIND_VARS,
+    "10m_u_component_of_wind",
+    "10m_v_component_of_wind",
 ]
-ERA5_VARS = Literal[MAX_RESAMPLING, MIN_RESAMPLING, MEAN_RESAMPLING]
+ERA5_VARS = MAX_RESAMPLING | MIN_RESAMPLING | MEAN_RESAMPLING
 
 
 INPUT_ZARR_STORE_CONFIG = {
@@ -117,17 +120,11 @@ def resample_time(
         )
 
     if variable in get_args(MAX_RESAMPLING):
-        return (
-            ds.sel(time=slice(f"{start_year}", f"{end_year}")).resample(time="d").max()
-        )
+        return ds.sel(time=slice(f"{start_year}", f"{end_year}")).resample(time="d").max()
     elif variable in get_args(MIN_RESAMPLING):
-        return (
-            ds.sel(time=slice(f"{start_year}", f"{end_year}")).resample(time="d").min()
-        )
+        return ds.sel(time=slice(f"{start_year}", f"{end_year}")).resample(time="d").min()
     elif variable in get_args(MEAN_RESAMPLING):
-        return (
-            ds.sel(time=slice(f"{start_year}", f"{end_year}")).resample(time="d").mean()
-        )
+        return ds.sel(time=slice(f"{start_year}", f"{end_year}")).resample(time="d").mean()
     else:
         raise ValueError(f"variable: {variable} is not in {ERA5_VARS}")
 
@@ -181,9 +178,7 @@ def process_dataset(
     # ~100Mb chunks, but not split spatially. Getting larger chunks to reduce scheduler task pressure
     ds = ds.chunk({"time": 48, "latitude": 721, "longitude": 1440})
 
-    ds = resample_time(
-        ds=ds, start_year=start_year, end_year=end_year, variable=variable
-    )
+    ds = resample_time(ds=ds, start_year=start_year, end_year=end_year, variable=variable)
 
     # ~115MB, some spatial chunking
     ds = ds.chunk({"time": 730, "latitude": 144, "longitude": 288})
@@ -206,16 +201,14 @@ def process_dataset(
     return ds
 
 
-def write_dataset(ds: xr.Dataset, variable: ERA5_VARS, session: icechunk.session):
+def write_dataset(ds: xr.Dataset, variable: ERA5_VARS, session: icechunk.Session):
     to_icechunk(ds, session, mode="a")
     session.commit(f"{variable}")
 
 
 def main(ds: xr.Dataset, variable: ERA5_VARS, start_year: int, end_year: int):
     # TODO add step to derive vars (wind_speed, rh etc.)
-    ds = process_dataset(
-        ds, variable=variable, start_year=start_year, end_year=end_year
-    )
+    ds = process_dataset(ds, variable=variable, start_year=start_year, end_year=end_year)
     write_dataset(ds, variable=variable, session=session)
 
 
