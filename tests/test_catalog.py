@@ -1,7 +1,9 @@
-from srm import catalog
+from typing import Literal
+
 import icechunk
 import xarray as xr
-from typing import Literal
+
+from srm import catalog
 
 dataset_type = Literal["zarr", "icechunk"]
 

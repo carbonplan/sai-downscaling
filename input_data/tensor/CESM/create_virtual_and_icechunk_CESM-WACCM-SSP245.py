@@ -1,16 +1,16 @@
 # Easily run on an m8g.4xlarge
 
+import boto3
+import coiled
+import icechunk
+import obstore as obs
 import xarray as xr
 import zarr
+from icechunk.xarray import to_icechunk
 from obstore.store import from_url
-import obstore as obs
 from virtualizarr import open_virtual_mfdataset
 from virtualizarr.parsers import HDFParser
 from virtualizarr.registry import ObjectStoreRegistry
-import icechunk
-from icechunk.xarray import to_icechunk
-import coiled
-import boto3
 
 sess = boto3.Session()
 creds = sess.get_credentials()
@@ -36,9 +36,7 @@ print(cluster._dashboard_address)
 # setup VZ config + bucket and prefix info
 bucket = "s3://carbonplan-srm/"
 prefix = "input/tensor/CESM2-WACCM-SSP245/netcdf"
-virtual_ic_prefix_7_10 = (
-    "input/tensor/CESM2-WACCM-SSP245/icechunk/virtual_icechunk_007_010"
-)
+virtual_ic_prefix_7_10 = "input/tensor/CESM2-WACCM-SSP245/icechunk/virtual_icechunk_007_010"
 virtual_ic_prefix_6 = "input/tensor/CESM2-WACCM-SSP245/icechunk/virtual_icechunk_006"
 ic_prefix = "input/tensor/CESM2-WACCM-SSP245/icechunk/icechunk"
 
@@ -135,9 +133,7 @@ config.set_virtual_chunk_container(
 )
 
 
-storage = icechunk.s3_storage(
-    bucket="carbonplan-srm", prefix=virtual_ic_prefix_6, from_env=True
-)
+storage = icechunk.s3_storage(bucket="carbonplan-srm", prefix=virtual_ic_prefix_6, from_env=True)
 repo = icechunk.Repository.open_or_create(storage, config)
 session = repo.writable_session("main")
 
@@ -167,9 +163,7 @@ config.set_virtual_chunk_container(
 )
 
 
-storage = icechunk.s3_storage(
-    bucket="carbonplan-srm", prefix=virtual_ic_prefix_7_10, from_env=True
-)
+storage = icechunk.s3_storage(bucket="carbonplan-srm", prefix=virtual_ic_prefix_7_10, from_env=True)
 repo = icechunk.Repository.open_or_create(storage, config)
 session = repo.writable_session("main")
 
@@ -194,9 +188,7 @@ credentials = icechunk.containers_credentials(
         "s3://carbonplan-srm": icechunk.s3_credentials(),
     }
 )
-storage_6 = icechunk.s3_storage(
-    bucket="carbonplan-srm", prefix=virtual_ic_prefix_6, from_env=True
-)
+storage_6 = icechunk.s3_storage(bucket="carbonplan-srm", prefix=virtual_ic_prefix_6, from_env=True)
 storage_7_10 = icechunk.s3_storage(
     bucket="carbonplan-srm", prefix=virtual_ic_prefix_7_10, from_env=True
 )

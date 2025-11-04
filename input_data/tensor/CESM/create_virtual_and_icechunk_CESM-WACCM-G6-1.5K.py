@@ -1,16 +1,15 @@
 # Easily run on an m8g.4xlarge
 
+import coiled
+import icechunk
+import obstore as obs
 import xarray as xr
 import zarr
+from icechunk.xarray import to_icechunk
 from obstore.store import from_url
-import obstore as obs
 from virtualizarr import open_virtual_mfdataset
 from virtualizarr.parsers import HDFParser
 from virtualizarr.registry import ObjectStoreRegistry
-import icechunk
-from icechunk.xarray import to_icechunk
-
-import coiled
 
 zarr.config.set({"async.concurrency": 128})
 
@@ -104,9 +103,7 @@ config.set_virtual_chunk_container(
         store=icechunk.s3_store(region="us-west-2"),
     ),
 )
-storage = icechunk.s3_storage(
-    bucket="carbonplan-srm", prefix=virtual_ic_prefix, from_env=True
-)
+storage = icechunk.s3_storage(bucket="carbonplan-srm", prefix=virtual_ic_prefix, from_env=True)
 repo = icechunk.Repository.open_or_create(storage, config)
 session = repo.writable_session("main")
 combined_vds.vz.to_icechunk(session.store)
