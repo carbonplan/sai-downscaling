@@ -16,7 +16,7 @@
 
 `uv sync --all-groups`
 
-** Linting**
+**Linting**
 
 We use `pre-commit` to run linting checks. You can run it against your branch with `uv run pre-commit run --all-files`.
 
