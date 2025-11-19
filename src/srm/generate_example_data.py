@@ -1,6 +1,5 @@
 import duckdb
 import geopandas as gpd
-import ibicus
 import icechunk
 import pandas as pd
 import rasterix
