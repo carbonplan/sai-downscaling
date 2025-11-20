@@ -182,3 +182,5 @@ cython_debug/
 
 
 *.pyc
+*.png 
+*.json
