@@ -21,6 +21,10 @@
         "xarray[accel,io]>=2025.8.0",
         "xclim>=0.58.1",
         "zarr>=3.1.2",
+	"duckdb",
+	"geopandas",
+	"rasterix",
+	"rasterio"
 ]
     description = "SRM"
     name = "srm"
