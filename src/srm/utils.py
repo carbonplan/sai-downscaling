@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     import xarray as xr
 
 
-def lon_to_180(ds: xr.Dataset) -> xr.Dataset:
+def lon_to_180(ds: xr.Dataset, lon_name: str = "lon") -> xr.Dataset:
     """
     Convert longitude values from 0-360 to -180-180.
 
@@ -22,6 +22,7 @@ def lon_to_180(ds: xr.Dataset) -> xr.Dataset:
     xr.Dataset
         Dataset with longitude coordinates converted to -180-180 range
     """
-    lon = ds["longitude"].where(ds["longitude"] < 180, ds["longitude"] - 360)
-    ds = ds.assign_coords(longitude=lon)
+
+    ds.coords[lon_name] = (ds.coords[lon_name] + 180) % 360 - 180
+    ds = ds.sortby(ds[lon_name])
     return ds
