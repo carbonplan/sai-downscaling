@@ -42,13 +42,13 @@ class Catalog:
             # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
                 name="CESM2-WACCM-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/icechunk",
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-SSP245-icechunk": Dataset(
                 name="CESM2-WACCM-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/icechunk",
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------

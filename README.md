@@ -50,10 +50,10 @@ print(catalog)
 
 ```bash 
 
-| CESM-WACCM-Historical-icechunk | icechunk | s3://carbonplan-srm/input/tensor/CESM2-WACCM-Historical/icechunk/icechunk         |
-| CESM-WACCM-G6-1.5K-icechunk    | icechunk | s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/icechunk             |
-| CESM2-WACCM-SSP245-icechunk    | icechunk | s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/icechunk             |
-| ERA5                           | icechunk | s3://carbonplan-srm/input/tensor/era5_rechunked_resampled.icechunk                |
+| CESM2-WACCM-Historical-icechunk | icechunk     | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/icechunk |
+| CESM2-WACCM-G6-1.5K-icechunk    | icechunk     | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/icechunk    |
+| CESM2-WACCM-SSP245-icechunk     | icechunk     | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/icechunk     |
+| ERA5                            | icechunk     | s3://carbonplan-srm/input/tensor/ERA5/era5_rechunked_resampled.icechunk         |
 
 ```
 
@@ -65,11 +65,13 @@ print(catalog)
 #!pip install icechunk xarray
 import icechunk
 import xarray as xr
+from srm import catalog 
 
 # Load CESM-WACCM-SSP245
-storage = icechunk.s3_storage(
-    bucket='carbonplan-srm', prefix='input/tensor/CESM2-WACCM-SSP245/icechunk/icechunk', from_env=True
-)
+ds_meta = catalog.get("CESM2-WACCM-SSP245-icechunk")
+
+storage = icechunk.s3_storage(bucket=ds_meta.bucket, prefix=ds_meta.prefix, from_env=True)
+
 repo = icechunk.Repository.open(storage)
 session = repo.readonly_session("main")
 ds = xr.open_zarr(session.store, consolidated=False)
@@ -82,11 +84,14 @@ print(ds)
 #!pip install icechunk xarray
 import icechunk
 import xarray as xr
+from srm import catalog 
 
 # Load CESM-G6-1.5K
-storage = icechunk.s3_storage(
-    bucket='carbonplan-srm', prefix='input/tensor/CESM-G6-1.5K/icechunk/icechunk', from_env=True
-)
+
+ds_meta = catalog.get("CESM2-WACCM-G6-1.5K-icechunk")
+
+storage = icechunk.s3_storage(bucket=ds_meta.bucket, prefix=ds_meta.prefix, from_env=True)
+
 repo = icechunk.Repository.open(storage)
 session = repo.readonly_session("main")
 ds = xr.open_zarr(session.store, consolidated=False)
@@ -100,17 +105,14 @@ print(ds)
 #!pip install icechunk xarray
 import icechunk
 import xarray as xr
+from srm import catalog
 
-# Load CESM-G6-1.5K
-storage = icechunk.s3_storage(
-    bucket='carbonplan-srm', prefix='input/tensor/era5_rechunked_resampled.icechunk', from_env=True
-)
+# Load ERA5
+ds_meta = catalog.get("ERA5")
+storage = icechunk.s3_storage(bucket=ds_meta.bucket, prefix=ds_meta.prefix, from_env=True)
+
 repo = icechunk.Repository.open(storage)
 session = repo.writable_session("main")
 ds = xr.open_zarr(session.store, consolidated=False)
 print(ds)
 ```
-
-
-
-
