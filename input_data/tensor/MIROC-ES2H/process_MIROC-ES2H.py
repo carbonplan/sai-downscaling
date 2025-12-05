@@ -184,6 +184,7 @@ class MIROC_ES2H_G6_1_5K(BaseModelETL):
         from srm.utils import lon_to_180
 
         ds = lon_to_180(self.dataset, lon_name="lon")
+        ds = ds.sortby(["latitude", "longitude"])
         ds = ds.drop_encoding()
 
         return ds
