@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     import xarray as xr
 
 
-def lon_to_180(ds: xr.Dataset) -> xr.Dataset:
+def lon_to_180(ds: xr.Dataset, lon_name: str = "lon") -> xr.Dataset:
     """
     Convert longitude values from 0-360 to -180-180.
 
@@ -25,9 +25,8 @@ def lon_to_180(ds: xr.Dataset) -> xr.Dataset:
     xr.Dataset
         Dataset with longitude coordinates converted to -180-180 range
     """
-    lon = ds["longitude"].where(ds["longitude"] < 180, ds["longitude"] - 360)
-    ds = ds.assign_coords(longitude=lon)
-    return ds
+    ds.coords[lon_name] = (ds.coords[lon_name] + 180) % 360 - 180
+    return ds.sortby(ds[lon_name])
 
 def icechunk_store_to_dataset(dataset_name, catalog):
     catalog_entry = catalog.get(dataset_name)
@@ -79,5 +78,3 @@ def clean_up_dataset(ds, model):
     ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
     ds['pr'] = convert_precip_units(ds['pr'])
     return ds
-
-

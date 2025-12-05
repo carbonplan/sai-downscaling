@@ -10,6 +10,9 @@ import zarr
 from distributed import Client
 from icechunk.xarray import to_icechunk
 
+from srm import catalog
+from srm.utils import lon_to_180
+
 # from dataclasses import dataclass
 
 # @dataclass
@@ -18,8 +21,10 @@ from icechunk.xarray import to_icechunk
 
 
 zarr.config.set({"async.concurrency": 128})
+era5_cat = catalog.get("ERA5")
 
-
+START_YEAR = 1950
+END_YEAR = 2014
 WIND_VARS = Literal["10m_u_component_of_wind", "10m_v_component_of_wind"]
 MAX_RESAMPLING = Literal["maximum_2m_temperature_since_previous_post_processing"]
 MIN_RESAMPLING = Literal["minimum_2m_temperature_since_previous_post_processing"]
@@ -51,9 +56,10 @@ DEFAULT_CLUSTER_ARGS = {
     "use_best_zone": True,
 }
 
+
 DEFAULT_STORAGE_CONFIG = {
-    "bucket": "carbonplan-srm",
-    "prefix": "input/tensor/era5_rechunked_resampled.icechunk",
+    "bucket": era5_cat.bucket,
+    "prefix": era5_cat.prefix,
     "region": "us-west-2",
 }
 
@@ -129,12 +135,6 @@ def resample_time(
         raise ValueError(f"variable: {variable} is not in {ERA5_VARS}")
 
 
-def convert_longitude(ds: xr.Dataset) -> xr.Dataset:
-    """Convert 0-360 longitude to -180-180"""
-    ds.coords["longitude"] = (ds.coords["longitude"] + 180) % 360 - 180
-    return ds.sortby(ds.longitude)
-
-
 def load_dataset(variables: ERA5_VARS, start_year: int = 1950, end_year: int = 2014):
     """Loads variable[s] from the public gcs ERA5 store.
 
@@ -154,7 +154,9 @@ def load_dataset(variables: ERA5_VARS, start_year: int = 1950, end_year: int = 2
     # subset time
     ds = ds.sel(time=slice(f"{start_year}", f"{end_year}"))
 
-    ds = convert_longitude(ds)
+    ds = lon_to_180(ds, lon_name="longitude")
+    ds = ds.sortby(["latitude", "longitude"])
+    ds = ds.rename({"longitude": "lon", "latitude": "lat"})
     # TODO: derive vars (ex wind speed) 2->1
 
     return ds
@@ -176,12 +178,12 @@ def process_dataset(
     xr.Dataset: An Xarray Dataset with the selected variables
     """
     # ~100Mb chunks, but not split spatially. Getting larger chunks to reduce scheduler task pressure
-    ds = ds.chunk({"time": 48, "latitude": 721, "longitude": 1440})
+    ds = ds.chunk({"time": 48, "lat": 721, "lon": 1440})
 
     ds = resample_time(ds=ds, start_year=start_year, end_year=end_year, variable=variable)
 
     # ~115MB, some spatial chunking
-    ds = ds.chunk({"time": 730, "latitude": 144, "longitude": 288})
+    ds = ds.chunk({"time": 730, "lat": 144, "lon": 288})
 
     # wait(ds)
 
@@ -216,14 +218,16 @@ if __name__ == "__main__":
     client = setup_cluster(DEFAULT_CLUSTER_ARGS)
     _, session = setup_repository(DEFAULT_STORAGE_CONFIG)
 
-    # for variable in get_args(ERA5_VARS):
-    #     ds = load_dataset(variables=variable, start_year=start_year, end_year=end_year)
-    #     main(variable=variable, start_year=1950, end_year=2014)
+    for variable in get_args(ERA5_VARS):
+        ds = load_dataset(variables=variable, start_year=START_YEAR, end_year=END_YEAR)
+        main(variable=variable, start_year=START_YEAR, end_year=END_YEAR)
 
-    # import xclim
+    client.cluster.close()
 
-    # # winds = xclim.indicators.convert.wind_speed_from_vector(
-    # #     uas=ds_u["10m_u_component_of_wind"], vas=ds_v["10m_v_component_of_wind"]
-    # # )
-    # wind_ds = xr.merge(winds)["sfcWind"]
-    # client.cluster.close()
+
+# import xclim
+
+# winds = xclim.indicators.convert.wind_speed_from_vector(
+#     uas=ds_u["10m_u_component_of_wind"], vas=ds_v["10m_v_component_of_wind"]
+# )
+# wind_ds = xr.merge(winds)["sfcWind"]
