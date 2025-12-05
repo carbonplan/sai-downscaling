@@ -77,7 +77,7 @@ def clean_up_dataset(ds, model):
     ds = lon_to_180(ds)
     # add a geographic coordinate system
     ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
-    ds['PREC'] = convert_precip_units(ds['PREC'])
+    ds['pr'] = convert_precip_units(ds['pr'])
     return ds
 
 
