@@ -2,7 +2,6 @@ import numpy as np
 
 from srm.utils import lon_to_180
 
-
 class TestLonTo180:
     def test_monotonic(self, ds_monotonic):
         result = lon_to_180(ds_monotonic)
