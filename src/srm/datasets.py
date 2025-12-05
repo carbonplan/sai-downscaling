@@ -34,15 +34,15 @@ class Catalog:
     def __init__(self):
         self.datasets = {
             # -----------------------------------------------------------------------------------------------
-            "CESM-WACCM-Historical-icechunk": Dataset(
+            "CESM2-WACCM-Historical-icechunk": Dataset(
                 name="CESM-WACCM-Historical-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-Historical/icechunk/icechunk",
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------
-            "CESM-WACCM-G6-1.5K-icechunk": Dataset(
+            "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
                 name="CESM-WACCM-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM-WACCM-G6-1.5K/icechunk/icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-G6-1.5K/icechunk/icechunk",
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------

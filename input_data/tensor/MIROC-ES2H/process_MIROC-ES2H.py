@@ -184,14 +184,12 @@ class MIROC_ES2H_G6_1_5K(BaseModelETL):
         from srm.utils import lon_to_180
 
         ds = lon_to_180(self.dataset, lon_name="lon")
-        ds = ds.drop_vars(["lon_bnds", "lat_bnds", "time_bnds"])
         ds = ds.drop_encoding()
 
         return ds
 
     def rechunk(self) -> xr.Dataset:
         ds = self.dataset.chunk({"time": -1, "ensemble_member": 1, "lat": 8, "lon": 16})
-        # opt2 = self.dataset.chunk({'time':100,'ensemble_member':1,'lat':-1,'lon':-1})
         return ds
 
     def write(self) -> None:
@@ -204,13 +202,6 @@ class MIROC_ES2H_G6_1_5K(BaseModelETL):
         _, session = self.setup_repository(storage_config)
         to_icechunk(self.dataset_opt1, session)
         session.commit("time-chunked")
-        # # icechunk.IcechunkError:   × ref not found `G6-1.5K-SAI-space-optimized`
-        # branch_name = "space-chunked"
-        # main_branch_snapshot_id = repo.lookup_branch("main")
-        # repo.create_branch(branch_name, snapshot_id=main_branch_snapshot_id)
-        # session = repo.writable_session(branch_name)
-        # to_icechunk(self.dataset_opt2, session)
-        # snapshot_id = session.commit(branch_name)
 
 
 @dataclass
