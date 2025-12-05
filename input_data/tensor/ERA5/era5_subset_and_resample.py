@@ -220,10 +220,12 @@ if __name__ == "__main__":
         ds = load_dataset(variables=variable, start_year=START_YEAR, end_year=END_YEAR)
         main(variable=variable, start_year=START_YEAR, end_year=END_YEAR)
 
-    # import xclim
-
-    # winds = xclim.indicators.convert.wind_speed_from_vector(
-    #     uas=ds_u["10m_u_component_of_wind"], vas=ds_v["10m_v_component_of_wind"]
-    # )
-    # wind_ds = xr.merge(winds)["sfcWind"]
     client.cluster.close()
+
+
+# import xclim
+
+# winds = xclim.indicators.convert.wind_speed_from_vector(
+#     uas=ds_u["10m_u_component_of_wind"], vas=ds_v["10m_v_component_of_wind"]
+# )
+# wind_ds = xr.merge(winds)["sfcWind"]
