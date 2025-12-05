@@ -27,7 +27,6 @@ def dataset(dataset_name):
     return ds, dataset_name
 
 
-@pytest.mark.xfail(reason="WIP")
 def test_longitude_range(dataset):
     ds, name = dataset
 
