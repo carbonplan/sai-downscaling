@@ -35,20 +35,20 @@ class Catalog:
         self.datasets = {
             # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-Historical-icechunk": Dataset(
-                name="CESM-WACCM-Historical-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-Historical/icechunk/icechunk",
+                name="CESM2-WACCM-Historical-icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/icechunk",
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
-                name="CESM-WACCM-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-G6-1.5K/icechunk/icechunk",
+                name="CESM2-WACCM-G6-1.5K-icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/icechunk",
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-SSP245-icechunk": Dataset(
                 name="CESM2-WACCM-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2-WACCM-SSP245/icechunk/icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/icechunk",
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------
@@ -66,7 +66,7 @@ class Catalog:
             # -----------------------------------------------------------------------------------------------
             "ERA5": Dataset(
                 name="ERA5",
-                path="s3://carbonplan-srm/input/tensor/era5_rechunked_resampled.icechunk",
+                path="s3://carbonplan-srm/input/tensor/ERA5/era5_rechunked_resampled.icechunk",
                 format="icechunk",
             ),
             # -----------------------------------------------------------------------------------------------

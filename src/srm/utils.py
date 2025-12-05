@@ -24,5 +24,4 @@ def lon_to_180(ds: xr.Dataset, lon_name: str = "lon") -> xr.Dataset:
     """
 
     ds.coords[lon_name] = (ds.coords[lon_name] + 180) % 360 - 180
-    ds = ds.sortby(ds[lon_name])
-    return ds
+    return ds.sortby(ds[lon_name])
