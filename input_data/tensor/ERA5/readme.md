@@ -1,3 +1,9 @@
+## ERA5 processing
+
+#### Notes
+
+**variables**
+
 mean_total_precipitation_rate 
 2m_temperature
 2m_dewpoint_temperature
