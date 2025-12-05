@@ -42,18 +42,18 @@ def icechunk_store_to_dataset(dataset_name, catalog):
 
 def rename_variables(ds, model):
     if model == 'CESM2-WACCM':
-        ds = ds.rename({"TREFHT": "TASMEAN"})
-        ds = ds.rename({"TREFHTMX": "TASMAX"})
-        ds = ds.rename({"TREFHTMN": "TASMIN"})
-        ds = ds.rename({"PRECT": "PREC"})
-        ds = ds.rename({"FSDS": "RSDS"})
+        ds = ds.rename({"TREFHT": "tas"})
+        ds = ds.rename({"TREFHTMX": "tasmax"})
+        ds = ds.rename({"TREFHTMN": "tasmin"})
+        ds = ds.rename({"PRECT": "pr"})
+        ds = ds.rename({"FSDS": "rsds"})
 
     elif model == 'ERA5':
-        ds = ds.rename({"2m_temperature": "TASMEAN"})
-        ds = ds.rename({"maximum_2m_temperature_since_previous_post_processing": "TASMAX"})
-        ds = ds.rename({"minimum_2m_temperature_since_previous_post_processing": "TASMIN"})
-        ds = ds.rename({"mean_total_precipitation_rate": "PREC"})
-        ds = ds.rename({"mean_surface_downward_short_wave_radiation_flux": "RSDS"})
+        ds = ds.rename({"2m_temperature": "tas"})
+        ds = ds.rename({"maximum_2m_temperature_since_previous_post_processing": "tasmax"})
+        ds = ds.rename({"minimum_2m_temperature_since_previous_post_processing": "tasmin"})
+        ds = ds.rename({"mean_total_precipitation_rate": "pr"})
+        ds = ds.rename({"mean_surface_downward_short_wave_radiation_flux": "rsds"})
     return ds
 
 def rename_coords(ds):
