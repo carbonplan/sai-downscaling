@@ -23,3 +23,14 @@ def ds_non_monotonic():
             "lon": [350, 355, 0, 5, 10, 180, 270, 300],
         },
     )
+
+
+@pytest.fixture
+def ds_0_360():
+    return xr.Dataset(
+        {"temp": (["lat", "lon"], np.random.rand(10, 20))},
+        coords={
+            "lat": np.linspace(-90, 90, 10),
+            "lon": np.linspace(0, 360, 20, endpoint=False),
+        },
+    )
