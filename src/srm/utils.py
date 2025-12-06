@@ -62,11 +62,16 @@ def rename_coords(ds):
         ds  = ds.rename({'lat': 'latitude'})
     return ds
 
-def convert_precip_units(da):
-    # convert m/s to mm/day for intuition
+def convert_precip_units(da, model):
+    # convert precip units from original to mm/day for intuition
     # TODO: change this to using metpy for safer unit conversions
-    return da * 86400
-
+    # OR : retain this conversion but update units in attrs
+    if model== 'ERA5':
+        # convert from kg/m^2/s 
+        return da * 86400
+    elif model == 'CESM2-WACCM':
+        # convert from m/s
+        return da * 1000 * 86400
 
 def clean_up_dataset(ds, model):
     ds = rename_variables(ds, model)
@@ -76,5 +81,6 @@ def clean_up_dataset(ds, model):
     ds = lon_to_180(ds, lon_name='longitude')
     # add a geographic coordinate system
     ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
-    ds['pr'] = convert_precip_units(ds['pr'])
+    ds['pr'] = convert_precip_units(ds['pr'], model)
+    ds = ds.drop('spatial_ref')
     return ds
