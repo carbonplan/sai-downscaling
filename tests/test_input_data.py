@@ -1,6 +1,8 @@
+import cf_xarray  # noqa
 import icechunk
 import pytest
 import xarray as xr
+from validators import DatasetValidator
 
 from srm import catalog
 
@@ -27,18 +29,17 @@ def dataset(dataset_name):
     return ds, dataset_name
 
 
-def test_longitude_range(dataset):
-    ds, name = dataset
+class TestCatalogDatasets:
+    """Validate input datasets in the catalog"""
 
-    lon_names = ["lon", "longitude"]
-    lon_coord = None
-    for lon_name in lon_names:
-        if lon_name in ds.coords:
-            lon_coord = ds[lon_name]
-            break
+    def test_longitude_valid(self, dataset):
+        ds, name = dataset
+        validator = DatasetValidator(ds)
+        is_valid = validator.validate_lon(check_monotonic=True)
+        assert is_valid, f"{name} lon validation failed: {validator.get_issues()}"
 
-    assert lon_coord is not None, f"{name}: No longitude coordinate found"
-
-    lon_values = lon_coord.values
-    assert lon_values.min() >= -180, f"{name}: Longitude minimum {lon_values.min()} < -180"
-    assert lon_values.max() <= 180, f"{name}: Longitude maximum {lon_values.max()} > 180"
+    def test_latitude_valid(self, dataset):
+        ds, name = dataset
+        validator = DatasetValidator(ds)
+        is_valid = validator.validate_lat(check_monotonic=True)
+        assert is_valid, f"{name} lat validation failed: {validator.get_issues()}"
