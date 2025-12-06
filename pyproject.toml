@@ -49,7 +49,13 @@
         "jupyter-server-proxy>=4.4.0",
         "jupyter>=1.1.1",
     ]
-    dev = ["pre-commit>=4.3.0", "pytest>=8.4.2", "ruff>=0.13.2"]
+    dev = [
+    "cf-xarray>=0.10.9",
+    "pre-commit>=4.3.0",
+    "pytest>=8.4.2",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.13.2",
+]
     geo = [
         "arro3-core>=0.6.3",
         "duckdb>=1.4.0",
@@ -110,6 +116,7 @@
     line-length = 100
     target-version = "py313"
 
+
 [tool.ruff.lint]
     ignore = [
         "E501", # Conflicts with ruff format
@@ -129,6 +136,10 @@
 [tool.ruff.format]
     docstring-code-format = true
     quote-style           = "double"
+
+
+[tool.uv.sources]
+srm = { workspace = true, editable = true }
 
 [tool.ruff.lint.pydocstyle]
     convention = "numpy"
