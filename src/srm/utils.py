@@ -73,7 +73,7 @@ def clean_up_dataset(ds, model):
     ds = rename_coords(ds)
     # make sure coords go from -180 to 180 and not to 360
     # this won't do anything if it's already on the -180-180 scale
-    ds = lon_to_180(ds)
+    ds = lon_to_180(ds, lon_name='longitude')
     # add a geographic coordinate system
     ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
     ds['pr'] = convert_precip_units(ds['pr'])

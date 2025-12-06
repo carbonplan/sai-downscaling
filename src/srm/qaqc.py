@@ -31,27 +31,27 @@ def outlandishly_low_temp(da):
     return (da<outlandishly_low_threshold).sum().values
 
 def negative_precip(ds):
-    return (ds['PREC']<0).sum().values
+    return (ds['prec']<0).sum().values
 
 def check_temperature_monotonic(ds):
-    min_exceeds_mean = (ds['TASMIN']>ds['TASMEAN']).sum().values
-    mean_exceeds_max = (ds['TASMEAN']>ds['TASMAX']).sum().values
-    min_exceeds_max = (ds['TASMIN']>ds['TASMAX']).sum().values
+    min_exceeds_mean = (ds['tasmin']>ds['tasmean']).sum().values
+    mean_exceeds_max = (ds['tasmean']>ds['tasmax']).sum().values
+    min_exceeds_max = (ds['tasmin']>ds['tasmax']).sum().values
     return min_exceeds_mean, mean_exceeds_max, min_exceeds_max
 
 def check_physical_constraints(ds):
     print(f'Number of negative precipitation values: {negative_precip(ds)}')
     print(f'Number of outlandishly high precipitation values: {outlandishly_high_precip(ds)}')
-    print(f'Number of outlandishly high TASMEAN values: {outlandishly_high_temp(ds['TASMEAN'])}')
-    print(f'Number of outlandishly high TASMAX values: {outlandishly_high_temp(ds['TASMAX'])}')
-    print(f'Number of outlandishly high TASMIN values: {outlandishly_high_temp(ds['TASMIN'])}')
-    print(f'Number of outlandishly low TASMEAN values: {outlandishly_low_temp(ds['TASMEAN'])}')
-    print(f'Number of outlandishly low TASMAX values: {outlandishly_low_temp(ds['TASMAX'])}')
-    print(f'Number of outlandishly low TASMIN values: {outlandishly_low_temp(ds['TASMIN'])}')
+    print(f'Number of outlandishly high tasmean values: {outlandishly_high_temp(ds['tasmean'])}')
+    print(f'Number of outlandishly high tasmax values: {outlandishly_high_temp(ds['tasmax'])}')
+    print(f'Number of outlandishly high tasmin values: {outlandishly_high_temp(ds['tasmin'])}')
+    print(f'Number of outlandishly low tasmean values: {outlandishly_low_temp(ds['tasmean'])}')
+    print(f'Number of outlandishly low tasmax values: {outlandishly_low_temp(ds['tasmax'])}')
+    print(f'Number of outlandishly low tasmin values: {outlandishly_low_temp(ds['tasmin'])}')
     min_exceeds_mean, mean_exceeds_max, min_exceeds_max = check_temperature_monotonic(ds)
-    print(f'Number of times TASMIN exceeds TASMEAN: {min_exceeds_mean}')    
-    print(f'Number of times TASMEAN exceeds TASMAX: {mean_exceeds_max}')   
-    print(f'Number of times TASMIN exceeds TASMAX: {min_exceeds_max}')
+    print(f'Number of times tasmin exceeds tasmean: {min_exceeds_mean}')    
+    print(f'Number of times tasmean exceeds tasmax: {mean_exceeds_max}')   
+    print(f'Number of times tasmin exceeds tasmax: {min_exceeds_max}')
 
 def confirm_coords(ds):
     era5 = icechunk_store_to_dataset("ERA5", catalog)
