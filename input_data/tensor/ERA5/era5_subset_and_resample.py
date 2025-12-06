@@ -155,6 +155,8 @@ def load_dataset(variables: ERA5_VARS, start_year: int = 1950, end_year: int = 2
     ds = ds.sel(time=slice(f"{start_year}", f"{end_year}"))
 
     ds = lon_to_180(ds, lon_name="longitude")
+    ds = ds.sortby(["latitude", "longitude"])
+    ds = ds.rename({"longitude": "lon", "latitude": "lat"})
     # TODO: derive vars (ex wind speed) 2->1
 
     return ds
@@ -176,12 +178,12 @@ def process_dataset(
     xr.Dataset: An Xarray Dataset with the selected variables
     """
     # ~100Mb chunks, but not split spatially. Getting larger chunks to reduce scheduler task pressure
-    ds = ds.chunk({"time": 48, "latitude": 721, "longitude": 1440})
+    ds = ds.chunk({"time": 48, "lat": 721, "lon": 1440})
 
     ds = resample_time(ds=ds, start_year=start_year, end_year=end_year, variable=variable)
 
     # ~115MB, some spatial chunking
-    ds = ds.chunk({"time": 730, "latitude": 144, "longitude": 288})
+    ds = ds.chunk({"time": 730, "lat": 144, "lon": 288})
 
     # wait(ds)
 
