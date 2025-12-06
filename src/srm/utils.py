@@ -65,7 +65,7 @@ def rename_coords(ds):
 def convert_precip_units(da):
     # convert m/s to mm/day for intuition
     # TODO: change this to using metpy for safer unit conversions
-    return da * 1000 * 86400
+    return da * 86400
 
 
 def clean_up_dataset(ds, model):
