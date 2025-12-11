@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from srm.catalog import Dataset
+    pass
 
 
 class ValidationResult:
@@ -22,11 +22,18 @@ class ValidationResult:
 
 
 class DatasetValidator:
-    def __init__(self, ds_info: Dataset):
+    def __init__(self, ds_info):
         import cf_xarray  # noqa ignore
+        import xarray as xr
 
-        self.ds_info = ds_info
-        self.ds = ds_info.to_xarray().cf
+        if isinstance(ds_info, xr.Dataset):
+            self.ds_info = None
+            self.ds = ds_info
+        else:
+            self.ds_info = ds_info
+            self.ds = ds_info.to_xarray()
+
+        self.ds = self.ds.cf
 
     def _validate_coord(
         self,
