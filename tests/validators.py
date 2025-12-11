@@ -23,6 +23,8 @@ class ValidationResult:
 
 class DatasetValidator:
     def __init__(self, ds_info: Dataset):
+        import cf_xarray  # noqa ignore
+
         self.ds_info = ds_info
         self.ds = ds_info.to_xarray().cf
 
