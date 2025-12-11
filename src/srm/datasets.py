@@ -17,6 +17,7 @@ class Dataset:
     name: str
     path: str | CloudPath
     format: typing.Literal["zarr", "icechunk"]
+    expected_chunks: dict[str, int] | None = None  # ex: {'time': 13522, 'lat': 32, 'lon': 48}
 
     @property
     def uri(self) -> str:
@@ -29,6 +30,13 @@ class Dataset:
     @property
     def prefix(self) -> str:
         return str(self.path.key)
+
+    def get_chunking_dict(self) -> dict[str, int]:
+        """Get a chunking dictionary. Note: Just the first var,
+        so we should update if we for some reason have differant chunking between vars"""
+        ds = self.to_xarray()
+        first_var = list(ds.data_vars)[0]
+        return {dim: c[0] for dim, c in ds[first_var].chunksizes.items()}
 
     def to_xarray(self) -> xr.Dataset:
         import xarray as xr
@@ -59,36 +67,42 @@ class Catalog:
                 name="CESM2-WACCM-Historical-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/icechunk",
                 format="icechunk",
+                expected_chunks={"time": 13522, "lat": 32, "lon": 48},
             ),
             # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
                 name="CESM2-WACCM-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/icechunk",
                 format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 18251, "lat": 32, "lon": 48},
             ),
             # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-SSP245-icechunk": Dataset(
                 name="CESM2-WACCM-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/icechunk",
                 format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 20076, "lat": 32, "lon": 48},
             ),
             # -----------------------------------------------------------------------------------------------
             "MIROC-ES2H-G6-1.5K-icechunk": Dataset(
                 name="MIROC-ES2H-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-G6-1.5K/MIROC-ES2H-G6-1.5K.icechunk",
                 format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 18263, "lat": 8, "lon": 16},
             ),
             # -----------------------------------------------------------------------------------------------
             "MIROC-ES2H-baseline-icechunk": Dataset(
                 name="MIROC-ES2H-baseline-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-baseline/MIROC-ES2H-baseline.icechunk",
                 format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 23742, "lat": 8, "lon": 16},
             ),
             # -----------------------------------------------------------------------------------------------
             "ERA5": Dataset(
                 name="ERA5",
                 path="s3://carbonplan-srm/input/tensor/ERA5/era5_rechunked_resampled.icechunk",
                 format="icechunk",
+                expected_chunks={"time": 730, "lat": 144, "lon": 288},
             ),
             # -----------------------------------------------------------------------------------------------
         }
