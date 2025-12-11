@@ -1,7 +1,13 @@
+from __future__ import annotations
+
 import typing
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from cloudpathlib import CloudPath
+
+if TYPE_CHECKING:
+    import xarray as xr
 
 
 @dataclass
@@ -11,11 +17,6 @@ class Dataset:
     name: str
     path: str | CloudPath
     format: typing.Literal["zarr", "icechunk"]
-
-    def __post_init__(self):
-        """Validate and convert path to CloudPathLib"""
-        if isinstance(self.path, str):
-            self.path = CloudPath(self.path)
 
     @property
     def uri(self) -> str:
@@ -28,6 +29,26 @@ class Dataset:
     @property
     def prefix(self) -> str:
         return str(self.path.key)
+
+    def to_xarray(self) -> xr.Dataset:
+        import xarray as xr
+
+        if self.format == "icechunk":
+            import icechunk
+
+            storage = icechunk.s3_storage(bucket=self.bucket, prefix=self.prefix, from_env=True)
+            repo = icechunk.Repository.open(storage)
+            session = repo.readonly_session("main")
+            return xr.open_zarr(session.store, consolidated=False)
+        elif self.format == "zarr":
+            return xr.open_zarr(self.path)
+        else:
+            raise ValueError(f"Unknown format: {self.format}")
+
+    def __post_init__(self):
+        """Validate and convert path to CloudPathLib"""
+        if isinstance(self.path, str):
+            self.path = CloudPath(self.path)
 
 
 class Catalog:
