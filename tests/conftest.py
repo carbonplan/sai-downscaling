@@ -2,6 +2,20 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from srm import catalog  # Assume this is your main catalog object
+
+
+@pytest.fixture(scope="session")
+def dataset_catalog():
+    """fixture for the catalog"""
+    return catalog
+
+
+@pytest.fixture(params=list(catalog.datasets.values()), ids=lambda ds: ds.name)
+def ds_info(request):
+    """Parametrize by dataset objects"""
+    return request.param
+
 
 @pytest.fixture
 def ds_monotonic():
