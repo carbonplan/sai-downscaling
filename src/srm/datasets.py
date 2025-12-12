@@ -125,13 +125,33 @@ class Catalog:
         """list all dataset names"""
         return list(self.datasets.keys())
 
+    def variable_metadata(self):
+        from tabulate import tabulate
+
+        attrs = ["units", "long_name", "cell_methods"]
+        headers = ["Variable"] + attrs
+
+        for dataset_name in self.datasets.keys():
+            ds = self.get(dataset_name).to_xarray()
+
+            table_data = [
+                [var_name] + [ds[var_name].attrs.get(attr, "") for attr in attrs]
+                for var_name in ds.data_vars
+            ]
+
+            print(f"\n{dataset_name}\n {tabulate(table_data, headers=headers, tablefmt='grid')} \n")
+
     def __str__(self) -> str:
-        """create a table-like view"""
-        lines = [f"Dataset Catalog ({len(self.datasets)} datasets)"]
-        lines.append("-" * 80)
+        from tabulate import tabulate
+
+        table_data = []
         for ds in self.datasets.values():
-            lines.append(f"{ds.name:<20} | {ds.format:<10} | {ds.uri}")
-        return "\n".join(lines)
+            table_data.append([ds.name, ds.format, str(ds.path), ds.expected_chunks])
+
+        headers = ["Name", "Format", "Path", "Expected Chunks"]
+        return f"Dataset Catalog ({len(self.datasets)} datasets)\n" + tabulate(
+            table_data, headers=headers, tablefmt="grid"
+        )
 
     def __repr__(self) -> str:
         return self.__str__()
