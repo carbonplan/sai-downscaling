@@ -77,6 +77,15 @@ def _resample_time(ds, variable):
         raise ValueError(f"Unknown variable: {variable}")
 
 
+def _compute_wind_speed(ds_u: xr.Dataset, ds_v: xr.Dataset) -> xr.Dataset:
+    import xclim
+
+    winds = xclim.indicators.convert.wind_speed_from_vector(
+        uas=ds_u["10m_u_component_of_wind"], vas=ds_v["10m_v_component_of_wind"]
+    )
+    return xr.merge(winds)["sfcWind"]
+
+
 def _load_era5(variable, config: ERA5Config):
     # chunks=None skips using dask.
     # This uses xarray’s internally private lazy indexing classes, but data is eagerly loaded into memory as numpy arrays when accessed.
@@ -168,7 +177,13 @@ def process_era5_pipeline(
             if verbose:
                 print(f"Processing {var}...")
 
-            ds = _load_era5(variable=var, input_url=config.input_url)
+        if var == "sfcWind":
+            ds_u = _load_era5(variable="10m_u_component_of_wind", config=config)
+            ds_v = _load_era5(variable="10m_v_component_of_wind", config=config)
+            ds = _compute_wind_speed(ds_u, ds_v)
+        else:
+            ds = _load_era5(variable=var, config=config)
+
             ds = _preprocess_era5(ds, config)
             if var == "mean_total_precipitation_rate":
                 ds = _trim_negative(ds)
