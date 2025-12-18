@@ -193,11 +193,10 @@ def _determine_mode_based_on_ancestry(repo: icechunk.Repository, branch: str = "
 def process_era5_pipeline(
     variables: list[str],
     start_year: int = 1950,
-    end_year: int = 1951,
+    end_year: int = 2014,
     use_coiled: bool = False,
     verbose: bool = True,
 ):
-    """Core pipeline logic without CLI dependencies"""
     era5_cat = catalog.get("ERA5")
     config = ERA5Config(start_year=start_year, end_year=end_year)
 
@@ -231,7 +230,7 @@ def process_era5_pipeline(
             encoding = _encoding(ds, config)
             print(ds)
             print(encoding)
-            # let's try explicity chunking to shard share
+            # try explicity chunking to shard size
             write_to_icechunk(
                 ds,
                 session,
@@ -241,7 +240,7 @@ def process_era5_pipeline(
                 config=config,
             )
 
-            # if we're doing multiple vars, switch to append after the first
+            # if we're doing multiple vars, switch to append after the first group is written
             write_mode = "a"
             if verbose:
                 print(f"Committed {var}")
@@ -263,14 +262,13 @@ def cli():
 @click.option(
     "--variable",
     multiple=True,
-    type=click.Choice(ERA5Config.ALL_VARS_LIST),  # Use the flattened list here
+    type=click.Choice(ERA5Config.ALL_VARS_LIST),
     required=True,
 )
 @click.option("--start-year", type=int, default=1950)
-@click.option("--end-year", type=int, default=1951)
+@click.option("--end-year", type=int, default=2014)
 @click.option("--coiled/--local", default=False)
 def era5(variable, start_year, end_year, coiled):
-    """CLI wrapper around the pipeline"""
     process_era5_pipeline(
         variables=list(variable),
         start_year=start_year,
@@ -282,28 +280,3 @@ def era5(variable, start_year, end_year, coiled):
 
 if __name__ == "__main__":
     cli()
-
-
-# steps:
-# create / open repo - from srm.catalog?!
-# setup client (coiled or local)
-# load dataset & drop encoding (input chunking?)
-# process
-# lat_lon conversion
-# lat/lon sortby
-# variable renaming
-# trim precip negatives
-# resample to daily
-# create encoding dict
-# to_icechunk with sharding/chunking encoding (icechunk2?)
-
-
-# update chunking /sharding size
-# trim negative precip values
-# check commit history or load the dataset and check if var exists before writing!
-
-# testing
-# we wanna check ipdb works
-# test 1 year?
-# test append 1 year 2 vars?
-# common utils in utils.py
