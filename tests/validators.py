@@ -33,7 +33,7 @@ class DatasetValidator:
             self.ds_info = ds_info
             self.ds = ds_info.to_xarray()
 
-        self.ds = self.ds.cf
+        # self.ds: Unknown = self.ds
 
     def _validate_coord(
         self,
@@ -87,3 +87,53 @@ class DatasetValidator:
             else [f"chunks {actual_chunks} != expected {self.ds_info.expected_chunks}"]
         )
         return ValidationResult(is_valid, issues)
+
+    def validate_expected_variables(self) -> ValidationResult:
+        if not self.ds_info.expected_vars:
+            return ValidationResult(True, [])
+
+        actual_names = set(self.ds.data_vars)
+        expected_specs = self.ds_info.expected_vars
+        expected_names = {spec.name for spec in expected_specs}
+
+        missing_names = expected_names - actual_names
+
+        if missing_names:
+            # We sort the strings (which Python knows how to do)
+            return ValidationResult(
+                False,
+                [
+                    f"Missing variables: {sorted(list(missing_names))}. Found: {sorted(list(actual_names))}"
+                ],
+            )
+
+        return ValidationResult(True, [])
+
+    def validate_units(self) -> ValidationResult:
+        if not self.ds_info.expected_vars:
+            return ValidationResult(True, [])
+
+        issues = []
+        for spec in self.ds_info.expected_vars:
+            if spec.name in self.ds:
+                actual_unit = self.ds[spec.name].attrs.get("units")
+                if actual_unit != spec.units:
+                    issues.append(
+                        f"Variable '{spec.name}' has units '{actual_unit}', expected '{spec.units}'"
+                    )
+
+        return ValidationResult(len(issues) == 0, issues)
+
+    # SLOW!
+    def validate_negative_precip(self) -> ValidationResult:
+        if "pr" not in list(self.ds):
+            return ValidationResult(
+                True,
+                [f"dataset has no variable named 'pr'. Available variables are: {list(self.ds)}"],
+            )
+
+        has_negatives = (self.ds["pr"] < 0).any().item()
+        if has_negatives:
+            return ValidationResult(False, ["Found negative precipitation data"])
+        else:
+            return ValidationResult(True, [])

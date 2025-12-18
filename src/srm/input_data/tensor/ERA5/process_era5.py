@@ -1,7 +1,9 @@
+import time
 from dataclasses import dataclass, field
 from typing import Literal, get_args
 
 import click
+import icechunk
 import xarray as xr
 import zarr
 from icechunk.xarray import to_icechunk
@@ -10,7 +12,7 @@ from srm import catalog
 from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
 from srm.utils import lon_to_180
 
-zarr.config.set({"async.concurrency": 128})
+zarr.config.set({"async.concurrency": 64})
 
 
 @dataclass
@@ -23,8 +25,8 @@ class ERA5Config:
         "2m_temperature",
         "mean_surface_downward_short_wave_radiation_flux",
         "mean_surface_downward_long_wave_radiation_flux",
-        "10m_u_component_of_wind",
-        "10m_v_component_of_wind",
+        "sfcWind",
+        "surface_pressure",
     ]
     ALL_VARS = MAX_RESAMPLING | MIN_RESAMPLING | MEAN_RESAMPLING
 
@@ -35,10 +37,10 @@ class ERA5Config:
         "maximum_2m_temperature_since_previous_post_processing": "tasmax",
         # 'ADDME_HURS': 'hurs',# we only have specific_humidity at levels in hpa, so can we back out 2m?
         "mean_surface_downward_short_wave_radiation_flux": "rsds",
-        # 'ADDME_SFCWIND': 'sfcWind', # calculate from 10m_u_component_of_wind, 10m_v_component_of_wind
+        "sfcWind": "sfcWind",
         # 'ADDME_HUSS': 'huss',
         "mean_surface_downward_long_wave_radiation_flux": "rlds",
-        # 'surface_pressure': 'ps',
+        "surface_pressure": "ps",
     }
 
     input_url: str = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
@@ -48,11 +50,17 @@ class ERA5Config:
     input_chunking = {"time": 24, "latitude": 721, "longitude": 1440}
 
     encoding = {
-        "chunks": {"time": 1, "lat": 720, "lon": 1440},
-        "shards": {"time": 10, "lat": 720, "lon": 1440},
+        "chunks": {"time": 1, "lat": 721, "lon": 1440},
+        "shards": {"time": 10, "lat": 721, "lon": 1440},
     }
 
     cluster: ClusterConfig = field(default_factory=ClusterConfig)
+
+    ALL_VARS_LIST = (
+        list(get_args(MAX_RESAMPLING))
+        + list(get_args(MIN_RESAMPLING))
+        + list(get_args(MEAN_RESAMPLING))
+    )
 
     def __post_init__(self):
         """Fetch output location from catalog and unpack"""
@@ -83,7 +91,7 @@ def _compute_wind_speed(ds_u: xr.Dataset, ds_v: xr.Dataset) -> xr.Dataset:
     winds = xclim.indicators.convert.wind_speed_from_vector(
         uas=ds_u["10m_u_component_of_wind"], vas=ds_v["10m_v_component_of_wind"]
     )
-    return xr.merge(winds)["sfcWind"]
+    return xr.merge(winds)[["sfcWind"]]
 
 
 def _load_era5(variable, config: ERA5Config):
@@ -97,8 +105,10 @@ def _load_era5(variable, config: ERA5Config):
     store = from_url(config.input_url, skip_signature=True)
     zstore = ObjectStore(store)
 
-    ds = xr.open_dataset(zstore, engine="zarr", chunks=None)[[variable]].sel(
-        time=slice(f"{config.start_year}", f"{config.end_year}")
+    ds = (
+        xr.open_dataset(zstore, engine="zarr", chunks=None)[[variable]]
+        .sel(time=slice(f"{config.start_year}", f"{config.end_year}"))
+        .drop_encoding()
     )
     return ds.chunk(config.input_chunking)
 
@@ -127,13 +137,25 @@ def _preprocess_era5(ds: xr.Dataset, config: ERA5Config):
 
 def _encoding(ds: xr.Dataset, config: ERA5Config):
     encoding = {}
-    for var in ds.data_vars:
-        encoding[var] = {"chunks": config.encoding["chunks"], "shards": config.encoding["shards"]}
+    for var_name in ds.data_vars:
+        var = ds[var_name]
+        var_chunks = tuple(config.encoding["chunks"][d] for d in var.dims)
+        var_shards = tuple(config.encoding["shards"][d] for d in var.dims)
+        encoding[var_name] = {
+            "chunks": var_chunks,
+            "shards": var_shards,
+        }
     return encoding
 
 
-def _update_attrs(ds: xr.Dataset, config: ERA5Config) -> xr.Dataset:
+def _update_attrs(ds: xr.Dataset, var: str, config: ERA5Config) -> xr.Dataset:
     import cf_xarray  # noqa ignore
+
+    if var == "pr":
+        ds["pr"].attrs["units"] = "kg m-2 s-1"
+
+    if var in ["rlds", "rsds"]:
+        ds[var].attrs["units"] = "W m-2"
 
     ds = ds.cf.add_bounds("time")
     ds = ds.cf.add_bounds("lat")
@@ -145,19 +167,33 @@ def _update_attrs(ds: xr.Dataset, config: ERA5Config) -> xr.Dataset:
             "valid_time_stop": f"{config.end_year}-12-31",
         }
     )
+
     return ds
 
 
-def write_to_icechunk(ds, session, commit_msg, encoding: dict):
-    # TODO: How to handle is it's the first commit, first variable, we gotta change mode I think
-    to_icechunk(ds, session, encoding=encoding, mode="a")
-    session.commit(commit_msg)
+def write_to_icechunk(
+    ds, session, encoding: dict, commit_message: str, write_mode: str, config: ERA5Config
+):
+    # rechunk to shard shape
+    ds = ds.chunk(config.encoding["shards"])
+
+    to_icechunk(ds, session, encoding=encoding, mode=write_mode)
+    session.commit(commit_message)
+
+
+def _determine_mode_based_on_ancestry(repo: icechunk.Repository, branch: str = "main") -> str:
+    # check the icechunk ancestry to see if data already exists. Change mode to append if so.
+    history = list(repo.ancestry(branch=branch))
+    if len(history) <= 1:
+        return "w"
+    else:
+        return "a"
 
 
 def process_era5_pipeline(
     variables: list[str],
     start_year: int = 1950,
-    end_year: int = 2014,
+    end_year: int = 1951,
     use_coiled: bool = False,
     verbose: bool = True,
 ):
@@ -170,30 +206,50 @@ def process_era5_pipeline(
     else:
         client = setup_local_client()
 
-    _, session = init_repo(era5_cat.bucket, era5_cat.prefix, readonly=False)
+    repo, session = init_repo(era5_cat.bucket, era5_cat.prefix, readonly=False)
 
     try:
         for var in variables:
+            repo, session = init_repo(era5_cat.bucket, era5_cat.prefix, readonly=False)
+            write_mode = _determine_mode_based_on_ancestry(repo)
+
             if verbose:
                 print(f"Processing {var}...")
 
-        if var == "sfcWind":
-            ds_u = _load_era5(variable="10m_u_component_of_wind", config=config)
-            ds_v = _load_era5(variable="10m_v_component_of_wind", config=config)
-            ds = _compute_wind_speed(ds_u, ds_v)
-        else:
-            ds = _load_era5(variable=var, config=config)
+            if var == "sfcWind":
+                ds_u = _load_era5(variable="10m_u_component_of_wind", config=config)
+                ds_v = _load_era5(variable="10m_v_component_of_wind", config=config)
+                ds = _compute_wind_speed(ds_u, ds_v)
+            else:
+                ds = _load_era5(variable=var, config=config)
 
             ds = _preprocess_era5(ds, config)
             if var == "mean_total_precipitation_rate":
                 ds = _trim_negative(ds)
             ds = _resample_time(ds, var)
-            ds = _update_attrs(ds, config)
+            ds = _update_attrs(ds, var, config)
             encoding = _encoding(ds, config)
-            write_to_icechunk(ds, session, f"{var}", encoding=encoding)
+            print(ds)
+            print(encoding)
+            # let's try explicity chunking to shard share
+            write_to_icechunk(
+                ds,
+                session,
+                encoding=encoding,
+                commit_message=f"{var}",
+                write_mode=write_mode,
+                config=config,
+            )
 
+            # if we're doing multiple vars, switch to append after the first
+            write_mode = "a"
             if verbose:
                 print(f"Committed {var}")
+
+            time.sleep(
+                10
+            )  # Try to slow down a bit for GCS: obstore.exceptions.GenericError: Generic GCS error: Error performing GET
+
     finally:
         client.shutdown()
 
@@ -205,15 +261,18 @@ def cli():
 
 @cli.command()
 @click.option(
-    "--variables", multiple=True, type=click.Choice(get_args(ERA5Config.ALL_VARS)), required=True
+    "--variable",
+    multiple=True,
+    type=click.Choice(ERA5Config.ALL_VARS_LIST),  # Use the flattened list here
+    required=True,
 )
 @click.option("--start-year", type=int, default=1950)
-@click.option("--end-year", type=int, default=2014)
+@click.option("--end-year", type=int, default=1951)
 @click.option("--coiled/--local", default=False)
-def era5(variables, start_year, end_year, coiled):
+def era5(variable, start_year, end_year, coiled):
     """CLI wrapper around the pipeline"""
     process_era5_pipeline(
-        variables=list(variables),
+        variables=list(variable),
         start_year=start_year,
         end_year=end_year,
         use_coiled=coiled,
