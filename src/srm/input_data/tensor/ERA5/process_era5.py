@@ -12,7 +12,7 @@ from srm import catalog
 from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
 from srm.utils import lon_to_180
 
-zarr.config.set({"async.concurrency": 64})
+zarr.config.set({"async.concurrency": 128})
 
 
 @dataclass
@@ -49,11 +49,6 @@ class ERA5Config:
 
     input_chunking = {"time": 24, "latitude": 721, "longitude": 1440}
 
-    encoding = {
-        "chunks": {"time": 1, "lat": 721, "lon": 1440},
-        "shards": {"time": 10, "lat": 721, "lon": 1440},
-    }
-
     cluster: ClusterConfig = field(default_factory=ClusterConfig)
 
     ALL_VARS_LIST = (
@@ -70,6 +65,11 @@ class ERA5Config:
         self.bucket = era5_dataset.bucket
         self.prefix = era5_dataset.prefix
         self.output_path = era5_dataset.path
+
+        self.encoding = {
+            "chunks": era5_dataset.expected_chunks,
+            "shards": era5_dataset.expected_shards,
+        }
 
 
 def _resample_time(ds, variable):
@@ -110,7 +110,7 @@ def _load_era5(variable, config: ERA5Config):
         .sel(time=slice(f"{config.start_year}", f"{config.end_year}"))
         .drop_encoding()
     )
-    return ds.chunk(config.input_chunking)
+    return ds.chunk(config.input_chunking).drop_encoding()
 
 
 def _trim_negative(
@@ -139,6 +139,7 @@ def _encoding(ds: xr.Dataset, config: ERA5Config):
     encoding = {}
     for var_name in ds.data_vars:
         var = ds[var_name]
+        # make a tuple for the chunks from the dict
         var_chunks = tuple(config.encoding["chunks"][d] for d in var.dims)
         var_shards = tuple(config.encoding["shards"][d] for d in var.dims)
         encoding[var_name] = {
