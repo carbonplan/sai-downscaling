@@ -29,7 +29,7 @@ class VarStandards:
 
 @dataclass
 class ClusterConfig:
-    n_workers: list = field(default_factory=lambda: [5, 30])
+    n_workers: list = field(default_factory=lambda: [2, 24])
     region: str = "us-west-2"
     worker_vm_types: list = field(default_factory=lambda: ["r8g.large", "m8g.xlarge"])
     scheduler_vm_types: str = "c8g.2xlarge"

@@ -21,6 +21,7 @@ class Dataset:
     path: str | CloudPath
     format: typing.Literal["zarr", "icechunk"]
     expected_chunks: dict[str, int] | None = None
+    expected_shards: dict[str, int] | None = None
     expected_vars: list[VarSpec] | None = None  # Now uses VarSpec objects in config.py
 
     @property
@@ -89,9 +90,10 @@ class Catalog:
             ),
             "MIROC-ES2H-G6-1.5K-icechunk": Dataset(
                 name="MIROC-ES2H-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-G6-1.5K/MIROC-ES2H-G6-1.5K.icechunk",
+                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-G6-1.5K/updated_MIROC-ES2H-G6-1.5K.icechunk",
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 18263, "lat": 8, "lon": 16},
+                expected_shards={"ensemble_member": 1, "time": 18263, "lat": 64, "lon": 128},
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.RSDS,
@@ -103,9 +105,10 @@ class Catalog:
             ),
             "MIROC-ES2H-baseline-icechunk": Dataset(
                 name="MIROC-ES2H-baseline-icechunk",
-                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-baseline/MIROC-ES2H-baseline.icechunk",
+                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-baseline/updated_MIROC-ES2H-baseline.icechunk",
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 23742, "lat": 8, "lon": 16},
+                expected_shards={"ensemble_member": 1, "time": 23742, "lat": 64, "lon": 128},
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.RSDS,
@@ -119,7 +122,12 @@ class Catalog:
                 name="ERA5",
                 path="s3://carbonplan-srm/input/tensor/ERA5/ERA5.icechunk",
                 format="icechunk",
-                expected_chunks={"time": 1, "lat": 721, "lon": 1440},
+                expected_chunks={"time": 23741, "lat": 7, "lon": 14},  # ~9.5MB chunks
+                expected_shards={
+                    "time": 23741,
+                    "lat": 35,
+                    "lon": 70,
+                },  # ~ 221.88 MiB shard! # 441 chunks in 5 graph layers
                 # Only a subset for ERA5 example
                 expected_vars=[
                     VarStandards.PR,
