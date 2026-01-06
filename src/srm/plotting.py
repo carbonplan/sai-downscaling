@@ -1,38 +1,122 @@
 import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import xclim as xc
+from xclim.indices import dry_days as xc_dry_days
+from xclim.indices import tx_max, growing_degree_days
 
-def plot_comparisons(obs, raw, ds1, ds2=None, bias='absolute'):
-    fig, axarr = plt.subplots(figsize=(20,8), nrows=2, ncols=4)
-    cax =  obs.plot(ax=axarr[1,0])
-    # plot raw and ds1 with same colorbar limits as obs
-    raw.plot(ax=axarr[0,0], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-    ds1.plot(ax=axarr[0,1], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
+def plot_comparisons(obs, raw, ds1, ds2=None, bias="absolute"):
+    fig, axarr = plt.subplots(figsize=(20, 8), nrows=2, ncols=4)
 
-    if bias=='absolute':
-        (ds1-obs).plot(ax=axarr[1,1])
-    elif bias=='percentage':
-        (((ds1-obs)/obs)*100).plot(ax=axarr[1,1])
+    varname = str(obs.name) if obs.name is not None else ""
+    fig.suptitle(f"1978 mean {varname}", fontsize=16, y=0.98)
+
+    cax = obs.plot(ax=axarr[0, 0])
+    axarr[0, 0].set_title("ERA5")
+
+    raw.plot(ax=axarr[0, 1], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
+    axarr[0, 1].set_title("GCM raw output")
+
+    ds1.plot(ax=axarr[0, 2], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
+    axarr[0, 2].set_title("GCM BCSD nonparametric")
+
     if ds2 is not None:
-        ds1.plot(ax=axarr[0,2], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-        if bias=='absolute':
-            (ds2-obs).plot(ax=axarr[1,2])
-            (ds2-ds1).plot(ax=axarr[0,3])
-        elif bias=='percentage':
-            (((ds2-obs)/obs)*100).plot(ax=axarr[1,2])
-            (((ds2-obs)/obs)*100).plot(ax=axarr[0,3])
-    axarr[1,3].axis('off')
+        ds2.plot(ax=axarr[0, 3], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
+        axarr[0, 3].set_title("GCM BCSD parametric")
+    else:
+        axarr[0, 3].axis("off")
+
+    if bias == "absolute":
+        (ds1 - obs).plot(ax=axarr[1, 0])
+        axarr[1, 0].set_title("Nonparametric minus ERA5")
+
+        if ds2 is not None:
+            (ds2 - obs).plot(ax=axarr[1, 1])
+            axarr[1, 1].set_title("Parametric minus ERA5")
+
+            (ds2 - ds1).plot(ax=axarr[1, 2])
+            axarr[1, 2].set_title("Parametric minus Nonparametric")
+        else:
+            axarr[1, 1].axis("off")
+            axarr[1, 2].axis("off")
+
+    elif bias == "percentage":
+        (((ds1 - obs) / obs) * 100).plot(ax=axarr[1, 0])
+        axarr[1, 0].set_title("Nonparametric − ERA5 (%)")
+
+        if ds2 is not None:
+            (((ds2 - obs) / obs) * 100).plot(ax=axarr[1, 1])
+            axarr[1, 1].set_title("Parametric − ERA5 (%)")
+
+            (((ds2 - ds1) / ds1) * 100).plot(ax=axarr[1, 2])
+            axarr[1, 2].set_title("Parametric − Nonparametric (%)")
+        else:
+            axarr[1, 1].axis("off")
+            axarr[1, 2].axis("off")
+
+    axarr[1, 3].axis("off")
+
     plt.tight_layout()
 
+from xclim.indices import dry_days
+
+from xclim.indices import dry_days
+
+from xclim.indices import dry_days, tx_max, growing_degree_days, hot_days
+
 def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
-    # input datasets should be already subset to the time periods of interest
-    # this function will collapse them down into a 2d map
-    # todo: make this work for the following set of statistics: mean, 99p, 1p, 
     ds_list = [raw, era5, ds1]
     if ds2 is not None:
         ds_list.append(ds2)
-    if stat=='mean':
-        [raw_toplot, era5_toplot, ds1_toplot, ds2_toplot] = [ds.mean(dim='time')[variable].compute() for ds in ds_list]
-    elif stat=='99p':
-        [raw_toplot, era5_toplot, ds1_toplot, ds2_toplot] = [ds.quantile(.99, dim='time')[variable].compute() for ds in ds_list]
+
+    if stat == "mean":
+        out = [ds[variable].mean(dim="time").compute() for ds in ds_list]
+
+    elif stat == "99p":
+        out = [ds[variable].quantile(0.99, dim="time").compute() for ds in ds_list]
+        out = [da.rename("99p") for da in out]
+
+    elif stat == "dry_days":
+        out = []
+        for ds in ds_list:
+            pr = ds["pr"]
+            pr.attrs.setdefault("units", "mm/day")
+            out.append(dry_days(pr, thresh="1 mm/day", freq="YS").sum("time").compute())
+        out = [da.rename("dry_days") for da in out]
+
+    elif stat == "hottest_day":
+        out = []
+        for ds in ds_list:
+            tasmax = ds[variable]         
+            tasmax.attrs.setdefault("units", "K")
+            out.append(tx_max(tasmax, freq="YS").mean("time").compute())
+        out = [da.rename("hottest_day") for da in out]
+
+    elif stat == "gdd":
+        out = []
+        for ds in ds_list:
+            tas = ds[variable]             
+            tas.attrs.setdefault("units", "K")
+            out.append(growing_degree_days(tas, thresh="10 degC", freq="YS").mean("time").compute())
+        out = [da.rename("gdd") for da in out]
+
+    elif stat == "days_over_30C":
+        out = []
+        for ds in ds_list:
+            tasmax = ds[variable]          
+            tasmax.attrs.setdefault("units", "K")
+            out.append(hot_days(tasmax, thresh="30 degC", freq="YS").mean("time").compute())
+        out = [da.rename("days_over_30C") for da in out]
+
+    else:
+        raise ValueError(f"Unknown stat: {stat}")
+
+    if ds2 is None:
+        raw_toplot, era5_toplot, ds1_toplot = out
+        ds2_toplot = None
+    else:
+        raw_toplot, era5_toplot, ds1_toplot, ds2_toplot = out
+
     return raw_toplot, era5_toplot, ds1_toplot, ds2_toplot
     
 def prep_funky_calendar(ds, ds_timeindex_to_match, time_slice):
@@ -76,7 +160,7 @@ def plot_timeseries(ax, era5_toplot, raw_toplot, ds1_toplot, location, ds2_toplo
     ax.set_title(location)
 
 
-def plot_pdf(era5, raw, ds1, var, ds2=ds2, title=None, xlabel=None):
+def plot_pdf(era5, raw, ds1, var, ds2=None, title=None, xlabel=None):
     plt.figure(figsize=(8, 6))
     plt.rcParams["font.size"] = 11
     
@@ -114,3 +198,49 @@ def plot_pdf(era5, raw, ds1, var, ds2=ds2, title=None, xlabel=None):
     
     plt.legend()
     plt.xlabel(xlabel)
+
+def plot_cdf(era5, raw, ds1, var=None, ds2=None, title=None, xlabel=None):
+    plt.figure(figsize=(8, 6))
+    plt.rcParams["font.size"] = 11
+
+    def _prep(x):
+        if hasattr(x, "values"):
+            v = x.values.ravel()
+            return v[~np.isnan(v)]
+        return x
+
+    sns.kdeplot(
+        _prep(era5),
+        label="Observations (ERA5)",
+        color="gray",
+        linewidth=7,
+        alpha=0.3,
+        cumulative=True,
+    )
+    sns.kdeplot(
+        _prep(raw),
+        label="Modeled historical (raw)",
+        color="black",
+        cumulative=True,
+    )
+    sns.kdeplot(
+        _prep(ds1),
+        label="Downscaled v1",
+        color="firebrick",
+        linestyle="-",
+        cumulative=True,
+    )
+    if ds2 is not None:
+        sns.kdeplot(
+            _prep(ds2),
+            label="Downscaled v2",
+            color="royalblue",
+            linestyle="-",
+            cumulative=True,
+        )
+
+    plt.title(title, fontsize=13, fontweight="bold")
+    plt.xlabel(xlabel)
+    plt.ylabel("Cumulative probability")
+    plt.legend()
+    plt.tight_layout()
