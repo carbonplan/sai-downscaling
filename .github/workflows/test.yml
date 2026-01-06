@@ -1,4 +1,4 @@
-name: Pytest
+name: pytest
 
 on:
   push:
@@ -34,10 +34,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: deps
-        run: uv sync --only-group dev
-        
-      - name: run pre-commit
-        run: uv run pre-commit run --all-files
+        run: uv sync --group dev
 
       - name: run tests
         run: uv run pytest -n auto -v

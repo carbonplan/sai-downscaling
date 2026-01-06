@@ -1,0 +1,28 @@
+name: pre-commit
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: deps
+        run: uv sync --group dev
+        
+      - name: run pre-commit
+        run: uv run pre-commit run --all-files

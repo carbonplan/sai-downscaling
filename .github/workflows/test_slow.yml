@@ -1,4 +1,4 @@
-name: Pytest (for slow tests)
+name: pytest (for slow tests)
 
 on:
   pull_request:
