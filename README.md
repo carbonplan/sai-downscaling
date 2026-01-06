@@ -127,3 +127,6 @@ This will run all the tests using multiple cpu cores and print verbose logs.
 
 **Running a single test**: `uv run pytest 'tests/test_input_data.py::TestCatalogDatasets::test_variable_units[ERA5]'`
 This will run a single test with a single input.
+
+**Running a test marked "slow"** `uv run pytest 'tests/test_input_data.py::TestCatalogDatasets::test_negative_precip[CESM2-WACCM-Historical-icechunk]' -vv -m slow`
+This will force a test that has been decorated with `@pytest.mark.slow` to run. These tests are usually computationally intensive and should only be run when source data is modified.
