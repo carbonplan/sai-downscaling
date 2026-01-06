@@ -1,35 +1,27 @@
 [project]
     dependencies = [
         "arro3-core>=0.6.3",
-        "bokeh>=3.8.1",
         "boto3>=1.40.18",
         "cf-xarray>=0.10.9",
+        "cftime>=1.6.5",
         "click>=8.3.1",
         "cloudpathlib>=0.22.0",
-        "coiled>=1.129.3",
+        "coiled>=1.130.0",
         "dask[complete]>=2025.7.0",
         "distributed>=2025.7.0",
-        "flox>=0.10.6",
         "gilknocker==0.4.1",
-        "h5netcdf>=1.6.4",
-        "ibicus>=1.2.0",
+        "h5py>=3.15.1",
         "icechunk>=1.1.14",
         "ipykernel>=7.1.0",
         "ipython>=9.6.0",
         "jupyter>=1.1.1",
         "jupyter-server-proxy>=4.4.0",
         "jupyterlab>=4.5.1",
-        "nc-time-axis>=1.4.1",
-        "netcdf4>=1.7.2",
+        "netcdf4>=1.7.4",
         "obstore>=0.8.1",
         "pip<25.3.0",
-        "s3fs>=2025.7.0",
-        "scikit-learn>=1.7.2",
-        "scipy>=1.16.1",
-        "tabulate>=0.9.0",
         "virtualizarr>=2.1.2",
-        "xarray[accel,io]>=2025.8.0",
-        "xclim>=0.58.1",
+        "xarray[accel,io]",
         "zarr>=3.1.2",
 ]
     description = "SRM"
@@ -47,44 +39,22 @@
 [dependency-groups]
     coiled-deploy = [
         "bokeh>=3.8.0",
-        "coiled>=1.122.0",
+        "coiled>=1.129.4",
         "ipykernel>=6.30.1",
         "jupyter-server-proxy>=4.4.0",
         "jupyter>=1.1.1",
         "jupyterlab>=4.5.1",
 ]
-    dev = [
-    "cf-xarray>=0.10.9",
-    "click>=8.3.1",
+dev = [
     "ipdb>=0.13.13",
-    "jupyter-server-proxy>=4.4.0",
-    "pre-commit>=4.3.0",
-    "pytest>=8.4.2",
+    "pytest>=9.0.2",
     "pytest-xdist>=3.8.0",
-    "ruff>=0.13.2",
 ]
-    geo = [
-        "arro3-core>=0.6.3",
-        "duckdb>=1.4.0",
-        "folium>=0.20.0",
-        "geodatasets>=2024.8.0",
-        "geopandas>=1.1.1",
-        "mapclassify>=2.10.0",
-        "pyarrow>=21.0.0",
-        "rasterio>=1.4.3",
-        "rasterix>=0.1a4",
-        "sparse>=0.17.0",
-    ]
+
+
     input-data = [
         "virtualizarr>=2.1.2",
 ]
-    intake = ["intake-esm>=2025.7.9", "intake-xarray>=2.0.0"]
-    plot = [
-        "bokeh>=3.8.0",
-        "holoviews>=1.21.0",
-        "hvplot>=0.12.1",
-        "matplotlib>=3.10.6",
-    ]
 
 [tool.ruff]
     builtins = ["ellipsis"]
@@ -150,3 +120,6 @@ srm = { workspace = true, editable = true }
 
 [tool.ruff.lint.pyupgrade]
     keep-runtime-typing = true
+
+[tool.uv]
+no-build-package = ["netcdf4"]

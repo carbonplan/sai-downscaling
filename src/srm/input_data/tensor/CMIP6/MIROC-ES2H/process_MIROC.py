@@ -173,6 +173,8 @@ def _encoding(ds: xr.Dataset, config: BaseMIROC_ES2H_Config):
 def _update_attrs(
     ds: xr.Dataset, var_specs: dict[str, VarSpec], config: BaseMIROC_ES2H_Config
 ) -> xr.Dataset:
+    import cf_xarray  # noqa ignore
+
     for var_name, spec in var_specs.items():
         if var_name in ds.data_vars:
             ds[var_name].attrs["units"] = spec.units

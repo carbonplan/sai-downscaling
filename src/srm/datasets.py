@@ -69,23 +69,26 @@ class Catalog:
         self.datasets = {
             "CESM2-WACCM-Historical-icechunk": Dataset(
                 name="CESM2-WACCM-Historical-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical.icechunk",
                 format="icechunk",
-                expected_chunks={"time": 13522, "lat": 32, "lon": 48},
+                expected_chunks={"time": 13522, "lat": 8, "lon": 16},
+                expected_shards={"time": 13522, "lat": 32, "lon": 64},
                 expected_vars=all_standards,
             ),
             "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
                 name="CESM2-WACCM-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 18251, "lat": 32, "lon": 48},
+                expected_chunks={"ensemble_member": 1, "time": 18251, "lat": 8, "lon": 16},
+                expected_shards={"ensemble_member": 1, "time": 18251, "lat": 32, "lon": 64},
                 expected_vars=all_standards,
             ),
             "CESM2-WACCM-SSP245-icechunk": Dataset(
                 name="CESM2-WACCM-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 20076, "lat": 32, "lon": 48},
+                expected_chunks={"ensemble_member": 1, "time": 20076, "lat": 8, "lon": 16},
+                expected_shards={"ensemble_member": 1, "time": 20076, "lat": 32, "lon": 64},
                 expected_vars=all_standards,
             ),
             "MIROC-ES2H-G6-1.5K-icechunk": Dataset(
