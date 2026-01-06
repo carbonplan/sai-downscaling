@@ -33,8 +33,10 @@ jobs:
           role-session-name: srm-slow-validator-session
           aws-region: us-west-2
 
-      - name: install uv
-        uses: astral-sh/setup-uv@v6
+      - name: install uv 
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
       - name: deps
         run: uv sync --only-group dev
