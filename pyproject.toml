@@ -123,3 +123,13 @@ srm = { workspace = true, editable = true }
 
 [tool.uv]
 no-build-package = ["netcdf4"]
+
+
+
+[tool.pytest.ini_options]
+# default don't run slow tests. -ra shows skip reasons in summary.
+addopts = "-m 'not slow' -ra"
+
+markers = [
+    "slow: marks tests as slow/expensive (run with 'pytest -m slow')"
+]

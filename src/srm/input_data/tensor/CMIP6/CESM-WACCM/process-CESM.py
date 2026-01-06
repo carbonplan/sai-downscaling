@@ -139,7 +139,7 @@ class CESM_SSP245_Config(BaseCESM_Config):
 @dataclass
 class CESM_G6_1p5K_Config(BaseCESM_Config):
     scenario: str = "G6-1.5K"
-    catalog_key: str = "CESM-WACCM-G6-1.5K-icechunk"
+    catalog_key: str = "CESM2-WACCM-G6-1.5K-icechunk"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-G6-1.5K/netcdf"
     has_ensemble: bool = True
 
@@ -194,9 +194,10 @@ def _virtualize_netcdfs(config: BaseCESM_Config, netcdf_urls: list[str]) -> xr.D
 
     delayed_vds = [manifest_ds(url) for url in netcdf_urls]
     vds_list = dask.compute(delayed_vds)[0]
-    return xr.combine_by_coords(
+    ds = xr.combine_by_coords(
         vds_list, coords="minimal", data_vars="minimal", compat="override", combine_attrs="override"
     )
+    return ds.drop_duplicates(dim="time", keep="first")
 
 
 def _standardize_vars(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
@@ -340,7 +341,14 @@ def process_cesm_pipeline(
 
                 ds_6 = _virtualize_netcdfs(config, netcdf_urls_6)
                 ds_7_10 = _virtualize_netcdfs(config, netcdf_urls_7_10)
-                ds = xr.combine_by_coords([ds_6, ds_7_10])
+                ds = xr.combine_by_coords(
+                    [ds_6, ds_7_10],
+                    coords="minimal",
+                    data_vars="minimal",
+                    compat="override",
+                    combine_attrs="override",
+                )
+                # ds = ds.drop_duplicates(dim="time", keep="first")
             else:
                 netcdf_urls = _get_netcdf_urls(config, [var])
                 ds = _virtualize_netcdfs(config, netcdf_urls)

@@ -52,7 +52,7 @@ def setup_cluster(config: ClusterConfig = None):  # TODO: add type
     return cluster.get_client()
 
 
-def setup_local_client(n_workers=64):
+def setup_local_client(n_workers=4):
     return Client(n_workers=n_workers)
 
 

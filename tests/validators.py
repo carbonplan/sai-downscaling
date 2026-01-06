@@ -124,15 +124,15 @@ class DatasetValidator:
 
         return ValidationResult(len(issues) == 0, issues)
 
-    # SLOW!
     def validate_negative_precip(self) -> ValidationResult:
         if "pr" not in list(self.ds):
             return ValidationResult(
                 True,
                 [f"dataset has no variable named 'pr'. Available variables are: {list(self.ds)}"],
             )
-
-        has_negatives = (self.ds["pr"] < 0).any().item()
+        has_negatives = (
+            (self.ds["pr"] < 0).any().compute()
+        )  # materialize the calc from the lazy dask arrays
         if has_negatives:
             return ValidationResult(False, ["Found negative precipitation data"])
         else:
