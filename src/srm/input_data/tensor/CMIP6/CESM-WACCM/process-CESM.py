@@ -14,7 +14,13 @@ from virtualizarr.parsers import HDFParser
 from virtualizarr.registry import ObjectStoreRegistry
 
 from srm import catalog
-from srm.config import ClusterConfig, VarSpec, init_repo, setup_cluster, setup_local_client
+from srm.config import (
+    ClusterConfig,
+    VarSpec,
+    init_repo,
+    setup_cluster,
+    setup_local_client,
+)
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 64})
@@ -165,7 +171,9 @@ def _get_cesm_var_from_cmip6(cmip6_var: str, config: BaseCESM_Config) -> str:
 def _get_netcdf_urls(config: BaseCESM_Config, variables: list[str]) -> list[str]:
     store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
 
-    stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
+    stream = obs.list_with_delimiter(
+        store, prefix=config.s3_input_prefix, return_arrow=True
+    )
     netcdf_list = list(stream["objects"]["path"].to_numpy())
 
     cesm_vars = [_get_cesm_var_from_cmip6(var, config) for var in variables]
@@ -173,7 +181,8 @@ def _get_netcdf_urls(config: BaseCESM_Config, variables: list[str]) -> list[str]
     filtered_urls = [
         f"s3://{config.s3_bucket}/{path}"
         for path in netcdf_list
-        if path.endswith(".nc") and any(f".{cesm_var}." in path for cesm_var in cesm_vars)
+        if path.endswith(".nc")
+        and any(f".{cesm_var}." in path for cesm_var in cesm_vars)
     ]
 
     return filtered_urls
@@ -195,7 +204,11 @@ def _virtualize_netcdfs(config: BaseCESM_Config, netcdf_urls: list[str]) -> xr.D
     delayed_vds = [manifest_ds(url) for url in netcdf_urls]
     vds_list = dask.compute(delayed_vds)[0]
     ds = xr.combine_by_coords(
-        vds_list, coords="minimal", data_vars="minimal", compat="override", combine_attrs="override"
+        vds_list,
+        coords="minimal",
+        data_vars="minimal",
+        compat="override",
+        combine_attrs="override",
     )
     return ds.drop_duplicates(dim="time", keep="first")
 
@@ -213,7 +226,9 @@ def _trim_negative(ds: xr.Dataset) -> xr.Dataset:
     return ds
 
 
-def _preprocess_cesm(ds: xr.Dataset, config: BaseCESM_Config, subset: bool = False) -> xr.Dataset:
+def _preprocess_cesm(
+    ds: xr.Dataset, config: BaseCESM_Config, subset: bool = False
+) -> xr.Dataset:
     ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False)
     ds = ds.drop_encoding()
     ds = ds.drop_vars(["ilev", "lev"], errors="ignore")
@@ -257,7 +272,9 @@ def _update_attrs(
             if spec.cell_methods:
                 ds[var_name].attrs["cell_methods"] = spec.cell_methods
 
-    bnds_to_drop = [v for v in list(ds.data_vars) + list(ds.coords) if v.endswith("_bnds")]
+    bnds_to_drop = [
+        v for v in list(ds.data_vars) + list(ds.coords) if v.endswith("_bnds")
+    ]
     ds = ds.drop_vars(bnds_to_drop, errors="ignore")
 
     ds = ds.cf.add_bounds("time")
@@ -292,7 +309,9 @@ def write_to_icechunk(
     session.commit(commit_message)
 
 
-def _determine_mode_based_on_ancestry(repo: icechunk.Repository, branch: str = "main") -> str:
+def _determine_mode_based_on_ancestry(
+    repo: icechunk.Repository, branch: str = "main"
+) -> str:
     history = list(repo.ancestry(branch=branch))
     if len(history) <= 1:
         return "w"
@@ -331,12 +350,18 @@ def process_cesm_pipeline(
                 netcdf_urls_6 = [
                     path
                     for path in netcdf_urls_all
-                    if any(f"CMIP6-SSP2-4.5-WACCM.{num}." in path for num in config.subset_6)
+                    if any(
+                        f"CMIP6-SSP2-4.5-WACCM.{num}." in path
+                        for num in config.subset_6
+                    )
                 ]
                 netcdf_urls_7_10 = [
                     path
                     for path in netcdf_urls_all
-                    if any(f"CMIP6-SSP2-4.5-WACCM.{num}." in path for num in config.subset_7_10)
+                    if any(
+                        f"CMIP6-SSP2-4.5-WACCM.{num}." in path
+                        for num in config.subset_7_10
+                    )
                 ]
 
                 ds_6 = _virtualize_netcdfs(config, netcdf_urls_6)

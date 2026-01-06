@@ -47,7 +47,9 @@ class Dataset:
         if self.format == "icechunk":
             import icechunk
 
-            storage = icechunk.s3_storage(bucket=self.bucket, prefix=self.prefix, from_env=True)
+            storage = icechunk.s3_storage(
+                bucket=self.bucket, prefix=self.prefix, from_env=True
+            )
             repo = icechunk.Repository.open(storage)
             session = repo.readonly_session("main")
             return xr.open_zarr(session.store, consolidated=False)
@@ -79,24 +81,54 @@ class Catalog:
                 name="CESM2-WACCM-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 18251, "lat": 8, "lon": 16},
-                expected_shards={"ensemble_member": 1, "time": 18251, "lat": 32, "lon": 64},
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 18251,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 18251,
+                    "lat": 32,
+                    "lon": 64,
+                },
                 expected_vars=all_standards,
             ),
             "CESM2-WACCM-SSP245-icechunk": Dataset(
                 name="CESM2-WACCM-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 20076, "lat": 8, "lon": 16},
-                expected_shards={"ensemble_member": 1, "time": 20076, "lat": 32, "lon": 64},
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 20076,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 20076,
+                    "lat": 32,
+                    "lon": 64,
+                },
                 expected_vars=all_standards,
             ),
             "MIROC-ES2H-G6-1.5K-icechunk": Dataset(
                 name="MIROC-ES2H-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-G6-1.5K/updated_MIROC-ES2H-G6-1.5K.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 18263, "lat": 8, "lon": 16},
-                expected_shards={"ensemble_member": 1, "time": 18263, "lat": 64, "lon": 128},
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 18263,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 18263,
+                    "lat": 64,
+                    "lon": 128,
+                },
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.RSDS,
@@ -110,8 +142,18 @@ class Catalog:
                 name="MIROC-ES2H-baseline-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-baseline/updated_MIROC-ES2H-baseline.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 23742, "lat": 8, "lon": 16},
-                expected_shards={"ensemble_member": 1, "time": 23742, "lat": 64, "lon": 128},
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 23742,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 23742,
+                    "lat": 64,
+                    "lon": 128,
+                },
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.RSDS,
@@ -168,7 +210,9 @@ class Catalog:
 
                 unit_str = actual_units
                 if spec and actual_units != spec.units:
-                    unit_str = f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
+                    unit_str = (
+                        f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
+                    )
 
                 table_data.append(
                     [
@@ -187,7 +231,8 @@ class Catalog:
         from tabulate import tabulate
 
         table_data = [
-            [ds.name, ds.format, str(ds.path), ds.expected_chunks] for ds in self.datasets.values()
+            [ds.name, ds.format, str(ds.path), ds.expected_chunks]
+            for ds in self.datasets.values()
         ]
         headers = ["Name", "Format", "Path", "Expected Chunks"]
         return f"Dataset Catalog ({len(self.datasets)} datasets)\n" + tabulate(

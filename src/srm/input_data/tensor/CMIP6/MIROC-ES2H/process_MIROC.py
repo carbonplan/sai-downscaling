@@ -14,7 +14,13 @@ from virtualizarr.parsers import HDFParser
 from virtualizarr.registry import ObjectStoreRegistry
 
 from srm import catalog
-from srm.config import ClusterConfig, VarSpec, init_repo, setup_cluster, setup_local_client
+from srm.config import (
+    ClusterConfig,
+    VarSpec,
+    init_repo,
+    setup_cluster,
+    setup_local_client,
+)
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 64})
@@ -86,7 +92,12 @@ def _fetch_netcdfs(config: BaseMIROC_ES2H_Config) -> None:
     )
 
     urls_csv = f"MIROC-ES2H-{config.scenario}-urls.csv"
-    df = pd.read_html(config.source_url)[0][["Name"]].iloc[2::].dropna().reset_index()[["Name"]]
+    df = (
+        pd.read_html(config.source_url)[0][["Name"]]
+        .iloc[2::]
+        .dropna()
+        .reset_index()[["Name"]]
+    )
     df["Name"] = config.source_url + df["Name"]
     df.to_csv(urls_csv, index=False, header=False)
 
@@ -112,7 +123,9 @@ def _fetch_netcdfs(config: BaseMIROC_ES2H_Config) -> None:
     subprocess.run(command)
 
 
-def _virtualize_netcdfs(variables: list[str], config: BaseMIROC_ES2H_Config) -> xr.Dataset:
+def _virtualize_netcdfs(
+    variables: list[str], config: BaseMIROC_ES2H_Config
+) -> xr.Dataset:
     store = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
     registry = ObjectStoreRegistry({f"s3://{config.s3_bucket}": store})
     parser = HDFParser()
@@ -133,7 +146,9 @@ def _virtualize_netcdfs(variables: list[str], config: BaseMIROC_ES2H_Config) -> 
 
     delayed_vds = [manifest_ds(url) for url in netcdf_urls]
     vds_list = dask.compute(delayed_vds)[0]
-    return xr.combine_by_coords(vds_list, coords="minimal", data_vars="minimal", compat="override")
+    return xr.combine_by_coords(
+        vds_list, coords="minimal", data_vars="minimal", compat="override"
+    )
 
 
 def _trim_negative(ds: xr.Dataset) -> xr.Dataset:
@@ -183,7 +198,9 @@ def _update_attrs(
             if spec.cell_methods:
                 ds[var_name].attrs["cell_methods"] = spec.cell_methods
 
-    bnds_to_drop = [v for v in list(ds.data_vars) + list(ds.coords) if v.endswith("_bnds")]
+    bnds_to_drop = [
+        v for v in list(ds.data_vars) + list(ds.coords) if v.endswith("_bnds")
+    ]
     ds = ds.drop_vars(bnds_to_drop, errors="ignore")
 
     ds = ds.cf.add_bounds("time")
@@ -219,7 +236,9 @@ def write_to_icechunk(
     session.commit(commit_message)
 
 
-def _determine_mode_based_on_ancestry(repo: icechunk.Repository, branch: str = "main") -> str:
+def _determine_mode_based_on_ancestry(
+    repo: icechunk.Repository, branch: str = "main"
+) -> str:
     history = list(repo.ancestry(branch=branch))
     if len(history) <= 1:
         return "w"
@@ -250,7 +269,9 @@ def process_cmip6_pipeline(
 
     try:
         for var in variables:
-            repo, session = init_repo(cmip6_cat.bucket, cmip6_cat.prefix, readonly=False)
+            repo, session = init_repo(
+                cmip6_cat.bucket, cmip6_cat.prefix, readonly=False
+            )
             write_mode = _determine_mode_based_on_ancestry(repo)
 
             ds = _virtualize_netcdfs([var], config)

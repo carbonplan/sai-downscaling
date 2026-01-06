@@ -48,10 +48,14 @@ class DatasetValidator:
             coord = self.ds[cf_key]
             coord_name = coord.name
         except KeyError:
-            return ValidationResult(False, [f"no {expected_name} coord '{cf_key}' found"])
+            return ValidationResult(
+                False, [f"no {expected_name} coord '{cf_key}' found"]
+            )
 
         if coord_name != expected_name:
-            issues.append(f"{expected_name} name is '{coord_name}', expected '{expected_name}'")
+            issues.append(
+                f"{expected_name} name is '{coord_name}', expected '{expected_name}'"
+            )
 
         coord_min = float(coord.min())
         coord_max = float(coord.max())
@@ -69,12 +73,16 @@ class DatasetValidator:
         return ValidationResult(len(issues) == 0, issues)
 
     def validate_lon(
-        self, expected_range: tuple[float, float] = (-180, 180), check_monotonic: bool = False
+        self,
+        expected_range: tuple[float, float] = (-180, 180),
+        check_monotonic: bool = False,
     ) -> ValidationResult:
         return self._validate_coord("lon", "lon", expected_range, check_monotonic)
 
     def validate_lat(
-        self, expected_range: tuple[float, float] = (-90, 90), check_monotonic: bool = False
+        self,
+        expected_range: tuple[float, float] = (-90, 90),
+        check_monotonic: bool = False,
     ) -> ValidationResult:
         return self._validate_coord("lat", "lat", expected_range, check_monotonic)
 
@@ -128,7 +136,9 @@ class DatasetValidator:
         if "pr" not in list(self.ds):
             return ValidationResult(
                 True,
-                [f"dataset has no variable named 'pr'. Available variables are: {list(self.ds)}"],
+                [
+                    f"dataset has no variable named 'pr'. Available variables are: {list(self.ds)}"
+                ],
             )
         has_negatives = (
             (self.ds["pr"] < 0).any().compute()
