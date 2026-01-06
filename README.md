@@ -16,9 +16,6 @@
 
 `uv sync --all-groups`
 
-**Linting**
-
-We use `pre-commit` to run linting checks. You can run it against your branch with `uv run pre-commit run --all-files`.
 
 ### Using Coiled
 
@@ -28,11 +25,11 @@ We use `pre-commit` to run linting checks. You can run it against your branch wi
 You should install `uv` and install the project dependencies with the commands listed above. This will install coiled as a cli tool in this repo.
 
 
-#### Start a coiled Jupyterlab
+#### Start a coiled JupyterLab
 With coiled you can choose what size of VM you want to run your JupyterLab session. You can specify which type of VM you wish in the coiled cli commands. A list of some commonly used VM's are [available here](https://aws.amazon.com/ec2/instance-types/m8g/). A good starting point is an `m8g.large`. 
 
 In this repository run:
-`uv run coiled notebook start --vm-type m8g.large --region 'us-west-2 --tag Project=SRM` 
+`uv run coiled notebook start --vm-type m8g.large --region 'us-west-2' --tag Project=SRM`
 
 That should sync the software environment and start a JupyterLab session with that environment. 
 
@@ -76,8 +73,8 @@ Dataset Catalog (6 datasets)
 from srm import catalog 
 
 # Load CESM-WACCM-Historical
-cesm_ssp245 = catalog.get("CESM2-WACCM-Historical-icechunk").to_xarray()
-cesm_ssp245
+cesm_historical = catalog.get("CESM2-WACCM-Historical-icechunk").to_xarray()
+cesm_historical
 ```
 
 ### Open datasets manually
@@ -98,3 +95,35 @@ session = repo.readonly_session("main")
 ds = xr.open_zarr(session.store, consolidated=False)
 print(ds)
 ```
+
+
+## Development
+
+Some general guidelines:
+- Only contribute via Pull Requests (PRs)
+- If you add core utilities, please add relevant pytest unit tests. 
+- Use pre-commit to lint your code 
+- If you add non-core dependencies, add them to a dependency group
+
+### Environment 
+This package uses `uv` for environment management. Non-core libraries should be added a dependency group.
+
+`uv sync` will install the core `dependencies` listed in `pyproject.toml`
+
+`uv sync --group dev` will install the core dependencies plus those listed in the group `[dev]`
+
+`uv sync --all-groups` will install dependencies from every listed group.
+
+
+### Linting
+
+We use `pre-commit` + `ruff` to run linting checks. You can run it against your branch with `uv run pre-commit run --all-files`.
+
+### Testing
+`pytest` is used for our unit testing. Make sure you have the test dependencies installed with `uv sync --group dev`.
+
+**Running the test suite:**: `uv run pytest tests/ -n auto -vv`
+This will run all the tests using multiple cpu cores and print verbose logs.
+
+**Running a single test**: `uv run pytest 'tests/test_input_data.py::TestCatalogDatasets::test_variable_units[ERA5]'`
+This will run a single test with a single input.
