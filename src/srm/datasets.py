@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING
 
 from cloudpathlib import CloudPath
+
+# Importing your new config structures
+from srm.config import VarSpec, VarStandards
 
 if TYPE_CHECKING:
     import xarray as xr
@@ -12,12 +15,14 @@ if TYPE_CHECKING:
 
 @dataclass
 class Dataset:
-    """base class for dataset object. Keeping it simple"""
+    """base class for dataset object. Keeping it simple-ish for now"""
 
     name: str
     path: str | CloudPath
     format: typing.Literal["zarr", "icechunk"]
-    expected_chunks: dict[str, int] | None = None  # ex: {'time': 13522, 'lat': 32, 'lon': 48}
+    expected_chunks: dict[str, int] | None = None
+    expected_shards: dict[str, int] | None = None
+    expected_vars: list[VarSpec] | None = None  # Now uses VarSpec objects in config.py
 
     @property
     def uri(self) -> str:
@@ -32,8 +37,6 @@ class Dataset:
         return str(self.path.key)
 
     def get_chunking_dict(self) -> dict[str, int]:
-        """Get a chunking dictionary. Note: Just the first var,
-        so we should update if we for some reason have differant chunking between vars"""
         ds = self.to_xarray()
         first_var = list(ds.data_vars)[0]
         return {dim: c[0] for dim, c in ds[first_var].chunksizes.items()}
@@ -44,7 +47,9 @@ class Dataset:
         if self.format == "icechunk":
             import icechunk
 
-            storage = icechunk.s3_storage(bucket=self.bucket, prefix=self.prefix, from_env=True)
+            storage = icechunk.s3_storage(
+                bucket=self.bucket, prefix=self.prefix, from_env=True
+            )
             repo = icechunk.Repository.open(storage)
             session = repo.readonly_session("main")
             return xr.open_zarr(session.store, consolidated=False)
@@ -61,93 +66,174 @@ class Dataset:
 
 class Catalog:
     def __init__(self):
+        all_standards = [f.default for f in fields(VarStandards)]
+
         self.datasets = {
-            # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-Historical-icechunk": Dataset(
                 name="CESM2-WACCM-Historical-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical.icechunk",
                 format="icechunk",
-                expected_chunks={"time": 13522, "lat": 32, "lon": 48},
+                expected_chunks={"time": 13521, "lat": 8, "lon": 16},
+                expected_shards={"time": 13521, "lat": 32, "lon": 64},
+                expected_vars=all_standards,
             ),
-            # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
                 name="CESM2-WACCM-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 18251, "lat": 32, "lon": 48},
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 18251,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 18251,
+                    "lat": 32,
+                    "lon": 64,
+                },
+                expected_vars=all_standards,
             ),
-            # -----------------------------------------------------------------------------------------------
             "CESM2-WACCM-SSP245-icechunk": Dataset(
                 name="CESM2-WACCM-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 20076, "lat": 32, "lon": 48},
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 20076,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 20076,
+                    "lat": 32,
+                    "lon": 64,
+                },
+                expected_vars=all_standards,
             ),
-            # -----------------------------------------------------------------------------------------------
             "MIROC-ES2H-G6-1.5K-icechunk": Dataset(
                 name="MIROC-ES2H-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-G6-1.5K/MIROC-ES2H-G6-1.5K.icechunk",
+                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-G6-1.5K/updated_MIROC-ES2H-G6-1.5K.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 18263, "lat": 8, "lon": 16},
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 18263,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 18263,
+                    "lat": 64,
+                    "lon": 128,
+                },
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.RSDS,
+                    VarStandards.TASMAX,
+                    VarStandards.TAS,
+                    VarStandards.SFCWIND,
+                    VarStandards.TASMIN,
+                ],
             ),
-            # -----------------------------------------------------------------------------------------------
             "MIROC-ES2H-baseline-icechunk": Dataset(
                 name="MIROC-ES2H-baseline-icechunk",
-                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-baseline/MIROC-ES2H-baseline.icechunk",
+                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-baseline/updated_MIROC-ES2H-baseline.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 23742, "lat": 8, "lon": 16},
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 23742,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 23742,
+                    "lat": 64,
+                    "lon": 128,
+                },
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.RSDS,
+                    VarStandards.TASMAX,
+                    VarStandards.TAS,
+                    VarStandards.SFCWIND,
+                    VarStandards.TASMIN,
+                ],
             ),
-            # -----------------------------------------------------------------------------------------------
             "ERA5": Dataset(
                 name="ERA5",
-                path="s3://carbonplan-srm/input/tensor/ERA5/era5_rechunked_resampled.icechunk",
+                path="s3://carbonplan-srm/input/tensor/ERA5/ERA5.icechunk",
                 format="icechunk",
-                expected_chunks={"time": 730, "lat": 144, "lon": 288},
+                expected_chunks={"time": 23741, "lat": 7, "lon": 14},  # ~9.5MB chunks
+                expected_shards={
+                    "time": 23741,
+                    "lat": 35,
+                    "lon": 70,
+                },  # ~ 221.88 MiB shard! # 441 chunks in 5 graph layers
+                # Only a subset for ERA5 example
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.RLDS,
+                    VarStandards.RSDS,
+                    VarStandards.TASMAX,
+                    VarStandards.TAS,
+                    VarStandards.SFCWIND,
+                    VarStandards.PS,
+                    VarStandards.TASMIN,
+                ],
             ),
-            # -----------------------------------------------------------------------------------------------
         }
 
     def get(self, name: str) -> Dataset:
-        """get a dataset by name"""
         if name not in self.datasets:
             raise KeyError(f"Dataset {name} not found.")
         return self.datasets[name]
 
-    def get_path(self, name: str) -> CloudPath:
-        """Get UPath for dataset"""
-        return self.get(name).path
-
-    def get_uri(self, name: str) -> str:
-        """create a uri"""
-        return self.get(name).uri
-
     def list(self) -> list[str]:
-        """list all dataset names"""
         return list(self.datasets.keys())
 
     def variable_metadata(self):
         from tabulate import tabulate
 
-        attrs = ["units", "long_name", "cell_methods"]
-        headers = ["Variable"] + attrs
+        for dataset_name, ds_info in self.datasets.items():
+            ds = ds_info.to_xarray()
 
-        for dataset_name in self.datasets.keys():
-            ds = self.get(dataset_name).to_xarray()
+            specs = {s.name: s for s in (ds_info.expected_vars or [])}
+            table_data = []
 
-            table_data = [
-                [var_name] + [ds[var_name].attrs.get(attr, "") for attr in attrs]
-                for var_name in ds.data_vars
-            ]
+            for var_name in ds.data_vars:
+                actual_units = ds[var_name].attrs.get("units", "")
+                spec = specs.get(var_name)
 
-            print(f"\n{dataset_name}\n {tabulate(table_data, headers=headers, tablefmt='grid')} \n")
+                unit_str = actual_units
+                if spec and actual_units != spec.units:
+                    unit_str = (
+                        f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
+                    )
+
+                table_data.append(
+                    [
+                        var_name,
+                        unit_str,
+                        ds[var_name].attrs.get("long_name", ""),
+                        ds[var_name].attrs.get("cell_methods", ""),
+                    ]
+                )
+
+            headers = ["Variable", "Units", "Long Name", "Cell Methods"]
+            print(f"\n{dataset_name}")
+            print(tabulate(table_data, headers=headers, tablefmt="grid"))
 
     def __str__(self) -> str:
         from tabulate import tabulate
 
-        table_data = []
-        for ds in self.datasets.values():
-            table_data.append([ds.name, ds.format, str(ds.path), ds.expected_chunks])
-
+        table_data = [
+            [ds.name, ds.format, str(ds.path), ds.expected_chunks]
+            for ds in self.datasets.values()
+        ]
         headers = ["Name", "Format", "Path", "Expected Chunks"]
         return f"Dataset Catalog ({len(self.datasets)} datasets)\n" + tabulate(
             table_data, headers=headers, tablefmt="grid"
