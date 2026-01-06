@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 
-import coiled
 import icechunk
 from distributed import Client
 
@@ -38,6 +37,8 @@ class ClusterConfig:
 
 
 def setup_cluster(config: ClusterConfig = None):  # TODO: add type
+    import coiled
+
     if config is None:
         config = ClusterConfig()
     cluster = coiled.Cluster(
