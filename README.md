@@ -32,7 +32,7 @@ You should install `uv` and install the project dependencies with the commands l
 With coiled you can choose what size of VM you want to run your JupyterLab session. You can specify which type of VM you wish in the coiled cli commands. A list of some commonly used VM's are [available here](https://aws.amazon.com/ec2/instance-types/m8g/). A good starting point is an `m8g.large`. 
 
 In this repository run:
-`uv run coiled notebook start --vm-type m8g.large --region 'us-west-2` 
+`uv run coiled notebook start --vm-type m8g.large --region 'us-west-2 --tag Project=SRM` 
 
 That should sync the software environment and start a JupyterLab session with that environment. 
 
@@ -50,69 +50,51 @@ print(catalog)
 
 ```bash 
 
-| CESM2-WACCM-Historical-icechunk | icechunk     | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/icechunk |
-| CESM2-WACCM-G6-1.5K-icechunk    | icechunk     | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/icechunk    |
-| CESM2-WACCM-SSP245-icechunk     | icechunk     | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/icechunk     |
-| ERA5                            | icechunk     | s3://carbonplan-srm/input/tensor/ERA5/era5_rechunked_resampled.icechunk         |
+Dataset Catalog (6 datasets)
++---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
+| Name                            | Format   | Path                                                                                                   | Expected Chunks                                            |
++=================================+==========+========================================================================================================+============================================================+
+| CESM2-WACCM-Historical-icechunk | icechunk | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical.icechunk | {'time': 13521, 'lat': 8, 'lon': 16}                       |
++---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
+| CESM2-WACCM-G6-1.5K-icechunk    | icechunk | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k.icechunk       | {'ensemble_member': 1, 'time': 18251, 'lat': 8, 'lon': 16} |
++---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
+| CESM2-WACCM-SSP245-icechunk     | icechunk | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245.icechunk         | {'ensemble_member': 1, 'time': 20076, 'lat': 8, 'lon': 16} |
++---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
+| MIROC-ES2H-G6-1.5K-icechunk     | icechunk | s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-G6-1.5K/updated_MIROC-ES2H-G6-1.5K.icechunk     | {'ensemble_member': 1, 'time': 18263, 'lat': 8, 'lon': 16} |
++---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
+| MIROC-ES2H-baseline-icechunk    | icechunk | s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-baseline/updated_MIROC-ES2H-baseline.icechunk   | {'ensemble_member': 1, 'time': 23742, 'lat': 8, 'lon': 16} |
++---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
+| ERA5                            | icechunk | s3://carbonplan-srm/input/tensor/ERA5/ERA5.icechunk                                                    | {'time': 23741, 'lat': 7, 'lon': 14}                       |
++---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
 
 ```
 
-### Open Icechunk stores with Xarray
+### Open datasets directly from the catalog
 
-#### CESM2-WACCM-SSP245
 ```python
 
-#!pip install icechunk xarray
+from srm import catalog 
+
+# Load CESM-WACCM-Historical
+cesm_ssp245 = catalog.get("CESM2-WACCM-Historical-icechunk").to_xarray()
+cesm_ssp245
+```
+
+### Open datasets manually
+
+```python
+
 import icechunk
 import xarray as xr
 from srm import catalog 
 
-# Load CESM-WACCM-SSP245
-ds_meta = catalog.get("CESM2-WACCM-SSP245-icechunk")
+# Load CESM-WACCM-Historical
+ds_meta = catalog.get("CESM2-WACCM-Historical-icechunk")
 
 storage = icechunk.s3_storage(bucket=ds_meta.bucket, prefix=ds_meta.prefix, from_env=True)
 
 repo = icechunk.Repository.open(storage)
 session = repo.readonly_session("main")
-ds = xr.open_zarr(session.store, consolidated=False)
-print(ds)
-```
-
-#### CESM-G6-1.5K
-```python
-
-#!pip install icechunk xarray
-import icechunk
-import xarray as xr
-from srm import catalog 
-
-# Load CESM-G6-1.5K
-
-ds_meta = catalog.get("CESM2-WACCM-G6-1.5K-icechunk")
-
-storage = icechunk.s3_storage(bucket=ds_meta.bucket, prefix=ds_meta.prefix, from_env=True)
-
-repo = icechunk.Repository.open(storage)
-session = repo.readonly_session("main")
-ds = xr.open_zarr(session.store, consolidated=False)
-print(ds)
-```
-
-#### ERA5
-
-```python
-
-#!pip install icechunk xarray
-import icechunk
-import xarray as xr
-from srm import catalog
-
-# Load ERA5
-ds_meta = catalog.get("ERA5")
-storage = icechunk.s3_storage(bucket=ds_meta.bucket, prefix=ds_meta.prefix, from_env=True)
-
-repo = icechunk.Repository.open(storage)
-session = repo.writable_session("main")
 ds = xr.open_zarr(session.store, consolidated=False)
 print(ds)
 ```
