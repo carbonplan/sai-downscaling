@@ -32,6 +32,11 @@ build-backend = "uv_build"
 [tool.uv.sources]
 srm = { workspace = true, editable = true }
 
+[tool.ty.src]
+exclude = ["**/notebooks/**"]
+
+
+
 [tool.pytest.ini_options]
 addopts = "-m 'not slow' -ra"
 markers = [
@@ -43,7 +48,8 @@ test = [
     "pytest>=9.0.2",
     "pytest-xdist>=3.8.0",
     "ipdb>=0.13.13",
-    "pre-commit>=4.5.1"
+    "pre-commit>=4.5.1",
+    "ty>=0.0.9",
 ]
 
 coiled-deploy = [
@@ -77,3 +83,4 @@ dev = [
     {include-group = "qa"},
     {include-group = "input-data"}
 ]
+
