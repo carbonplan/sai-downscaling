@@ -49,6 +49,11 @@ class TestCatalogDatasets:
         result = validator.validate_units()
         assert result, f"Unit mismatch for {ds_info.name}: {result.issues}"
 
+    def test_calendar(self, ds_info: Dataset, validator: DatasetValidator):
+        """check calendar is proleptic_gregorian and datetime64"""
+        result = validator.validate_calendar()
+        assert result, f"U {ds_info.name}: {result.issues}"
+
     @pytest.mark.slow
     def test_negative_precip(self, ds_info: Dataset, validator: DatasetValidator):
         """Only run on datasets that contain 'pr'"""
