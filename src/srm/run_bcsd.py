@@ -1,5 +1,7 @@
 import time
 import xarray as xr
+import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
+
 from ibicus.debias import QuantileMapping
 from srm.downscaling_utils import (
     get_experiment,
