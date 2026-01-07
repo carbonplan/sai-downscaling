@@ -1,12 +1,9 @@
 from __future__ import annotations
-
 import typing
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING
 
 from cloudpathlib import CloudPath
-
-# Importing your new config structures
 from srm.config import VarSpec, VarStandards
 
 if TYPE_CHECKING:
@@ -15,14 +12,12 @@ if TYPE_CHECKING:
 
 @dataclass
 class Dataset:
-    """base class for dataset object. Keeping it simple-ish for now"""
-
     name: str
     path: str | CloudPath
     format: typing.Literal["zarr", "icechunk"]
     expected_chunks: dict[str, int] | None = None
     expected_shards: dict[str, int] | None = None
-    expected_vars: list[VarSpec] | None = None  # Now uses VarSpec objects in config.py
+    expected_vars: list[VarSpec] | None = None
 
     @property
     def uri(self) -> str:
@@ -30,11 +25,11 @@ class Dataset:
 
     @property
     def bucket(self) -> str:
-        return str(self.path.bucket)
+        return str(self.path.bucket) if isinstance(self.path, CloudPath) else ""
 
     @property
     def prefix(self) -> str:
-        return str(self.path.key)
+        return str(self.path.key) if isinstance(self.path, CloudPath) else ""
 
     def get_chunking_dict(self) -> dict[str, int]:
         ds = self.to_xarray()
@@ -59,14 +54,15 @@ class Dataset:
             raise ValueError(f"Unknown format: {self.format}")
 
     def __post_init__(self):
-        """Validate and convert path to CloudPathLib"""
         if isinstance(self.path, str):
             self.path = CloudPath(self.path)
 
 
 class Catalog:
     def __init__(self):
-        all_standards = [f.default for f in fields(VarStandards)]
+        all_standards = [
+            f.default for f in fields(VarStandards) if isinstance(f.default, VarSpec)
+        ]
 
         self.datasets = {
             "CESM2-WACCM-Historical-icechunk": Dataset(
@@ -167,13 +163,12 @@ class Catalog:
                 name="ERA5",
                 path="s3://carbonplan-srm/input/tensor/ERA5/ERA5.icechunk",
                 format="icechunk",
-                expected_chunks={"time": 23741, "lat": 7, "lon": 14},  # ~9.5MB chunks
+                expected_chunks={"time": 23741, "lat": 7, "lon": 14},
                 expected_shards={
                     "time": 23741,
                     "lat": 35,
                     "lon": 70,
-                },  # ~ 221.88 MiB shard! # 441 chunks in 5 graph layers
-                # Only a subset for ERA5 example
+                },
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.RLDS,
@@ -206,9 +201,9 @@ class Catalog:
 
             for var_name in ds.data_vars:
                 actual_units = ds[var_name].attrs.get("units", "")
-                spec = specs.get(var_name)
+                spec = specs.get(str(var_name))
 
-                unit_str = actual_units
+                unit_str = str(actual_units)
                 if spec and actual_units != spec.units:
                     unit_str = (
                         f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"

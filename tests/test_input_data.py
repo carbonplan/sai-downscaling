@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from srm.catalog import Dataset
+    from srm.datasets import Dataset
 
 from validators import DatasetValidator
 
