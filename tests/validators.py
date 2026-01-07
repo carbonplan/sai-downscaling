@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    # if needed
     pass
 
 
@@ -107,7 +108,6 @@ class DatasetValidator:
         missing_names = expected_names - actual_names
 
         if missing_names:
-            # We sort the strings (which Python knows how to do)
             return ValidationResult(
                 False,
                 [
@@ -129,6 +129,25 @@ class DatasetValidator:
                     issues.append(
                         f"Variable '{spec.name}' has units '{actual_unit}', expected '{spec.units}'"
                     )
+
+        return ValidationResult(len(issues) == 0, issues)
+
+    def validate_calendar(self) -> ValidationResult:
+        import numpy as np
+
+        issues = []
+
+        if "time" not in self.ds.dims:
+            return ValidationResult(False, ["Dataset has no 'time' dimension"])
+
+        calendar = self.ds.time.encoding.get("calendar")
+        if calendar is None:
+            issues.append("time coord missing 'calendar' in encoding")
+        elif calendar != "proleptic_gregorian":
+            issues.append(f"calendar is '{calendar}', expected 'proleptic_gregorian'")
+
+        if not np.issubdtype(self.ds.time.dtype, np.datetime64):
+            issues.append(f"time dtype is {self.ds.time.dtype}, expected datetime64")
 
         return ValidationResult(len(issues) == 0, issues)
 
