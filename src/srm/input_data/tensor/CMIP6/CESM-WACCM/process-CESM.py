@@ -243,12 +243,14 @@ def _preprocess_cesm(
 
 def _encoding(ds: xr.Dataset, config: BaseCESM_Config):
     encoding = {}
-    for var_name in ds.data_vars:
-        if var_name.endswith("_bounds") or var_name.endswith("_bnds"):
-            continue
+    target_vars = [
+        str(v) for v in ds.data_vars if not str(v).endswith(("_bounds", "_bnds"))
+    ]
+
+    for var_name in target_vars:
         var = ds[var_name]
-        var_chunks = tuple(config.encoding["chunks"][d] for d in var.dims)
-        var_shards = tuple(config.encoding["shards"][d] for d in var.dims)
+        var_chunks = tuple(config.encoding["chunks"][str(d)] for d in var.dims)
+        var_shards = tuple(config.encoding["shards"][str(d)] for d in var.dims)
         encoding[var_name] = {
             "chunks": var_chunks,
             "shards": var_shards,
