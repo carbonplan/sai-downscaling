@@ -1,6 +1,5 @@
 import time
 import xarray as xr
-import rasterix
 from ibicus.debias import QuantileMapping
 from srm.downscaling_utils import (
     get_experiment,
@@ -23,7 +22,6 @@ RUN_PARAMETERS = {
 
 
 def main(verbose=True, rechunk_workflow=True, run_parameters=RUN_PARAMETERS):
-
     start_time = time.time()
 
     ################## Load data

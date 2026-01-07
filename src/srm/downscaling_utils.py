@@ -4,6 +4,7 @@ import pandas as pd
 
 from srm import catalog
 
+
 def subset_space(da: xr.DataArray, coord_bounds_list: list):
     [lat_min, lat_max, lon_min, lon_max] = coord_bounds_list
     da_subset = da.sel(
