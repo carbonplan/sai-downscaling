@@ -1,5 +1,6 @@
 import icechunk
 import xarray as xr
+import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import pandas as pd
 
 from srm import catalog
