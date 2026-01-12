@@ -41,6 +41,23 @@ class TestCatalogDatasets:
         result = validator.validate_expected_variables()
         assert result, f"variable mismatch {ds_info.name}: {result.issues}"
 
+    @pytest.mark.parametrize(
+        "ds_info",
+        [
+            pytest.param(
+                "MIROC-ES2H-G6-1.5K-icechunk",
+                marks=pytest.mark.xfail(
+                    reason="sfcWind units are w/m**2, while the other datasets have m / s. Source data (netcdf) issue."
+                ),
+            ),
+            pytest.param(
+                "MIROC-ES2H-baseline-icechunk",
+                marks=pytest.mark.xfail(
+                    reason="sfcWind units are w/m**2, while the other datasets have m / s. Source data (netcdf) issue."
+                ),
+            ),
+        ],
+    )
     def test_variable_units(self, ds_info: Dataset, validator: DatasetValidator):
         """check variable units match"""
         if not ds_info.expected_vars:
