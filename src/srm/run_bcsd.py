@@ -1,8 +1,10 @@
 import time
-import xarray as xr
-import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 
 from ibicus.debias import QuantileMapping
+import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
+import xarray as xr
+import xarray_regrid
+
 from srm.downscaling_utils import (
     get_experiment,
     get_obs,
@@ -31,11 +33,15 @@ def main(verbose=True, rechunk_workflow=True, run_parameters=RUN_PARAMETERS):
         gcm=run_parameters["GCM"], scenario="SSP245", var=run_parameters["VAR"]
     )
     ssp245 = ssp245.isel(ensemble_member=0)
+    ssp245 = ssp245.drop_vars("spatial_ref")
 
     model_historical = get_experiment(
         gcm=run_parameters["GCM"], scenario="Historical", var=run_parameters["VAR"]
     )
+    model_historical = model_historical.drop_vars("spatial_ref")
+
     obs = get_obs(var=run_parameters["VAR"])
+    obs = obs.drop_vars("spatial_ref")
 
     if verbose:
         elapsed = time.time() - start_time
@@ -67,12 +73,10 @@ def main(verbose=True, rechunk_workflow=True, run_parameters=RUN_PARAMETERS):
             print(f"Rechunked obs to full space: {elapsed:.2f} seconds")
 
     step_start_time = time.time()
-    dict_all["obs"] = dict_all["obs"].persist()
-    dict_all["obs_coarse"] = dict_all["obs"].interp(
-        lon=dict_all["model_hist"].lon,
-        lat=dict_all["model_hist"].lat,
-        method="linear",
-    )
+
+    # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
+    dict_all["obs_coarse"] = dict_all["obs"].regrid.conservative(dict_all['model_hist']).persist()
+
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Interpolated obs to coarse grid: {elapsed:.2f} seconds")
