@@ -14,6 +14,9 @@ from srm.downscaling_utils import (
     downscale_from_coarse,
 )
 
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning) # or do i put this at the top of run_bcsd
+
 RUN_PARAMETERS = {
     "OBS": "ERA5",
     "GCM": "CESM2-WACCM",
@@ -95,9 +98,9 @@ def main(verbose=True, rechunk_workflow=True, run_parameters=RUN_PARAMETERS):
     debiaser = QuantileMapping.from_variable(
         variable=run_parameters["VAR"], mapping_type="parametric"
     )
-
-    obs = dict_all["obs_coarse"].load().values
-    cm_hist = dict_all["model_hist"].load().values
+    # as_numpy brings from sparse to dense. regridding sparsifies, so bring it back here for downstream tasks.
+    obs = dict_all["obs_coarse"].as_numpy().values
+    cm_hist = dict_all["model_hist"].as_numpy().values
     cm_future = cm_hist
 
     tas_cm_hist_debiased = debiaser.apply(
