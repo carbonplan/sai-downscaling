@@ -15,18 +15,9 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list):
     return da_subset
 
 
-def subset_time(da: xr.DataArray, run_parameters: dict, time_period: str = "train"):
-    if time_period == "train":
-        start_year = run_parameters["TRAIN_PERIOD_START"]
-        end_year = run_parameters["TRAIN_PERIOD_END"]
-
-    elif time_period == "predict":
-        start_year = run_parameters["PREDICT_PERIOD_START"]
-        end_year = run_parameters["PREDICT_PERIOD_END"]
-
+def subset_time(da: xr.DataArray, start_year=None, end_year=None):
     da = da.where(da["time.year"] >= start_year, drop=True)
     da = da.where(da["time.year"] <= end_year, drop=True)
-
     return da
 
 
