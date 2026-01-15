@@ -70,7 +70,10 @@ def main(verbose=True, rechunk_workflow=True, run_parameters=RUN_PARAMETERS):
     if rechunk_workflow:
         step_start_time = time.time()
         dict_all["obs"] = rechunk(dict_all["obs"], pattern="full_space")
+        # currently, we need this call otherwise xarray_regrid throws an error when we try to access values of
+        # the resulting regridded dataset
         dict_all["obs"] = dict_all["obs"].persist()
+
         if verbose:
             elapsed = time.time() - step_start_time
             print(f"Rechunked obs to full space: {elapsed:.2f} seconds")
