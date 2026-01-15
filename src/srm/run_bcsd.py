@@ -37,7 +37,6 @@ def run_bcsd(
     train_period_end=None,
     predict_period_start=None,
     predict_period_end=None,
-    scenario=None,
     var_name=None,
     verbose=True,
     rechunk_workflow=True,
@@ -73,7 +72,7 @@ def run_bcsd(
         obs, start_year=train_period_start, end_year=train_period_end
     )
     dict_all["model_scenario"] = subset_time(
-        model_scenario, start_year=train_period_start, end_year=predict_period_end
+        model_scenario, start_year=predict_period_start, end_year=predict_period_end
     )
 
     if verbose:
