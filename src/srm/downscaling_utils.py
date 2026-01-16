@@ -1,6 +1,7 @@
 import icechunk
 import xarray as xr
 import pandas as pd
+import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 
 from srm import catalog
 
@@ -92,9 +93,11 @@ def rechunk(da: xr.DataArray, pattern: str):
 def calculate_baseline_climatology(
     da_baseline: xr.DataArray,
     baseline_period_start: int = 1978,
-    baseline_period_end: int = 1990,
+    baseline_period_end: int = 2014,
 ):
     da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
+    da_baseline = da_baseline.where(da_baseline['time.year']>=baseline_period_start)
+    da_baseline = da_baseline.where(da_baseline['time.year']<=baseline_period_end)
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
 
     return da_baseline_clim
@@ -124,6 +127,15 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray):
     detrended = da - trend_on_daily_timestep
 
     return detrended, trend_on_daily_timestep
+
+def retrend(bias_corrected_detrended: xr.DataArray,
+           trend_on_daily_timestep: xr.DataArray,
+           detrending='additive'):
+    
+    if detrending=='additive':
+        retrended= bias_corrected_detrended + trend_on_daily_timestep
+
+    return retrended
 
 
 def interpolate_to_coarse_grid(
