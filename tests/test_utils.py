@@ -18,11 +18,15 @@ class TestLonTo180:
         assert validation_result, f"{validation_result.issues}"
 
         expected_sorted = [-180, -90, -60, -10, -5, 0, 5, 10]
-        np.testing.assert_array_almost_equal(validator.ds["lon"].values, expected_sorted)
+        np.testing.assert_array_almost_equal(
+            validator.ds["lon"].values, expected_sorted
+        )
 
     def test_0_360_range_fails(self, ds_0_360):
         validator = DatasetValidator(ds_0_360)
         validation_result = validator.validate_lon(check_monotonic=True)
 
-        assert not validation_result, "expected validation to fail for 0-360 longitude range"
+        assert not validation_result, (
+            "expected validation to fail for 0-360 longitude range"
+        )
         assert any("outside" in issue for issue in validation_result.issues)
