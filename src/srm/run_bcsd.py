@@ -238,7 +238,7 @@ def bias_correct(
         dims=["time", "lat", "lon"],
     )
 
-    dict_all["scenario_debiased"] = xr.DataArray(
+    debiased_scenario = xr.DataArray(
         data=scenario_fut_debiased,
         coords={
             "lat": dict_all["model_scenario"]["lat"],
@@ -250,15 +250,21 @@ def bias_correct(
 
     ################## Add back trend if previously detrended
     if detrend_data:
+        dict_all["scenario_debiased_detrended"] = debiased_scenario
+
         step_start_time = time.time()
         dict_all["scenario_debiased"] = retrend(
-            bias_corrected_detrended=dict_all["scenario_debiased"],
+            bias_corrected_detrended=dict_all["scenario_debiased_detrended"],
             trend_on_daily_timestep=dict_all["scenario_trend"],
             detrending="additive",
         )
         if verbose:
             elapsed = time.time() - step_start_time
             print(f"Added back trend: {elapsed:.2f} seconds")
+
+    else:
+        dict_all["scenario_debiased"] = debiased_scenario
+
     return dict_all
 
 
