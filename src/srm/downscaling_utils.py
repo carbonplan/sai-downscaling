@@ -15,9 +15,21 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list):
     return da_subset
 
 
-def subset_time(da: xr.DataArray, start_year=None, end_year=None):
-    da = da.where(da["time.year"] >= start_year, drop=True)
-    da = da.where(da["time.year"] <= end_year, drop=True)
+def subset_time(
+    da: xr.DataArray,
+    train_period_start: int = 1978,
+    train_period_end: int = 2014,
+    predict_period_start: int = 2015,
+    predict_period_end: int = 2100,
+    time_period: str = "train",
+):
+    if time_period == "train":
+        start_year = train_period_start
+        end_year = train_period_end
+    elif time_period == "predict":
+        start_year = predict_period_start
+        end_year = predict_period_end
+    da = da.sel(time=slice(f"{start_year}", f"{end_year}"))
     return da
 
 
@@ -28,18 +40,6 @@ def rechunk(da: xr.DataArray, pattern: str):
         da_rechunk = da.chunk(time=-1, lat=7, lon=14)
 
     return da_rechunk
-
-
-def interpolate_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
-    da_fine_to_coarsen = da_fine_to_coarsen.persist()
-
-    da_coarse = da_fine_to_coarsen.interp(
-        lon=da_coarse_grid.lon,
-        lat=da_coarse_grid.lat,
-        method="linear",
-    )
-
-    return da_coarse
 
 
 def get_experiment(
@@ -93,6 +93,73 @@ def get_obs(var: str = "tas", coord_bounds_list: list = None):
     return da
 
 
+def calculate_baseline_climatology(
+    da_baseline: xr.DataArray,
+    baseline_period_start: int = 1978,
+    baseline_period_end: int = 2014,
+):
+    da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
+    da_baseline = da_baseline.sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
+    da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
+
+    return da_baseline_clim
+
+
+def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray):
+    # Calculate monthly averages
+    da_mon = da.resample(time="1MS").mean("time")
+    da_mon = da_mon.chunk({"time": 120})
+
+    # Group by month
+    g = da_mon.groupby("time.month")
+
+    # Apply a 9-year rolling mean within each month group
+    da_mon_avg = g.map(lambda x: x.rolling(time=9, center=True, min_periods=1).mean())
+
+    da_mon_trend = da_mon_avg.groupby("time.month").map(
+        lambda x: x - da_baseline_clim.sel(month=x["time.month"][0].item())
+    )
+
+    # Project that monthly trend onto the daily timestep
+    trend_on_daily_timestep = (
+        da_mon_trend.resample(time="1D").ffill().reindex(time=da.time).ffill(dim="time")
+    ).compute()
+
+    # Calculate detrended timeseries
+    detrended = da - trend_on_daily_timestep
+
+    return detrended, trend_on_daily_timestep
+
+
+def retrend(
+    bias_corrected_detrended: xr.DataArray,
+    trend_on_daily_timestep: xr.DataArray,
+    detrending="additive",
+):
+    valid_values = ["additive"]
+    if detrending not in valid_values:
+        raise ValueError(
+            f"{detrending} is currently not supported. valid values are: {valid_values}"
+        )
+
+    if detrending == "additive":
+        retrended = bias_corrected_detrended + trend_on_daily_timestep
+
+    return retrended
+
+
+def interpolate_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
+    da_fine_to_coarsen = da_fine_to_coarsen.persist()
+
+    da_coarse = da_fine_to_coarsen.interp(
+        lon=da_coarse_grid.lon,
+        lat=da_coarse_grid.lat,
+        method="linear",
+    )
+
+    return da_coarse
+
+
 def calculate_error_map(obs_coarse: xr.DataArray, obs_fine: xr.DataArray):
     def calculate_doy_means(ds):
         ds_xr = xr.DataArray(
@@ -107,8 +174,7 @@ def calculate_error_map(obs_coarse: xr.DataArray, obs_fine: xr.DataArray):
 
         return ds_xr_doy_mean
 
-    obs_coarse_reset = obs_coarse  # .reset_coords(["lon", "lat"], drop=True)
-    obs_coarse_on_fine_grid = obs_coarse_reset.interp(
+    obs_coarse_on_fine_grid = obs_coarse.interp(
         lon=obs_fine["lon"],
         lat=obs_fine["lat"],
         method="linear",
