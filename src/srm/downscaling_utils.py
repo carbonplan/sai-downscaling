@@ -29,10 +29,7 @@ def subset_time(
     elif time_period == "predict":
         start_year = predict_period_start
         end_year = predict_period_end
-
-    da = da.where(da["time.year"] >= start_year, drop=True)
-    da = da.where(da["time.year"] <= end_year, drop=True)
-da = da.sel(time=slice(f"{start_year}", f"{end_year}"))
+    da = da.sel(time=slice(f"{start_year}", f"{end_year}"))
     return da
 
 
@@ -102,7 +99,7 @@ def calculate_baseline_climatology(
     baseline_period_end: int = 2014,
 ):
     da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
-    da_baseline = da_baseline..sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
+    da_baseline = da_baseline.sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
 
     return da_baseline_clim
@@ -139,9 +136,11 @@ def retrend(
     trend_on_daily_timestep: xr.DataArray,
     detrending="additive",
 ):
-     valid_values = ["additive"]
-     if detrending not in valid_values:
-        raise ValueError(f'{detrending} is currently not supported. valid values are: {valid_values}')
+    valid_values = ["additive"]
+    if detrending not in valid_values:
+        raise ValueError(
+            f"{detrending} is currently not supported. valid values are: {valid_values}"
+        )
 
     if detrending == "additive":
         retrended = bias_corrected_detrended + trend_on_daily_timestep
