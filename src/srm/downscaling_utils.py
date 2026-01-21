@@ -32,7 +32,7 @@ def subset_time(
 
     da = da.where(da["time.year"] >= start_year, drop=True)
     da = da.where(da["time.year"] <= end_year, drop=True)
-
+da = da.sel(time=slice(f"{start_year}", f"{end_year}"))
     return da
 
 
