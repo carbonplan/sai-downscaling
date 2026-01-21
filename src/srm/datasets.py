@@ -47,9 +47,7 @@ class Dataset:
         if self.format == "icechunk":
             import icechunk
 
-            storage = icechunk.s3_storage(
-                bucket=self.bucket, prefix=self.prefix, from_env=True
-            )
+            storage = icechunk.s3_storage(bucket=self.bucket, prefix=self.prefix, from_env=True)
             repo = icechunk.Repository.open(storage)
             session = repo.readonly_session("main")
             return xr.open_zarr(session.store, consolidated=False)
@@ -163,6 +161,94 @@ class Catalog:
                     VarStandards.TASMIN,
                 ],
             ),
+            "UKESM-SSP245-icechunk": Dataset(
+                name="UKESM-SSP245-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245/UKESM-SSP245.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 30451,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 30451,
+                    "lat": 64,
+                    "lon": 128,
+                },
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PS,
+                    VarStandards.RSDS,
+                    VarStandards.RLDS,
+                ],
+            ),
+            "UKESM-G6-1.5K-icechunk": Dataset(
+                name="UKESM-G6-1.5K-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K/UKESM-G6-1.5K.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 17913,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 17913,
+                    "lat": 64,
+                    "lon": 128,
+                },
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PS,
+                    VarStandards.RSDS,
+                    VarStandards.RLDS,
+                ],
+            ),
+            "UKESM-SSP245-SFCWIND-icechunk": Dataset(
+                name="UKESM-SSP245-SFCWIND-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245-SFCWIND/UKESM-SSP245-SFCWIND.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 30451,
+                    "lat": 12,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 30451,
+                    "lat": 144,
+                    "lon": 192,
+                },
+                expected_vars=[
+                    VarStandards.SFCWIND,
+                ],
+            ),
+            "UKESM-G6-1.5K-SFCWIND-icechunk": Dataset(
+                name="UKESM-G6-1.5K-SFCWIND-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K-SFCWIND/UKESM-G6-1.5K-SFCWIND.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 17913,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 17913,
+                    "lat": 144,
+                    "lon": 192,
+                },
+                expected_vars=[
+                    VarStandards.SFCWIND,
+                ],
+            ),
             "ERA5": Dataset(
                 name="ERA5",
                 path="s3://carbonplan-srm/input/tensor/ERA5/ERA5.icechunk",
@@ -210,9 +296,7 @@ class Catalog:
 
                 unit_str = actual_units
                 if spec and actual_units != spec.units:
-                    unit_str = (
-                        f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
-                    )
+                    unit_str = f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
 
                 table_data.append(
                     [
@@ -231,8 +315,7 @@ class Catalog:
         from tabulate import tabulate
 
         table_data = [
-            [ds.name, ds.format, str(ds.path), ds.expected_chunks]
-            for ds in self.datasets.values()
+            [ds.name, ds.format, str(ds.path), ds.expected_chunks] for ds in self.datasets.values()
         ]
         headers = ["Name", "Format", "Path", "Expected Chunks"]
         return f"Dataset Catalog ({len(self.datasets)} datasets)\n" + tabulate(

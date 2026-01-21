@@ -41,6 +41,23 @@ class TestCatalogDatasets:
         result = validator.validate_expected_variables()
         assert result, f"variable mismatch {ds_info.name}: {result.issues}"
 
+    @pytest.mark.parametrize(
+        "ds_info",
+        [
+            pytest.param(
+                "MIROC-ES2H-G6-1.5K-icechunk",
+                marks=pytest.mark.xfail(
+                    reason="sfcWind units are w/m**2, while the other datasets have m / s. Source data (netcdf) issue."
+                ),
+            ),
+            pytest.param(
+                "MIROC-ES2H-baseline-icechunk",
+                marks=pytest.mark.xfail(
+                    reason="sfcWind units are w/m**2, while the other datasets have m / s. Source data (netcdf) issue."
+                ),
+            ),
+        ],
+    )
     def test_variable_units(self, ds_info: Dataset, validator: DatasetValidator):
         """check variable units match"""
         if not ds_info.expected_vars:
@@ -57,9 +74,7 @@ class TestCatalogDatasets:
     @pytest.mark.slow
     def test_negative_precip(self, ds_info: Dataset, validator: DatasetValidator):
         """Only run on datasets that contain 'pr'"""
-        if ds_info.expected_vars and not any(
-            v.name == "pr" for v in ds_info.expected_vars
-        ):
+        if ds_info.expected_vars and not any(v.name == "pr" for v in ds_info.expected_vars):
             pytest.skip(f"Dataset {ds_info.name} does not contain precipitation.")
 
         result = validator.validate_negative_precip()

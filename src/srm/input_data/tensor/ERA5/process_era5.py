@@ -10,6 +10,7 @@ from icechunk.xarray import to_icechunk
 
 from srm import catalog
 from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
+from srm.input_data.etl_utils import compute_wind_speed
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
@@ -43,9 +44,7 @@ class ERA5Config:
         "surface_pressure": "ps",
     }
 
-    input_url: str = (
-        "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
-    )
+    input_url: str = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
     start_year: int = 1950
     end_year: int = 2014
 
@@ -85,15 +84,6 @@ def _resample_time(ds, variable):
         return ds.resample(time="d").mean()
     else:
         raise ValueError(f"Unknown variable: {variable}")
-
-
-def _compute_wind_speed(ds_u: xr.Dataset, ds_v: xr.Dataset) -> xr.Dataset:
-    import xclim
-
-    winds = xclim.indicators.convert.wind_speed_from_vector(
-        uas=ds_u["10m_u_component_of_wind"], vas=ds_v["10m_v_component_of_wind"]
-    )
-    return xr.merge(winds)[["sfcWind"]]
 
 
 def _load_era5(variable, config: ERA5Config):
@@ -189,9 +179,7 @@ def write_to_icechunk(
     session.commit(commit_message)
 
 
-def _determine_mode_based_on_ancestry(
-    repo: icechunk.Repository, branch: str = "main"
-) -> str:
+def _determine_mode_based_on_ancestry(repo: icechunk.Repository, branch: str = "main") -> str:
     # check the icechunk ancestry to see if data already exists. Change mode to append if so.
     history = list(repo.ancestry(branch=branch))
     if len(history) <= 1:
@@ -228,7 +216,12 @@ def process_era5_pipeline(
             if var == "sfcWind":
                 ds_u = _load_era5(variable="10m_u_component_of_wind", config=config)
                 ds_v = _load_era5(variable="10m_v_component_of_wind", config=config)
-                ds = _compute_wind_speed(ds_u, ds_v)
+                ds = compute_wind_speed(
+                    ds_u,
+                    ds_v,
+                    u_var_name="10m_u_component_of_wind",
+                    v_var_name="10m_v_component_of_wind",
+                )
             else:
                 ds = _load_era5(variable=var, config=config)
 

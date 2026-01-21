@@ -6,6 +6,38 @@ import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio access
 from srm import catalog
 
 
+def subset_space(da: xr.DataArray, coord_bounds_list: list):
+    [lat_min, lat_max, lon_min, lon_max] = coord_bounds_list
+    da_subset = da.sel(
+        lon=slice(lon_min, lon_max),
+        lat=slice(lat_min, lat_max),
+    )
+    return da_subset
+
+
+def subset_time(da: xr.DataArray, run_parameters: dict, time_period: str = "train"):
+    if time_period == "train":
+        start_year = run_parameters["TRAIN_PERIOD_START"]
+        end_year = run_parameters["TRAIN_PERIOD_END"]
+
+    elif time_period == "predict":
+        start_year = run_parameters["PREDICT_PERIOD_START"]
+        end_year = run_parameters["PREDICT_PERIOD_END"]
+
+    da = da.where(da["time.year"] >= start_year, drop=True)
+    da = da.where(da["time.year"] <= end_year, drop=True)
+
+    return da
+
+def rechunk(da: xr.DataArray, pattern: str):
+    if pattern == "full_space":
+        da_rechunk = da.chunk(time=5, lat=-1, lon=-1)
+    elif pattern == "full_time":
+        da_rechunk = da.chunk(time=-1, lat=7, lon=14)
+
+    return da_rechunk
+
+
 def get_experiment(
     gcm: str = "CESM2-WACCM",
     scenario: str = "SSP245",
@@ -55,39 +87,6 @@ def get_obs(var: str = "tas", coord_bounds_list: list = None):
     if coord_bounds_list is not None:
         da = subset_space(da, coord_bounds_list)
     return da
-
-
-def subset_space(da: xr.DataArray, coord_bounds_list: list):
-    [lat_min, lat_max, lon_min, lon_max] = coord_bounds_list
-    da_subset = da.sel(
-        lon=slice(lon_min, lon_max),
-        lat=slice(lat_min, lat_max),
-    )
-    return da_subset
-
-
-def subset_time(da: xr.DataArray, run_parameters: dict, time_period: str = "train"):
-    if time_period == "train":
-        start_year = run_parameters["TRAIN_PERIOD_START"]
-        end_year = run_parameters["TRAIN_PERIOD_END"]
-
-    elif time_period == "predict":
-        start_year = run_parameters["PREDICT_PERIOD_START"]
-        end_year = run_parameters["PREDICT_PERIOD_END"]
-
-    da = da.where(da["time.year"] >= start_year, drop=True)
-    da = da.where(da["time.year"] <= end_year, drop=True)
-
-    return da
-
-
-def rechunk(da: xr.DataArray, pattern: str):
-    if pattern == "full_space":
-        da_rechunk = da.chunk(time=5, lat=-1, lon=-1)
-    elif pattern == "full_time":
-        da_rechunk = da.chunk(time=-1, lat=7, lon=14)
-
-    return da_rechunk
 
 
 def calculate_baseline_climatology(
