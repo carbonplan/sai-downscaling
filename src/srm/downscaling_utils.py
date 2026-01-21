@@ -139,6 +139,10 @@ def retrend(
     trend_on_daily_timestep: xr.DataArray,
     detrending="additive",
 ):
+     valid_values = ["additive"]
+     if detrending not in valid_values:
+        raise ValueError(f'{detrending} is currently not supported. valid values are: {valid_values}')
+
     if detrending == "additive":
         retrended = bias_corrected_detrended + trend_on_daily_timestep
 
