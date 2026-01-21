@@ -316,6 +316,7 @@ def run_bcsd(
     verbose: bool = True,
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
+    do_windowing: bool = True,
     subset_bounds: list = None,
 ):
     dict_all = get_all_data(
@@ -349,6 +350,7 @@ def run_bcsd(
         verbose=verbose,
         rechunk_workflow=rechunk_workflow,
         detrend_data=detrend_data,
+        do_windowing=do_windowing,
     )
 
     dict_all = spatially_disaggregate(dict_all, verbose=verbose, rechunk_workflow=rechunk_workflow)
