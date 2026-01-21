@@ -3,14 +3,18 @@ import warnings
 
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
+import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 from ibicus.debias import QuantileMapping
 
 from srm.downscaling_utils import (
+    calculate_baseline_climatology,
     calculate_error_map,
+    detrend,
     downscale_from_coarse,
     get_experiment,
     get_obs,
     rechunk,
+    retrend,
     subset_time,
 )
 
@@ -74,7 +78,63 @@ def preprocess_data(
     predict_period_end=None,
     verbose=True,
     rechunk_workflow=True,
+    detrend_data=True,
 ):
+    ################## Interpolate obs to coarse grid
+    if rechunk_workflow:
+        step_start_time = time.time()
+        dict_all["obs"] = rechunk(dict_all["obs"], pattern="full_space")
+        # currently, we need this call otherwise xarray_regrid throws an error when we try to access values of
+        # the resulting regridded dataset
+        dict_all["obs"] = dict_all["obs"].persist()
+
+        if verbose:
+            elapsed = time.time() - step_start_time
+            print(f"Rechunked obs to full space: {elapsed:.2f} seconds")
+
+    step_start_time = time.time()
+
+    # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
+    dict_all["obs_coarse"] = dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
+
+    if verbose:
+        elapsed = time.time() - step_start_time
+        print(f"Interpolated obs to coarse grid: {elapsed:.2f} seconds")
+
+    ###### Detrend data
+    if detrend_data:
+        step_start_time = time.time()
+        dict_all["historical_scenario"] = xr.concat(
+            [
+                dict_all["model_hist"].where(
+                    dict_all["model_hist"]["time.year"] < predict_period_start,
+                    drop=True,
+                ),
+                dict_all["model_scenario"].where(
+                    dict_all["model_scenario"]["time.year"] >= predict_period_start,
+                    drop=True,
+                ),
+            ],
+            dim="time",
+        )
+
+        da_baseline_clim = calculate_baseline_climatology(
+            da_baseline=dict_all["model_hist"],
+            baseline_period_start=train_period_start,
+            baseline_period_end=train_period_end,
+        )
+
+        ssp_detrended, ssp_trend_on_daily_timestep = detrend(
+            da=dict_all["historical_scenario"],
+            da_baseline_clim=da_baseline_clim,
+        )
+
+        dict_all["scenario_detrended"] = ssp_detrended
+        dict_all["scenario_trend"] = ssp_trend_on_daily_timestep
+        if verbose:
+            elapsed = time.time() - step_start_time
+            print(f"Detrended data: {elapsed:.2f} seconds")
+
     ################## Subset time periods
     dict_all["model_hist"] = subset_time(
         dict_all["model_hist"],
@@ -101,31 +161,10 @@ def preprocess_data(
         time_period="predict",
     )
 
-    ################## Interpolate obs to coarse grid
-    if rechunk_workflow:
-        step_start_time = time.time()
-        dict_all["obs"] = rechunk(dict_all["obs"], pattern="full_space")
-        # currently, we need this call otherwise xarray_regrid throws an error when we try to access values of
-        # the resulting regridded dataset
-        dict_all["obs"] = dict_all["obs"].persist()
-
-        if verbose:
-            elapsed = time.time() - step_start_time
-            print(f"Rechunked obs to full space: {elapsed:.2f} seconds")
-
-    step_start_time = time.time()
-
-    # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    dict_all["obs_coarse"] = dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
-
-    if verbose:
-        elapsed = time.time() - step_start_time
-        print(f"Interpolated obs to coarse grid: {elapsed:.2f} seconds")
-
     return dict_all
 
 
-def bias_correct(dict_all, var_name=None, verbose=True, rechunk_workflow=True):
+def bias_correct(dict_all, var_name=None, verbose=True, rechunk_workflow=True, detrend_data=True):
     step_start_time = time.time()
     debiaser = QuantileMapping.from_variable(
         variable=var_name, mapping_type="nonparametric", detrending="additive"
@@ -183,6 +222,18 @@ def bias_correct(dict_all, var_name=None, verbose=True, rechunk_workflow=True):
         },
         dims=["time", "lat", "lon"],
     )
+
+    ################## Add back trend if previously detrended
+    if detrend_data:
+        step_start_time = time.time()
+        dict_all["scenario_debiased"] = retrend(
+            bias_corrected_detrended=dict_all["scenario_debiased"],
+            trend_on_daily_timestep=dict_all["scenario_trend"],
+            detrending="additive",
+        )
+        if verbose:
+            elapsed = time.time() - step_start_time
+            print(f"Added back trend: {elapsed:.2f} seconds")
     return dict_all
 
 
@@ -239,6 +290,7 @@ def run_bcsd(
     var_name=None,
     verbose=True,
     rechunk_workflow=True,
+    detrend_data=True,
 ):
     dict_all = get_all_data(
         gcm=gcm,
@@ -254,6 +306,7 @@ def run_bcsd(
         predict_period_end=predict_period_end,
         verbose=verbose,
         rechunk_workflow=rechunk_workflow,
+        detrend_data=detrend_data,
     )
 
     dict_all = bias_correct(
@@ -261,6 +314,7 @@ def run_bcsd(
         var_name=var_name,
         verbose=verbose,
         rechunk_workflow=rechunk_workflow,
+        detrend_data=detrend_data,
     )
 
     dict_all = spatially_disaggregate(dict_all, verbose=verbose, rechunk_workflow=rechunk_workflow)
