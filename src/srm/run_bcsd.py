@@ -33,9 +33,9 @@ RUN_PARAMETERS = {
 
 
 def get_all_data(
-    gcm=None,
-    var_name=None,
-    verbose=True,
+    gcm: str = None,
+    var_name: str = None,
+    verbose: bool = True,
 ):
     start_time = time.time()
 
@@ -71,14 +71,14 @@ def get_all_data(
 
 
 def preprocess_data(
-    dict_all,
-    train_period_start=None,
-    train_period_end=None,
-    predict_period_start=None,
-    predict_period_end=None,
-    verbose=True,
-    rechunk_workflow=True,
-    detrend_data=True,
+    dict_all: dict,
+    train_period_start: int = None,
+    train_period_end: int = None,
+    predict_period_start: int = None,
+    predict_period_end: int = None,
+    verbose: bool = True,
+    rechunk_workflow: bool = True,
+    detrend_data: bool = True,
 ):
     ################## Interpolate obs to coarse grid
     if rechunk_workflow:
@@ -165,13 +165,13 @@ def preprocess_data(
 
 
 def bias_correct(
-    dict_all,
-    var_name=None,
-    verbose=True,
-    rechunk_workflow=True,
-    detrend_data=True,
-    do_windowing=True,
-    mapping_type="nonparametric",
+    dict_all: dict,
+    var_name: str = None,
+    verbose: bool = True,
+    rechunk_workflow: bool = True,
+    detrend_data: bool = True,
+    do_windowing: bool = True,
+    mapping_type: str = "nonparametric",
 ):
     step_start_time = time.time()
 
@@ -261,7 +261,7 @@ def bias_correct(
     return dict_all
 
 
-def spatially_disaggregate(dict_all, verbose=True, rechunk_workflow=True):
+def spatially_disaggregate(dict_all: dict, verbose: bool = True, rechunk_workflow: bool = True):
     ################## Do Quantile Mapping
     if rechunk_workflow:
         step_start_time = time.time()
@@ -306,15 +306,15 @@ def spatially_disaggregate(dict_all, verbose=True, rechunk_workflow=True):
 
 def run_bcsd(
     *,
-    gcm=None,
-    train_period_start=None,
-    train_period_end=None,
-    predict_period_start=None,
-    predict_period_end=None,
-    var_name=None,
-    verbose=True,
-    rechunk_workflow=True,
-    detrend_data=True,
+    gcm: str = None,
+    train_period_start: int = None,
+    train_period_end: int = None,
+    predict_period_start: int = None,
+    predict_period_end: int = None,
+    var_name: str = None,
+    verbose: bool = True,
+    rechunk_workflow: bool = True,
+    detrend_data: bool = True,
 ):
     dict_all = get_all_data(
         gcm=gcm,
