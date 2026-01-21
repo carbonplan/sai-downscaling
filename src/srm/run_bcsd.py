@@ -167,7 +167,7 @@ def preprocess_data(
 
 def bias_correct(
     dict_all: dict,
-    var_name: str = None,
+    var_name: str,
     verbose: bool = True,
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
