@@ -15,6 +15,7 @@ from srm.downscaling_utils import (
     get_obs,
     rechunk,
     retrend,
+    subset_space,
     subset_time,
 )
 
@@ -315,12 +316,21 @@ def run_bcsd(
     verbose: bool = True,
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
+    subset_bounds: list = None,
 ):
     dict_all = get_all_data(
         gcm=gcm,
         var_name=var_name,
         verbose=verbose,
     )
+
+    if subset_bounds is not None:
+        [lat_min, lat_max, lon_min, lon_max] = subset_bounds
+        for key in dict_all:
+            dict_all[key] = subset_space(
+                dict_all[key],
+                coord_bounds_list=[lat_min, lat_max, lon_min, lon_max],
+            )
 
     dict_all = preprocess_data(
         dict_all=dict_all,
