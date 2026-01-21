@@ -905,6 +905,23 @@ wheels = [
 ]
 
 [[package]]
+name = "flox"
+version = "0.10.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "numpy-groupies" },
+    { name = "packaging" },
+    { name = "pandas" },
+    { name = "scipy" },
+    { name = "toolz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7d/4d/93cbe6588aa434173ba5204e3a8b70587a46be10daff0a393c89a1770c34/flox-0.10.8.tar.gz", hash = "sha256:bb3e7a249dcb4b45bdd8320f9130a1117dc58b9ce6a1e8140b4a20961d2eab03", size = 925040, upload-time = "2025-12-15T17:38:57.421Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ad/ec/2eff1f7617979121a38841b9c5b4fe0eaa64dc1d976cf4c85328a288ba8c/flox-0.10.8-py3-none-any.whl", hash = "sha256:9c5e6dc45717aab74d8a79b64e7c4224ea7fa40fbdefe37290bd6be1171dc581", size = 89002, upload-time = "2025-12-15T17:38:56.384Z" },
+]
+
+[[package]]
 name = "fonttools"
 version = "4.61.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2156,6 +2173,18 @@ wheels = [
 ]
 
 [[package]]
+name = "numpy-groupies"
+version = "0.11.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7d/ff/0559b586423d9a59feac52c2261501106dcd61e45214862de5fbb03b78cb/numpy_groupies-0.11.3.tar.gz", hash = "sha256:aed4afdad55e856b9e737fe4b4673c77e47c2f887c3663a18baaa200407c23e0", size = 159159, upload-time = "2025-05-22T11:47:58.364Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b0/e0/760e73c111193db5ca37712a148e4807d1b0c60302ab31e4ada6528ca34d/numpy_groupies-0.11.3-py3-none-any.whl", hash = "sha256:d4065dd5d56fda941ad5a7c80a7f80b49f671ed148aaa3e243a0e4caa71adcb3", size = 40784, upload-time = "2025-05-22T11:47:56.997Z" },
+]
+
+[[package]]
 name = "obstore"
 version = "0.8.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3151,8 +3180,10 @@ dependencies = [
     { name = "netcdf4" },
     { name = "obstore" },
     { name = "pip" },
+    { name = "s3fs" },
     { name = "tabulate" },
     { name = "xarray" },
+    { name = "xarray-regrid" },
     { name = "xclim" },
     { name = "zarr" },
 ]
@@ -3231,8 +3262,10 @@ requires-dist = [
     { name = "netcdf4", specifier = ">=1.7.4" },
     { name = "obstore", specifier = ">=0.8.2" },
     { name = "pip", specifier = ">=25.3" },
+    { name = "s3fs", specifier = ">=0.4.2" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "xarray", specifier = ">=2025.12.0" },
+    { name = "xarray-regrid", specifier = ">=0.4.1" },
     { name = "xclim", specifier = ">=0.59.1" },
     { name = "zarr", specifier = ">=3.1.5" },
 ]
@@ -3652,6 +3685,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d3/af/7b945f331ba8911fdfff2fdfa092763156119f124be1ba4144615c540222/xarray-2025.12.0.tar.gz", hash = "sha256:73f6a6fadccc69c4d45bdd70821a47c72de078a8a0313ff8b1e97cd54ac59fed", size = 3082244, upload-time = "2025-12-05T21:51:22.432Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d5/e4/62a677feefde05b12a70a4fc9bdc8558010182a801fbcab68cb56c2b0986/xarray-2025.12.0-py3-none-any.whl", hash = "sha256:9e77e820474dbbe4c6c2954d0da6342aa484e33adaa96ab916b15a786181e970", size = 1381742, upload-time = "2025-12-05T21:51:20.841Z" },
+]
+
+[[package]]
+name = "xarray-regrid"
+version = "0.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "flox" },
+    { name = "numpy" },
+    { name = "scipy" },
+    { name = "xarray" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/58/23/d55ead2418c4421f337297e3413afd8e39f2f7f7dba7935bd374cef6d20f/xarray_regrid-0.4.1.tar.gz", hash = "sha256:2c8a7baa321c2451aa42b387fef3b22ecd7bdf693e7ee5c52ebe5168482a1e2a", size = 67694777, upload-time = "2025-04-08T17:37:23.366Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/af/5b36e319b559cc5713b66fcb5941fca1598a36d97f7c3bd50d6873c9d28c/xarray_regrid-0.4.1-py3-none-any.whl", hash = "sha256:92c7cf676292b29996149b06be56fe0b5cc6f6238fa9e88a45d8022c6a653468", size = 22715, upload-time = "2025-04-08T17:37:20.81Z" },
 ]
 
 [[package]]

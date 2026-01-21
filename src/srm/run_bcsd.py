@@ -3,7 +3,6 @@ import time
 from ibicus.debias import QuantileMapping
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
-import xarray_regrid
 
 from srm.downscaling_utils import (
     get_experiment,
