@@ -164,11 +164,35 @@ def preprocess_data(
     return dict_all
 
 
-def bias_correct(dict_all, var_name=None, verbose=True, rechunk_workflow=True, detrend_data=True):
+def bias_correct(
+    dict_all,
+    var_name=None,
+    verbose=True,
+    rechunk_workflow=True,
+    detrend_data=True,
+    do_windowing=True,
+    mapping_type="nonparametric",
+):
     step_start_time = time.time()
-    debiaser = QuantileMapping.from_variable(
-        variable=var_name, mapping_type="nonparametric", detrending="additive"
-    )
+
+    if do_windowing:
+        debiaser = QuantileMapping.from_variable(
+            variable=var_name,
+            mapping_type=mapping_type,
+            detrending="no_detrending",
+            running_window_mode=True,
+            running_window_length=31,
+            running_window_step_length=1,
+            running_window_mode_over_years_of_cm_future=False,
+        )
+    else:
+        debiaser = QuantileMapping.from_variable(
+            variable=var_name,
+            mapping_type=mapping_type,
+            detrending="no_detrending",
+            running_window_mode=False,
+            running_window_mode_over_years_of_cm_future=False,
+        )
 
     # as_numpy brings from sparse to dense. regridding sparsifies, so bring it back here for downstream tasks.
     obs = dict_all["obs_coarse"].as_numpy().values
