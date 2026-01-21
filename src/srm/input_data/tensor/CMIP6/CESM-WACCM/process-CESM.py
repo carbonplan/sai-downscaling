@@ -3,39 +3,36 @@ from dataclasses import dataclass, field
 
 import boto3
 import click
-import dask
-import icechunk
 import obstore as obs
 import xarray as xr
 import zarr
-from icechunk.xarray import to_icechunk
 from obstore.store import from_url
 from virtualizarr.parsers import HDFParser
 from virtualizarr.registry import ObjectStoreRegistry
 
 from srm import catalog
 from srm.config import (
-    ClusterConfig,
-    VarSpec,
     init_repo,
     setup_cluster,
     setup_local_client,
+)
+from srm.input_data.etl_config import BaseETLConfig
+from srm.input_data.etl_utils import (
+    add_cf_bounds,
+    build_encoding_dict,
+    determine_write_mode,
+    get_var_specs,
+    trim_negative_precipitation,
+    virtualize_and_combine,
+    write_dataset_to_icechunk,
 )
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 64})
 
 
-def _get_var_specs(catalog_entry) -> dict[str, VarSpec]:
-    return {var.name: var for var in catalog_entry.expected_vars}
-
-
 @dataclass
-class BaseCESM_Config:
-    scenario: str
-    catalog_key: str
-
-    s3_bucket: str = "carbonplan-srm"
+class BaseCESM_Config(BaseETLConfig):
     s3_input_prefix: str = ""
 
     CESM_WACCM_VARIABLE_MAPPING: dict = field(
@@ -100,21 +97,10 @@ class BaseCESM_Config:
 
     has_ensemble: bool = False
 
-    cluster: ClusterConfig = field(default_factory=ClusterConfig)
-
     aws_creds: dict = field(default_factory=dict)
 
     def __post_init__(self):
-        self.dataset_entry = catalog.get(self.catalog_key)
-        self.bucket = self.dataset_entry.bucket
-        self.prefix = self.dataset_entry.prefix
-        self.output_path = self.dataset_entry.path
-        self.all_variables = [var.name for var in self.dataset_entry.expected_vars]
-        self.encoding = {
-            "chunks": self.dataset_entry.expected_chunks,
-            "shards": self.dataset_entry.expected_shards,
-        }
-
+        super().__post_init__()
         sesh = boto3.Session()
         creds = sesh.get_credentials()
         self.aws_creds = {
@@ -157,7 +143,7 @@ SCENARIO_CONFIG_MAP = {
 }
 
 
-def _preprocess_ensemble(ds: xr.Dataset) -> xr.Dataset:
+def _preprocess_ensemble(ds: xr.Dataset, url: str) -> xr.Dataset:
     ensemble = ds.attrs["case"].rsplit(".")[-1]
     ds = ds.expand_dims({"ensemble_member": [ensemble]})
     return ds
@@ -171,9 +157,7 @@ def _get_cesm_var_from_cmip6(cmip6_var: str, config: BaseCESM_Config) -> str:
 def _get_netcdf_urls(config: BaseCESM_Config, variables: list[str]) -> list[str]:
     store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
 
-    stream = obs.list_with_delimiter(
-        store, prefix=config.s3_input_prefix, return_arrow=True
-    )
+    stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
     netcdf_list = list(stream["objects"]["path"].to_numpy())
 
     cesm_vars = [_get_cesm_var_from_cmip6(var, config) for var in variables]
@@ -181,8 +165,7 @@ def _get_netcdf_urls(config: BaseCESM_Config, variables: list[str]) -> list[str]
     filtered_urls = [
         f"s3://{config.s3_bucket}/{path}"
         for path in netcdf_list
-        if path.endswith(".nc")
-        and any(f".{cesm_var}." in path for cesm_var in cesm_vars)
+        if path.endswith(".nc") and any(f".{cesm_var}." in path for cesm_var in cesm_vars)
     ]
 
     return filtered_urls
@@ -193,23 +176,8 @@ def _virtualize_netcdfs(config: BaseCESM_Config, netcdf_urls: list[str]) -> xr.D
     registry = ObjectStoreRegistry({f"s3://{config.s3_bucket}": store})
     parser = HDFParser(drop_variables=config.drop_variables)
 
-    @dask.delayed
-    def manifest_ds(url) -> xr.Dataset:
-        manifest_store = parser(url=url, registry=registry)
-        loadable_ds = xr.open_zarr(manifest_store, consolidated=False, zarr_format=3)
-        if config.has_ensemble:
-            loadable_ds = _preprocess_ensemble(loadable_ds)
-        return loadable_ds
-
-    delayed_vds = [manifest_ds(url) for url in netcdf_urls]
-    vds_list = dask.compute(delayed_vds)[0]
-    ds = xr.combine_by_coords(
-        vds_list,
-        coords="minimal",
-        data_vars="minimal",
-        compat="override",
-        combine_attrs="override",
-    )
+    preprocess_fn = _preprocess_ensemble if config.has_ensemble else None
+    ds = virtualize_and_combine(netcdf_urls, registry, parser, preprocess_fn)
     return ds.drop_duplicates(dim="time", keep="first")
 
 
@@ -220,47 +188,20 @@ def _standardize_vars(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
     return ds
 
 
-def _trim_negative(ds: xr.Dataset) -> xr.Dataset:
-    if "pr" in ds.data_vars:
-        ds["pr"] = ds["pr"].clip(min=0)
-    return ds
-
-
-def _preprocess_cesm(
-    ds: xr.Dataset, config: BaseCESM_Config, subset: bool = False
-) -> xr.Dataset:
+def _preprocess_cesm(ds: xr.Dataset, config: BaseCESM_Config, subset: bool = False) -> xr.Dataset:
     ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False)
     ds = ds.drop_encoding()
     ds = ds.drop_vars(["ilev", "lev"], errors="ignore")
     ds = lon_to_180(ds, lon_name="lon")
     ds = ds.sortby(["lat", "lon"])
     ds = _standardize_vars(ds, config)
-    ds = _trim_negative(ds)
+    ds = trim_negative_precipitation(ds)
     if subset:
         ds = ds.isel(time=slice(0, 365))
     return ds
 
 
-def _encoding(ds: xr.Dataset, config: BaseCESM_Config):
-    encoding = {}
-    for var_name in ds.data_vars:
-        if var_name.endswith("_bounds") or var_name.endswith("_bnds"):
-            continue
-        var = ds[var_name]
-        var_chunks = tuple(config.encoding["chunks"][d] for d in var.dims)
-        var_shards = tuple(config.encoding["shards"][d] for d in var.dims)
-        encoding[var_name] = {
-            "chunks": var_chunks,
-            "shards": var_shards,
-        }
-    return encoding
-
-
-def _update_attrs(
-    ds: xr.Dataset, var_specs: dict[str, VarSpec], config: BaseCESM_Config
-) -> xr.Dataset:
-    import cf_xarray  # noqa ignore
-
+def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseCESM_Config) -> xr.Dataset:
     for var_name in ds.data_vars:
         if var_name in config.CESM_UNIT_MAPPING:
             ds[var_name].attrs["units"] = config.CESM_UNIT_MAPPING[var_name]
@@ -272,18 +213,7 @@ def _update_attrs(
             if spec.cell_methods:
                 ds[var_name].attrs["cell_methods"] = spec.cell_methods
 
-    bnds_to_drop = [
-        v for v in list(ds.data_vars) + list(ds.coords) if v.endswith("_bnds")
-    ]
-    ds = ds.drop_vars(bnds_to_drop, errors="ignore")
-
-    ds = ds.cf.add_bounds("time")
-    ds = ds.cf.add_bounds("lat")
-    ds = ds.cf.add_bounds("lon")
-
-    bounds_vars = [v for v in ds.data_vars if v.endswith("_bounds")]
-    if bounds_vars:
-        ds = ds.set_coords(bounds_vars)
+    ds = add_cf_bounds(ds)
 
     ds.attrs.update(
         {
@@ -294,29 +224,6 @@ def _update_attrs(
     )
 
     return ds
-
-
-def write_to_icechunk(
-    ds: xr.Dataset,
-    session,
-    encoding: dict,
-    commit_message: str,
-    write_mode: str,
-    config: BaseCESM_Config,
-):
-    ds = ds.chunk(config.encoding["shards"])
-    to_icechunk(ds, session, encoding=encoding, mode=write_mode)
-    session.commit(commit_message)
-
-
-def _determine_mode_based_on_ancestry(
-    repo: icechunk.Repository, branch: str = "main"
-) -> str:
-    history = list(repo.ancestry(branch=branch))
-    if len(history) <= 1:
-        return "w"
-    else:
-        return "a"
 
 
 def process_cesm_pipeline(
@@ -337,12 +244,12 @@ def process_cesm_pipeline(
         client = setup_local_client()
 
     cesm_cat = catalog.get(config.catalog_key)
-    var_specs = _get_var_specs(cesm_cat)
+    var_specs = get_var_specs(cesm_cat)
 
     try:
         for var in variables:
             repo, session = init_repo(cesm_cat.bucket, cesm_cat.prefix, readonly=False)
-            write_mode = _determine_mode_based_on_ancestry(repo)
+            write_mode = determine_write_mode(repo)
 
             if scenario == "SSP245":
                 netcdf_urls_all = _get_netcdf_urls(config, [var])
@@ -350,18 +257,12 @@ def process_cesm_pipeline(
                 netcdf_urls_6 = [
                     path
                     for path in netcdf_urls_all
-                    if any(
-                        f"CMIP6-SSP2-4.5-WACCM.{num}." in path
-                        for num in config.subset_6
-                    )
+                    if any(f"CMIP6-SSP2-4.5-WACCM.{num}." in path for num in config.subset_6)
                 ]
                 netcdf_urls_7_10 = [
                     path
                     for path in netcdf_urls_all
-                    if any(
-                        f"CMIP6-SSP2-4.5-WACCM.{num}." in path
-                        for num in config.subset_7_10
-                    )
+                    if any(f"CMIP6-SSP2-4.5-WACCM.{num}." in path for num in config.subset_7_10)
                 ]
 
                 ds_6 = _virtualize_netcdfs(config, netcdf_urls_6)
@@ -373,22 +274,21 @@ def process_cesm_pipeline(
                     compat="override",
                     combine_attrs="override",
                 )
-                # ds = ds.drop_duplicates(dim="time", keep="first")
             else:
                 netcdf_urls = _get_netcdf_urls(config, [var])
                 ds = _virtualize_netcdfs(config, netcdf_urls)
 
             ds = _preprocess_cesm(ds, config, subset=subset)
             ds = _update_attrs(ds, var_specs, config)
-            encoding = _encoding(ds, config)
+            encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
 
-            write_to_icechunk(
+            write_dataset_to_icechunk(
                 ds,
                 session,
                 encoding=encoding,
+                shards=config.encoding["shards"],
                 commit_message=f"{scenario}: {var}",
                 write_mode=write_mode,
-                config=config,
             )
 
             time.sleep(5)
