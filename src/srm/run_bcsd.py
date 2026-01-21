@@ -62,10 +62,29 @@ def run_bcsd(
     dict_all = {}
 
     dict_all["model_hist"] = subset_time(
-        model_historical, run_parameters, time_period="train"
+        model_historical,
+        train_period_start=train_period_start,
+        train_period_end=train_period_end,
+        predict_period_start=predict_period_start,
+        predict_period_end=predict_period_end,
+        time_period="train",
     )
-    dict_all["obs"] = subset_time(obs, run_parameters, time_period="train")
-    dict_all["model_scenario"] = subset_time(model_scenario, run_parameters, time_period="predict")
+    dict_all["obs"] = subset_time(
+        obs,
+        train_period_start=train_period_start,
+        train_period_end=train_period_end,
+        predict_period_start=predict_period_start,
+        predict_period_end=predict_period_end,
+        time_period="train",
+    )
+    dict_all["model_scenario"] = subset_time(
+        model_scenario,
+        train_period_start=train_period_start,
+        train_period_end=train_period_end,
+        predict_period_start=predict_period_start,
+        predict_period_end=predict_period_end,
+        time_period="predict",
+    )
 
     if verbose:
         elapsed = time.time() - step_start_time
@@ -147,12 +166,6 @@ def run_bcsd(
         dims=["time", "lat", "lon"],
     )
 
-    dict_all["ssp245_debiased"] = xr.DataArray(
-        data=ssp245_fut_debiased,
-        coords={
-            "lat": dict_all["ssp245"]["lat"],
-            "lon": dict_all["ssp245"]["lon"],
-            "time": dict_all["ssp245"]["time"],
     dict_all["scenario_debiased"] = xr.DataArray(
         data=scenario_fut_debiased,
         coords={
@@ -166,9 +179,7 @@ def run_bcsd(
     ################## Calculate error map
     # Calculate a fine-resolution spatial anomaly pattern derived from the observations
     step_start_time = time.time()
-    error_map = calculate_error_map(
-        obs_coarse=dict_all["obs_coarse"], obs_fine=dict_all["obs"]
-    )
+    error_map = calculate_error_map(obs_coarse=dict_all["obs_coarse"], obs_fine=dict_all["obs"])
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Calculate error map for spatial disaggregation: {elapsed:.2f} seconds")

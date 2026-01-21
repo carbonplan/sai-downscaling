@@ -1,7 +1,7 @@
 import icechunk
-import xarray as xr
 import pandas as pd
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
+import xarray as xr
 
 from srm import catalog
 
@@ -15,19 +15,26 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list):
     return da_subset
 
 
-def subset_time(da: xr.DataArray, run_parameters: dict, time_period: str = "train"):
+def subset_time(
+    da: xr.DataArray,
+    train_period_start: int = 1978,
+    train_period_end: int = 2014,
+    predict_period_start: int = 2015,
+    predict_period_end: int = 2100,
+    time_period: str = "train",
+):
     if time_period == "train":
-        start_year = run_parameters["TRAIN_PERIOD_START"]
-        end_year = run_parameters["TRAIN_PERIOD_END"]
-
+        start_year = train_period_start
+        end_year = train_period_end
     elif time_period == "predict":
-        start_year = run_parameters["PREDICT_PERIOD_START"]
-        end_year = run_parameters["PREDICT_PERIOD_END"]
+        start_year = predict_period_start
+        end_year = predict_period_end
 
     da = da.where(da["time.year"] >= start_year, drop=True)
     da = da.where(da["time.year"] <= end_year, drop=True)
 
     return da
+
 
 def rechunk(da: xr.DataArray, pattern: str):
     if pattern == "full_space":
@@ -139,9 +146,7 @@ def retrend(
     return retrended
 
 
-def interpolate_to_coarse_grid(
-    da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray
-):
+def interpolate_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
     da_fine_to_coarsen = da_fine_to_coarsen.persist()
 
     da_coarse = da_fine_to_coarsen.interp(
@@ -183,9 +188,7 @@ def calculate_error_map(obs_coarse: xr.DataArray, obs_fine: xr.DataArray):
     return error_map
 
 
-def downscale_from_coarse(
-    da: xr.DataArray, error_map: xr.DataArray, fine_grid: xr.DataArray
-):
+def downscale_from_coarse(da: xr.DataArray, error_map: xr.DataArray, fine_grid: xr.DataArray):
     da_fine_grid = da.interp(
         lon=fine_grid["lon"],
         lat=fine_grid["lat"],
