@@ -1,7 +1,7 @@
 import icechunk
-import xarray as xr
-import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import pandas as pd
+import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
+import xarray as xr
 
 from srm import catalog
 
@@ -30,9 +30,7 @@ def rechunk(da: xr.DataArray, pattern: str):
     return da_rechunk
 
 
-def interpolate_to_coarse_grid(
-    da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray
-):
+def interpolate_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
     da_fine_to_coarsen = da_fine_to_coarsen.persist()
 
     da_coarse = da_fine_to_coarsen.interp(
@@ -126,9 +124,7 @@ def calculate_error_map(obs_coarse: xr.DataArray, obs_fine: xr.DataArray):
     return error_map
 
 
-def downscale_from_coarse(
-    da: xr.DataArray, error_map: xr.DataArray, fine_grid: xr.DataArray
-):
+def downscale_from_coarse(da: xr.DataArray, error_map: xr.DataArray, fine_grid: xr.DataArray):
     da_fine_grid = da.interp(
         lon=fine_grid["lon"],
         lat=fine_grid["lat"],

@@ -3,6 +3,7 @@ import icechunk
 import xarray as xr
 from virtualizarr.parsers import HDFParser
 from virtualizarr.registry import ObjectStoreRegistry
+
 from srm.config import VarSpec
 
 
@@ -120,8 +121,7 @@ def virtualize_and_combine(
     preprocess_fn: callable = None,
 ) -> xr.Dataset:
     delayed_datasets = [
-        dask.delayed(virtualize_netcdf)(url, registry, parser, preprocess_fn)
-        for url in urls
+        dask.delayed(virtualize_netcdf)(url, registry, parser, preprocess_fn) for url in urls
     ]
     ds_list = dask.compute(delayed_datasets)[0]
     return xr.combine_by_coords(

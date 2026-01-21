@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
+
+from srm import catalog
 from srm.config import (
     ClusterConfig,
 )
-from srm import catalog
 
 
 @dataclass

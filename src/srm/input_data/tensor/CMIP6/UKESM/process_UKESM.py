@@ -13,18 +13,17 @@ from srm.config import (
     setup_cluster,
     setup_local_client,
 )
+from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
     add_cf_bounds,
     build_encoding_dict,
+    compute_wind_speed,
     determine_write_mode,
     get_var_specs,
     trim_negative_precipitation,
     update_variable_attrs,
     write_dataset_to_icechunk,
-    compute_wind_speed,
 )
-from srm.input_data.etl_config import BaseETLConfig
-
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 64})
@@ -74,13 +73,9 @@ SCENARIO_CONFIG_MAP = {
 
 
 def _get_netcdf_urls(config: BaseUKESM_Config, variables: list[str]) -> list[str]:
-    store = from_url(
-        f"s3://{config.s3_bucket}", region="us-west-2", skip_signature=True
-    )
+    store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", skip_signature=True)
 
-    stream = obs.list_with_delimiter(
-        store, prefix=config.s3_input_prefix, return_arrow=True
-    )
+    stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
     netcdf_list = list(stream["objects"]["path"].to_numpy())
     filtered_urls = [
         f"s3://{config.s3_bucket}/{path}"
@@ -134,9 +129,7 @@ def _preprocess_ukesm(
     return ds
 
 
-def _update_attrs(
-    ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config
-) -> xr.Dataset:
+def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> xr.Dataset:
     ds = update_variable_attrs(ds, var_specs)
     ds = add_cf_bounds(ds)
 
@@ -175,9 +168,7 @@ def process_ukesm_pipeline(
 
     try:
         for var in variables:
-            repo, session = init_repo(
-                ukesm_cat.bucket, ukesm_cat.prefix, readonly=False
-            )
+            repo, session = init_repo(ukesm_cat.bucket, ukesm_cat.prefix, readonly=False)
             write_mode = determine_write_mode(repo)
 
             if is_sfcwind_scenario and var.lower() == "sfcwind":
@@ -185,22 +176,16 @@ def process_ukesm_pipeline(
                 ds = _open_ukesm_dataset(config, netcdf_urls)
                 ds = _preprocess_ukesm(ds, config, derive_wind=True, subset=subset)
             elif is_sfcwind_scenario:
-                raise ValueError(
-                    f"SFCWIND scenario only supports sfcWind variable, got {var}"
-                )
+                raise ValueError(f"SFCWIND scenario only supports sfcWind variable, got {var}")
             else:
                 if var.lower() == "sfcwind":
-                    raise ValueError(
-                        f"Use {scenario}-SFCWIND scenario for sfcWind variable"
-                    )
+                    raise ValueError(f"Use {scenario}-SFCWIND scenario for sfcWind variable")
                 netcdf_urls = _get_netcdf_urls(config, [var])
                 ds = _open_ukesm_dataset(config, netcdf_urls)
                 ds = _preprocess_ukesm(ds, config, derive_wind=False, subset=subset)
 
             ds = _update_attrs(ds, var_specs, config)
-            encoding = build_encoding_dict(
-                ds, config.encoding["chunks"], config.encoding["shards"]
-            )
+            encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
 
             write_dataset_to_icechunk(
                 ds,
