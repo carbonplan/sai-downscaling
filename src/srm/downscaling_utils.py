@@ -102,8 +102,7 @@ def calculate_baseline_climatology(
     baseline_period_end: int = 2014,
 ):
     da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
-    da_baseline = da_baseline.where(da_baseline["time.year"] >= baseline_period_start)
-    da_baseline = da_baseline.where(da_baseline["time.year"] <= baseline_period_end)
+    da_baseline = da_baseline..sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
 
     return da_baseline_clim
