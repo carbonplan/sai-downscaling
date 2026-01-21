@@ -313,12 +313,12 @@ def spatially_disaggregate(dict_all: dict, verbose: bool = True, rechunk_workflo
 
 def run_bcsd(
     *,
-    gcm: str = None,
-    train_period_start: int = None,
-    train_period_end: int = None,
-    predict_period_start: int = None,
-    predict_period_end: int = None,
-    var_name: str = None,
+    gcm: str,
+    train_period_start: int,
+    train_period_end: int,
+    predict_period_start: int,
+    predict_period_end: int,
+    var_name: str,
     verbose: bool = True,
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
