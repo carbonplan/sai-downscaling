@@ -1,19 +1,18 @@
 import time
+import warnings
 
-from ibicus.debias import QuantileMapping
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
+from ibicus.debias import QuantileMapping
 
 from srm.downscaling_utils import (
-    get_experiment,
-    get_obs,
-    subset_time,
-    rechunk,
     calculate_error_map,
     downscale_from_coarse,
+    get_experiment,
+    get_obs,
+    rechunk,
+    subset_time,
 )
-
-import warnings
 
 warnings.filterwarnings(
     "ignore", category=RuntimeWarning
@@ -67,9 +66,7 @@ def run_bcsd(
         start_year=train_period_start,
         end_year=train_period_end,
     )
-    dict_all["obs"] = subset_time(
-        obs, start_year=train_period_start, end_year=train_period_end
-    )
+    dict_all["obs"] = subset_time(obs, start_year=train_period_start, end_year=train_period_end)
     dict_all["model_scenario"] = subset_time(
         model_scenario, start_year=predict_period_start, end_year=predict_period_end
     )
@@ -93,9 +90,7 @@ def run_bcsd(
     step_start_time = time.time()
 
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    dict_all["obs_coarse"] = (
-        dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
-    )
+    dict_all["obs_coarse"] = dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
 
     if verbose:
         elapsed = time.time() - step_start_time
@@ -112,9 +107,7 @@ def run_bcsd(
             print(f"Rechunked all to full time: {elapsed:.2f} seconds")
 
     step_start_time = time.time()
-    debiaser = QuantileMapping.from_variable(
-        variable=var_name, mapping_type="parametric"
-    )
+    debiaser = QuantileMapping.from_variable(variable=var_name, mapping_type="parametric")
     # as_numpy brings from sparse to dense. regridding sparsifies, so bring it back here for downstream tasks.
     obs = dict_all["obs_coarse"].as_numpy().values
     cm_hist = dict_all["model_hist"].as_numpy().values
@@ -171,9 +164,7 @@ def run_bcsd(
     ################## Calculate error map
     # Calculate a fine-resolution spatial anomaly pattern derived from the observations
     step_start_time = time.time()
-    error_map = calculate_error_map(
-        obs_coarse=dict_all["obs_coarse"], obs_fine=dict_all["obs"]
-    )
+    error_map = calculate_error_map(obs_coarse=dict_all["obs_coarse"], obs_fine=dict_all["obs"])
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Calculate error map for spatial disaggregation: {elapsed:.2f} seconds")

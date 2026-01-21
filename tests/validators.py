@@ -49,14 +49,10 @@ class DatasetValidator:
             coord = self.ds[cf_key]
             coord_name = coord.name
         except KeyError:
-            return ValidationResult(
-                False, [f"no {expected_name} coord '{cf_key}' found"]
-            )
+            return ValidationResult(False, [f"no {expected_name} coord '{cf_key}' found"])
 
         if coord_name != expected_name:
-            issues.append(
-                f"{expected_name} name is '{coord_name}', expected '{expected_name}'"
-            )
+            issues.append(f"{expected_name} name is '{coord_name}', expected '{expected_name}'")
 
         coord_min = float(coord.min())
         coord_max = float(coord.max())
@@ -155,9 +151,7 @@ class DatasetValidator:
         if "pr" not in list(self.ds):
             return ValidationResult(
                 True,
-                [
-                    f"dataset has no variable named 'pr'. Available variables are: {list(self.ds)}"
-                ],
+                [f"dataset has no variable named 'pr'. Available variables are: {list(self.ds)}"],
             )
         has_negatives = (
             (self.ds["pr"] < 0).any().compute()

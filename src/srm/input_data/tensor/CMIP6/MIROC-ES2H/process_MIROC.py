@@ -16,8 +16,6 @@ from srm.config import (
     setup_cluster,
     setup_local_client,
 )
-from srm.input_data.etl_config import BaseETLConfig
-
 from srm.etl_utils import (
     add_cf_bounds,
     build_encoding_dict,
@@ -28,6 +26,7 @@ from srm.etl_utils import (
     virtualize_and_combine,
     write_dataset_to_icechunk,
 )
+from srm.input_data.etl_config import BaseETLConfig
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 64})
@@ -80,12 +79,7 @@ def _fetch_netcdfs(config: BaseMIROC_ES2H_Config) -> None:
     )
 
     urls_csv = f"MIROC-ES2H-{config.scenario}-urls.csv"
-    df = (
-        pd.read_html(config.source_url)[0][["Name"]]
-        .iloc[2::]
-        .dropna()
-        .reset_index()[["Name"]]
-    )
+    df = pd.read_html(config.source_url)[0][["Name"]].iloc[2::].dropna().reset_index()[["Name"]]
     df["Name"] = config.source_url + df["Name"]
     df.to_csv(urls_csv, index=False, header=False)
 
@@ -117,9 +111,7 @@ def _preprocess_miroc_ensemble(ds: xr.Dataset, url: str) -> xr.Dataset:
     return ds
 
 
-def _virtualize_netcdfs(
-    variables: list[str], config: BaseMIROC_ES2H_Config
-) -> xr.Dataset:
+def _virtualize_netcdfs(variables: list[str], config: BaseMIROC_ES2H_Config) -> xr.Dataset:
     store = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
     registry = ObjectStoreRegistry({f"s3://{config.s3_bucket}": store})
     parser = HDFParser()
@@ -130,9 +122,7 @@ def _virtualize_netcdfs(
         for ensm in config.ensemble_members
     ]
 
-    return virtualize_and_combine(
-        netcdf_urls, registry, parser, _preprocess_miroc_ensemble
-    )
+    return virtualize_and_combine(netcdf_urls, registry, parser, _preprocess_miroc_ensemble)
 
 
 def _preprocess_cmip6(
@@ -147,9 +137,7 @@ def _preprocess_cmip6(
     return ds
 
 
-def _update_attrs(
-    ds: xr.Dataset, var_specs: dict, config: BaseMIROC_ES2H_Config
-) -> xr.Dataset:
+def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseMIROC_ES2H_Config) -> xr.Dataset:
     ds = update_variable_attrs(ds, var_specs)
     ds = add_cf_bounds(ds)
 
@@ -188,17 +176,13 @@ def process_miroc_pipeline(
 
     try:
         for var in variables:
-            repo, session = init_repo(
-                miroc_cat.bucket, miroc_cat.prefix, readonly=False
-            )
+            repo, session = init_repo(miroc_cat.bucket, miroc_cat.prefix, readonly=False)
             write_mode = determine_write_mode(repo)
 
             ds = _virtualize_netcdfs([var], config)
             ds = _preprocess_cmip6(ds, config, subset=subset)
             ds = _update_attrs(ds, var_specs, config)
-            encoding = build_encoding_dict(
-                ds, config.encoding["chunks"], config.encoding["shards"]
-            )
+            encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
 
             write_dataset_to_icechunk(
                 ds,

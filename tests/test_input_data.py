@@ -74,9 +74,7 @@ class TestCatalogDatasets:
     @pytest.mark.slow
     def test_negative_precip(self, ds_info: Dataset, validator: DatasetValidator):
         """Only run on datasets that contain 'pr'"""
-        if ds_info.expected_vars and not any(
-            v.name == "pr" for v in ds_info.expected_vars
-        ):
+        if ds_info.expected_vars and not any(v.name == "pr" for v in ds_info.expected_vars):
             pytest.skip(f"Dataset {ds_info.name} does not contain precipitation.")
 
         result = validator.validate_negative_precip()

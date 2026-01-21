@@ -10,8 +10,8 @@ from icechunk.xarray import to_icechunk
 
 from srm import catalog
 from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
-from srm.utils import lon_to_180
 from srm.input_data.etl_utils import compute_wind_speed
+from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
 
@@ -44,9 +44,7 @@ class ERA5Config:
         "surface_pressure": "ps",
     }
 
-    input_url: str = (
-        "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
-    )
+    input_url: str = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
     start_year: int = 1950
     end_year: int = 2014
 
@@ -181,9 +179,7 @@ def write_to_icechunk(
     session.commit(commit_message)
 
 
-def _determine_mode_based_on_ancestry(
-    repo: icechunk.Repository, branch: str = "main"
-) -> str:
+def _determine_mode_based_on_ancestry(repo: icechunk.Repository, branch: str = "main") -> str:
     # check the icechunk ancestry to see if data already exists. Change mode to append if so.
     history = list(repo.ancestry(branch=branch))
     if len(history) <= 1:
