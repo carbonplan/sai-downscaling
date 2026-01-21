@@ -4,6 +4,7 @@ import warnings
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
 from ibicus.debias import QuantileMapping
+import xarray_regrid
 
 from srm.downscaling_utils import (
     calculate_error_map,
@@ -28,16 +29,10 @@ RUN_PARAMETERS = {
 }
 
 
-def run_bcsd(
-    *,
+def get_all_data(
     gcm=None,
-    train_period_start=None,
-    train_period_end=None,
-    predict_period_start=None,
-    predict_period_end=None,
     var_name=None,
     verbose=True,
-    rechunk_workflow=True,
 ):
     start_time = time.time()
 
@@ -61,8 +56,30 @@ def run_bcsd(
     step_start_time = time.time()
     dict_all = {}
 
+    if verbose:
+        elapsed = time.time() - step_start_time
+        print(f"Subset time: {elapsed:.2f} seconds")
+
+    dict_all["model_hist"] = model_historical
+    dict_all["obs"] = obs
+    dict_all["model_scenario"] = model_scenario
+
+    return dict_all
+
+
+def preprocess_data(
+    dict_all,
+    train_period_start=None,
+    train_period_end=None,
+    predict_period_start=None,
+    predict_period_end=None,
+    verbose=True,
+    rechunk_workflow=True,
+):
+
+    ################## Subset time periods
     dict_all["model_hist"] = subset_time(
-        model_historical,
+        dict_all["model_hist"],
         train_period_start=train_period_start,
         train_period_end=train_period_end,
         predict_period_start=predict_period_start,
@@ -70,7 +87,7 @@ def run_bcsd(
         time_period="train",
     )
     dict_all["obs"] = subset_time(
-        obs,
+        dict_all["obs"],
         train_period_start=train_period_start,
         train_period_end=train_period_end,
         predict_period_start=predict_period_start,
@@ -78,17 +95,13 @@ def run_bcsd(
         time_period="train",
     )
     dict_all["model_scenario"] = subset_time(
-        model_scenario,
+        dict_all["model_scenario"],
         train_period_start=train_period_start,
         train_period_end=train_period_end,
         predict_period_start=predict_period_start,
         predict_period_end=predict_period_end,
         time_period="predict",
     )
-
-    if verbose:
-        elapsed = time.time() - step_start_time
-        print(f"Subset time: {elapsed:.2f} seconds")
 
     ################## Interpolate obs to coarse grid
     if rechunk_workflow:
@@ -105,24 +118,23 @@ def run_bcsd(
     step_start_time = time.time()
 
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    dict_all["obs_coarse"] = dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
+    dict_all["obs_coarse"] = (
+        dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
+    )
 
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Interpolated obs to coarse grid: {elapsed:.2f} seconds")
 
-    ################## Do Quantile Mapping
-    if rechunk_workflow:
-        step_start_time = time.time()
-        for key in ["obs_coarse", "model_hist", "model_scenario"]:
-            dict_all[key] = rechunk(dict_all[key], pattern="full_time")
-            dict_all[key] = dict_all[key].persist()
-        elapsed = time.time() - step_start_time
-        if verbose:
-            print(f"Rechunked all to full time: {elapsed:.2f} seconds")
+    return dict_all
 
+
+def bias_correct(dict_all, var_name=None, verbose=True, rechunk_workflow=True):
     step_start_time = time.time()
-    debiaser = QuantileMapping.from_variable(variable=var_name, mapping_type="parametric")
+    debiaser = QuantileMapping.from_variable(
+        variable=var_name, mapping_type="nonparametric", detrending="additive"
+    )
+
     # as_numpy brings from sparse to dense. regridding sparsifies, so bring it back here for downstream tasks.
     obs = dict_all["obs_coarse"].as_numpy().values
     cm_hist = dict_all["model_hist"].as_numpy().values
@@ -175,11 +187,27 @@ def run_bcsd(
         },
         dims=["time", "lat", "lon"],
     )
+    return dict_all
+
+
+def spatially_disaggregate(dict_all, verbose=True, rechunk_workflow=True):
+    ################## Do Quantile Mapping
+    if rechunk_workflow:
+        step_start_time = time.time()
+        for key in ["obs_coarse", "model_hist", "model_scenario"]:
+            dict_all[key] = rechunk(dict_all[key], pattern="full_time")
+            dict_all[key] = dict_all[key].persist()
+        elapsed = time.time() - step_start_time
+        if verbose:
+            print(f"Rechunked all to full time: {elapsed:.2f} seconds")
 
     ################## Calculate error map
     # Calculate a fine-resolution spatial anomaly pattern derived from the observations
     step_start_time = time.time()
-    error_map = calculate_error_map(obs_coarse=dict_all["obs_coarse"], obs_fine=dict_all["obs"])
+    error_map = calculate_error_map(
+        obs_coarse=dict_all["obs_coarse"].as_numpy(),
+        obs_fine=dict_all["obs"].as_numpy(),
+    )
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Calculate error map for spatial disaggregation: {elapsed:.2f} seconds")
@@ -202,7 +230,46 @@ def run_bcsd(
         elapsed = time.time() - step_start_time
         print(f"Downscaled future: {elapsed:.2f} seconds")
 
-        elapsed_total = time.time() - start_time
-        print(f"TOTAL TIME: {elapsed_total:.2f} seconds")
+    return dict_all
+
+
+def run_bcsd(
+    *,
+    gcm=None,
+    train_period_start=None,
+    train_period_end=None,
+    predict_period_start=None,
+    predict_period_end=None,
+    var_name=None,
+    verbose=True,
+    rechunk_workflow=True,
+):
+
+    dict_all = get_all_data(
+        gcm=gcm,
+        var_name=var_name,
+        verbose=verbose,
+    )
+
+    dict_all = preprocess_data(
+        dict_all=dict_all,
+        train_period_start=train_period_start,
+        train_period_end=train_period_end,
+        predict_period_start=predict_period_start,
+        predict_period_end=predict_period_end,
+        verbose=verbose,
+        rechunk_workflow=rechunk_workflow,
+    )
+
+    dict_all = bias_correct(
+        dict_all=dict_all,
+        var_name=var_name,
+        verbose=verbose,
+        rechunk_workflow=rechunk_workflow,
+    )
+
+    dict_all = spatially_disaggregate(
+        dict_all, verbose=verbose, rechunk_workflow=rechunk_workflow
+    )
 
     return dict_all
