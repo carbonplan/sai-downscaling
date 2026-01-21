@@ -4,7 +4,6 @@ import warnings
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
 from ibicus.debias import QuantileMapping
-import xarray_regrid
 
 from srm.downscaling_utils import (
     calculate_error_map,
@@ -76,7 +75,6 @@ def preprocess_data(
     verbose=True,
     rechunk_workflow=True,
 ):
-
     ################## Subset time periods
     dict_all["model_hist"] = subset_time(
         dict_all["model_hist"],
@@ -118,9 +116,7 @@ def preprocess_data(
     step_start_time = time.time()
 
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    dict_all["obs_coarse"] = (
-        dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
-    )
+    dict_all["obs_coarse"] = dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
 
     if verbose:
         elapsed = time.time() - step_start_time
@@ -244,7 +240,6 @@ def run_bcsd(
     verbose=True,
     rechunk_workflow=True,
 ):
-
     dict_all = get_all_data(
         gcm=gcm,
         var_name=var_name,
@@ -268,8 +263,6 @@ def run_bcsd(
         rechunk_workflow=rechunk_workflow,
     )
 
-    dict_all = spatially_disaggregate(
-        dict_all, verbose=verbose, rechunk_workflow=rechunk_workflow
-    )
+    dict_all = spatially_disaggregate(dict_all, verbose=verbose, rechunk_workflow=rechunk_workflow)
 
     return dict_all
