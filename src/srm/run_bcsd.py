@@ -73,10 +73,10 @@ def get_all_data(
 
 def preprocess_data(
     dict_all: dict,
-    train_period_start: int = None,
-    train_period_end: int = None,
-    predict_period_start: int = None,
-    predict_period_end: int = None,
+    train_period_start: int,
+    train_period_end: int,
+    predict_period_start: int,
+    predict_period_end: int,
     verbose: bool = True,
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
