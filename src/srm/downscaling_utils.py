@@ -151,11 +151,7 @@ def retrend(
 def interpolate_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
     da_fine_to_coarsen = da_fine_to_coarsen.persist()
 
-    da_coarse = da_fine_to_coarsen.interp(
-        lon=da_coarse_grid.lon,
-        lat=da_coarse_grid.lat,
-        method="linear",
-    )
+    da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).persist()
 
     return da_coarse
 
