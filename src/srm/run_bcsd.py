@@ -7,7 +7,6 @@ from ibicus.debias import QuantileMapping
 
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
-    calculate_error_map,
     detrend,
     downscale_from_coarse,
     get_experiment,
@@ -283,10 +282,6 @@ def spatially_disaggregate(dict_all: dict, verbose: bool = True, rechunk_workflo
     ################## Calculate error map
     # Calculate a fine-resolution spatial anomaly pattern derived from the observations
     step_start_time = time.time()
-    error_map = calculate_error_map(
-        obs_coarse=dict_all["obs_coarse"].as_numpy(),
-        obs_fine=dict_all["obs"].as_numpy(),
-    )
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Calculate error map for spatial disaggregation: {elapsed:.2f} seconds")
@@ -294,15 +289,22 @@ def spatially_disaggregate(dict_all: dict, verbose: bool = True, rechunk_workflo
     ################## Downscale coarse -> fine
     step_start_time = time.time()
     dict_all["model_hist_debiased_downscaled"] = downscale_from_coarse(
-        dict_all["model_hist_debiased"], error_map=error_map, fine_grid=dict_all["obs"]
+        da=dict_all["model_hist_debiased"],
+        obs_coarse=dict_all["obs_coarse"].as_numpy(),
+        obs_fine=dict_all["obs"].as_numpy(),
+        method="subtract",
     )
+
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Downscaled historical: {elapsed:.2f} seconds")
 
     step_start_time = time.time()
     dict_all["scenario_debiased_downscaled"] = downscale_from_coarse(
-        dict_all["scenario_debiased"], error_map=error_map, fine_grid=dict_all["obs"]
+        da=dict_all["scenario_debiased"],
+        obs_coarse=dict_all["obs_coarse"].as_numpy(),
+        obs_fine=dict_all["obs"].as_numpy(),
+        method="subtract",
     )
 
     if verbose:

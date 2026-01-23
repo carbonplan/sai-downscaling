@@ -186,27 +186,39 @@ def calculate_doy_means(ds):
     return ds_xr_doy_mean
 
 
-def calculate_error_map(obs_coarse: xr.DataArray, obs_fine: xr.DataArray):
-    obs_coarse_on_fine_grid = interpolate_coarse_to_fine_grid(
-        da_coarse_to_regrid=obs_coarse, da_fine_grid=obs_fine
-    )
-
-    error_map = obs_fine.mean(dim="time") - obs_coarse_on_fine_grid.mean(dim="time")
-
+def downscale_from_coarse(
+    da: xr.DataArray,
+    obs_coarse: xr.DataArray,
+    obs_fine: xr.DataArray,
+    method="subtract",
+):
+    # Step 1: calculate the daily climatology of high-res observations
     obs_fine_doy_means = calculate_doy_means(obs_fine)
 
-    obs_coarse_on_fine_grid_doy_means = calculate_doy_means(obs_coarse_on_fine_grid)
-
-    error_map = obs_fine_doy_means - obs_coarse_on_fine_grid_doy_means
-
-    return error_map
-
-
-def downscale_from_coarse(da: xr.DataArray, error_map: xr.DataArray, fine_grid: xr.DataArray):
-    da_fine_grid = da.interp(
-        lon=fine_grid["lon"],
-        lat=fine_grid["lat"],
-        method="linear",
+    # Step 2: Aggregate daily climatology to the low-resolution grid of the GCM being processed
+    obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
+        da_fine_to_coarsen=obs_fine_doy_means, da_coarse_grid=obs_coarse
     )
 
-    return da_fine_grid.groupby("time.dayofyear") + error_map
+    # Step 3: Remove coarsened daily climatology from the bias-corrected fields
+    valid_values = ["subtract", "divide"]
+    if method not in valid_values:
+        raise ValueError(f"{method} is currently not supported. valid values are: {valid_values}")
+
+    if method == "subtract":
+        residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
+    elif method == "divide":
+        residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
+
+    # Step 4: Bilinearly interpolate residuals to the high-res grid
+    residuals_fine = interpolate_coarse_to_fine_grid(
+        da_coarse_to_regrid=residuals, da_fine_grid=obs_fine
+    )
+
+    # Step 5: Return high-res climatology
+    if method == "subtract":
+        downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
+    elif method == "divide":
+        downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
+
+    return downscaled
