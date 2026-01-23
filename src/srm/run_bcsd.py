@@ -3,7 +3,6 @@ import warnings
 
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
-import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 from ibicus.debias import QuantileMapping
 
 from srm.downscaling_utils import (
@@ -13,6 +12,7 @@ from srm.downscaling_utils import (
     downscale_from_coarse,
     get_experiment,
     get_obs,
+    interpolate_fine_to_coarse_grid,
     rechunk,
     retrend,
     subset_space,
@@ -95,8 +95,9 @@ def preprocess_data(
 
     step_start_time = time.time()
 
-    # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    dict_all["obs_coarse"] = dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
+    dict_all["obs_coarse"] = interpolate_fine_to_coarse_grid(
+        da_fine_to_coarsen=dict_all["obs"], da_coarse_grid=dict_all["model_hist"]
+    )
 
     if verbose:
         elapsed = time.time() - step_start_time

@@ -2,6 +2,7 @@ import icechunk
 import pandas as pd
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
+import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 
 from srm import catalog
 
@@ -148,12 +149,23 @@ def retrend(
     return retrended
 
 
-def interpolate_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
+def interpolate_fine_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
     da_fine_to_coarsen = da_fine_to_coarsen.persist()
 
+    # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
     da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).persist()
 
     return da_coarse
+
+
+def interpolate_coarse_to_fine_grid(da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray):
+    coarse_on_fine_grid = da_coarse_to_regrid.interp(
+        lon=da_fine_grid["lon"],
+        lat=da_fine_grid["lat"],
+        method="linear",
+    )
+
+    return coarse_on_fine_grid
 
 
 def calculate_error_map(obs_coarse: xr.DataArray, obs_fine: xr.DataArray):
@@ -170,11 +182,10 @@ def calculate_error_map(obs_coarse: xr.DataArray, obs_fine: xr.DataArray):
 
         return ds_xr_doy_mean
 
-    obs_coarse_on_fine_grid = obs_coarse.interp(
-        lon=obs_fine["lon"],
-        lat=obs_fine["lat"],
-        method="linear",
+    obs_coarse_on_fine_grid = interpolate_coarse_to_fine_grid(
+        da_coarse_to_regrid=obs_coarse, da_fine_grid=obs_fine
     )
+
     error_map = obs_fine.mean(dim="time") - obs_coarse_on_fine_grid.mean(dim="time")
 
     obs_fine_doy_means = calculate_doy_means(obs_fine)
