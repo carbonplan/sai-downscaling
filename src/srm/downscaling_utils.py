@@ -153,7 +153,7 @@ def interpolate_fine_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_
     da_fine_to_coarsen = da_fine_to_coarsen.persist()
 
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).persist()
+    da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).as_numpy().persist()
 
     return da_coarse
 
