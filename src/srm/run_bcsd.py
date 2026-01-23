@@ -272,7 +272,7 @@ def spatially_disaggregate(
     dict_all: dict,
     verbose: bool = True,
     rechunk_workflow: bool = True,
-    clim_method: str = "simple",
+    clim_method: str = "fft",
     method: str = "subtract",
 ):
     ################## Do Quantile Mapping
