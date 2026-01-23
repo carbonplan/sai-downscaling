@@ -1,4 +1,5 @@
 import icechunk
+import numpy as np
 import pandas as pd
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
@@ -168,10 +169,30 @@ def interpolate_coarse_to_fine_grid(da_coarse_to_regrid: xr.DataArray, da_fine_g
     return coarse_on_fine_grid
 
 
-def calculate_doy_means(ds):
+def fft_smooth_3harmonics(data):
+    """Apply FFT and retain only mean + 3 harmonics"""
+    # Handle NaN values
+    if np.all(np.isnan(data)):
+        return data
+
+    # Compute FFT
+    Z = np.fft.fft(data)
+
+    # Create filtered version: keep mean (0) + first 3 harmonics (1,2,3 and -3,-2,-1)
+    Z_filtered = np.zeros_like(Z)
+    Z_filtered[0] = Z[0]  # mean (DC component)
+    Z_filtered[1:4] = Z[1:4]  # positive frequencies (harmonics 1-3)
+    Z_filtered[-3:] = Z[-3:]  # negative frequencies (harmonics 1-3)
+
+    # Inverse FFT to get smoothed time series
+    smoothed = np.real(np.fft.ifft(Z_filtered))
+
+    return smoothed
+
+
+def calculate_doy_means(ds, clim_method: str = "simple"):
     """
     Calculate the daily climatology of high-res observations.
-    To do: calculate using a Fast Fourier Transform
     """
     ds_xr = xr.DataArray(
         ds.data,
@@ -183,17 +204,37 @@ def calculate_doy_means(ds):
 
     ds_xr_doy_mean = ds_xr.groupby("time.dayofyear").mean("time")
 
-    return ds_xr_doy_mean
+    if clim_method == "simple":
+        doy_means = ds_xr_doy_mean
+    elif clim_method == "fft":
+        # Apply FFT smoothing along the time dimension
+        obs_fine_doy_means_smoothed = xr.apply_ufunc(
+            fft_smooth_3harmonics,
+            ds_xr_doy_mean.load(),
+            input_core_dims=[["dayofyear"]],
+            output_core_dims=[["dayofyear"]],
+            vectorize=True,
+            # dask='parallelized',
+            output_dtypes=[float],
+        )
+
+        obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.transpose(
+            "dayofyear", "lat", "lon"
+        )
+
+        doy_means = obs_fine_doy_means_smoothed
+    return doy_means
 
 
 def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    method="subtract",
+    method: str = "subtract",
+    clim_method: str = "simple",
 ):
     # Step 1: calculate the daily climatology of high-res observations
-    obs_fine_doy_means = calculate_doy_means(obs_fine)
+    obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
 
     # Step 2: Aggregate daily climatology to the low-resolution grid of the GCM being processed
     obs_coarse_doy_means = interpolate_fine_to_coarse_grid(

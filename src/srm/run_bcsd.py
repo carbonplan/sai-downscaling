@@ -268,7 +268,13 @@ def bias_correct(
     return dict_all
 
 
-def spatially_disaggregate(dict_all: dict, verbose: bool = True, rechunk_workflow: bool = True):
+def spatially_disaggregate(
+    dict_all: dict,
+    verbose: bool = True,
+    rechunk_workflow: bool = True,
+    clim_method: str = "simple",
+    method: str = "subtract",
+):
     ################## Do Quantile Mapping
     if rechunk_workflow:
         step_start_time = time.time()
@@ -279,20 +285,14 @@ def spatially_disaggregate(dict_all: dict, verbose: bool = True, rechunk_workflo
         if verbose:
             print(f"Rechunked all to full time: {elapsed:.2f} seconds")
 
-    ################## Calculate error map
-    # Calculate a fine-resolution spatial anomaly pattern derived from the observations
-    step_start_time = time.time()
-    if verbose:
-        elapsed = time.time() - step_start_time
-        print(f"Calculate error map for spatial disaggregation: {elapsed:.2f} seconds")
-
     ################## Downscale coarse -> fine
     step_start_time = time.time()
     dict_all["model_hist_debiased_downscaled"] = downscale_from_coarse(
         da=dict_all["model_hist_debiased"],
         obs_coarse=dict_all["obs_coarse"].as_numpy(),
         obs_fine=dict_all["obs"].as_numpy(),
-        method="subtract",
+        method=method,
+        clim_method=clim_method,
     )
 
     if verbose:
@@ -304,7 +304,8 @@ def spatially_disaggregate(dict_all: dict, verbose: bool = True, rechunk_workflo
         da=dict_all["scenario_debiased"],
         obs_coarse=dict_all["obs_coarse"].as_numpy(),
         obs_fine=dict_all["obs"].as_numpy(),
-        method="subtract",
+        method=method,
+        clim_method=clim_method,
     )
 
     if verbose:
