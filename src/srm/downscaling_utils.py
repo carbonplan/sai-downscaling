@@ -168,20 +168,25 @@ def interpolate_coarse_to_fine_grid(da_coarse_to_regrid: xr.DataArray, da_fine_g
     return coarse_on_fine_grid
 
 
+def calculate_doy_means(ds):
+    """
+    Calculate the daily climatology of high-res observations.
+    To do: calculate using a Fast Fourier Transform
+    """
+    ds_xr = xr.DataArray(
+        ds.data,
+        dims=ds.dims,
+        coords={k: v for k, v in ds.coords.items() if k != "spatial_ref"},
+    )
+
+    ds_xr = ds_xr.assign_coords(time=("time", pd.to_datetime(ds["time"].values)))
+
+    ds_xr_doy_mean = ds_xr.groupby("time.dayofyear").mean("time")
+
+    return ds_xr_doy_mean
+
+
 def calculate_error_map(obs_coarse: xr.DataArray, obs_fine: xr.DataArray):
-    def calculate_doy_means(ds):
-        ds_xr = xr.DataArray(
-            ds.data,
-            dims=ds.dims,
-            coords={k: v for k, v in ds.coords.items() if k != "spatial_ref"},
-        )
-
-        ds_xr = ds_xr.assign_coords(time=("time", pd.to_datetime(ds["time"].values)))
-
-        ds_xr_doy_mean = ds_xr.groupby("time.dayofyear").mean("time")
-
-        return ds_xr_doy_mean
-
     obs_coarse_on_fine_grid = interpolate_coarse_to_fine_grid(
         da_coarse_to_regrid=obs_coarse, da_fine_grid=obs_fine
     )
