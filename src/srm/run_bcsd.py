@@ -206,8 +206,9 @@ def bias_correct(
         cm_future=cm_future,
         time_obs=dict_all["obs_coarse"]["time"].values,
         time_cm_hist=dict_all["model_hist"]["time"].values,
-        # parallelbool = True,
-        # nr_processesint = 1
+        parallel=True,
+        progressbar=False,  # progress bar doesn't work if parallel=True
+        nr_processes=16,
     )
     if verbose:
         elapsed = time.time() - step_start_time
@@ -222,6 +223,9 @@ def bias_correct(
         time_obs=dict_all["obs_coarse"]["time"].values,
         time_cm_hist=dict_all["model_hist"]["time"].values,
         time_cm_future=dict_all["model_scenario"]["time"].values,
+        parallel=True,
+        progressbar=False,  # progress bar doesn't work if parallel=True
+        nr_processes=16,
     )
     if verbose:
         elapsed = time.time() - step_start_time
