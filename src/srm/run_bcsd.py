@@ -174,6 +174,16 @@ def bias_correct(
     do_windowing: bool = True,
     mapping_type: str = "nonparametric",
 ):
+    ################## Do Quantile Mapping
+    if rechunk_workflow:
+        step_start_time = time.time()
+        for key in ["obs_coarse", "model_hist", "model_scenario"]:
+            dict_all[key] = rechunk(dict_all[key], pattern="full_time")
+            dict_all[key] = dict_all[key].persist()
+        elapsed = time.time() - step_start_time
+        if verbose:
+            print(f"Rechunked all to full time: {elapsed:.2f} seconds")
+
     step_start_time = time.time()
 
     if do_windowing:
@@ -279,15 +289,14 @@ def spatially_disaggregate(
     clim_method: str = "fft",
     method: str = "subtract",
 ):
-    ################## Do Quantile Mapping
     if rechunk_workflow:
         step_start_time = time.time()
         for key in ["obs_coarse", "model_hist", "model_scenario"]:
-            dict_all[key] = rechunk(dict_all[key], pattern="full_time")
+            dict_all[key] = rechunk(dict_all[key], pattern="full_space")
             dict_all[key] = dict_all[key].persist()
         elapsed = time.time() - step_start_time
         if verbose:
-            print(f"Rechunked all to full time: {elapsed:.2f} seconds")
+            print(f"Rechunked all to full space: {elapsed:.2f} seconds")
 
     ################## Downscale coarse -> fine
     step_start_time = time.time()
