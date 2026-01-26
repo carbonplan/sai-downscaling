@@ -291,7 +291,7 @@ def spatially_disaggregate(
 ):
     if rechunk_workflow:
         step_start_time = time.time()
-        for key in ["obs_coarse", "model_hist", "model_scenario"]:
+        for key in ["model_hist_debiased", "scenario_debiased"]:
             dict_all[key] = rechunk(dict_all[key], pattern="full_space")
             dict_all[key] = dict_all[key].persist()
         elapsed = time.time() - step_start_time
