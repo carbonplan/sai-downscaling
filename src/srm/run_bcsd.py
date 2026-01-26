@@ -215,6 +215,7 @@ def bias_correct(
         cm_future=cm_future,
         time_obs=dict_all["obs_coarse"]["time"].values,
         time_cm_hist=dict_all["model_hist"]["time"].values,
+        time_cm_future=dict_all["model_hist"]["time"].values,
         parallel=True,
         progressbar=False,  # progress bar doesn't work if parallel=True
         nr_processes=16,
