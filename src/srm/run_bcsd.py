@@ -1,6 +1,7 @@
 import time
 import warnings
 
+import dask.system
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
 from ibicus.debias import QuantileMapping
@@ -218,7 +219,7 @@ def bias_correct(
         time_cm_future=dict_all["model_hist"]["time"].values,
         parallel=True,
         progressbar=False,  # progress bar doesn't work if parallel=True
-        nr_processes=16,
+        nr_processes=dask.system.CPU_COUNT,
     )
     if verbose:
         elapsed = time.time() - step_start_time
@@ -235,7 +236,7 @@ def bias_correct(
         time_cm_future=dict_all["model_scenario"]["time"].values,
         parallel=True,
         progressbar=False,  # progress bar doesn't work if parallel=True
-        nr_processes=16,
+        nr_processes=dask.system.CPU_COUNT,
     )
     if verbose:
         elapsed = time.time() - step_start_time
