@@ -146,6 +146,10 @@ def preprocess_data(
             elapsed = time.time() - step_start_time
             print(f"Detrended data: {elapsed:.2f} seconds")
 
+    else:
+        # Use raw model scenario data if not detrending
+        dict_all["scenario_detrended"] = dict_all["model_scenario"]
+
     ################## Subset time periods
     dict_all["model_hist"] = subset_time(
         dict_all["model_hist"],
