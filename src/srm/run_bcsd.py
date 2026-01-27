@@ -1,5 +1,6 @@
 import warnings
 
+import dask.system
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
@@ -34,8 +35,8 @@ RUN_PARAMETERS = {
 
 
 def get_all_data(
-    gcm: str = None,
-    var_name: str = None,
+    gcm: str,
+    var_name: str,
     verbose: bool = True,
 ):
     with Timer("Loaded data", verbose=verbose):
@@ -73,9 +74,6 @@ def preprocess_data(
     if rechunk_workflow:
         with Timer("Rechunked obs to full space", verbose=verbose):
             dict_all["obs"] = rechunk(dict_all["obs"], pattern="full_space")
-            # currently, we need this call otherwise xarray_regrid throws an error when we try to access values of
-            # the resulting regridded dataset
-            dict_all["obs"] = dict_all["obs"].compute()
 
     with Timer("Interpolated obs to coarse grid", verbose=verbose):
         # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
@@ -183,8 +181,9 @@ def bias_correct(
             cm_future=cm_future,
             time_obs=dict_all["obs_coarse"]["time"].values,
             time_cm_hist=dict_all["model_hist"]["time"].values,
-            # parallelbool = True,
-            # nr_processesint = 1
+            parallel=True,
+            progressbar=False,
+            nr_processes=dask.system.CPU_COUNT,
         )
 
     with Timer("Quantile mapped future", verbose=verbose):
@@ -196,6 +195,9 @@ def bias_correct(
             time_obs=dict_all["obs_coarse"]["time"].values,
             time_cm_hist=dict_all["model_hist"]["time"].values,
             time_cm_future=dict_all["model_scenario"]["time"].values,
+            parallel=True,
+            progressbar=False,
+            nr_processes=dask.system.CPU_COUNT,
         )
 
     ################## Save debiased data to dictionary
@@ -242,7 +244,7 @@ def spatially_disaggregate(dict_all: dict, verbose: bool = True, rechunk_workflo
         with Timer("Rechunked all to full time", verbose=verbose):
             for key in ["obs_coarse", "model_hist", "model_scenario"]:
                 dict_all[key] = rechunk(dict_all[key], pattern="full_time")
-                dict_all[key] = dict_all[key].compute()
+                # dict_all[key] = dict_all[key].compute()
 
     ################## Calculate error map
     # Calculate a fine-resolution spatial anomaly pattern derived from the observations
