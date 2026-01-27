@@ -233,6 +233,12 @@ def downscale_from_coarse(
     method: str = "subtract",
     clim_method: str = "simple",
 ):
+    valid_clim_methods = ["simple", "fft"]
+    if clim_method not in valid_clim_methods:
+        raise ValueError(
+            f"{method} is currently not supported. valid values are: {valid_clim_methods}"
+        )
+
     # Step 1: calculate the daily climatology of high-res observations
     obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
 
