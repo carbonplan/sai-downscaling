@@ -172,6 +172,15 @@ def preprocess_data(
         time_period="predict",
     )
 
+    dict_all["scenario_detrended"] = subset_time(
+        dict_all["scenario_detrended"],
+        train_period_start=train_period_start,
+        train_period_end=train_period_end,
+        predict_period_start=predict_period_start,
+        predict_period_end=predict_period_end,
+        time_period="predict",
+    )
+
     return dict_all
 
 
@@ -226,14 +235,14 @@ def bias_correct(
         print(f"Quantile mapped historical: {elapsed:.2f} seconds")
 
     step_start_time = time.time()
-    cm_future = dict_all["model_scenario"].load().values
+    cm_future = dict_all["scenario_detrended"].load().values
     scenario_fut_debiased = debiaser.apply(
         obs=obs,
         cm_hist=cm_hist,
         cm_future=cm_future,
         time_obs=dict_all["obs_coarse"]["time"].values,
         time_cm_hist=dict_all["model_hist"]["time"].values,
-        time_cm_future=dict_all["model_scenario"]["time"].values,
+        time_cm_future=dict_all["scenario_detrended"]["time"].values,
         parallel=True,
         progressbar=False,  # progress bar doesn't work if parallel=True
         nr_processes=dask.system.CPU_COUNT,
@@ -256,9 +265,9 @@ def bias_correct(
     debiased_scenario = xr.DataArray(
         data=scenario_fut_debiased,
         coords={
-            "lat": dict_all["model_scenario"]["lat"],
-            "lon": dict_all["model_scenario"]["lon"],
-            "time": dict_all["model_scenario"]["time"],
+            "lat": dict_all["scenario_detrended"]["lat"],
+            "lon": dict_all["scenario_detrended"]["lon"],
+            "time": dict_all["scenario_detrended"]["time"],
         },
         dims=["time", "lat", "lon"],
     )
