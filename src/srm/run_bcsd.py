@@ -357,6 +357,7 @@ def run_bcsd(
     do_windowing: bool = True,
     subset_bounds: list | None = None,
     save_output: bool = True,
+    save_intermediate_output: bool = True,
 ):
     dict_all = get_all_data(
         gcm=gcm,
@@ -396,10 +397,23 @@ def run_bcsd(
 
     if save_output:
         step_start_time = time.time()
+        if save_intermediate_output:
+            dict_to_save = {
+                key: dict_all[key]
+                for key in dict_all
+                if key
+                in [
+                    "model_hist_debiased_downscaled",
+                    "scenario_debiased_downscaled",
+                ]
+            }
+        else:
+            dict_to_save = dict_all
         # fname should be all keys joined by underscores
-        fname_key = "_".join(dict_all.keys())
+        # fname_key = "_".join(dict_to_save.keys())
+        fname_key = "data"
         save_data(
-            dict_data=dict_all,
+            dict_data=dict_to_save,
             fname_key=fname_key,
             var_name=var_name,
             output_suffix="zarr",
