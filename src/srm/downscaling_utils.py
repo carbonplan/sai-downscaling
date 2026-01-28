@@ -319,3 +319,15 @@ def save_data(
 
     else:
         raise ValueError("Invalid output format. Please choose 'zarr' or 'netcdf'.")
+
+
+def get_output_data(
+    fname_key: str,
+    dtree_key: str = "model_hist_obs_model_scenario_obs_coarse_historical_scenario_scenario_detrended_scenario_trend_model_hist_debiased_scenario_debiased_detrended_scenario_debiased_model_hist_debiased_downscaled_scenario_debiased_downscaled.zarr/",
+    s3_bucket: str = "s3://carbonplan-scratch/",
+    prefix: str = "srm-scratch/v0.3_global/",
+):
+    dt = xr.open_datatree(s3_bucket + prefix + dtree_key, engine="zarr")
+    ds = dt[fname_key]
+
+    return ds
