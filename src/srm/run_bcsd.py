@@ -1,18 +1,18 @@
 import time
 import warnings
 
+import dask.system
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
-import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 from ibicus.debias import QuantileMapping
 
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
-    calculate_error_map,
     detrend,
     downscale_from_coarse,
     get_experiment,
     get_obs,
+    interpolate_fine_to_coarse_grid,
     rechunk,
     retrend,
     subset_space,
@@ -95,14 +95,24 @@ def preprocess_data(
 
     step_start_time = time.time()
 
-    # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    dict_all["obs_coarse"] = dict_all["obs"].regrid.conservative(dict_all["model_hist"]).persist()
+    dict_all["obs_coarse"] = interpolate_fine_to_coarse_grid(
+        da_fine_to_coarsen=dict_all["obs"], da_coarse_grid=dict_all["model_hist"]
+    )
 
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Interpolated obs to coarse grid: {elapsed:.2f} seconds")
 
     ###### Detrend data
+    if rechunk_workflow:
+        step_start_time = time.time()
+        for key in ["obs_coarse", "model_hist", "model_scenario"]:
+            dict_all[key] = rechunk(dict_all[key], pattern="full_time")
+            dict_all[key] = dict_all[key].persist()
+        elapsed = time.time() - step_start_time
+        if verbose:
+            print(f"Rechunked all to full time: {elapsed:.2f} seconds")
+
     if detrend_data:
         step_start_time = time.time()
         dict_all["historical_scenario"] = xr.concat(
@@ -136,6 +146,10 @@ def preprocess_data(
             elapsed = time.time() - step_start_time
             print(f"Detrended data: {elapsed:.2f} seconds")
 
+    else:
+        # Use raw model scenario data if not detrending
+        dict_all["scenario_detrended"] = dict_all["model_scenario"]
+
     ################## Subset time periods
     dict_all["model_hist"] = subset_time(
         dict_all["model_hist"],
@@ -155,6 +169,15 @@ def preprocess_data(
     )
     dict_all["model_scenario"] = subset_time(
         dict_all["model_scenario"],
+        train_period_start=train_period_start,
+        train_period_end=train_period_end,
+        predict_period_start=predict_period_start,
+        predict_period_end=predict_period_end,
+        time_period="predict",
+    )
+
+    dict_all["scenario_detrended"] = subset_time(
+        dict_all["scenario_detrended"],
         train_period_start=train_period_start,
         train_period_end=train_period_end,
         predict_period_start=predict_period_start,
@@ -206,22 +229,27 @@ def bias_correct(
         cm_future=cm_future,
         time_obs=dict_all["obs_coarse"]["time"].values,
         time_cm_hist=dict_all["model_hist"]["time"].values,
-        # parallelbool = True,
-        # nr_processesint = 1
+        time_cm_future=dict_all["model_hist"]["time"].values,
+        parallel=True,
+        progressbar=False,  # progress bar doesn't work if parallel=True
+        nr_processes=dask.system.CPU_COUNT,
     )
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Quantile mapped historical: {elapsed:.2f} seconds")
 
     step_start_time = time.time()
-    cm_future = dict_all["model_scenario"].load().values
+    cm_future = dict_all["scenario_detrended"].load().values
     scenario_fut_debiased = debiaser.apply(
         obs=obs,
         cm_hist=cm_hist,
         cm_future=cm_future,
         time_obs=dict_all["obs_coarse"]["time"].values,
         time_cm_hist=dict_all["model_hist"]["time"].values,
-        time_cm_future=dict_all["model_scenario"]["time"].values,
+        time_cm_future=dict_all["scenario_detrended"]["time"].values,
+        parallel=True,
+        progressbar=False,  # progress bar doesn't work if parallel=True
+        nr_processes=dask.system.CPU_COUNT,
     )
     if verbose:
         elapsed = time.time() - step_start_time
@@ -241,9 +269,9 @@ def bias_correct(
     debiased_scenario = xr.DataArray(
         data=scenario_fut_debiased,
         coords={
-            "lat": dict_all["model_scenario"]["lat"],
-            "lon": dict_all["model_scenario"]["lon"],
-            "time": dict_all["model_scenario"]["time"],
+            "lat": dict_all["scenario_detrended"]["lat"],
+            "lon": dict_all["scenario_detrended"]["lon"],
+            "time": dict_all["scenario_detrended"]["time"],
         },
         dims=["time", "lat", "lon"],
     )
@@ -268,40 +296,43 @@ def bias_correct(
     return dict_all
 
 
-def spatially_disaggregate(dict_all: dict, verbose: bool = True, rechunk_workflow: bool = True):
-    ################## Do Quantile Mapping
+def spatially_disaggregate(
+    dict_all: dict,
+    verbose: bool = True,
+    rechunk_workflow: bool = True,
+    clim_method: str = "fft",
+    method: str = "subtract",
+):
     if rechunk_workflow:
         step_start_time = time.time()
-        for key in ["obs_coarse", "model_hist", "model_scenario"]:
-            dict_all[key] = rechunk(dict_all[key], pattern="full_time")
+        for key in ["model_hist_debiased", "scenario_debiased"]:
+            dict_all[key] = rechunk(dict_all[key], pattern="full_space")
             dict_all[key] = dict_all[key].persist()
         elapsed = time.time() - step_start_time
         if verbose:
-            print(f"Rechunked all to full time: {elapsed:.2f} seconds")
-
-    ################## Calculate error map
-    # Calculate a fine-resolution spatial anomaly pattern derived from the observations
-    step_start_time = time.time()
-    error_map = calculate_error_map(
-        obs_coarse=dict_all["obs_coarse"].as_numpy(),
-        obs_fine=dict_all["obs"].as_numpy(),
-    )
-    if verbose:
-        elapsed = time.time() - step_start_time
-        print(f"Calculate error map for spatial disaggregation: {elapsed:.2f} seconds")
+            print(f"Rechunked all to full space: {elapsed:.2f} seconds")
 
     ################## Downscale coarse -> fine
     step_start_time = time.time()
     dict_all["model_hist_debiased_downscaled"] = downscale_from_coarse(
-        dict_all["model_hist_debiased"], error_map=error_map, fine_grid=dict_all["obs"]
+        da=dict_all["model_hist_debiased"],
+        obs_coarse=dict_all["obs_coarse"].as_numpy(),
+        obs_fine=dict_all["obs"].as_numpy(),
+        method=method,
+        clim_method=clim_method,
     )
+
     if verbose:
         elapsed = time.time() - step_start_time
         print(f"Downscaled historical: {elapsed:.2f} seconds")
 
     step_start_time = time.time()
     dict_all["scenario_debiased_downscaled"] = downscale_from_coarse(
-        dict_all["scenario_debiased"], error_map=error_map, fine_grid=dict_all["obs"]
+        da=dict_all["scenario_debiased"],
+        obs_coarse=dict_all["obs_coarse"].as_numpy(),
+        obs_fine=dict_all["obs"].as_numpy(),
+        method=method,
+        clim_method=clim_method,
     )
 
     if verbose:
