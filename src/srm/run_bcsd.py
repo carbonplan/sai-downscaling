@@ -399,8 +399,9 @@ def run_bcsd(
         # fname should be all keys joined by underscores
         fname_key = "_".join(dict_all.keys())
         save_data(
-            dict_all,
+            dict_data=dict_all,
             fname_key=fname_key,
+            var_name=var_name,
             output_suffix="zarr",
             s3_bucket="s3://carbonplan-scratch/",
             prefix="srm-scratch/v0.3_global/",

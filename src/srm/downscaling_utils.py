@@ -275,6 +275,7 @@ def downscale_from_coarse(
 def save_data(
     dict_data: dict,
     fname_key: str,
+    var_name: str,
     output_suffix: str = "zarr",
     s3_bucket: str = "s3://carbonplan-scratch/",
     prefix: str = "srm-scratch/v0.3_global/",
@@ -286,7 +287,7 @@ def save_data(
     if print_fpath:
         print(f"Saving to {s3_path}")
 
-    dict_dsets = {key: dict_data[key].to_dataset() for key in dict_data}
+    dict_dsets = {key: dict_data[key].to_dataset(name=var_name) for key in dict_data}
     # clear encoding to avoid issues when saving
     for ds in dict_dsets.values():
         for var in ds.data_vars:
