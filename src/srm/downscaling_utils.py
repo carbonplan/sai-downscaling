@@ -269,3 +269,38 @@ def downscale_from_coarse(
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
 
     return downscaled
+
+
+def save_data(
+    ds,
+    fname_key: str,
+    output_format: str = "zarr",
+    s3_bucket: str = "s3://carbonplan-scratch/",
+    prefix: str = "srm-scratch/v0.3_global/",
+):
+    if output_format == "zarr":
+        output_dir = s3_bucket + prefix
+        s3_path = output_dir + fname_key + ".zarr"
+        ds.to_zarr(s3_path, encoding={var: {"shards": None} for var in ds.data_vars}, mode="w")
+
+    elif output_format == "netcdf":
+        output_dir = s3_bucket + prefix
+        s3_path = output_dir + fname_key + ".nc"
+        ds.to_netcdf(s3_path)
+
+    elif output_format == "icechunk":
+        # Option 2: save as icechunk. Example:
+        storage = icechunk.s3_storage(
+            bucket=s3_bucket,
+            prefix=prefix + fname_key + ".icechunk",
+            from_env=True,
+        )
+        repo = icechunk.Repository.create(storage)
+
+        session = repo.writable_session("main")
+
+        icechunk.xarray.to_icechunk(ds, session)
+        session.commit("write data")
+
+    else:
+        raise ValueError("Invalid output format. Please choose 'zarr' or 'netcdf'.")

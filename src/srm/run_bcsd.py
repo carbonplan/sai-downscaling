@@ -15,6 +15,7 @@ from srm.downscaling_utils import (
     interpolate_fine_to_coarse_grid,
     rechunk,
     retrend,
+    save_data,
     subset_space,
     subset_time,
 )
@@ -355,6 +356,7 @@ def run_bcsd(
     detrend_data: bool = True,
     do_windowing: bool = True,
     subset_bounds: list = None,
+    save_output: bool = True,
 ):
     dict_all = get_all_data(
         gcm=gcm,
@@ -391,5 +393,20 @@ def run_bcsd(
     )
 
     dict_all = spatially_disaggregate(dict_all, verbose=verbose, rechunk_workflow=rechunk_workflow)
+
+    if save_output:
+        step_start_time = time.time()
+        for key in dict_all:
+            ds = dict_all[key].to_dataset(name=var_name)
+            save_data(
+                ds,
+                fname_key=key,
+                output_format="zarr",
+                s3_bucket="s3://carbonplan-scratch/",
+                prefix="srm-scratch/v0.3_global/",
+            )
+        if verbose:
+            elapsed = time.time() - step_start_time
+            print(f"Saved all data: {elapsed:.2f} seconds")
 
     return dict_all
