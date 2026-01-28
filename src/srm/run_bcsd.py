@@ -401,7 +401,7 @@ def run_bcsd(
             save_data(
                 ds,
                 fname_key=key,
-                output_format="zarr",
+                output_suffix="zarr",
                 s3_bucket="s3://carbonplan-scratch/",
                 prefix="srm-scratch/v0.3_global/",
             )

@@ -274,21 +274,27 @@ def downscale_from_coarse(
 def save_data(
     ds,
     fname_key: str,
-    output_format: str = "zarr",
+    output_suffix: str = "zarr",
     s3_bucket: str = "s3://carbonplan-scratch/",
     prefix: str = "srm-scratch/v0.3_global/",
+    print_fpath: bool = True,
 ):
-    if output_format == "zarr":
-        output_dir = s3_bucket + prefix
-        s3_path = output_dir + fname_key + ".zarr"
-        ds.to_zarr(s3_path, encoding={var: {"shards": None} for var in ds.data_vars}, mode="w")
+    s3_path = f"{s3_bucket + prefix}{fname_key}.{output_suffix}"
 
-    elif output_format == "netcdf":
-        output_dir = s3_bucket + prefix
-        s3_path = output_dir + fname_key + ".nc"
+    if print_fpath:
+        print(f"Saving to {s3_path}")
+
+    if output_suffix == "zarr":
+        ds_computed = ds.compute()
+        ds_rechunked = ds_computed.chunk({"time": 5, "lat": -1, "lon": -1})
+        ds_rechunked.to_zarr(
+            s3_path, encoding={var: {"shards": None} for var in ds.data_vars}, mode="w"
+        )
+
+    elif output_suffix == "nc":
         ds.to_netcdf(s3_path)
 
-    elif output_format == "icechunk":
+    elif output_suffix == "icechunk":
         # Option 2: save as icechunk. Example:
         storage = icechunk.s3_storage(
             bucket=s3_bucket,
