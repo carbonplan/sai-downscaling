@@ -398,6 +398,8 @@ def run_bcsd(
     if save_output:
         step_start_time = time.time()
         if save_intermediate_output:
+            dict_to_save = dict_all
+        else:
             dict_to_save = {
                 key: dict_all[key]
                 for key in dict_all
@@ -407,8 +409,7 @@ def run_bcsd(
                     "scenario_debiased_downscaled",
                 ]
             }
-        else:
-            dict_to_save = dict_all
+
         # fname should be all keys joined by underscores
         # fname_key = "_".join(dict_to_save.keys())
         fname_key = "data"
@@ -418,7 +419,7 @@ def run_bcsd(
             var_name=var_name,
             output_suffix="zarr",
             s3_bucket="s3://carbonplan-scratch/",
-            prefix="srm-scratch/v0.3_global/",
+            prefix="srm-scratch/v0.3_SouthAfrica/",
         )
 
         if verbose:
