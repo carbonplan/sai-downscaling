@@ -280,7 +280,7 @@ def save_data(
     s3_bucket: str = "s3://carbonplan-scratch/",
     prefix: str = "srm-scratch/v0.3_global/",
     print_fpath: bool = True,
-    chunks: dict | None = None,
+    chunks: dict = {"time": 5, "lat": -1, "lon": -1},
 ):
     s3_path = f"{s3_bucket + prefix}{fname_key}.{output_suffix}"
 
@@ -298,7 +298,6 @@ def save_data(
         # instead of chunking here, we could let the user specify chunking earlier?
         if chunks is not None:
             datatree = datatree.chunk(chunks)
-        datatree = datatree.chunk({"time": 5, "lat": -1, "lon": -1})
         datatree.to_zarr(s3_path, mode="w")
 
     elif output_suffix == "nc":
