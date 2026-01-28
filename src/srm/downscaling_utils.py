@@ -278,7 +278,7 @@ def save_data(
     var_name: str,
     output_suffix: str = "zarr",
     s3_bucket: str = "s3://carbonplan-scratch/",
-    prefix: str = "srm-scratch/v0.3_global/",
+    prefix: str = "srm-scratch/v0.3_SouthAfrica/",
     print_fpath: bool = True,
     chunks: dict = {"time": 5, "lat": -1, "lon": -1},
 ):
@@ -323,9 +323,9 @@ def save_data(
 
 def get_output_data(
     fname_key: str,
-    dtree_key: str = "model_hist_obs_model_scenario_obs_coarse_historical_scenario_scenario_detrended_scenario_trend_model_hist_debiased_scenario_debiased_detrended_scenario_debiased_model_hist_debiased_downscaled_scenario_debiased_downscaled.zarr/",
+    dtree_key: str = "data.zarr/",
     s3_bucket: str = "s3://carbonplan-scratch/",
-    prefix: str = "srm-scratch/v0.3_global/",
+    prefix: str = "srm-scratch/v0.3_SouthAfrica/",
 ):
     dt = xr.open_datatree(s3_bucket + prefix + dtree_key, engine="zarr")
     ds = dt[fname_key]
