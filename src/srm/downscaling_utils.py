@@ -1,4 +1,5 @@
 import icechunk
+import icechunk.xarray
 import numpy as np
 import pandas as pd
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
@@ -272,27 +273,34 @@ def downscale_from_coarse(
 
 
 def save_data(
-    ds,
+    dict_data: dict,
     fname_key: str,
     output_suffix: str = "zarr",
     s3_bucket: str = "s3://carbonplan-scratch/",
     prefix: str = "srm-scratch/v0.3_global/",
     print_fpath: bool = True,
+    chunks: dict | None = None,
 ):
     s3_path = f"{s3_bucket + prefix}{fname_key}.{output_suffix}"
 
     if print_fpath:
         print(f"Saving to {s3_path}")
 
+    dict_dsets = {key: dict_data[key].to_dataset() for key in dict_data}
+    # clear encoding to avoid issues when saving
+    for ds in dict_dsets.values():
+        for var in ds.data_vars:
+            ds[var].encoding = {}
+    datatree = xr.DataTree.from_dict(dict_dsets)
+
     if output_suffix == "zarr":
-        ds_computed = ds.compute()
-        ds_rechunked = ds_computed.chunk({"time": 5, "lat": -1, "lon": -1})
-        ds_rechunked.to_zarr(
-            s3_path, encoding={var: {"shards": None} for var in ds.data_vars}, mode="w"
-        )
+        # instead of chunking here, we could let the user specify chunking earlier?
+        if chunks is not None:
+            datatree = datatree.chunk(chunks)
+        datatree.to_zarr(s3_path, mode="w")
 
     elif output_suffix == "nc":
-        ds.to_netcdf(s3_path)
+        datatree.to_netcdf(s3_path)
 
     elif output_suffix == "icechunk":
         # Option 2: save as icechunk. Example:
@@ -305,7 +313,7 @@ def save_data(
 
         session = repo.writable_session("main")
 
-        icechunk.xarray.to_icechunk(ds, session)
+        icechunk.xarray.to_icechunk(datatree, session)
         session.commit("write data")
 
     else:

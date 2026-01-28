@@ -355,7 +355,7 @@ def run_bcsd(
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
     do_windowing: bool = True,
-    subset_bounds: list = None,
+    subset_bounds: list | None = None,
     save_output: bool = True,
 ):
     dict_all = get_all_data(
@@ -396,15 +396,16 @@ def run_bcsd(
 
     if save_output:
         step_start_time = time.time()
-        for key in dict_all:
-            ds = dict_all[key].to_dataset(name=var_name)
-            save_data(
-                ds,
-                fname_key=key,
-                output_suffix="zarr",
-                s3_bucket="s3://carbonplan-scratch/",
-                prefix="srm-scratch/v0.3_global/",
-            )
+        # fname should be all keys joined by underscores
+        fname_key = "_".join(dict_all.keys())
+        save_data(
+            dict_all,
+            fname_key=fname_key,
+            output_suffix="zarr",
+            s3_bucket="s3://carbonplan-scratch/",
+            prefix="srm-scratch/v0.3_global/",
+        )
+
         if verbose:
             elapsed = time.time() - step_start_time
             print(f"Saved all data: {elapsed:.2f} seconds")
