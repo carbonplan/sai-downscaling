@@ -298,6 +298,7 @@ def save_data(
         # instead of chunking here, we could let the user specify chunking earlier?
         if chunks is not None:
             datatree = datatree.chunk(chunks)
+        datatree = datatree.chunk({"time": 5, "lat": -1, "lon": -1})
         datatree.to_zarr(s3_path, mode="w")
 
     elif output_suffix == "nc":
