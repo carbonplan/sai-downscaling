@@ -1,8 +1,8 @@
 import dask
 import icechunk
 import xarray as xr
+from obspec_utils.registry import ObjectStoreRegistry
 from virtualizarr.parsers import HDFParser
-from virtualizarr.registry import ObjectStoreRegistry
 
 from srm.config import VarSpec
 
@@ -23,8 +23,8 @@ def get_var_specs(catalog_entry) -> dict[str, VarSpec]:
 
 
 def CMORIZE_pr(ds: xr.Dataset, var_name: str) -> xr.Dataset:
-    # multiply by 997, density of water (though note CMORization CESM script says multiply by 1000)
-    ds[var_name] = ds[var_name] * 997.0
+    # CMORization CESM script says multiply by 1000)
+    ds[var_name] = ds[var_name] * 1000.0
     return ds
 
 
