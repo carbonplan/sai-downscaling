@@ -18,6 +18,8 @@ from srm.config import (
 )
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
+    CMORIZE_hurs,
+    CMORIZE_pr,
     add_cf_bounds,
     build_encoding_dict,
     determine_write_mode,
@@ -62,6 +64,13 @@ class BaseCESM_Config(BaseETLConfig):
             "huss": "1",
             "rlds": "W m-2",
             "ps": "Pa",
+        }
+    )
+
+    cmorization_functions: dict = field(
+        default_factory=lambda: {
+            "pr": CMORIZE_pr,
+            "hurs": CMORIZE_hurs,
         }
     )
 
@@ -188,7 +197,9 @@ def _standardize_vars(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
     return ds
 
 
-def _preprocess_cesm(ds: xr.Dataset, config: BaseCESM_Config, subset: bool = False) -> xr.Dataset:
+def _preprocess_cesm(
+    ds: xr.Dataset, config: BaseCESM_Config, var: str, subset: bool = False
+) -> xr.Dataset:
     ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False)
     ds = ds.drop_encoding()
     ds = ds.drop_vars(["ilev", "lev"], errors="ignore")
@@ -196,6 +207,10 @@ def _preprocess_cesm(ds: xr.Dataset, config: BaseCESM_Config, subset: bool = Fal
     ds = ds.sortby(["lat", "lon"])
     ds = _standardize_vars(ds, config)
     ds = trim_negative_precipitation(ds)
+
+    if var in config.cmorization_functions:
+        ds = config.cmorization_functions[var](ds, var)
+
     if subset:
         ds = ds.isel(time=slice(0, 365))
     return ds
@@ -278,7 +293,8 @@ def process_cesm_pipeline(
                 netcdf_urls = _get_netcdf_urls(config, [var])
                 ds = _virtualize_netcdfs(config, netcdf_urls)
 
-            ds = _preprocess_cesm(ds, config, subset=subset)
+            ds = _preprocess_cesm(ds, config, var, subset=subset)
+
             ds = _update_attrs(ds, var_specs, config)
             encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
 

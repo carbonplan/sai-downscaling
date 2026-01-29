@@ -22,6 +22,18 @@ def get_var_specs(catalog_entry) -> dict[str, VarSpec]:
     return {var.name: var for var in catalog_entry.expected_vars}
 
 
+def CMORIZE_pr(ds: xr.Dataset, var_name: str) -> xr.Dataset:
+    # multiply by 997, density of water (though note CMORization CESM script says multiply by 1000)
+    ds[var_name] = ds[var_name] * 997.0
+    return ds
+
+
+def CMORIZE_hurs(ds: xr.Dataset, var_name: str) -> xr.Dataset:
+    # convert fraction to %, multiply by 1000
+    ds[var_name] = ds[var_name] * 1000
+    return ds
+
+
 def trim_negative_precipitation(ds: xr.Dataset) -> xr.Dataset:
     if "pr" in ds.data_vars:
         ds["pr"] = ds["pr"].clip(min=0)
