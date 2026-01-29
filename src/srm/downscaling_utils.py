@@ -161,10 +161,11 @@ def interpolate_fine_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_
 
 
 def interpolate_coarse_to_fine_grid(da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray):
+    # Using slinear instead of linear because linear can produce very small negative numbers even when input dataset is all positive
     coarse_on_fine_grid = da_coarse_to_regrid.interp(
         lon=da_fine_grid["lon"],
         lat=da_fine_grid["lat"],
-        method="linear",
+        method="slinear",
     )
 
     return coarse_on_fine_grid
