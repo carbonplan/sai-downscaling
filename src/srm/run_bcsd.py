@@ -33,6 +33,27 @@ RUN_PARAMETERS = {
     "var_name": "tas",
 }
 
+BCSD_CONFIG = {
+    "pr": {
+        "detrend_data": False,
+        "do_windowing": True,
+        "downscaling_method": "divide",
+        "downscaling_clim_method": "simple",
+    },
+    "tas": {
+        "detrend_data": True,
+        "do_windowing": True,
+        "downscaling_method": "subtract",
+        "downscaling_clim_method": "fft",
+    },
+    "tasmax": {
+        "detrend_data": True,
+        "do_windowing": True,
+        "downscaling_method": "subtract",
+        "downscaling_clim_method": "fft",
+    },
+}
+
 
 def get_all_data(
     gcm: str = None,
@@ -196,7 +217,7 @@ def bias_correct(
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
     do_windowing: bool = True,
-    mapping_type: str = " parametric",
+    mapping_type: str = "parametric",
 ):
     step_start_time = time.time()
 
@@ -353,14 +374,16 @@ def run_bcsd(
     var_name: str,
     verbose: bool = True,
     rechunk_workflow: bool = True,
-    detrend_data: bool = True,
-    do_windowing: bool = True,
     subset_bounds: list | None = None,
     save_output: bool = True,
     save_intermediate_output: bool = True,
-    downscaling_method: str = "subtract",
-    downscaling_clim_method: str = "fft",
 ):
+    cfg = BCSD_CONFIG[var_name]
+    detrend_data = cfg["detrend_data"]
+    do_windowing = cfg["do_windowing"]
+    downscaling_method = cfg["downscaling_method"]
+    downscaling_clim_method = cfg["downscaling_clim_method"]
+
     dict_all = get_all_data(
         gcm=gcm,
         var_name=var_name,
@@ -393,7 +416,7 @@ def run_bcsd(
         rechunk_workflow=rechunk_workflow,
         detrend_data=detrend_data,
         do_windowing=do_windowing,
-        mapping_type=" parametric",
+        mapping_type="parametric",
     )
 
     dict_all = spatially_disaggregate(
@@ -421,7 +444,7 @@ def run_bcsd(
 
         # fname should be all keys joined by underscores
         # fname_key = "_".join(dict_to_save.keys())
-        fname_key = "data"
+        fname_key = var_name + "_data"
         save_data(
             dict_data=dict_to_save,
             fname_key=fname_key,
