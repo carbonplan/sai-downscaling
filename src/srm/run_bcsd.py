@@ -196,7 +196,7 @@ def bias_correct(
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
     do_windowing: bool = True,
-    mapping_type: str = "nonparametric",
+    mapping_type: str = " parametric",
 ):
     step_start_time = time.time()
 
@@ -358,6 +358,8 @@ def run_bcsd(
     subset_bounds: list | None = None,
     save_output: bool = True,
     save_intermediate_output: bool = True,
+    downscaling_method: str = "subtract",
+    downscaling_clim_method: str = "fft",
 ):
     dict_all = get_all_data(
         gcm=gcm,
@@ -391,9 +393,16 @@ def run_bcsd(
         rechunk_workflow=rechunk_workflow,
         detrend_data=detrend_data,
         do_windowing=do_windowing,
+        mapping_type=" parametric",
     )
 
-    dict_all = spatially_disaggregate(dict_all, verbose=verbose, rechunk_workflow=rechunk_workflow)
+    dict_all = spatially_disaggregate(
+        dict_all,
+        verbose=verbose,
+        rechunk_workflow=rechunk_workflow,
+        clim_method=downscaling_clim_method,
+        method=downscaling_method,
+    )
 
     if save_output:
         step_start_time = time.time()
