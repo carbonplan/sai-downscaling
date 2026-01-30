@@ -102,10 +102,10 @@
 [dependency-groups]
     test = [
         "ipdb>=0.13.13",
-        "pre-commit>=4.5.1",
+        "prek>=0.3.0",
         "pytest-xdist>=3.8.0",
         "pytest>=9.0.2",
-    ]
+]
 
     coiled-deploy = [
         "bokeh>=3.8.2",
