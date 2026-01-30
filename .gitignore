@@ -185,6 +185,7 @@ cython_debug/
 *.egg-info
 
 
+uv.lock
 
 
 *.pyc
