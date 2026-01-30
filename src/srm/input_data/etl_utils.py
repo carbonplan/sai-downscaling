@@ -1,8 +1,8 @@
 import dask
 import icechunk
 import xarray as xr
+from obspec_utils.registry import ObjectStoreRegistry
 from virtualizarr.parsers import HDFParser
-from virtualizarr.registry import ObjectStoreRegistry
 
 from srm.config import VarSpec
 
@@ -20,6 +20,18 @@ def compute_wind_speed(
 
 def get_var_specs(catalog_entry) -> dict[str, VarSpec]:
     return {var.name: var for var in catalog_entry.expected_vars}
+
+
+def CMORIZE_pr(ds: xr.Dataset, var_name: str) -> xr.Dataset:
+    # CMORization CESM script says multiply by 1000)
+    ds[var_name] = ds[var_name] * 1000.0
+    return ds
+
+
+def CMORIZE_hurs(ds: xr.Dataset, var_name: str) -> xr.Dataset:
+    # convert fraction to %, multiply by 1000
+    ds[var_name] = ds[var_name] * 1000
+    return ds
 
 
 def trim_negative_precipitation(ds: xr.Dataset) -> xr.Dataset:
