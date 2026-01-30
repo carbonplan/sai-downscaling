@@ -117,7 +117,7 @@ This package uses `uv` for environment management. Non-core libraries should be 
 
 ### Linting
 
-We use `pre-commit` + `ruff` to run linting checks. You can run it against your branch with `uv run pre-commit run --all-files`.
+We use `prek` + `ruff` to run linting checks. You can run it against your branch with `uv run prek run --all-files`.
 
 ### Testing
 `pytest` is used for our unit testing. Make sure you have the test dependencies installed with `uv sync --group dev`.
