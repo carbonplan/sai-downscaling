@@ -126,16 +126,16 @@ def preprocess_data(
         print(f"Interpolated obs to coarse grid: {elapsed:.2f} seconds")
 
     ###### Detrend data
-    if rechunk_workflow:
-        step_start_time = time.time()
-        for key in ["obs_coarse", "model_hist", "model_scenario"]:
-            dict_all[key] = rechunk(dict_all[key], pattern="full_time")
-            dict_all[key] = dict_all[key].persist()
-        elapsed = time.time() - step_start_time
-        if verbose:
-            print(f"Rechunked all to full time: {elapsed:.2f} seconds")
-
     if detrend_data:
+        if rechunk_workflow:
+            step_start_time = time.time()
+            for key in ["obs_coarse", "model_hist", "model_scenario"]:
+                dict_all[key] = rechunk(dict_all[key], pattern="full_time")
+                dict_all[key] = dict_all[key].persist()
+            elapsed = time.time() - step_start_time
+            if verbose:
+                print(f"Rechunked all to full time: {elapsed:.2f} seconds")
+
         step_start_time = time.time()
         dict_all["historical_scenario"] = xr.concat(
             [
