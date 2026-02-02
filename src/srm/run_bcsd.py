@@ -20,9 +20,7 @@ from srm.downscaling_utils import (
 )
 
 # this is here to suppress xarray_regrid warnings
-warnings.filterwarnings(
-    "ignore", category=RuntimeWarning
-)
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 
 BCSD_CONFIG = {
