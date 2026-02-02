@@ -102,7 +102,9 @@ def calculate_baseline_climatology(
     baseline_period_end: int = 2014,
 ):
     da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
-    da_baseline = da_baseline.sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
+    da_baseline = da_baseline.sel(
+        time=slice(f"{baseline_period_start}", f"{baseline_period_end}")
+    )
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
 
     return da_baseline_clim
@@ -151,16 +153,22 @@ def retrend(
     return retrended
 
 
-def interpolate_fine_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
+def interpolate_fine_to_coarse_grid(
+    da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray
+):
     da_fine_to_coarsen = da_fine_to_coarsen.persist()
 
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).as_numpy().persist()
+    da_coarse = (
+        da_fine_to_coarsen.regrid.conservative(da_coarse_grid).as_numpy().persist()
+    )
 
     return da_coarse
 
 
-def interpolate_coarse_to_fine_grid(da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray):
+def interpolate_coarse_to_fine_grid(
+    da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray
+):
     # Using slinear instead of linear because linear can produce very small negative numbers even when input dataset is all positive
     coarse_on_fine_grid = da_coarse_to_regrid.interp(
         lon=da_fine_grid["lon"],
@@ -252,7 +260,9 @@ def downscale_from_coarse(
     # Step 3: Remove coarsened daily climatology from the bias-corrected fields
     valid_values = ["subtract", "divide"]
     if method not in valid_values:
-        raise ValueError(f"{method} is currently not supported. valid values are: {valid_values}")
+        raise ValueError(
+            f"{method} is currently not supported. valid values are: {valid_values}"
+        )
 
     if method == "subtract":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
