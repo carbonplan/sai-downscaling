@@ -25,14 +25,6 @@ warnings.filterwarnings(
     "ignore", category=RuntimeWarning
 )
 
-RUN_PARAMETERS = {
-    "gcm": "CESM2-WACCM",
-    "train_period_start": 1978,
-    "train_period_end": 2014,
-    "predict_period_start": 2015,
-    "predict_period_end": 2100,
-    "var_name": "tas",
-}
 
 BCSD_CONFIG = {
     "pr": {
