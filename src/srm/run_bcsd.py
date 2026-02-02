@@ -173,38 +173,17 @@ def preprocess_data(
         dict_all["scenario_detrended"] = dict_all["model_scenario"]
 
     ################## Subset time periods
-    dict_all["model_hist"] = subset_time(
-        dict_all["model_hist"],
-        train_period_start=train_period_start,
-        train_period_end=train_period_end,
-        predict_period_start=predict_period_start,
-        predict_period_end=predict_period_end,
-        time_period="train",
+    dict_all["model_hist"] = dict_all["model_hist"].sel(
+        time=slice(f"{train_period_start}", f"{train_period_end}")
     )
-    dict_all["obs"] = subset_time(
-        dict_all["obs"],
-        train_period_start=train_period_start,
-        train_period_end=train_period_end,
-        predict_period_start=predict_period_start,
-        predict_period_end=predict_period_end,
-        time_period="train",
+    dict_all["obs"] = dict_all["obs"].sel(
+        time=slice(f"{train_period_start}", f"{train_period_end}")
     )
-    dict_all["model_scenario"] = subset_time(
-        dict_all["model_scenario"],
-        train_period_start=train_period_start,
-        train_period_end=train_period_end,
-        predict_period_start=predict_period_start,
-        predict_period_end=predict_period_end,
-        time_period="predict",
+    dict_all["model_scenario"] = dict_all["model_scenario"].sel(
+        time=slice(f"{predict_period_start}", f"{predict_period_end}")
     )
-
-    dict_all["scenario_detrended"] = subset_time(
-        dict_all["scenario_detrended"],
-        train_period_start=train_period_start,
-        train_period_end=train_period_end,
-        predict_period_start=predict_period_start,
-        predict_period_end=predict_period_end,
-        time_period="predict",
+    dict_all["scenario_detrended"] = dict_all["scenario_detrended"].sel(
+        time=slice(f"{predict_period_start}", f"{predict_period_end}")
     )
 
     return dict_all

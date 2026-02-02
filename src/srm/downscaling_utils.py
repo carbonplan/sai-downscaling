@@ -18,24 +18,6 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list):
     return da_subset
 
 
-def subset_time(
-    da: xr.DataArray,
-    train_period_start: int = 1978,
-    train_period_end: int = 2014,
-    predict_period_start: int = 2015,
-    predict_period_end: int = 2100,
-    time_period: str = "train",
-):
-    if time_period == "train":
-        start_year = train_period_start
-        end_year = train_period_end
-    elif time_period == "predict":
-        start_year = predict_period_start
-        end_year = predict_period_end
-    da = da.sel(time=slice(f"{start_year}", f"{end_year}"))
-    return da
-
-
 def rechunk(da: xr.DataArray, pattern: str):
     if pattern == "full_space":
         da_rechunk = da.chunk(time=5, lat=-1, lon=-1)
