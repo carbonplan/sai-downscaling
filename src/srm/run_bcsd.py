@@ -17,7 +17,6 @@ from srm.downscaling_utils import (
     retrend,
     save_data,
     subset_space,
-    subset_time,
 )
 
 # this is here to suppress xarray_regrid warnings
@@ -68,8 +67,6 @@ def get_all_data(
     if verbose:
         elapsed = time.time() - start_time
         print(f"Loaded data: {elapsed:.2f} seconds")
-
-    start_time = time.time()
 
     ################## Subset time
     step_start_time = time.time()
@@ -216,7 +213,7 @@ def bias_correct(
     cm_hist = dict_all["model_hist"].as_numpy().values
     cm_future = cm_hist
 
-    tas_cm_hist_debiased = debiaser.apply(
+    var_cm_hist_debiased = debiaser.apply(
         obs=obs,
         cm_hist=cm_hist,
         cm_future=cm_future,
@@ -250,7 +247,7 @@ def bias_correct(
 
     ################## Save debiased data to dictionary
     dict_all["model_hist_debiased"] = xr.DataArray(
-        data=tas_cm_hist_debiased,
+        data=var_cm_hist_debiased,
         coords={
             "lat": dict_all["model_hist"]["lat"],
             "lon": dict_all["model_hist"]["lon"],
@@ -259,7 +256,7 @@ def bias_correct(
         dims=["time", "lat", "lon"],
     )
 
-    debiased_scenario = xr.DataArray(
+    scenario_debiased = xr.DataArray(
         data=scenario_fut_debiased,
         coords={
             "lat": dict_all["scenario_detrended"]["lat"],
@@ -271,7 +268,7 @@ def bias_correct(
 
     ################## Add back trend if previously detrended
     if detrend_data:
-        dict_all["scenario_debiased_detrended"] = debiased_scenario
+        dict_all["scenario_debiased_detrended"] = scenario_debiased
 
         step_start_time = time.time()
         dict_all["scenario_debiased"] = retrend(
@@ -284,7 +281,7 @@ def bias_correct(
             print(f"Added back trend: {elapsed:.2f} seconds")
 
     else:
-        dict_all["scenario_debiased"] = debiased_scenario
+        dict_all["scenario_debiased"] = scenario_debiased
 
     return dict_all
 
