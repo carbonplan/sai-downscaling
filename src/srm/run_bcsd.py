@@ -20,9 +20,10 @@ from srm.downscaling_utils import (
     subset_time,
 )
 
+# this is here to suppress xarray_regrid warnings
 warnings.filterwarnings(
     "ignore", category=RuntimeWarning
-)  # or do i put this at the top of run_bcsd
+)
 
 RUN_PARAMETERS = {
     "gcm": "CESM2-WACCM",
@@ -193,7 +194,6 @@ def bias_correct(
     dict_all: dict,
     var_name: str,
     verbose: bool = True,
-    rechunk_workflow: bool = True,
     detrend_data: bool = True,
     do_windowing: bool = True,
     mapping_type: str = "parametric",
@@ -392,7 +392,6 @@ def run_bcsd(
         dict_all=dict_all,
         var_name=var_name,
         verbose=verbose,
-        rechunk_workflow=rechunk_workflow,
         detrend_data=detrend_data,
         do_windowing=do_windowing,
         mapping_type="parametric",
