@@ -15,6 +15,7 @@ from srm.downscaling_utils import (
     interpolate_fine_to_coarse_grid,
     rechunk,
     retrend,
+    save_data,
     subset_space,
     subset_time,
 )
@@ -354,7 +355,9 @@ def run_bcsd(
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
     do_windowing: bool = True,
-    subset_bounds: list = None,
+    subset_bounds: list | None = None,
+    save_output: bool = True,
+    save_intermediate_output: bool = True,
 ):
     dict_all = get_all_data(
         gcm=gcm,
@@ -391,5 +394,36 @@ def run_bcsd(
     )
 
     dict_all = spatially_disaggregate(dict_all, verbose=verbose, rechunk_workflow=rechunk_workflow)
+
+    if save_output:
+        step_start_time = time.time()
+        if save_intermediate_output:
+            dict_to_save = dict_all
+        else:
+            dict_to_save = {
+                key: dict_all[key]
+                for key in dict_all
+                if key
+                in [
+                    "model_hist_debiased_downscaled",
+                    "scenario_debiased_downscaled",
+                ]
+            }
+
+        # fname should be all keys joined by underscores
+        # fname_key = "_".join(dict_to_save.keys())
+        fname_key = "data"
+        save_data(
+            dict_data=dict_to_save,
+            fname_key=fname_key,
+            var_name=var_name,
+            output_suffix="zarr",
+            s3_bucket="s3://carbonplan-scratch/",
+            prefix="srm-scratch/v0.3_SouthAfrica/",
+        )
+
+        if verbose:
+            elapsed = time.time() - step_start_time
+            print(f"Saved all data: {elapsed:.2f} seconds")
 
     return dict_all

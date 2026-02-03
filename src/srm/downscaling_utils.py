@@ -1,4 +1,5 @@
 import icechunk
+import icechunk.xarray
 import numpy as np
 import pandas as pd
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
@@ -269,3 +270,64 @@ def downscale_from_coarse(
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
 
     return downscaled
+
+
+def save_data(
+    dict_data: dict,
+    fname_key: str,
+    var_name: str,
+    output_suffix: str = "zarr",
+    s3_bucket: str = "s3://carbonplan-scratch/",
+    prefix: str = "srm-scratch/v0.3_SouthAfrica/",
+    print_fpath: bool = True,
+    chunks: dict = {"time": 5, "lat": -1, "lon": -1},
+):
+    s3_path = f"{s3_bucket + prefix}{fname_key}.{output_suffix}"
+
+    if print_fpath:
+        print(f"Saving to {s3_path}")
+
+    dict_dsets = {key: dict_data[key].to_dataset(name=var_name) for key in dict_data}
+    # clear encoding to avoid issues when saving
+    for ds in dict_dsets.values():
+        for var in ds.data_vars:
+            ds[var].encoding = {}
+    datatree = xr.DataTree.from_dict(dict_dsets)
+
+    if output_suffix == "zarr":
+        # instead of chunking here, we could let the user specify chunking earlier?
+        if chunks is not None:
+            datatree = datatree.chunk(chunks)
+        datatree.to_zarr(s3_path, mode="w")
+
+    elif output_suffix == "nc":
+        datatree.to_netcdf(s3_path)
+
+    elif output_suffix == "icechunk":
+        # Option 2: save as icechunk. Example:
+        storage = icechunk.s3_storage(
+            bucket=s3_bucket,
+            prefix=prefix + fname_key + ".icechunk",
+            from_env=True,
+        )
+        repo = icechunk.Repository.create(storage)
+
+        session = repo.writable_session("main")
+
+        icechunk.xarray.to_icechunk(datatree, session)
+        session.commit("write data")
+
+    else:
+        raise ValueError("Invalid output format. Please choose 'zarr' or 'netcdf'.")
+
+
+def get_output_data(
+    fname_key: str,
+    dtree_key: str = "data.zarr/",
+    s3_bucket: str = "s3://carbonplan-scratch/",
+    prefix: str = "srm-scratch/v0.3_SouthAfrica/",
+):
+    dt = xr.open_datatree(s3_bucket + prefix + dtree_key, engine="zarr")
+    ds = dt[fname_key]
+
+    return ds

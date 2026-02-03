@@ -6,9 +6,9 @@ import click
 import obstore as obs
 import xarray as xr
 import zarr
+from obspec_utils.registry import ObjectStoreRegistry
 from obstore.store import from_url
 from virtualizarr.parsers import HDFParser
-from virtualizarr.registry import ObjectStoreRegistry
 
 from srm import catalog
 from srm.config import (
@@ -18,6 +18,8 @@ from srm.config import (
 )
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
+    CMORIZE_hurs,
+    CMORIZE_pr,
     add_cf_bounds,
     build_encoding_dict,
     determine_write_mode,
@@ -62,6 +64,13 @@ class BaseCESM_Config(BaseETLConfig):
             "huss": "1",
             "rlds": "W m-2",
             "ps": "Pa",
+        }
+    )
+
+    cmorization_functions: dict = field(
+        default_factory=lambda: {
+            "pr": CMORIZE_pr,
+            "hurs": CMORIZE_hurs,
         }
     )
 
@@ -172,9 +181,20 @@ def _get_netcdf_urls(config: BaseCESM_Config, variables: list[str]) -> list[str]
 
 
 def _virtualize_netcdfs(config: BaseCESM_Config, netcdf_urls: list[str]) -> xr.Dataset:
-    store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
-    registry = ObjectStoreRegistry({f"s3://{config.s3_bucket}": store})
-    parser = HDFParser(drop_variables=config.drop_variables)
+    # https://github.com/zarr-developers/VirtualiZarr/blob/main/examples/V2/goes_with_caching_stores.py
+    from obspec_utils.readers import BufferedStoreReader
+    from obspec_utils.wrappers import CachingReadableStore, SplittingReadableStore
+
+    base_store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
+
+    splitting_store = SplittingReadableStore(base_store)
+
+    #  256MB
+    max_size = 512 * 1024 * 1024
+    caching_store = CachingReadableStore(splitting_store, max_size=max_size)
+
+    registry = ObjectStoreRegistry({f"s3://{config.s3_bucket}": caching_store})
+    parser = HDFParser(drop_variables=config.drop_variables, reader_factory=BufferedStoreReader)
 
     preprocess_fn = _preprocess_ensemble if config.has_ensemble else None
     ds = virtualize_and_combine(netcdf_urls, registry, parser, preprocess_fn)
@@ -188,7 +208,9 @@ def _standardize_vars(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
     return ds
 
 
-def _preprocess_cesm(ds: xr.Dataset, config: BaseCESM_Config, subset: bool = False) -> xr.Dataset:
+def _preprocess_cesm(
+    ds: xr.Dataset, config: BaseCESM_Config, var: str, subset: bool = False
+) -> xr.Dataset:
     ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False)
     ds = ds.drop_encoding()
     ds = ds.drop_vars(["ilev", "lev"], errors="ignore")
@@ -196,6 +218,10 @@ def _preprocess_cesm(ds: xr.Dataset, config: BaseCESM_Config, subset: bool = Fal
     ds = ds.sortby(["lat", "lon"])
     ds = _standardize_vars(ds, config)
     ds = trim_negative_precipitation(ds)
+
+    if var in config.cmorization_functions:
+        ds = config.cmorization_functions[var](ds, var)
+
     if subset:
         ds = ds.isel(time=slice(0, 365))
     return ds
@@ -278,7 +304,8 @@ def process_cesm_pipeline(
                 netcdf_urls = _get_netcdf_urls(config, [var])
                 ds = _virtualize_netcdfs(config, netcdf_urls)
 
-            ds = _preprocess_cesm(ds, config, subset=subset)
+            ds = _preprocess_cesm(ds, config, var, subset=subset)
+
             ds = _update_attrs(ds, var_specs, config)
             encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
 
@@ -317,7 +344,7 @@ def cli():
 )
 @click.option("--coiled/--local", default=False)
 @click.option("--subset/--no-subset", default=False)
-def cesm(variable, scenario, coiled, subset):
+def cesm2(variable, scenario, coiled, subset):
     process_cesm_pipeline(
         variables=list(variable),
         scenario=scenario,
@@ -326,7 +353,7 @@ def cesm(variable, scenario, coiled, subset):
     )
 
 
-cli.add_command(cesm)
+cli.add_command(cesm2)
 
 
 if __name__ == "__main__":
