@@ -192,3 +192,6 @@ uv.lock
 *.json
 
 # *input_data_old/
+*.nc 
+*.csv
+*.parquet
