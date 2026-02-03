@@ -1,7 +1,6 @@
 import icechunk
 import icechunk.xarray
 import numpy as np
-import pandas as pd
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
@@ -178,15 +177,8 @@ def calculate_doy_means(ds, clim_method: str = "simple"):
     """
     Calculate the daily climatology of high-res observations.
     """
-    ds_xr = xr.DataArray(
-        ds.data,
-        dims=ds.dims,
-        coords={k: v for k, v in ds.coords.items() if k != "spatial_ref"},
-    )
 
-    ds_xr = ds_xr.assign_coords(time=("time", pd.to_datetime(ds["time"].values)))
-
-    ds_xr_doy_mean = ds_xr.groupby("time.dayofyear").mean("time")
+    ds_xr_doy_mean = ds.groupby("time.dayofyear").mean("time")
 
     if clim_method == "simple":
         doy_means = ds_xr_doy_mean
@@ -202,6 +194,7 @@ def calculate_doy_means(ds, clim_method: str = "simple"):
             output_dtypes=[float],
         )
 
+        # transpose from ["lat", "lon", "dayofyear"] to original order of ["dayofyear", "lat", "lon"]
         obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.transpose(
             "dayofyear", "lat", "lon"
         )

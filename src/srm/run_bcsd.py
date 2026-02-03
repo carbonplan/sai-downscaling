@@ -124,6 +124,7 @@ def preprocess_data(
             if verbose:
                 print(f"Rechunked all to full time: {elapsed:.2f} seconds")
 
+        # Splice together historical and future scenario for calculating smooth 9 year running mean for detrending (otherwise first few years of scenario will be nans)
         step_start_time = time.time()
         dict_all["historical_scenario"] = xr.concat(
             [
@@ -209,12 +210,11 @@ def bias_correct(
     # as_numpy brings from sparse to dense. regridding sparsifies, so bring it back here for downstream tasks.
     obs = dict_all["obs_coarse"].as_numpy().values
     cm_hist = dict_all["model_hist"].as_numpy().values
-    cm_future = cm_hist
 
     var_cm_hist_debiased = debiaser.apply(
         obs=obs,
         cm_hist=cm_hist,
-        cm_future=cm_future,
+        cm_future=cm_hist,  # cm_future is the scenario being debiased. cm_future=cm_hist because the historical model run is being debiased here
         time_obs=dict_all["obs_coarse"]["time"].values,
         time_cm_hist=dict_all["model_hist"]["time"].values,
         time_cm_future=dict_all["model_hist"]["time"].values,
