@@ -1,7 +1,10 @@
 import icechunk
+import icechunk.xarray
+import numpy as np
 import pandas as pd
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
+import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 
 from srm import catalog
 
@@ -148,53 +151,183 @@ def retrend(
     return retrended
 
 
-def interpolate_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
+def interpolate_fine_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
     da_fine_to_coarsen = da_fine_to_coarsen.persist()
 
-    da_coarse = da_fine_to_coarsen.interp(
-        lon=da_coarse_grid.lon,
-        lat=da_coarse_grid.lat,
-        method="linear",
-    )
+    # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
+    da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).as_numpy().persist()
 
     return da_coarse
 
 
-def calculate_error_map(obs_coarse: xr.DataArray, obs_fine: xr.DataArray):
-    def calculate_doy_means(ds):
-        ds_xr = xr.DataArray(
-            ds.data,
-            dims=ds.dims,
-            coords={k: v for k, v in ds.coords.items() if k != "spatial_ref"},
+def interpolate_coarse_to_fine_grid(da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray):
+    coarse_on_fine_grid = da_coarse_to_regrid.interp(
+        lon=da_fine_grid["lon"],
+        lat=da_fine_grid["lat"],
+        method="linear",
+    )
+
+    return coarse_on_fine_grid
+
+
+def fft_smooth_3harmonics(data):
+    """Apply FFT and retain only mean + 3 harmonics"""
+    # Handle NaN values
+    if np.all(np.isnan(data)):
+        return data
+
+    # Compute FFT
+    Z = np.fft.fft(data)
+
+    # Create filtered version: keep mean (0) + first 3 harmonics (1,2,3 and -3,-2,-1)
+    Z_filtered = np.zeros_like(Z)
+    Z_filtered[0] = Z[0]  # mean (DC component)
+    Z_filtered[1:4] = Z[1:4]  # positive frequencies (harmonics 1-3)
+    Z_filtered[-3:] = Z[-3:]  # negative frequencies (harmonics 1-3)
+
+    # Inverse FFT to get smoothed time series
+    smoothed = np.real(np.fft.ifft(Z_filtered))
+
+    return smoothed
+
+
+def calculate_doy_means(ds, clim_method: str = "simple"):
+    """
+    Calculate the daily climatology of high-res observations.
+    """
+    ds_xr = xr.DataArray(
+        ds.data,
+        dims=ds.dims,
+        coords={k: v for k, v in ds.coords.items() if k != "spatial_ref"},
+    )
+
+    ds_xr = ds_xr.assign_coords(time=("time", pd.to_datetime(ds["time"].values)))
+
+    ds_xr_doy_mean = ds_xr.groupby("time.dayofyear").mean("time")
+
+    if clim_method == "simple":
+        doy_means = ds_xr_doy_mean
+    elif clim_method == "fft":
+        # Apply FFT smoothing along the time dimension
+        obs_fine_doy_means_smoothed = xr.apply_ufunc(
+            fft_smooth_3harmonics,
+            ds_xr_doy_mean.load(),
+            input_core_dims=[["dayofyear"]],
+            output_core_dims=[["dayofyear"]],
+            vectorize=True,
+            # dask='parallelized',
+            output_dtypes=[float],
         )
 
-        ds_xr = ds_xr.assign_coords(time=("time", pd.to_datetime(ds["time"].values)))
+        obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.transpose(
+            "dayofyear", "lat", "lon"
+        )
 
-        ds_xr_doy_mean = ds_xr.groupby("time.dayofyear").mean("time")
+        doy_means = obs_fine_doy_means_smoothed
+    return doy_means
 
-        return ds_xr_doy_mean
 
-    obs_coarse_on_fine_grid = obs_coarse.interp(
-        lon=obs_fine["lon"],
-        lat=obs_fine["lat"],
-        method="linear",
+def downscale_from_coarse(
+    da: xr.DataArray,
+    obs_coarse: xr.DataArray,
+    obs_fine: xr.DataArray,
+    method: str = "subtract",
+    clim_method: str = "simple",
+):
+    valid_clim_methods = ["simple", "fft"]
+    if clim_method not in valid_clim_methods:
+        raise ValueError(
+            f"{method} is currently not supported. valid values are: {valid_clim_methods}"
+        )
+
+    # Step 1: calculate the daily climatology of high-res observations
+    obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
+
+    # Step 2: Aggregate daily climatology to the low-resolution grid of the GCM being processed
+    obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
+        da_fine_to_coarsen=obs_fine_doy_means, da_coarse_grid=obs_coarse
     )
-    error_map = obs_fine.mean(dim="time") - obs_coarse_on_fine_grid.mean(dim="time")
 
-    obs_fine_doy_means = calculate_doy_means(obs_fine)
+    # Step 3: Remove coarsened daily climatology from the bias-corrected fields
+    valid_values = ["subtract", "divide"]
+    if method not in valid_values:
+        raise ValueError(f"{method} is currently not supported. valid values are: {valid_values}")
 
-    obs_coarse_on_fine_grid_doy_means = calculate_doy_means(obs_coarse_on_fine_grid)
+    if method == "subtract":
+        residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
+    elif method == "divide":
+        residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
 
-    error_map = obs_fine_doy_means - obs_coarse_on_fine_grid_doy_means
-
-    return error_map
-
-
-def downscale_from_coarse(da: xr.DataArray, error_map: xr.DataArray, fine_grid: xr.DataArray):
-    da_fine_grid = da.interp(
-        lon=fine_grid["lon"],
-        lat=fine_grid["lat"],
-        method="linear",
+    # Step 4: Bilinearly interpolate residuals to the high-res grid
+    residuals_fine = interpolate_coarse_to_fine_grid(
+        da_coarse_to_regrid=residuals, da_fine_grid=obs_fine
     )
 
-    return da_fine_grid.groupby("time.dayofyear") + error_map
+    # Step 5: Return high-res climatology
+    if method == "subtract":
+        downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
+    elif method == "divide":
+        downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
+
+    return downscaled
+
+
+def save_data(
+    dict_data: dict,
+    fname_key: str,
+    var_name: str,
+    output_suffix: str = "zarr",
+    s3_bucket: str = "s3://carbonplan-scratch/",
+    prefix: str = "srm-scratch/v0.3_SouthAfrica/",
+    print_fpath: bool = True,
+    chunks: dict = {"time": 5, "lat": -1, "lon": -1},
+):
+    s3_path = f"{s3_bucket + prefix}{fname_key}.{output_suffix}"
+
+    if print_fpath:
+        print(f"Saving to {s3_path}")
+
+    dict_dsets = {key: dict_data[key].to_dataset(name=var_name) for key in dict_data}
+    # clear encoding to avoid issues when saving
+    for ds in dict_dsets.values():
+        for var in ds.data_vars:
+            ds[var].encoding = {}
+    datatree = xr.DataTree.from_dict(dict_dsets)
+
+    if output_suffix == "zarr":
+        # instead of chunking here, we could let the user specify chunking earlier?
+        if chunks is not None:
+            datatree = datatree.chunk(chunks)
+        datatree.to_zarr(s3_path, mode="w")
+
+    elif output_suffix == "nc":
+        datatree.to_netcdf(s3_path)
+
+    elif output_suffix == "icechunk":
+        # Option 2: save as icechunk. Example:
+        storage = icechunk.s3_storage(
+            bucket=s3_bucket,
+            prefix=prefix + fname_key + ".icechunk",
+            from_env=True,
+        )
+        repo = icechunk.Repository.create(storage)
+
+        session = repo.writable_session("main")
+
+        icechunk.xarray.to_icechunk(datatree, session)
+        session.commit("write data")
+
+    else:
+        raise ValueError("Invalid output format. Please choose 'zarr' or 'netcdf'.")
+
+
+def get_output_data(
+    fname_key: str,
+    dtree_key: str = "data.zarr/",
+    s3_bucket: str = "s3://carbonplan-scratch/",
+    prefix: str = "srm-scratch/v0.3_SouthAfrica/",
+):
+    dt = xr.open_datatree(s3_bucket + prefix + dtree_key, engine="zarr")
+    ds = dt[fname_key]
+
+    return ds

@@ -185,9 +185,13 @@ cython_debug/
 *.egg-info
 
 
+uv.lock
 
 
 *.pyc
 *.json
 
 # *input_data_old/
+*.nc 
+*.csv
+*.parquet

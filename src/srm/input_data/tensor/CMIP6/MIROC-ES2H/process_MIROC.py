@@ -6,9 +6,9 @@ import click
 import pandas as pd
 import xarray as xr
 import zarr
+from obspec_utils.registry import ObjectStoreRegistry
 from obstore.store import from_url
 from virtualizarr.parsers import HDFParser
-from virtualizarr.registry import ObjectStoreRegistry
 
 from srm import catalog
 from srm.config import (

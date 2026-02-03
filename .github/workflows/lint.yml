@@ -26,5 +26,5 @@ jobs:
       - name: deps
         run: uv sync --group dev
         
-      - name: run pre-commit
-        run: uv run pre-commit run --all-files
+      - name: lint
+        run: uv run prek run --all-files
