@@ -240,6 +240,7 @@ def downscale_from_coarse(
     )
 
     # Step 5: Return high-res climatology
+    # Add or multiply a constant value to the residuals based on DOY
     if method == "subtract":
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
     elif method == "divide":
