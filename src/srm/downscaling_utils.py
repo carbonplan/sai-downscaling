@@ -89,6 +89,17 @@ def calculate_baseline_climatology(
     return da_baseline_clim
 
 
+def splice_scenarios(scenario1: xr.DataArray, scenario2: xr.DataArray, scenario1_end_year: int):
+    spliced_scenario = xr.concat(
+        [
+            scenario1.where(scenario1["time.year"] < scenario1_end_year, drop=True),
+            scenario2.where(scenario2["time.year"] >= scenario1_end_year, drop=True),
+        ],
+        dim="time",
+    )
+    return spliced_scenario
+
+
 def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray):
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
@@ -217,9 +228,11 @@ def downscale_from_coarse(
         )
 
     # Step 1: calculate the daily climatology of high-res observations
+    # This step is duplicated if running multiple scenarios for the same model
     obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
 
     # Step 2: Aggregate daily climatology to the low-resolution grid of the GCM being processed
+    # This step is duplicated if running multiple scenarios for the same model
     obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
         da_fine_to_coarsen=obs_fine_doy_means, da_coarse_grid=obs_coarse
     )
