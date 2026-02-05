@@ -15,6 +15,7 @@ from srm.downscaling_utils import (
     rechunk,
     retrend,
     save_data,
+    splice_scenarios,
     subset_space,
 )
 from srm.utils import Timer
@@ -55,6 +56,10 @@ def get_all_data(
         model_scenario = model_scenario.isel(ensemble_member=0)
         model_scenario = model_scenario.drop_vars("spatial_ref")
 
+        model_sai = get_experiment(gcm=gcm, scenario="G6-1.5K", var=var_name)
+        model_sai = model_sai.isel(ensemble_member=0)
+        model_sai = model_sai.drop_vars("spatial_ref")
+
         model_historical = get_experiment(gcm=gcm, scenario="Historical", var=var_name)
         model_historical = model_historical.drop_vars("spatial_ref")
 
@@ -66,6 +71,7 @@ def get_all_data(
     dict_all["model_hist"] = model_historical
     dict_all["obs"] = obs
     dict_all["model_scenario"] = model_scenario
+    dict_all["model_sai"] = model_sai
 
     return dict_all
 
@@ -97,24 +103,23 @@ def preprocess_data(
     if detrend_data:
         if rechunk_workflow:
             with Timer("Rechunked all to full time", verbose=verbose):
-                for key in ["obs_coarse", "model_hist", "model_scenario"]:
+                for key in ["obs_coarse", "model_hist", "model_scenario", "model_sai"]:
                     dict_all[key] = rechunk(dict_all[key], pattern="full_time")
                     dict_all[key] = dict_all[key].persist()
 
         # Splice together historical and future scenario for calculating smooth 9 year running mean for detrending (otherwise first few years of scenario will be nans)
         with Timer("Detrended data", verbose=verbose):
-            dict_all["historical_scenario"] = xr.concat(
-                [
-                    dict_all["model_hist"].where(
-                        dict_all["model_hist"]["time.year"] < predict_period_start,
-                        drop=True,
-                    ),
-                    dict_all["model_scenario"].where(
-                        dict_all["model_scenario"]["time.year"] >= predict_period_start,
-                        drop=True,
-                    ),
-                ],
-                dim="time",
+            dict_all["historical_scenario"] = splice_scenarios(
+                scenario1=dict_all["model_hist"],
+                scenario2=dict_all["model_scenario"],
+                scenario1_end_year=predict_period_start,
+            )
+
+            # SAI scenario branches from SSP245 in 2035
+            dict_all["historical_sai"] = splice_scenarios(
+                scenario1=dict_all["historical_scenario"],
+                scenario2=dict_all["model_sai"],
+                scenario1_end_year=2035,
             )
 
             da_baseline_clim = calculate_baseline_climatology(
@@ -128,12 +133,20 @@ def preprocess_data(
                 da_baseline_clim=da_baseline_clim,
             )
 
+            sai_detrended, sai_trend_on_daily_timestep = detrend(
+                da=dict_all["historical_sai"],
+                da_baseline_clim=da_baseline_clim,
+            )
+
             dict_all["scenario_detrended"] = ssp_detrended
+            dict_all["sai_detrended"] = sai_detrended
             dict_all["scenario_trend"] = ssp_trend_on_daily_timestep
+            dict_all["sai_trend"] = sai_trend_on_daily_timestep
 
     else:
         # Use raw model scenario data if not detrending
         dict_all["scenario_detrended"] = dict_all["model_scenario"]
+        dict_all["sai_detrended"] = dict_all["model_sai"]
 
     ################## Subset time periods
     dict_all["model_hist"] = dict_all["model_hist"].sel(
@@ -148,6 +161,10 @@ def preprocess_data(
     dict_all["scenario_detrended"] = dict_all["scenario_detrended"].sel(
         time=slice(f"{predict_period_start}", f"{predict_period_end}")
     )
+
+    dict_all["model_sai"] = dict_all["model_sai"].sel(time=slice(f"{2035}", f"{2085}"))
+
+    dict_all["sai_detrended"] = dict_all["sai_detrended"].sel(time=slice(f"{2035}", f"{2085}"))
 
     return dict_all
 
@@ -196,7 +213,7 @@ def bias_correct(
             nr_processes=dask.system.CPU_COUNT,
         )
 
-    with Timer("Quantile mapped future", verbose=verbose):
+    with Timer("Quantile mapped future SSP", verbose=verbose):
         cm_future = dict_all["scenario_detrended"].load().values
         scenario_fut_debiased = debiaser.apply(
             obs=obs,
@@ -205,6 +222,20 @@ def bias_correct(
             time_obs=dict_all["obs_coarse"]["time"].values,
             time_cm_hist=dict_all["model_hist"]["time"].values,
             time_cm_future=dict_all["scenario_detrended"]["time"].values,
+            parallel=True,
+            progressbar=False,  # progress bar doesn't work if parallel=True
+            nr_processes=dask.system.CPU_COUNT,
+        )
+
+    with Timer("Quantile mapped SAI", verbose=verbose):
+        cm_future = dict_all["sai_detrended"].load().values
+        sai_fut_debiased = debiaser.apply(
+            obs=obs,
+            cm_hist=cm_hist,
+            cm_future=cm_future,
+            time_obs=dict_all["obs_coarse"]["time"].values,
+            time_cm_hist=dict_all["model_hist"]["time"].values,
+            time_cm_future=dict_all["sai_detrended"]["time"].values,
             parallel=True,
             progressbar=False,  # progress bar doesn't work if parallel=True
             nr_processes=dask.system.CPU_COUNT,
@@ -231,6 +262,16 @@ def bias_correct(
         dims=["time", "lat", "lon"],
     )
 
+    sai_debiased = xr.DataArray(
+        data=sai_fut_debiased,
+        coords={
+            "lat": dict_all["sai_detrended"]["lat"],
+            "lon": dict_all["sai_detrended"]["lon"],
+            "time": dict_all["sai_detrended"]["time"],
+        },
+        dims=["time", "lat", "lon"],
+    )
+
     ################## Add back trend if previously detrended
     if detrend_data:
         dict_all["scenario_debiased_detrended"] = scenario_debiased
@@ -242,8 +283,18 @@ def bias_correct(
                 detrending="additive",
             )
 
+        dict_all["sai_debiased_detrended"] = sai_debiased
+
+        with Timer("Added back trend", verbose=verbose):
+            dict_all["sai_debiased"] = retrend(
+                bias_corrected_detrended=dict_all["sai_debiased_detrended"],
+                trend_on_daily_timestep=dict_all["sai_trend"],
+                detrending="additive",
+            )
+
     else:
         dict_all["scenario_debiased"] = scenario_debiased
+        dict_all["sai_debiased"] = sai_debiased
 
     return dict_all
 
@@ -274,6 +325,15 @@ def spatially_disaggregate(
     with Timer("Downscaled future", verbose=verbose):
         dict_all["scenario_debiased_downscaled"] = downscale_from_coarse(
             da=dict_all["scenario_debiased"],
+            obs_coarse=dict_all["obs_coarse"].as_numpy(),
+            obs_fine=dict_all["obs"].as_numpy(),
+            method=method,
+            clim_method=clim_method,
+        )
+
+    with Timer("Downscaled SAI", verbose=verbose):
+        dict_all["sai_debiased_downscaled"] = downscale_from_coarse(
+            da=dict_all["sai_debiased"],
             obs_coarse=dict_all["obs_coarse"].as_numpy(),
             obs_fine=dict_all["obs"].as_numpy(),
             method=method,
@@ -357,6 +417,7 @@ def run_bcsd(
                     in [
                         "model_hist_debiased_downscaled",
                         "scenario_debiased_downscaled",
+                        "sai_debiased_downscaled",
                     ]
                 }
 
