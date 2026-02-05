@@ -100,7 +100,7 @@ def splice_scenarios(scenario1: xr.DataArray, scenario2: xr.DataArray, scenario1
     return spliced_scenario
 
 
-def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray, detrending: str = "additive"):
+def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray, detrend_method: str = "additive"):
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
     da_mon = da_mon.chunk({"time": 120})
@@ -121,15 +121,15 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray, detrending: str = 
     ).compute()
 
     valid_values = ["additive", "multiplicative"]
-    if detrending not in valid_values:
+    if detrend_method not in valid_values:
         raise ValueError(
-            f"{detrending} is currently not supported. valid values are: {valid_values}"
+            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
         )
 
     # Calculate detrended timeseries
-    if detrending == "additive":
+    if detrend_method == "additive":
         detrended = da - trend_on_daily_timestep
-    elif detrending == "multiplicative":
+    elif detrend_method == "multiplicative":
         detrended = da / trend_on_daily_timestep
 
     return detrended, trend_on_daily_timestep
@@ -138,17 +138,17 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray, detrending: str = 
 def retrend(
     bias_corrected_detrended: xr.DataArray,
     trend_on_daily_timestep: xr.DataArray,
-    detrending="additive",
+    detrend_method="additive",
 ):
     valid_values = ["additive", "multiplicative"]
-    if detrending not in valid_values:
+    if detrend_method not in valid_values:
         raise ValueError(
-            f"{detrending} is currently not supported. valid values are: {valid_values}"
+            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
         )
 
-    if detrending == "additive":
+    if detrend_method == "additive":
         retrended = bias_corrected_detrended + trend_on_daily_timestep
-    elif detrending == "multiplicative":
+    elif detrend_method == "multiplicative":
         retrended = bias_corrected_detrended * trend_on_daily_timestep
 
     return retrended

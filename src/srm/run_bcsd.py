@@ -291,7 +291,7 @@ def bias_correct(
             dict_all["scenario_debiased"] = retrend(
                 bias_corrected_detrended=dict_all["scenario_debiased_detrended"],
                 trend_on_daily_timestep=dict_all["scenario_trend"],
-                detrending="additive",
+                detrend_method="additive",
             )
 
         dict_all["sai_debiased_detrended"] = sai_debiased
@@ -300,7 +300,7 @@ def bias_correct(
             dict_all["sai_debiased"] = retrend(
                 bias_corrected_detrended=dict_all["sai_debiased_detrended"],
                 trend_on_daily_timestep=dict_all["sai_trend"],
-                detrending="additive",
+                detrend_method="additive",
             )
 
     else:
