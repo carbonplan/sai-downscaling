@@ -20,6 +20,7 @@ class Dataset:
     name: str
     path: str | CloudPath
     format: typing.Literal["zarr", "icechunk"]
+    virtual_path: str | CloudPath | None = None
     expected_chunks: dict[str, int] | None = None
     expected_shards: dict[str, int] | None = None
     expected_vars: list[VarSpec] | None = None  # Now uses VarSpec objects in config.py
@@ -190,6 +191,7 @@ class Catalog:
             "UKESM-SSP245-icechunk": Dataset(
                 name="UKESM-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245/UKESM-SSP245.icechunk",
+                virtual_path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245/UKESM-SSP245-virtual.icechunk",
                 format="icechunk",
                 expected_chunks={
                     "ensemble_member": 1,
@@ -214,6 +216,7 @@ class Catalog:
             "UKESM-G6-1.5K-icechunk": Dataset(
                 name="UKESM-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K/UKESM-G6-1.5K.icechunk",
+                virtual_path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K/UKESM-G6-1.5K-virtual.icechunk",
                 format="icechunk",
                 expected_chunks={
                     "ensemble_member": 1,
@@ -238,6 +241,7 @@ class Catalog:
             "UKESM-SSP245-SFCWIND-icechunk": Dataset(
                 name="UKESM-SSP245-SFCWIND-icechunk",
                 path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245-SFCWIND/UKESM-SSP245-SFCWIND.icechunk",
+                virtual_path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245-SFCWIND/UKESM-SSP245-SFCWIND-virtual.icechunk",
                 format="icechunk",
                 expected_chunks={
                     "ensemble_member": 1,
@@ -258,6 +262,7 @@ class Catalog:
             "UKESM-G6-1.5K-SFCWIND-icechunk": Dataset(
                 name="UKESM-G6-1.5K-SFCWIND-icechunk",
                 path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K-SFCWIND/UKESM-G6-1.5K-SFCWIND.icechunk",
+                virtual_path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K-SFCWIND/UKESM-G6-1.5K-SFCWIND-virtual.icechunk",
                 format="icechunk",
                 expected_chunks={
                     "ensemble_member": 1,
@@ -274,6 +279,15 @@ class Catalog:
                 expected_vars=[
                     VarStandards.SFCWIND,
                 ],
+            ),
+            "UKESM-historical-icechunk": Dataset(
+                name="UKESM-historical-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-historical/UKESM-historical.icechunk",
+                virtual_path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-historical/UKESM-historical-virtual.icechunk",
+                format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
+                expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
+                expected_vars=all_standards,
             ),
             "ERA5": Dataset(
                 name="ERA5",
