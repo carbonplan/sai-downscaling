@@ -29,28 +29,28 @@ BCSD_CONFIG = {
         "detrend_data": False,
         "detrend_method": "multiplicative",
         "do_windowing": True,
-        "downscaling_method": "divide",
+        "downscaling_method": "multiplicative",
         "downscaling_clim_method": "simple",
     },
     "tas": {
         "detrend_data": True,
         "detrend_method": "additive",
         "do_windowing": True,
-        "downscaling_method": "subtract",
+        "downscaling_method": "additive",
         "downscaling_clim_method": "fft",
     },
     "tasmax": {
         "detrend_data": True,
         "detrend_method": "additive",
         "do_windowing": True,
-        "downscaling_method": "subtract",
+        "downscaling_method": "additive",
         "downscaling_clim_method": "fft",
     },
     "rsds": {
         "detrend_data": True,
         "detrend_method": "multiplicative",
         "do_windowing": True,
-        "downscaling_method": "divide",
+        "downscaling_method": "multiplicative",
         "downscaling_clim_method": "simple",
     },
 }
@@ -323,7 +323,7 @@ def spatially_disaggregate(
     verbose: bool = True,
     rechunk_workflow: bool = True,
     clim_method: str = "fft",
-    method: str = "subtract",
+    method: str = "additive",
 ):
     if rechunk_workflow:
         with Timer("Rechunked to full space for downscaling", verbose=verbose):
