@@ -47,7 +47,9 @@ class Dataset:
         if self.format == "icechunk":
             import icechunk
 
-            storage = icechunk.s3_storage(bucket=self.bucket, prefix=self.prefix, from_env=True)
+            storage = icechunk.s3_storage(
+                bucket=self.bucket, prefix=self.prefix, from_env=True
+            )
             repo = icechunk.Repository.open(storage)
             session = repo.readonly_session("main")
             return xr.open_zarr(session.store, consolidated=False)
@@ -278,7 +280,7 @@ class Catalog:
             "ERA5": Dataset(
                 name="ERA5",
                 # path="s3://carbonplan-srm/input/tensor/ERA5/ERA5.icechunk",
-                path="s3://carbonplan-srm/input/tensor/ERA5/ERA5_pancakes.icechunk",
+                path="s3://carbonplan-srm/input/tensor/ERA5/ERA5.icechunk",
                 format="icechunk",
                 # expected_chunks={"time": 23741, "lat": 7, "lon": 14},  # ~9.5MB chunks
                 # expected_shards={
@@ -332,7 +334,9 @@ class Catalog:
 
                 unit_str = actual_units
                 if spec and actual_units != spec.units:
-                    unit_str = f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
+                    unit_str = (
+                        f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
+                    )
 
                 table_data.append(
                     [
@@ -351,7 +355,8 @@ class Catalog:
         from tabulate import tabulate
 
         table_data = [
-            [ds.name, ds.format, str(ds.path), ds.expected_chunks] for ds in self.datasets.values()
+            [ds.name, ds.format, str(ds.path), ds.expected_chunks]
+            for ds in self.datasets.values()
         ]
         headers = ["Name", "Format", "Path", "Expected Chunks"]
         return f"Dataset Catalog ({len(self.datasets)} datasets)\n" + tabulate(
