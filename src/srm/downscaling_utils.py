@@ -1,7 +1,6 @@
 import icechunk
 import icechunk.xarray
 import numpy as np
-import pandas as pd
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
@@ -16,24 +15,6 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list):
         lat=slice(lat_min, lat_max),
     )
     return da_subset
-
-
-def subset_time(
-    da: xr.DataArray,
-    train_period_start: int = 1978,
-    train_period_end: int = 2014,
-    predict_period_start: int = 2015,
-    predict_period_end: int = 2100,
-    time_period: str = "train",
-):
-    if time_period == "train":
-        start_year = train_period_start
-        end_year = train_period_end
-    elif time_period == "predict":
-        start_year = predict_period_start
-        end_year = predict_period_end
-    da = da.sel(time=slice(f"{start_year}", f"{end_year}"))
-    return da
 
 
 def rechunk(da: xr.DataArray, pattern: str):
@@ -161,10 +142,11 @@ def interpolate_fine_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_
 
 
 def interpolate_coarse_to_fine_grid(da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray):
+    # Using slinear instead of linear because linear can produce very small negative numbers even when input dataset is all positive
     coarse_on_fine_grid = da_coarse_to_regrid.interp(
         lon=da_fine_grid["lon"],
         lat=da_fine_grid["lat"],
-        method="linear",
+        method="slinear",
     )
 
     return coarse_on_fine_grid
@@ -195,15 +177,8 @@ def calculate_doy_means(ds, clim_method: str = "simple"):
     """
     Calculate the daily climatology of high-res observations.
     """
-    ds_xr = xr.DataArray(
-        ds.data,
-        dims=ds.dims,
-        coords={k: v for k, v in ds.coords.items() if k != "spatial_ref"},
-    )
 
-    ds_xr = ds_xr.assign_coords(time=("time", pd.to_datetime(ds["time"].values)))
-
-    ds_xr_doy_mean = ds_xr.groupby("time.dayofyear").mean("time")
+    ds_xr_doy_mean = ds.groupby("time.dayofyear").mean("time")
 
     if clim_method == "simple":
         doy_means = ds_xr_doy_mean
@@ -219,6 +194,7 @@ def calculate_doy_means(ds, clim_method: str = "simple"):
             output_dtypes=[float],
         )
 
+        # transpose from ["lat", "lon", "dayofyear"] to original order of ["dayofyear", "lat", "lon"]
         obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.transpose(
             "dayofyear", "lat", "lon"
         )
@@ -264,6 +240,7 @@ def downscale_from_coarse(
     )
 
     # Step 5: Return high-res climatology
+    # Add or multiply a constant value to the residuals based on DOY
     if method == "subtract":
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
     elif method == "divide":
