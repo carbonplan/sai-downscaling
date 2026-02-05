@@ -3,13 +3,13 @@ from dataclasses import dataclass, field
 
 import boto3
 import click
+import icechunk
 import obstore as obs
 import xarray as xr
 import zarr
 from obspec_utils.registry import ObjectStoreRegistry
 from obstore.store import from_url
 from virtualizarr.parsers import HDFParser
-import icechunk 
 
 from srm import catalog
 from srm.config import (
@@ -355,12 +355,9 @@ def virtualize(variable, scenario, coiled):
         #     ),
         # )
 
-
         # repo = icechunk.Repository.open_or_create(storage, repo_config)
 
         for var in list(variable):
-
-
             repo_config = icechunk.RepositoryConfig.default()
             repo_config.set_virtual_chunk_container(
                 icechunk.VirtualChunkContainer(
@@ -403,7 +400,7 @@ def virtualize(variable, scenario, coiled):
 
             ds.vz.to_icechunk(session.store, group=var)
             session.commit(f"{scenario}: {var}")
-            print(f'var finished:{var}')
+            print(f"var finished:{var}")
 
             repo.save_config()
 
@@ -496,5 +493,3 @@ cli.add_command(process)
 
 if __name__ == "__main__":
     cli()
-
-
