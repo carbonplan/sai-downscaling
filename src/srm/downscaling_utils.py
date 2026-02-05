@@ -100,7 +100,7 @@ def splice_scenarios(scenario1: xr.DataArray, scenario2: xr.DataArray, scenario1
     return spliced_scenario
 
 
-def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray):
+def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray, detrending: str = "additive"):
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
     da_mon = da_mon.chunk({"time": 120})
@@ -120,8 +120,17 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray):
         da_mon_trend.resample(time="1D").ffill().reindex(time=da.time).ffill(dim="time")
     ).compute()
 
+    valid_values = ["additive", "multiplicative"]
+    if detrending not in valid_values:
+        raise ValueError(
+            f"{detrending} is currently not supported. valid values are: {valid_values}"
+        )
+
     # Calculate detrended timeseries
-    detrended = da - trend_on_daily_timestep
+    if detrending == "additive":
+        detrended = da - trend_on_daily_timestep
+    elif detrending == "multiplicative":
+        detrended = da / trend_on_daily_timestep
 
     return detrended, trend_on_daily_timestep
 
@@ -131,7 +140,7 @@ def retrend(
     trend_on_daily_timestep: xr.DataArray,
     detrending="additive",
 ):
-    valid_values = ["additive"]
+    valid_values = ["additive", "multiplicative"]
     if detrending not in valid_values:
         raise ValueError(
             f"{detrending} is currently not supported. valid values are: {valid_values}"
@@ -139,6 +148,8 @@ def retrend(
 
     if detrending == "additive":
         retrended = bias_corrected_detrended + trend_on_daily_timestep
+    elif detrending == "multiplicative":
+        retrended = bias_corrected_detrended * trend_on_daily_timestep
 
     return retrended
 
