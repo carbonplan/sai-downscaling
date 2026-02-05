@@ -27,24 +27,28 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 BCSD_CONFIG = {
     "pr": {
         "detrend_data": False,
+        "detrend_method": "multiplicative",
         "do_windowing": True,
         "downscaling_method": "divide",
         "downscaling_clim_method": "simple",
     },
     "tas": {
         "detrend_data": True,
+        "detrend_method": "additive",
         "do_windowing": True,
         "downscaling_method": "subtract",
         "downscaling_clim_method": "fft",
     },
     "tasmax": {
         "detrend_data": True,
+        "detrend_method": "additive",
         "do_windowing": True,
         "downscaling_method": "subtract",
         "downscaling_clim_method": "fft",
     },
     "rsds": {
         "detrend_data": True,
+        "detrend_method": "multiplicative",
         "do_windowing": True,
         "downscaling_method": "divide",
         "downscaling_clim_method": "simple",
@@ -93,6 +97,7 @@ def preprocess_data(
     verbose: bool = True,
     rechunk_workflow: bool = True,
     detrend_data: bool = True,
+    detrend_method: str = "additive",
 ):
     ################## Interpolate obs to coarse grid
     if rechunk_workflow:
@@ -139,11 +144,13 @@ def preprocess_data(
             ssp_detrended, ssp_trend_on_daily_timestep = detrend(
                 da=dict_all["historical_scenario"],
                 da_baseline_clim=da_baseline_clim,
+                detrend_method=detrend_method,
             )
 
             sai_detrended, sai_trend_on_daily_timestep = detrend(
                 da=dict_all["historical_sai"],
                 da_baseline_clim=da_baseline_clim,
+                detrend_method=detrend_method,
             )
 
             dict_all["scenario_detrended"] = ssp_detrended
@@ -184,6 +191,7 @@ def bias_correct(
     detrend_data: bool = True,
     do_windowing: bool = True,
     mapping_type: str = "parametric",
+    detrend_method: str = "additive",
 ):
     def make_debiaser(var_name=var_name, **kwargs):
         if var_name == "rsds":
@@ -291,7 +299,7 @@ def bias_correct(
             dict_all["scenario_debiased"] = retrend(
                 bias_corrected_detrended=dict_all["scenario_debiased_detrended"],
                 trend_on_daily_timestep=dict_all["scenario_trend"],
-                detrend_method="additive",
+                detrend_method=detrend_method,
             )
 
         dict_all["sai_debiased_detrended"] = sai_debiased
@@ -300,7 +308,7 @@ def bias_correct(
             dict_all["sai_debiased"] = retrend(
                 bias_corrected_detrended=dict_all["sai_debiased_detrended"],
                 trend_on_daily_timestep=dict_all["sai_trend"],
-                detrend_method="additive",
+                detrend_method=detrend_method,
             )
 
     else:
@@ -372,6 +380,7 @@ def run_bcsd(
 ):
     cfg = BCSD_CONFIG[var_name]
     detrend_data = cfg["detrend_data"]
+    detrend_method = cfg["detrend_method"]
     do_windowing = cfg["do_windowing"]
     downscaling_method = cfg["downscaling_method"]
     downscaling_clim_method = cfg["downscaling_clim_method"]
@@ -401,6 +410,7 @@ def run_bcsd(
         verbose=verbose,
         rechunk_workflow=rechunk_workflow,
         detrend_data=detrend_data,
+        detrend_method=detrend_method,
     )
 
     dict_all = bias_correct(
@@ -408,6 +418,7 @@ def run_bcsd(
         var_name=var_name,
         verbose=verbose,
         detrend_data=detrend_data,
+        detrend_method=detrend_method,
         do_windowing=do_windowing,
         mapping_type="parametric",
     )
