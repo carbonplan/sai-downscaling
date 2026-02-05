@@ -50,14 +50,16 @@ def get_all_data(
     gcm: str,
     var_name: str,
     verbose: bool = True,
+    ensemble_member_ssp: int = 0,
+    ensemble_member_sai: int = 0,
 ):
     with Timer("Loaded data", verbose=verbose):
         model_scenario = get_experiment(gcm=gcm, scenario="SSP245", var=var_name)
-        model_scenario = model_scenario.isel(ensemble_member=0)
+        model_scenario = model_scenario.isel(ensemble_member=ensemble_member_ssp)
         model_scenario = model_scenario.drop_vars("spatial_ref")
 
         model_sai = get_experiment(gcm=gcm, scenario="G6-1.5K", var=var_name)
-        model_sai = model_sai.isel(ensemble_member=0)
+        model_sai = model_sai.isel(ensemble_member=ensemble_member_sai)
         model_sai = model_sai.drop_vars("spatial_ref")
 
         model_historical = get_experiment(gcm=gcm, scenario="Historical", var=var_name)
@@ -356,6 +358,8 @@ def run_bcsd(
     subset_bounds: list | None = None,
     save_output: bool = True,
     save_intermediate_output: bool = True,
+    ensemble_member_ssp: int = 0,
+    ensemble_member_sai: int = 0,
 ):
     cfg = BCSD_CONFIG[var_name]
     detrend_data = cfg["detrend_data"]
@@ -367,6 +371,8 @@ def run_bcsd(
         gcm=gcm,
         var_name=var_name,
         verbose=verbose,
+        ensemble_member_ssp=ensemble_member_ssp,
+        ensemble_member_sai=ensemble_member_sai,
     )
 
     if subset_bounds is not None:
