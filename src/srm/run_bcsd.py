@@ -43,6 +43,12 @@ BCSD_CONFIG = {
         "downscaling_method": "subtract",
         "downscaling_clim_method": "fft",
     },
+    "rsds": {
+        "detrend_data": True,
+        "do_windowing": True,
+        "downscaling_method": "divide",
+        "downscaling_clim_method": "simple",
+    },
 }
 
 
@@ -179,25 +185,28 @@ def bias_correct(
     do_windowing: bool = True,
     mapping_type: str = "parametric",
 ):
+    def make_debiaser(var_name=var_name, **kwargs):
+        if var_name == "rsds":
+            debiaser = QuantileMapping(distribution=None, **kwargs)
+        else:
+            debiaser = QuantileMapping.from_variable(variable=var_name, **kwargs)
+        return debiaser
+
     with Timer("Quantile mapped historical", verbose=verbose):
         if do_windowing:
-            debiaser = QuantileMapping.from_variable(
-                variable=var_name,
-                mapping_type=mapping_type,
-                detrending="no_detrending",
-                running_window_mode=True,
-                running_window_length=31,
-                running_window_step_length=1,
-                running_window_mode_over_years_of_cm_future=False,
-            )
+            running_window_mode = True
         else:
-            debiaser = QuantileMapping.from_variable(
-                variable=var_name,
-                mapping_type=mapping_type,
-                detrending="no_detrending",
-                running_window_mode=False,
-                running_window_mode_over_years_of_cm_future=False,
-            )
+            running_window_mode = False
+
+        debiaser = make_debiaser(
+            var_name=var_name,
+            mapping_type=mapping_type,
+            detrending="no_detrending",
+            running_window_mode=running_window_mode,
+            running_window_length=31,
+            running_window_step_length=1,
+            running_window_mode_over_years_of_cm_future=False,
+        )
 
         # as_numpy brings from sparse to dense. regridding sparsifies, so bring it back here for downstream tasks.
         obs = dict_all["obs_coarse"].as_numpy().values
