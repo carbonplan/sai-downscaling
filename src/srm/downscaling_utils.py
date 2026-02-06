@@ -111,20 +111,25 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray, detrend_method: st
     # Apply a 9-year rolling mean within each month group
     da_mon_avg = g.map(lambda x: x.rolling(time=9, center=True, min_periods=1).mean())
 
-    da_mon_trend = da_mon_avg.groupby("time.month").map(
-        lambda x: x - da_baseline_clim.sel(month=x["time.month"][0].item())
-    )
-
-    # Project that monthly trend onto the daily timestep
-    trend_on_daily_timestep = (
-        da_mon_trend.resample(time="1D").ffill().reindex(time=da.time).ffill(dim="time")
-    ).compute()
-
     valid_values = ["additive", "multiplicative"]
     if detrend_method not in valid_values:
         raise ValueError(
             f"{detrend_method} is currently not supported. valid values are: {valid_values}"
         )
+
+    if detrend_method == "additive":
+        da_mon_trend = da_mon_avg.groupby("time.month").map(
+            lambda x: x - da_baseline_clim.sel(month=x["time.month"][0].item())
+        )
+    elif detrend_method == "multiplicative":
+        da_mon_trend = da_mon_avg.groupby("time.month").map(
+            lambda x: x / da_baseline_clim.sel(month=x["time.month"][0].item())
+        )
+
+    # Project that monthly trend onto the daily timestep
+    trend_on_daily_timestep = (
+        da_mon_trend.resample(time="1D").ffill().reindex(time=da.time).ffill(dim="time")
+    ).compute()
 
     # Calculate detrended timeseries
     if detrend_method == "additive":
