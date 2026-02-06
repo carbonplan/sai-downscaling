@@ -2,6 +2,7 @@ import warnings
 
 import dask.system
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
+import scipy
 import xarray as xr
 from ibicus.debias import QuantileMapping
 
@@ -198,7 +199,7 @@ def bias_correct(
 ):
     def make_debiaser(var_name=var_name, **kwargs):
         if var_name == "rsds":
-            debiaser = QuantileMapping(distribution=None, **kwargs)
+            debiaser = QuantileMapping(distribution=scipy.stats.beta, **kwargs)
         else:
             debiaser = QuantileMapping.from_variable(variable=var_name, **kwargs)
         return debiaser
