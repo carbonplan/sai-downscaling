@@ -164,23 +164,26 @@ def preprocess_data(
         dict_all["sai_detrended"] = dict_all["model_sai"]
 
     ################## Subset time periods
-    dict_all["model_hist"] = dict_all["model_hist"].sel(
-        time=slice(f"{train_period_start}", f"{train_period_end}")
-    )
-    dict_all["obs"] = dict_all["obs"].sel(
-        time=slice(f"{train_period_start}", f"{train_period_end}")
-    )
-    dict_all["model_scenario"] = dict_all["model_scenario"].sel(
-        time=slice(f"{predict_period_start}", f"{predict_period_end}")
-    )
-    dict_all["scenario_detrended"] = dict_all["scenario_detrended"].sel(
-        time=slice(f"{predict_period_start}", f"{predict_period_end}")
-    )
+    for key in ["model_hist", "obs"]:
+        dict_all[key] = dict_all[key].sel(
+            time=slice(f"{train_period_start}", f"{train_period_end}")
+        )
 
-    dict_all["model_sai"] = dict_all["model_sai"].sel(time=slice(f"{2035}", f"{2085}"))
+    for key in ["model_scenario", "scenario_detrended"]:
+        dict_all[key] = dict_all[key].sel(
+            time=slice(f"{predict_period_start}", f"{predict_period_end}")
+        )
 
-    dict_all["sai_detrended"] = dict_all["sai_detrended"].sel(time=slice(f"{2035}", f"{2085}"))
+    for key in ["model_sai", "sai_detrended"]:
+        dict_all[key] = dict_all[key].sel(time=slice(f"{2035}", f"{2084}"))
 
+    if detrend_data:
+        for key in ["scenario_trend", "scenario_detrended"]:
+            dict_all[key] = dict_all[key].sel(
+                time=slice(f"{predict_period_start}", f"{predict_period_end}")
+            )
+        for key in ["sai_trend", "sai_detrended"]:
+            dict_all[key] = dict_all[key].sel(time=slice(f"{2035}", f"{2085}"))
     return dict_all
 
 
