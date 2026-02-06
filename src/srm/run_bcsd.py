@@ -215,8 +215,8 @@ def bias_correct(
             mapping_type=mapping_type,
             detrending="no_detrending",
             running_window_mode=running_window_mode,
-            running_window_length=31,
-            running_window_step_length=1,
+            running_window_length=31,  # only used if running_window_mode=True
+            running_window_step_length=1,  # only used if running_window_mode=True
             running_window_mode_over_years_of_cm_future=False,
         )
 
