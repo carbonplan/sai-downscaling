@@ -424,7 +424,7 @@ def run_bcsd(
         detrend_data=detrend_data,
         detrend_method=detrend_method,
         do_windowing=do_windowing,
-        mapping_type="parametric",
+        mapping_type="nonparametric",
     )
 
     dict_all = spatially_disaggregate(
