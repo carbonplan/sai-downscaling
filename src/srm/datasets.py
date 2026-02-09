@@ -47,9 +47,7 @@ class Dataset:
         if self.format == "icechunk":
             import icechunk
 
-            storage = icechunk.s3_storage(
-                bucket=self.bucket, prefix=self.prefix, from_env=True
-            )
+            storage = icechunk.s3_storage(bucket=self.bucket, prefix=self.prefix, from_env=True)
             repo = icechunk.Repository.open(storage)
             session = repo.readonly_session("main")
             return xr.open_zarr(session.store, consolidated=False)
@@ -71,46 +69,46 @@ class Catalog:
         self.datasets = {
             "CESM2-WACCM-Historical-icechunk": Dataset(
                 name="CESM2-WACCM-Historical-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical.icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical_pancakes.icechunk",
                 format="icechunk",
-                expected_chunks={"time": 13521, "lat": 8, "lon": 16},
-                expected_shards={"time": 13521, "lat": 32, "lon": 64},
+                expected_chunks={"time": 30, "lat": 192, "lon": 288},  # ~6MB ~ 30 days
+                expected_shards={"time": 480, "lat": 192, "lon": 288},  #  ~77MB 1 year
                 expected_vars=all_standards,
             ),
             "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
                 name="CESM2-WACCM-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k.icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k_pancakes.icechunk",
                 format="icechunk",
                 expected_chunks={
                     "ensemble_member": 1,
-                    "time": 18251,
-                    "lat": 8,
-                    "lon": 16,
-                },
+                    "time": 30,
+                    "lat": 192,
+                    "lon": 288,
+                },  # ~6MB ~ 30 days
                 expected_shards={
                     "ensemble_member": 1,
-                    "time": 18251,
-                    "lat": 32,
-                    "lon": 64,
-                },
+                    "time": 480,
+                    "lat": 192,
+                    "lon": 288,
+                },  #  ~77MB 1 year
                 expected_vars=all_standards,
             ),
             "CESM2-WACCM-SSP245-icechunk": Dataset(
                 name="CESM2-WACCM-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245.icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245_pancakes.icechunk",
                 format="icechunk",
                 expected_chunks={
                     "ensemble_member": 1,
-                    "time": 20076,
-                    "lat": 8,
-                    "lon": 16,
-                },
+                    "time": 30,
+                    "lat": 192,
+                    "lon": 288,
+                },  # ~6MB ~ 30 days
                 expected_shards={
                     "ensemble_member": 1,
-                    "time": 20076,
-                    "lat": 32,
-                    "lon": 64,
-                },
+                    "time": 480,
+                    "lat": 192,
+                    "lon": 288,
+                },  #  ~77MB 1 year
                 expected_vars=all_standards,
             ),
             "MIROC-ES2H-G6-1.5K-icechunk": Dataset(
@@ -163,17 +161,115 @@ class Catalog:
                     VarStandards.TASMIN,
                 ],
             ),
+            "UKESM-SSP245-icechunk": Dataset(
+                name="UKESM-SSP245-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245/UKESM-SSP245.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 30451,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 30451,
+                    "lat": 64,
+                    "lon": 128,
+                },
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PS,
+                    VarStandards.RSDS,
+                    VarStandards.RLDS,
+                ],
+            ),
+            "UKESM-G6-1.5K-icechunk": Dataset(
+                name="UKESM-G6-1.5K-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K/UKESM-G6-1.5K.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 17913,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 17913,
+                    "lat": 64,
+                    "lon": 128,
+                },
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PS,
+                    VarStandards.RSDS,
+                    VarStandards.RLDS,
+                ],
+            ),
+            "UKESM-SSP245-SFCWIND-icechunk": Dataset(
+                name="UKESM-SSP245-SFCWIND-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245-SFCWIND/UKESM-SSP245-SFCWIND.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 30451,
+                    "lat": 12,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 30451,
+                    "lat": 144,
+                    "lon": 192,
+                },
+                expected_vars=[
+                    VarStandards.SFCWIND,
+                ],
+            ),
+            "UKESM-G6-1.5K-SFCWIND-icechunk": Dataset(
+                name="UKESM-G6-1.5K-SFCWIND-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K-SFCWIND/UKESM-G6-1.5K-SFCWIND.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 17913,
+                    "lat": 8,
+                    "lon": 16,
+                },
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 17913,
+                    "lat": 144,
+                    "lon": 192,
+                },
+                expected_vars=[
+                    VarStandards.SFCWIND,
+                ],
+            ),
             "ERA5": Dataset(
                 name="ERA5",
-                path="s3://carbonplan-srm/input/tensor/ERA5/ERA5.icechunk",
+                # path="s3://carbonplan-srm/input/tensor/ERA5/ERA5.icechunk",
+                path="s3://carbonplan-srm/input/tensor/ERA5/ERA5_pancakes.icechunk",
                 format="icechunk",
-                expected_chunks={"time": 23741, "lat": 7, "lon": 14},  # ~9.5MB chunks
+                # expected_chunks={"time": 23741, "lat": 7, "lon": 14},  # ~9.5MB chunks
+                # expected_shards={
+                #     "time": 23741,
+                #     "lat": 35,
+                #     "lon": 70,
+                # },  # ~ 221.88 MiB shard! # 441 chunks in 5 graph layers
+                expected_chunks={
+                    "time": 1,
+                    "lat": 721,
+                    "lon": 1440,
+                },  # ~4 MB chunks # maps / pancakes
                 expected_shards={
-                    "time": 23741,
-                    "lat": 35,
-                    "lon": 70,
-                },  # ~ 221.88 MiB shard! # 441 chunks in 5 graph layers
-                # Only a subset for ERA5 example
+                    "time": 30,
+                    "lat": 721,
+                    "lon": 1440,
+                },  # ~119 MB chunks # maps / pancakes
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.RLDS,
@@ -210,9 +306,7 @@ class Catalog:
 
                 unit_str = actual_units
                 if spec and actual_units != spec.units:
-                    unit_str = (
-                        f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
-                    )
+                    unit_str = f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
 
                 table_data.append(
                     [
@@ -231,8 +325,7 @@ class Catalog:
         from tabulate import tabulate
 
         table_data = [
-            [ds.name, ds.format, str(ds.path), ds.expected_chunks]
-            for ds in self.datasets.values()
+            [ds.name, ds.format, str(ds.path), ds.expected_chunks] for ds in self.datasets.values()
         ]
         headers = ["Name", "Format", "Path", "Expected Chunks"]
         return f"Dataset Catalog ({len(self.datasets)} datasets)\n" + tabulate(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    # if needed
     pass
 
 
@@ -48,14 +49,10 @@ class DatasetValidator:
             coord = self.ds[cf_key]
             coord_name = coord.name
         except KeyError:
-            return ValidationResult(
-                False, [f"no {expected_name} coord '{cf_key}' found"]
-            )
+            return ValidationResult(False, [f"no {expected_name} coord '{cf_key}' found"])
 
         if coord_name != expected_name:
-            issues.append(
-                f"{expected_name} name is '{coord_name}', expected '{expected_name}'"
-            )
+            issues.append(f"{expected_name} name is '{coord_name}', expected '{expected_name}'")
 
         coord_min = float(coord.min())
         coord_max = float(coord.max())
@@ -107,7 +104,6 @@ class DatasetValidator:
         missing_names = expected_names - actual_names
 
         if missing_names:
-            # We sort the strings (which Python knows how to do)
             return ValidationResult(
                 False,
                 [
@@ -132,13 +128,30 @@ class DatasetValidator:
 
         return ValidationResult(len(issues) == 0, issues)
 
+    def validate_calendar(self) -> ValidationResult:
+        import numpy as np
+
+        issues = []
+
+        if "time" not in self.ds.dims:
+            return ValidationResult(False, ["Dataset has no 'time' dimension"])
+
+        calendar = self.ds.time.encoding.get("calendar")
+        if calendar is None:
+            issues.append("time coord missing 'calendar' in encoding")
+        elif calendar != "proleptic_gregorian":
+            issues.append(f"calendar is '{calendar}', expected 'proleptic_gregorian'")
+
+        if not np.issubdtype(self.ds.time.dtype, np.datetime64):
+            issues.append(f"time dtype is {self.ds.time.dtype}, expected datetime64")
+
+        return ValidationResult(len(issues) == 0, issues)
+
     def validate_negative_precip(self) -> ValidationResult:
         if "pr" not in list(self.ds):
             return ValidationResult(
                 True,
-                [
-                    f"dataset has no variable named 'pr'. Available variables are: {list(self.ds)}"
-                ],
+                [f"dataset has no variable named 'pr'. Available variables are: {list(self.ds)}"],
             )
         has_negatives = (
             (self.ds["pr"] < 0).any().compute()
