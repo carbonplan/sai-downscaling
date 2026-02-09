@@ -1,9 +1,8 @@
 import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
-import xclim as xc
-from xclim.indices import dry_days as xc_dry_days
-from xclim.indices import tx_max, growing_degree_days
+import seaborn as sns
+from xclim.indices import growing_degree_days, tx_max
+
 
 def plot_comparisons(obs, raw, ds1, ds2=None, bias="absolute"):
     fig, axarr = plt.subplots(figsize=(20, 8), nrows=2, ncols=4)
@@ -58,11 +57,9 @@ def plot_comparisons(obs, raw, ds1, ds2=None, bias="absolute"):
 
     plt.tight_layout()
 
-from xclim.indices import dry_days
 
-from xclim.indices import dry_days
+from xclim.indices import dry_days, hot_days
 
-from xclim.indices import dry_days, tx_max, growing_degree_days, hot_days
 
 def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
     ds_list = [raw, era5, ds1]
@@ -87,7 +84,7 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
     elif stat == "hottest_day":
         out = []
         for ds in ds_list:
-            tasmax = ds[variable]         
+            tasmax = ds[variable]
             tasmax.attrs.setdefault("units", "K")
             out.append(tx_max(tasmax, freq="YS").mean("time").compute())
         out = [da.rename("hottest_day") for da in out]
@@ -95,7 +92,7 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
     elif stat == "gdd":
         out = []
         for ds in ds_list:
-            tas = ds[variable]             
+            tas = ds[variable]
             tas.attrs.setdefault("units", "K")
             out.append(growing_degree_days(tas, thresh="10 degC", freq="YS").mean("time").compute())
         out = [da.rename("gdd") for da in out]
@@ -103,7 +100,7 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
     elif stat == "days_over_30C":
         out = []
         for ds in ds_list:
-            tasmax = ds[variable]          
+            tasmax = ds[variable]
             tasmax.attrs.setdefault("units", "K")
             out.append(hot_days(tasmax, thresh="30 degC", freq="YS").mean("time").compute())
         out = [da.rename("days_over_30C") for da in out]
@@ -118,17 +115,20 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
         raw_toplot, era5_toplot, ds1_toplot, ds2_toplot = out
 
     return raw_toplot, era5_toplot, ds1_toplot, ds2_toplot
-    
+
+
 def prep_funky_calendar(ds, ds_timeindex_to_match, time_slice):
     ds_subset = ds.sel(time=time_slice)
     # overwrite the time index because some calendars are weird and won't play nice in plotting
-    # this will only work if we're not in a leap year! (if we have any 360 day calendar models 
+    # this will only work if we're not in a leap year! (if we have any 360 day calendar models
     # we'll have to change this as well)
-    ds_subset['time'] = ds_timeindex_to_match.sel(time=time_slice)['time']
+    ds_subset["time"] = ds_timeindex_to_match.sel(time=time_slice)["time"]
     return ds_subset
 
+
 def sel_point(ds, lat, lon):
-    return ds.sel(latitude=lat, longitude=lon, method='nearest')
+    return ds.sel(latitude=lat, longitude=lon, method="nearest")
+
 
 def prep_datasets_for_daily_timeseries_plotting(ds_list, time_slice, lat, lon, variable):
     era5_subset = sel_point(era5.sel(time=time_slice), lat, lon)
@@ -140,30 +140,44 @@ def prep_datasets_for_daily_timeseries_plotting(ds_list, time_slice, lat, lon, v
     else:
         return era5_toplot, raw_toplot, ds1_toplot
 
-def prep_datasets_for_seasonal_cycle_plotting(era5, raw, ds1, time_slice, lat, lon, variable, ds2=None):
 
-    era5_toplot, raw_toplot, ds1_toplot = [ds[variable].sel(time=time_slice).sel(latitude=lat, longitude=lon, method='nearest').groupby('time.dayofyear').mean() for ds in [era5, raw, ds1]]
+def prep_datasets_for_seasonal_cycle_plotting(
+    era5, raw, ds1, time_slice, lat, lon, variable, ds2=None
+):
+    era5_toplot, raw_toplot, ds1_toplot = [
+        ds[variable]
+        .sel(time=time_slice)
+        .sel(latitude=lat, longitude=lon, method="nearest")
+        .groupby("time.dayofyear")
+        .mean()
+        for ds in [era5, raw, ds1]
+    ]
     if ds2 is not None:
-        ds2_toplot = ds2[variable].sel(time=time_slice).sel(latitude=lat, longitude=lon, method='nearest').groupby('time.dayofyear').mean()
+        ds2_toplot = (
+            ds2[variable]
+            .sel(time=time_slice)
+            .sel(latitude=lat, longitude=lon, method="nearest")
+            .groupby("time.dayofyear")
+            .mean()
+        )
         return era5_toplot, raw_toplot, ds1_toplot, ds2_toplot
     else:
         return era5_toplot, raw_toplot, ds1_toplot
 
 
-
 def plot_timeseries(ax, era5_toplot, raw_toplot, ds1_toplot, location, ds2_toplot=None):
-    era5_toplot.plot(ax=ax, color='grey', alpha=0.5)
-    raw_toplot.plot(ax=ax, color='k')
-    ds1_toplot.plot(ax=ax, color='firebrick')
+    era5_toplot.plot(ax=ax, color="grey", alpha=0.5)
+    raw_toplot.plot(ax=ax, color="k")
+    ds1_toplot.plot(ax=ax, color="firebrick")
     if ds2_toplot is not None:
-        ds2_toplot.plot(ax=ax, color='royalblue')
+        ds2_toplot.plot(ax=ax, color="royalblue")
     ax.set_title(location)
 
 
 def plot_pdf(era5, raw, ds1, var, ds2=None, title=None, xlabel=None):
     plt.figure(figsize=(8, 6))
     plt.rcParams["font.size"] = 11
-    
+
     sns.kdeplot(
         era5,
         label="Observations (ERA5)",
@@ -184,20 +198,21 @@ def plot_pdf(era5, raw, ds1, var, ds2=None, title=None, xlabel=None):
     )
     if ds2 is not None:
         sns.kdeplot(
-        ds2,
-        label="Downscaled v2",
-        color="royalblue",
-        linestyle="-",
-    )
-    
+            ds2,
+            label="Downscaled v2",
+            color="royalblue",
+            linestyle="-",
+        )
+
     plt.title(
         title,
         fontsize=13,
         fontweight="bold",
     )
-    
+
     plt.legend()
     plt.xlabel(xlabel)
+
 
 def plot_cdf(era5, raw, ds1, var=None, ds2=None, title=None, xlabel=None):
     plt.figure(figsize=(8, 6))
