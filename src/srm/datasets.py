@@ -66,7 +66,7 @@ class BaseDataset(ABC):
             repo = icechunk.Repository.open(storage)
 
         session = repo.readonly_session("main")
-        return xr.open_dataset(session.store, engine='zarr', chunks="auto",consolidated=False, zarr_format=3)
+        return xr.open_dataset(session.store, engine='zarr', chunks=self.encoding["shards"],consolidated=False, zarr_format=3)
 
     def get_chunking_dict(self) -> dict[str, int]:
         ds = self.to_xarray()
@@ -86,6 +86,12 @@ class Dataset(BaseDataset):
         if isinstance(self.path, str):
             self.path = CloudPath(self.path)
 
+    @property 
+    def encoding(self) ->dict:
+        return {
+            "chunks": self.expected_chunks,
+            "shards": self.expected_shards,
+        }
     @property
     def bucket(self) -> str:
         return str(self.path.bucket)

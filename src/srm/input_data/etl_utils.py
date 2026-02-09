@@ -117,11 +117,10 @@ def write_dataset_to_icechunk(
 
     if shards is not None:
         ds = ds.chunk(shards)
-    import ipdb; ipdb.set_trace()
-    # to_icechunk(ds, session, encoding=encoding, mode=write_mode)
+    to_icechunk(ds, session, encoding=encoding, mode=write_mode)
 
-    # if commit_message:
-    #     session.commit(commit_message)
+    if commit_message:
+        session.commit(commit_message)
 
 
 def virtualize_netcdf(

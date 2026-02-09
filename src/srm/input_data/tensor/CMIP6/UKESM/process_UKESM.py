@@ -46,7 +46,7 @@ class BaseUKESM_Config(BaseETLConfig):
 
     virtualize_cluster: dict = field(
         default_factory=lambda: {
-            "n_workers": [4, 20],
+            "n_workers": [4, 16],
             "worker_vm_types": ["m8g.2xlarge"],
             "scheduler_vm_types": "c8g.2xlarge",
         }
@@ -54,8 +54,8 @@ class BaseUKESM_Config(BaseETLConfig):
 
     process_cluster: dict = field(
         default_factory=lambda: {
-            "n_workers": [1, 20],
-            "worker_vm_types": ["c8g.xlarge"],
+            "n_workers": [4, 16],
+            "worker_vm_types": ["m8g.xlarge"],
             "scheduler_vm_types": "c8g.xlarge",
         }
     )
@@ -404,11 +404,9 @@ def process(variable, scenario, coiled, subset):
                 materialized_cat.bucket, materialized_cat.prefix, readonly=False
             )
             write_mode = determine_write_mode(repo)
-
             encoding = build_encoding_dict(
                 ds, config.encoding["chunks"], config.encoding["shards"]
             )
-
             write_dataset_to_icechunk(
                 ds,
                 session,
