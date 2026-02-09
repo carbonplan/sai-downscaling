@@ -1,3 +1,4 @@
+#etl_utils.py
 import dask
 import icechunk
 import xarray as xr
@@ -116,24 +117,11 @@ def write_dataset_to_icechunk(
 
     if shards is not None:
         ds = ds.chunk(shards)
+    import ipdb; ipdb.set_trace()
+    # to_icechunk(ds, session, encoding=encoding, mode=write_mode)
 
-    to_icechunk(ds, session, encoding=encoding, mode=write_mode)
-
-    if commit_message:
-        session.commit(commit_message)
-
-
-# def virtualize_netcdf(
-#     url: str,
-#     registry: ObjectStoreRegistry,
-#     parser: HDFParser,
-#     preprocess_fn: callable = None,
-# ) -> xr.Dataset:
-#     manifest_store = parser(url=url, registry=registry)
-#     ds = xr.open_zarr(manifest_store, consolidated=False, zarr_format=3)
-#     if preprocess_fn:
-#         ds = preprocess_fn(ds, url)
-#     return ds
+    # if commit_message:
+    #     session.commit(commit_message)
 
 
 def virtualize_netcdf(
@@ -167,7 +155,7 @@ def virtualize_and_combine(
     """
     Parallellizes the virtualization of multiple files and combines them.
     """
-
+    
     delayed_datasets = [
         dask.delayed(virtualize_netcdf)(url, registry, parser, loadable_variables, preprocess_fn)
         for url in urls

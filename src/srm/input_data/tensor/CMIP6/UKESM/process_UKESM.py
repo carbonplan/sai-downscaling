@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 
 import boto3
 import click
+import dask
 import icechunk
 import obstore as obs
 import xarray as xr
@@ -21,6 +22,7 @@ from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
     add_cf_bounds,
     build_encoding_dict,
+    compute_wind_speed,
     determine_write_mode,
     get_var_specs,
     trim_negative_precipitation,
@@ -30,41 +32,31 @@ from srm.input_data.etl_utils import (
 )
 from srm.utils import lon_to_180
 
-zarr.config.set({"async.concurrency": 64})
+zarr.config.set({"async.concurrency": 128})
 
 
 @dataclass
 class BaseUKESM_Config(BaseETLConfig):
     s3_input_prefix: str = ""
-
     ensemble_members: list = field(default_factory=lambda: ["001", "002", "003"])
-
     drop_variables: list = field(
-        default_factory=lambda: [
-            "time_bnds",
-            "lat_bnds",
-            "lon_bnds",
-            "height",
-        ]
+        default_factory=lambda: ["time_bnds", "lat_bnds", "lon_bnds", "height"]
     )
-
     aws_creds: dict = field(default_factory=dict)
 
-    # Cluster config for virtualization (metadata-only, needs many small workers)
     virtualize_cluster: dict = field(
         default_factory=lambda: {
-            "n_workers": [2, 50],
-            "worker_vm_types": ["r8g.2xlarge"],
+            "n_workers": [4, 20],
+            "worker_vm_types": ["m8g.2xlarge"],
             "scheduler_vm_types": "c8g.2xlarge",
         }
     )
 
-    # Cluster config for processing (data-heavy, needs fewer large workers)
     process_cluster: dict = field(
         default_factory=lambda: {
-            "n_workers": [1, 50],
-            "worker_vm_types": ["r8g.2xlarge"],
-            "scheduler_vm_types": "c8g.2xlarge",
+            "n_workers": [1, 20],
+            "worker_vm_types": ["c8g.xlarge"],
+            "scheduler_vm_types": "c8g.xlarge",
         }
     )
 
@@ -81,65 +73,67 @@ class BaseUKESM_Config(BaseETLConfig):
 @dataclass
 class UKESM_SSP245_Config(BaseUKESM_Config):
     scenario: str = "SSP245"
-    catalog_key: str = "UKESM-SSP245-icechunk"
+    catalog_key: str = "UKESM-SSP245-virtual"  # Standard variables
+    materialized_key: str = "UKESM-SSP245-icechunk"
+    s3_input_prefix: str = "input/tensor/UKESM/transfer/SSP2-4.5/"
+
+
+@dataclass
+class UKESM_SSP245_UAS_Config(BaseUKESM_Config):
+    scenario: str = "SSP245-uas"
+    catalog_key: str = "UKESM-SSP245-uas-virtual"
+    s3_input_prefix: str = "input/tensor/UKESM/transfer/SSP2-4.5/"
+
+
+@dataclass
+class UKESM_SSP245_VAS_Config(BaseUKESM_Config):
+    scenario: str = "SSP245-vas"
+    catalog_key: str = "UKESM-SSP245-vas-virtual"
     s3_input_prefix: str = "input/tensor/UKESM/transfer/SSP2-4.5/"
 
 
 @dataclass
 class UKESM_G6_1p5K_Config(BaseUKESM_Config):
     scenario: str = "G6-1.5K"
-    catalog_key: str = "UKESM-G6-1.5K-icechunk"
-    s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K"
+    catalog_key: str = "UKESM-G6-1.5K-virtual"
+    materialized_key: str = "UKESM-G6-1.5K-icechunk"
+    s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K/"
 
 
 @dataclass
-class UKESM_SSP245_SFCWIND_Config(BaseUKESM_Config):
-    scenario: str = "SSP245"
-    catalog_key: str = "UKESM-SSP245-SFCWIND-icechunk"
-    s3_input_prefix: str = "input/tensor/UKESM/transfer/SSP2-4.5/"
+class UKESM_G6_1p5K_UAS_Config(BaseUKESM_Config):
+    scenario: str = "G6-1.5K-uas"
+    catalog_key: str = "UKESM-G6-1.5K-uas-virtual"
+    s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K/"
 
 
 @dataclass
-class UKESM_G6_1p5K_SFCWIND_Config(BaseUKESM_Config):
-    scenario: str = "G6-1.5K"
-    catalog_key: str = "UKESM-G6-1.5K-SFCWIND-icechunk"
-    s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K"
+class UKESM_G6_1p5K_VAS_Config(BaseUKESM_Config):
+    scenario: str = "G6-1.5K-vas"
+    catalog_key: str = "UKESM-G6-1.5K-vas-virtual"
+    s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K/"
 
 
-@dataclass
 class UKESM_Historical_Config(BaseUKESM_Config):
     scenario: str = "historical"
     catalog_key: str = "UKESM-historical-icechunk"
+    virtual_catalog_key: str = "UKESM-historical-virtual"
     time_range: str = "1850-1949"
-    source_base_url: str = (
-        "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/MOHC/UKESM1-0-LL/historical"
-    )
     s3_input_prefix: str = "input/tensor/UKESM/netcdf/historical"
-
     ensemble_members: list = field(
-        default_factory=lambda: [
-            "r1i1p1f2",
-            "r2i1p1f2",
-            "r3i1p1f2",
-            "r4i1p1f2",
-            "r5i1p1f3",
-            "r6i1p1f3",
-            "r7i1p1f3",
-            "r8i1p1f2",
-            "r9i1p1f2",
-            "r10i1p1f2",
-        ]
+        default_factory=lambda: ["r1i1p1f2", "r2i1p1f2", "r3i1p1f2", "r4i1p1f2", "r5i1p1f3", "r6i1p1f3", "r7i1p1f3", "r8i1p1f2", "r9i1p1f2", "r10i1p1f2"]
     )
-
 
 SCENARIO_CONFIG_MAP = {
     "SSP245": UKESM_SSP245_Config,
+    "SSP245-uas": UKESM_SSP245_UAS_Config,
+    "SSP245-vas": UKESM_SSP245_VAS_Config,
     "G6-1.5K": UKESM_G6_1p5K_Config,
-    "SSP245-SFCWIND": UKESM_SSP245_SFCWIND_Config,
-    "G6-1.5K-SFCWIND": UKESM_G6_1p5K_SFCWIND_Config,
+    "G6-1.5K-uas": UKESM_G6_1p5K_UAS_Config,
+    "G6-1.5K-vas": UKESM_G6_1p5K_VAS_Config,
     "historical": UKESM_Historical_Config,
-}
 
+}
 
 def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Config) -> None:
     import warnings
@@ -202,11 +196,12 @@ def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Confi
     subprocess.run(command)
 
 
+
 def _get_netcdf_urls(config: BaseUKESM_Config, variables: list[str]) -> list[str]:
     store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
-
     stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
     netcdf_list = list(stream["objects"]["path"].to_numpy())
+
     filtered_urls = [
         f"s3://{config.s3_bucket}/{path}"
         for path in netcdf_list
@@ -216,15 +211,8 @@ def _get_netcdf_urls(config: BaseUKESM_Config, variables: list[str]) -> list[str
 
 
 def _preprocess_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """
-    Extract ensemble member from URL and expand dims.
-
-    url parameter is required when using VirtualiZarr's open_virtual_mfdataset
-    since the dataset encoding doesn't contain the source path.
-    """
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
-
     ensemble = url.split(".nc")[0].split("_gn")[0].split("_")[-1]
     ds = ds.expand_dims({"ensemble_member": [ensemble]})
     return ds
@@ -235,7 +223,6 @@ def _preprocess_ukesm(
     config: BaseUKESM_Config,
     subset: bool = False,
 ) -> xr.Dataset:
-    # Drop any duplicate times (do this first while still lazy)
     ds = ds.drop_duplicates(dim="time", keep="first")
 
     ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False, align_on="date")
@@ -253,22 +240,23 @@ def _preprocess_ukesm(
     return ds
 
 
+
 def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> xr.Dataset:
     ds = update_variable_attrs(ds, var_specs)
     ds = add_cf_bounds(ds)
 
-    attrs = {
-        "scenario": config.scenario,
-        "model": "UKESM1-0-LL",
-        "Conventions": "CF-1.8",
-    }
-
-    if isinstance(config, UKESM_Historical_Config):
-        attrs["time_range"] = config.time_range
-
-    ds.attrs.update(attrs)
+    ds.attrs.update(
+        {
+            "scenario": config.scenario,
+            "model": "UKESM1-0-LL",
+            "Conventions": "CF-1.8",
+        }
+    )
 
     return ds
+
+
+# --- CLI Commands ---
 
 
 @click.group()
@@ -301,177 +289,125 @@ def fetch(variable, scenario):
     else:
         raise ValueError(f"fetch not implemented for scenario: {scenario}")
 
-
 @click.command()
 @click.option(
-    "--variable",
-    multiple=True,
-    required=True,
-    help="UKESM variables to virtualize",
-)
-@click.option(
-    "--scenario",
-    type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())),
-    required=True,
-    help="which UKESM scenario to virtualize",
+    "--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True
 )
 @click.option("--coiled/--local", default=False)
-def virtualize(variable, scenario, coiled):
+def virtualize(scenario, coiled):
     """Stage 1: Virtualize netcdf files and write virtual references to icechunk"""
-    from cloudpathlib import S3Path
     from obspec_utils.readers import BufferedStoreReader
     from obspec_utils.wrappers import CachingReadableStore, SplittingReadableStore
 
-    config_class = SCENARIO_CONFIG_MAP.get(scenario)
-    if config_class is None:
-        raise ValueError(f"unknown scenario: {scenario}")
-
-    config = config_class()
+    config = SCENARIO_CONFIG_MAP[scenario]()
+    virt_cat = catalog.get(config.catalog_key)
+    variables = [var.name for var in virt_cat.expected_vars]
 
     if coiled:
         from srm.config import ClusterConfig
 
-        virt_cluster_config = ClusterConfig(**config.virtualize_cluster)
-        client = setup_cluster(virt_cluster_config)
+        client = setup_cluster(ClusterConfig(**config.virtualize_cluster))
     else:
         client = setup_local_client()
 
-    ukesm_cat = catalog.get(config.catalog_key)
-
-    virtual_path = ukesm_cat.virtual_path
-    if not virtual_path:
-        raise ValueError(f"No virtual_path defined for {config.catalog_key}")
-
-    virtual_s3_path = S3Path(virtual_path)
-    virtual_bucket = virtual_s3_path.bucket
-    virtual_prefix = str(virtual_s3_path.key)
-
     try:
-        # repo_config = icechunk.RepositoryConfig.default()
-        # repo_config.set_virtual_chunk_container(
-        #     icechunk.VirtualChunkContainer(
-        #         f"s3://{config.s3_bucket}/",
-        #         store=icechunk.s3_store(region="us-west-2"),
-        #     ),
-        # )
+        base_store = from_url(
+            f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds
+        )
+        registry = ObjectStoreRegistry(
+            {
+                f"s3://{config.s3_bucket}": CachingReadableStore(
+                    SplittingReadableStore(base_store)
+                )
+            }
+        )
+        parser = HDFParser(
+            drop_variables=config.drop_variables, reader_factory=BufferedStoreReader
+        )
 
-        # repo = icechunk.Repository.open_or_create(storage, repo_config)
+        netcdf_urls = _get_netcdf_urls(config, variables)
+        combined_ds = virtualize_and_combine(
+            urls=netcdf_urls,
+            registry=registry,
+            parser=parser,
+            loadable_variables=["lat", "lon", "time"],
+            preprocess_fn=_preprocess_ensemble,
+        )
 
-        for var in list(variable):
-            repo_config = icechunk.RepositoryConfig.default()
-            repo_config.set_virtual_chunk_container(
-                icechunk.VirtualChunkContainer(
-                    "s3://carbonplan-srm/",
-                    store=icechunk.s3_store(region="us-west-2"),
-                ),
+        repo_config = icechunk.RepositoryConfig.default()
+        repo_config.set_virtual_chunk_container(
+            icechunk.VirtualChunkContainer(
+                f"s3://{config.s3_bucket}/", store=icechunk.s3_store(region="us-west-2")
             )
-            storage = icechunk.s3_storage(
-                bucket=virtual_bucket,
-                prefix=virtual_prefix,
-                region="us-west-2",
-            )
-            repo = icechunk.Repository.open_or_create(storage, repo_config)
-            session = repo.writable_session("main")
-            # write_mode = determine_write_mode(repo)
+        )
 
-            netcdf_urls = _get_netcdf_urls(config, [var])
+        storage = icechunk.s3_storage(
+            bucket=virt_cat.bucket, prefix=virt_cat.prefix, region="us-west-2"
+        )
+        repo = icechunk.Repository.open_or_create(storage, repo_config)
+        session = repo.writable_session("main")
 
-            base_store = from_url(
-                f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds
-            )
-
-            splitting_store = SplittingReadableStore(base_store)
-
-            max_size = 512 * 1024 * 1024
-            caching_store = CachingReadableStore(splitting_store, max_size=max_size)
-
-            registry = ObjectStoreRegistry({f"s3://{config.s3_bucket}": caching_store})
-            parser = HDFParser(
-                drop_variables=config.drop_variables, reader_factory=BufferedStoreReader
-            )
-
-            ds = virtualize_and_combine(
-                urls=netcdf_urls,
-                registry=registry,
-                parser=parser,
-                loadable_variables=["lat", "lon", "time"],
-                preprocess_fn=_preprocess_ensemble,
-            )
-
-            ds.vz.to_icechunk(session.store, group=var)
-            session.commit(f"{scenario}: {var}")
-            print(f"var finished:{var}")
-
-            repo.save_config()
+        combined_ds.vz.to_icechunk(session.store)
+        session.commit(f"{scenario}: virtualized variables {variables}")
+        repo.save_config()
 
     finally:
         client.shutdown()
 
 
 @click.command()
+@click.option("--variable", multiple=True, required=True)
 @click.option(
-    "--variable",
-    multiple=True,
-    required=True,
-    help="UKESM variables to process",
-)
-@click.option(
-    "--scenario",
-    type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())),
-    required=True,
-    help="which UKESM scenario to process",
+    "--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True
 )
 @click.option("--coiled/--local", default=False)
 @click.option("--subset/--no-subset", default=False)
 def process(variable, scenario, coiled, subset):
     """Stage 2: Read virtual icechunk, postprocess, rechunk, and write materialized data"""
-    from cloudpathlib import S3Path
-
-    config_class = SCENARIO_CONFIG_MAP.get(scenario)
-    if config_class is None:
-        raise ValueError(f"unknown scenario: {scenario}")
-
-    config = config_class()
+    config = SCENARIO_CONFIG_MAP[scenario]()
 
     if coiled:
-        # Use process-specific cluster config (fewer large workers)
         from srm.config import ClusterConfig
 
-        proc_cluster_config = ClusterConfig(**config.process_cluster)
-        client = setup_cluster(proc_cluster_config)
+        client = setup_cluster(ClusterConfig(**config.process_cluster))
     else:
         client = setup_local_client()
 
-    ukesm_cat = catalog.get(config.catalog_key)
-    var_specs = get_var_specs(ukesm_cat)
-
-    # Extract bucket and prefix from virtual_path using cloudpathlib
-    virtual_path = ukesm_cat.virtual_path
-    if not virtual_path:
-        raise ValueError(f"No virtual_path defined for {config.catalog_key}")
-
-    virtual_s3_path = S3Path(virtual_path)
-    virtual_bucket = virtual_s3_path.bucket
-    virtual_prefix = str(virtual_s3_path.key)
+    mat_key = getattr(config, "materialized_key", "UKESM-SSP245-icechunk")
+    materialized_cat = catalog.get(mat_key)
+    var_specs = get_var_specs(materialized_cat)
 
     try:
         for var in list(variable):
-            # Read from virtual icechunk store
-            virtual_repo, virtual_session = init_repo(virtual_bucket, virtual_prefix, readonly=True)
-            virtual_store = virtual_session.store()
-            ds = xr.open_zarr(virtual_store, consolidated=False, zarr_format=3)
-            ds = ds[[var]]
+            if var == "sfcwind":
+                # Grid reconciliation: UAS and VAS are on different virtual grids
+                prefix = scenario.split("-")[0]  # e.g., 'SSP245' or 'G6-1.5K'
+                uas_ds = catalog.get(f"UKESM-{prefix}-uas-virtual").to_xarray()
+                vas_ds = catalog.get(f"UKESM-{prefix}-vas-virtual").to_xarray()
 
-            # Postprocess
-            ds = _preprocess_ukesm(ds, config, subset=subset)
-            print(ds)
+                uas_ds = _preprocess_ukesm(uas_ds, config, subset=subset)
+                vas_ds = _preprocess_ukesm(vas_ds, config, subset=subset)
+                vas_ds_interp = vas_ds.interp_like(uas_ds, method="linear")
+                ds = compute_wind_speed(
+                    uas_ds[["uas"]], vas_ds_interp[["vas"]], "uas", "vas"
+                )
+                ds = ds.rename({'sfcWind':var})
+            else:
+                # Default to the standard virtual entry for this scenario
+                virt_ds = catalog.get(config.catalog_key).to_xarray()
+                ds = virt_ds[[var]]
+                ds = _preprocess_ukesm(ds, config, subset=subset)
+
             ds = _update_attrs(ds, var_specs, config)
 
-            # Write to final icechunk with proper chunking
-            repo, session = init_repo(ukesm_cat.bucket, ukesm_cat.prefix, readonly=False)
+            repo, session = init_repo(
+                materialized_cat.bucket, materialized_cat.prefix, readonly=False
+            )
             write_mode = determine_write_mode(repo)
 
-            encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
+            encoding = build_encoding_dict(
+                ds, config.encoding["chunks"], config.encoding["shards"]
+            )
 
             write_dataset_to_icechunk(
                 ds,
@@ -486,10 +422,8 @@ def process(variable, scenario, coiled, subset):
         client.shutdown()
 
 
-cli.add_command(fetch)
 cli.add_command(virtualize)
 cli.add_command(process)
-
 
 if __name__ == "__main__":
     cli()

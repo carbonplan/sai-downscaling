@@ -25,6 +25,8 @@ class VarStandards:
     RLDS: VarSpec = VarSpec(name="rlds", units="W m-2")
     PS: VarSpec = VarSpec(name="ps", units="Pa")
     PSL: VarSpec = VarSpec(name="psl", units="Pa")
+    UAS: VarSpec = VarSpec(name="uas", units="Pa")
+    VAS: VarSpec = VarSpec(name="vas", units="m s-1")
 
 
 @dataclass
