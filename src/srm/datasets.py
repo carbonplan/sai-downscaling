@@ -71,6 +71,8 @@ class Catalog:
                 name="CESM2-WACCM-Historical-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical_pancakes.icechunk",
                 format="icechunk",
+                # expected_chunks={"time": 13521, "lat": 8, "lon": 16},
+                # expected_shards={"time": 13521, "lat": 32, "lon": 64},
                 expected_chunks={"time": 30, "lat": 192, "lon": 288},  # ~6MB ~ 30 days
                 expected_shards={"time": 480, "lat": 192, "lon": 288},  #  ~77MB 1 year
                 expected_vars=all_standards,
@@ -91,6 +93,18 @@ class Catalog:
                     "lat": 192,
                     "lon": 288,
                 },  #  ~77MB 1 year
+                # expected_chunks={
+                #     "ensemble_member": 1,
+                #     "time": 18251,
+                #     "lat": 8,
+                #     "lon": 16,
+                # },
+                # expected_shards={
+                #     "ensemble_member": 1,
+                #     "time": 18251,
+                #     "lat": 32,
+                #     "lon": 64,
+                # },
                 expected_vars=all_standards,
             ),
             "CESM2-WACCM-SSP245-icechunk": Dataset(
@@ -109,6 +123,18 @@ class Catalog:
                     "lat": 192,
                     "lon": 288,
                 },  #  ~77MB 1 year
+                # expected_chunks={
+                #     "ensemble_member": 1,
+                #     "time": 20076,
+                #     "lat": 8,
+                #     "lon": 16,
+                # },
+                # expected_shards={
+                #     "ensemble_member": 1,
+                #     "time": 20076,
+                #     "lat": 32,
+                #     "lon": 64,
+                # },
                 expected_vars=all_standards,
             ),
             "MIROC-ES2H-G6-1.5K-icechunk": Dataset(
