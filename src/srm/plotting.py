@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-from xclim.indices import growing_degree_days, tx_max
+from xclim.indices import dry_days, growing_degree_days, hot_days, tx_max
 
 
 def plot_comparisons(obs, raw, ds1, ds2=None, bias="absolute"):
@@ -56,9 +56,6 @@ def plot_comparisons(obs, raw, ds1, ds2=None, bias="absolute"):
     axarr[1, 3].axis("off")
 
     plt.tight_layout()
-
-
-from xclim.indices import dry_days, hot_days
 
 
 def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
@@ -127,15 +124,15 @@ def prep_funky_calendar(ds, ds_timeindex_to_match, time_slice):
 
 
 def sel_point(ds, lat, lon):
-    return ds.sel(latitude=lat, longitude=lon, method="nearest")
+    return ds.sel(lat=lat, lon=lon, method="nearest")
 
 
-def prep_datasets_for_daily_timeseries_plotting(ds_list, time_slice, lat, lon, variable):
-    era5_subset = sel_point(era5.sel(time=time_slice), lat, lon)
-    raw_subset = sel_point(prep_funky_calendar(raw, era5, time_slice), lat, lon)
-    ds1_subset = sel_point(prep_funky_calendar(ds1, era5, time_slice), lat, lon)
+def prep_datasets_for_daily_timeseries_plotting(era5, raw, ds1, time_slice, lat, lon, ds2=None):
+    era5_toplot = sel_point(era5.sel(time=time_slice), lat, lon)
+    raw_toplot = sel_point(prep_funky_calendar(raw, era5, time_slice), lat, lon)
+    ds1_toplot = sel_point(prep_funky_calendar(ds1, era5, time_slice), lat, lon)
     if ds2 is not None:
-        ds2_subset = sel_point(prep_funky_calendar(ds2, era5, time_slice), lat, lon)
+        ds2_toplot = sel_point(prep_funky_calendar(ds2, era5, time_slice), lat, lon)
         return era5_toplot, raw_toplot, ds1_toplot, ds2_toplot
     else:
         return era5_toplot, raw_toplot, ds1_toplot
@@ -147,7 +144,7 @@ def prep_datasets_for_seasonal_cycle_plotting(
     era5_toplot, raw_toplot, ds1_toplot = [
         ds[variable]
         .sel(time=time_slice)
-        .sel(latitude=lat, longitude=lon, method="nearest")
+        .sel(lat=lat, lon=lon, method="nearest")
         .groupby("time.dayofyear")
         .mean()
         for ds in [era5, raw, ds1]
@@ -156,7 +153,7 @@ def prep_datasets_for_seasonal_cycle_plotting(
         ds2_toplot = (
             ds2[variable]
             .sel(time=time_slice)
-            .sel(latitude=lat, longitude=lon, method="nearest")
+            .sel(lat=lat, lon=lon, method="nearest")
             .groupby("time.dayofyear")
             .mean()
         )
