@@ -3529,6 +3529,7 @@ name = "srm"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "cf-xarray" },
     { name = "cftime" },
     { name = "click" },
@@ -3617,6 +3618,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.42.22" },
     { name = "cf-xarray", specifier = ">=0.10.10" },
     { name = "cftime", specifier = ">=1.6.5" },
     { name = "click", specifier = ">=8.3.1" },
