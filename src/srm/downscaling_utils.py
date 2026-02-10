@@ -1,3 +1,6 @@
+import typing
+
+import dask.base
 import icechunk
 import icechunk.xarray
 import numpy as np
@@ -8,7 +11,7 @@ import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid name
 from srm import catalog
 
 
-def subset_space(da: xr.DataArray, coord_bounds_list: list):
+def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
     [lat_min, lat_max, lon_min, lon_max] = coord_bounds_list
     da_subset = da.sel(
         lon=slice(lon_min, lon_max),
@@ -17,12 +20,12 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list):
     return da_subset
 
 
-def rechunk(da: xr.DataArray, pattern: str):
+def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]) -> xr.DataArray:
     if pattern == "full_space":
         da_rechunk = da.chunk(time=5, lat=-1, lon=-1)
     elif pattern == "full_time":
         da_rechunk = da.chunk(time=-1, lat=7, lon=14)
-
+    da_rechunk = dask.base.optimize(da_rechunk)[0]
     return da_rechunk
 
 
@@ -30,21 +33,10 @@ def get_experiment(
     gcm: str = "CESM2-WACCM",
     scenario: str = "SSP245",
     var: str = "tas",
-    coord_bounds_list: list = None,
+    coord_bounds_list: list | None = None,
 ):
     cat_name = gcm + "-" + scenario + "-icechunk"
-    scenario_cat = catalog.get(cat_name)
-
-    scenario_storage = icechunk.s3_storage(
-        bucket=scenario_cat.bucket,
-        prefix=scenario_cat.prefix,
-        from_env=True,
-    )
-
-    scenario_repo = icechunk.Repository.open(scenario_storage)
-    scenario_session = scenario_repo.readonly_session("main")
-
-    ds_scenario = xr.open_zarr(scenario_session.store, consolidated=False)
+    ds_scenario = catalog.get(cat_name).to_xarray()
 
     ds_scenario = ds_scenario.proj.assign_crs(spatial_ref="epsg:4326")
 
@@ -57,17 +49,8 @@ def get_experiment(
     return da
 
 
-def get_obs(var: str = "tas", coord_bounds_list: list = None):
-    era5_cat = catalog.get("ERA5")
-
-    era5_storage = icechunk.s3_storage(
-        bucket=era5_cat.bucket,
-        prefix=era5_cat.prefix,
-        from_env=True,
-    )
-    era5_repo = icechunk.Repository.open(era5_storage)
-    era5_session = era5_repo.readonly_session("main")
-    era5 = xr.open_zarr(era5_session.store)
+def get_obs(var: str = "tas", coord_bounds_list: list | None = None):
+    era5 = catalog.get("ERA5").to_xarray()
     era5 = era5.proj.assign_crs(spatial_ref="epsg:4326")
 
     da = era5[var]
@@ -81,7 +64,7 @@ def calculate_baseline_climatology(
     da_baseline: xr.DataArray,
     baseline_period_start: int = 1978,
     baseline_period_end: int = 2014,
-):
+) -> xr.DataArray:
     da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
     da_baseline = da_baseline.sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
@@ -89,7 +72,7 @@ def calculate_baseline_climatology(
     return da_baseline_clim
 
 
-def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray):
+def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataArray, xr.DataArray]:
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
     da_mon = da_mon.chunk({"time": 120})
@@ -118,8 +101,8 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray):
 def retrend(
     bias_corrected_detrended: xr.DataArray,
     trend_on_daily_timestep: xr.DataArray,
-    detrending="additive",
-):
+    detrending: typing.Literal["additive"] = "additive",
+) -> xr.DataArray:
     valid_values = ["additive"]
     if detrending not in valid_values:
         raise ValueError(
@@ -132,16 +115,18 @@ def retrend(
     return retrended
 
 
-def interpolate_fine_to_coarse_grid(da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray):
-    da_fine_to_coarsen = da_fine_to_coarsen.persist()
-
+def interpolate_fine_to_coarse_grid(
+    da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray
+) -> xr.DataArray:
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
     da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).as_numpy().persist()
 
     return da_coarse
 
 
-def interpolate_coarse_to_fine_grid(da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray):
+def interpolate_coarse_to_fine_grid(
+    da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray
+) -> xr.DataArray:
     # Using slinear instead of linear because linear can produce very small negative numbers even when input dataset is all positive
     coarse_on_fine_grid = da_coarse_to_regrid.interp(
         lon=da_fine_grid["lon"],
@@ -173,7 +158,9 @@ def fft_smooth_3harmonics(data):
     return smoothed
 
 
-def calculate_doy_means(ds, clim_method: str = "simple"):
+def calculate_doy_means(
+    ds: xr.DataArray, clim_method: typing.Literal["simple", "fft"] = "simple"
+) -> xr.DataArray:
     """
     Calculate the daily climatology of high-res observations.
     """
@@ -207,9 +194,9 @@ def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    method: str = "subtract",
-    clim_method: str = "simple",
-):
+    method: typing.Literal["subtract", "divide"] = "subtract",
+    clim_method: typing.Literal["simple", "fft"] = "simple",
+) -> xr.DataArray:
     valid_clim_methods = ["simple", "fft"]
     if clim_method not in valid_clim_methods:
         raise ValueError(

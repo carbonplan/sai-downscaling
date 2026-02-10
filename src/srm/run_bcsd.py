@@ -1,3 +1,4 @@
+import typing
 import warnings
 
 import dask.system
@@ -250,8 +251,8 @@ def spatially_disaggregate(
     dict_all: dict,
     verbose: bool = True,
     rechunk_workflow: bool = True,
-    clim_method: str = "fft",
-    method: str = "subtract",
+    clim_method: typing.Literal["simple", "fft"] = "fft",
+    method: typing.Literal["subtract", "divide"] = "subtract",
 ):
     if rechunk_workflow:
         with Timer("Rechunked to full space for downscaling", verbose=verbose):
