@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import typing
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from cloudpathlib import CloudPath
@@ -62,11 +62,15 @@ class BaseDataset(ABC):
                 {self.bucket_uri: icechunk.s3_credentials()}
             )
             repo = icechunk.Repository.open(storage, authorize_virtual_chunk_access=credentials)
+            chunks = "auto"
         else:
             repo = icechunk.Repository.open(storage)
+            chunks = self.encoding["shards"]
 
         session = repo.readonly_session("main")
-        return xr.open_dataset(session.store, engine='zarr', chunks=self.encoding["shards"],consolidated=False, zarr_format=3)
+        return xr.open_dataset(
+            session.store, engine="zarr", chunks=chunks, consolidated=False, zarr_format=3
+        )
 
     def get_chunking_dict(self) -> dict[str, int]:
         ds = self.to_xarray()
@@ -79,19 +83,19 @@ class BaseDataset(ABC):
 
 @dataclass(kw_only=True)
 class Dataset(BaseDataset):
-
     path: str | CloudPath
 
     def __post_init__(self):
         if isinstance(self.path, str):
             self.path = CloudPath(self.path)
 
-    @property 
-    def encoding(self) ->dict:
+    @property
+    def encoding(self) -> dict:
         return {
             "chunks": self.expected_chunks,
             "shards": self.expected_shards,
         }
+
     @property
     def bucket(self) -> str:
         return str(self.path.bucket)
@@ -109,6 +113,7 @@ class Dataset(BaseDataset):
             return self._open_icechunk(self.prefix, is_virtual=False)
         elif self.format == "zarr":
             import xarray as xr
+
             return xr.open_zarr(self.path)
         else:
             raise ValueError(f"Unknown format: {self.format}")
@@ -145,7 +150,7 @@ class VirtualDataset(BaseDataset):
 
 class Catalog:
     def __init__(self):
-        all_standards = [f.default for f in fields(VarStandards)]
+        # all_standards = [f.default for f in fields(VarStandards)]
 
         self.datasets: dict[str, BaseDataset] = {
             "CESM2-WACCM-Historical-icechunk": Dataset(
@@ -153,13 +158,78 @@ class Catalog:
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical_pancakes.icechunk",
                 format="icechunk",
                 expected_chunks={"time": 30, "lat": 192, "lon": 288},
-                expected_shards={"time": 1920, "lat": 192, "lon": 288},
+                expected_shards={"time": 480, "lat": 192, "lon": 288},
                 expected_vars=[
-                    VarStandards.HURS, VarStandards.HUSS, VarStandards.PR, VarStandards.PS, VarStandards.RLDS, VarStandards.RSDS,VarStandards.SFCWIND,
-                    VarStandards.TAS,VarStandards.TASMAX, VarStandards.TASMIN,
-                ],            ),
-
-
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PR,
+                    VarStandards.PS,
+                    VarStandards.RLDS,
+                    VarStandards.RSDS,
+                    VarStandards.SFCWIND,
+                    VarStandards.TAS,
+                    VarStandards.TASMAX,
+                    VarStandards.TASMIN,
+                ],
+            ),
+            "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
+                name="CESM2-WACCM-G6-1.5K-icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k_pancakes.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 30,
+                    "lat": 192,
+                    "lon": 288,
+                },  # ~6MB ~ 30 days
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 480,
+                    "lat": 192,
+                    "lon": 288,
+                },  #  ~77MB 1 year
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.HURS,
+                    VarStandards.RSDS,
+                    VarStandards.SFCWIND,
+                    VarStandards.HUSS,
+                    VarStandards.RLDS,
+                    VarStandards.PS,
+                ],
+            ),
+            "CESM2-WACCM-SSP245-icechunk": Dataset(
+                name="CESM2-WACCM-SSP245-icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245_pancakes.icechunk",
+                format="icechunk",
+                expected_chunks={
+                    "ensemble_member": 1,
+                    "time": 30,
+                    "lat": 192,
+                    "lon": 288,
+                },  # ~6MB ~ 30 days
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 480,
+                    "lat": 192,
+                    "lon": 288,
+                },  #  ~77MB 1 year
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.HURS,
+                    VarStandards.RSDS,
+                    VarStandards.SFCWIND,
+                    VarStandards.HUSS,
+                    VarStandards.RLDS,
+                    VarStandards.PS,
+                ],
+            ),
             "MIROC-ES2H-G6-1.5K-icechunk": Dataset(
                 name="MIROC-ES2H-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/MIROC-ES2H-G6-1.5K/updated_MIROC-ES2H-G6-1.5K.icechunk",
@@ -167,8 +237,50 @@ class Catalog:
                 expected_chunks={"ensemble_member": 1, "time": 18263, "lat": 8, "lon": 16},
                 expected_shards={"ensemble_member": 1, "time": 18263, "lat": 64, "lon": 128},
                 expected_vars=[
-                    VarStandards.PR, VarStandards.RSDS, VarStandards.TASMAX,
-                    VarStandards.TAS, VarStandards.SFCWIND, VarStandards.TASMIN,
+                    VarStandards.PR,
+                    VarStandards.RSDS,
+                    VarStandards.TASMAX,
+                    VarStandards.TAS,
+                    VarStandards.SFCWIND,
+                    VarStandards.TASMIN,
+                ],
+            ),
+            "UKESM-historical-icechunk": Dataset(
+                name="UKESM-historical-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-historical/UKESM-historical.icechunk",
+                format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
+                expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.HURS,
+                    VarStandards.RSDS,
+                    VarStandards.SFCWIND,
+                    VarStandards.HUSS,
+                    VarStandards.RLDS,
+                    VarStandards.PSL,
+                ],
+            ),
+            "UKESM-historical-virtual": VirtualDataset(
+                name="UKESM-historical-virtual",
+                virtual_path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-historical/UKESM-historical-virtual.icechunk",
+                format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
+                expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.HURS,
+                    VarStandards.RSDS,
+                    VarStandards.SFCWIND,
+                    VarStandards.HUSS,
+                    VarStandards.RLDS,
+                    VarStandards.PSL,
                 ],
             ),
             "UKESM-G6-1.5K-icechunk": Dataset(
@@ -177,7 +289,13 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
-                expected_vars=[VarStandards.HURS, VarStandards.HUSS, VarStandards.PS, VarStandards.RSDS, VarStandards.RLDS],
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PS,
+                    VarStandards.RSDS,
+                    VarStandards.RLDS,
+                ],
             ),
             "UKESM-G6-1.5K-virtual": VirtualDataset(
                 name="UKESM-G6-1.5K-virtual",
@@ -185,7 +303,13 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
-                expected_vars=[VarStandards.HURS, VarStandards.HUSS, VarStandards.PS, VarStandards.RSDS, VarStandards.RLDS],
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PS,
+                    VarStandards.RSDS,
+                    VarStandards.RLDS,
+                ],
             ),
             "UKESM-SSP245-icechunk": Dataset(
                 name="UKESM-SSP245-icechunk",
@@ -193,7 +317,14 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
-                expected_vars=[VarStandards.HURS, VarStandards.HUSS, VarStandards.PS, VarStandards.RSDS, VarStandards.RLDS, VarStandards.SFCWIND],
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PS,
+                    VarStandards.RSDS,
+                    VarStandards.RLDS,
+                    VarStandards.SFCWIND,
+                ],
             ),
             "UKESM-SSP245-virtual": VirtualDataset(
                 name="UKESM-SSP245-virtual",
@@ -201,7 +332,13 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
-                expected_vars=[VarStandards.HURS, VarStandards.HUSS, VarStandards.PS, VarStandards.RSDS, VarStandards.RLDS],
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PS,
+                    VarStandards.RSDS,
+                    VarStandards.RLDS,
+                ],
             ),
             "UKESM-SSP245-uas-virtual": VirtualDataset(
                 name="UKESM-SSP245-uas-virtual",
@@ -238,9 +375,14 @@ class Catalog:
                 expected_chunks={"time": 1, "lat": 721, "lon": 1440},
                 expected_shards={"time": 30, "lat": 721, "lon": 1440},
                 expected_vars=[
-                    VarStandards.PR, VarStandards.RLDS, VarStandards.RSDS,
-                    VarStandards.TASMAX, VarStandards.TAS, VarStandards.SFCWIND,
-                    VarStandards.PS, VarStandards.TASMIN,
+                    VarStandards.PR,
+                    VarStandards.RLDS,
+                    VarStandards.RSDS,
+                    VarStandards.TASMAX,
+                    VarStandards.TAS,
+                    VarStandards.SFCWIND,
+                    VarStandards.PS,
+                    VarStandards.TASMIN,
                 ],
             ),
         }
@@ -255,6 +397,7 @@ class Catalog:
 
     def variable_metadata(self):
         from tabulate import tabulate
+
         for dataset_name, ds_info in self.datasets.items():
             ds = ds_info.to_xarray()
             specs = {s.name: s for s in (ds_info.expected_vars or [])}
@@ -267,11 +410,14 @@ class Catalog:
                 if spec and actual_units != spec.units:
                     unit_str = f"MISMATCH WARNING! {actual_units} (Expected: {spec.units})"
 
-                table_data.append([
-                    var_name, unit_str, 
-                    ds[var_name].attrs.get("long_name", ""),
-                    ds[var_name].attrs.get("cell_methods", "")
-                ])
+                table_data.append(
+                    [
+                        var_name,
+                        unit_str,
+                        ds[var_name].attrs.get("long_name", ""),
+                        ds[var_name].attrs.get("cell_methods", ""),
+                    ]
+                )
 
             headers = ["Variable", "Units", "Long Name", "Cell Methods"]
             print(f"\n{dataset_name}")
@@ -279,8 +425,9 @@ class Catalog:
 
     def __str__(self) -> str:
         from tabulate import tabulate
+
         table_data = [
-            [ds.name, ds.__class__.__name__, ds.format, ds.prefix, ds.expected_chunks] 
+            [ds.name, ds.__class__.__name__, ds.format, ds.prefix, ds.expected_chunks]
             for ds in self.datasets.values()
         ]
         headers = ["Name", "Type", "Format", "Prefix/Key", "Expected Chunks"]

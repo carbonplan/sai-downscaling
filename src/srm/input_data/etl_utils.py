@@ -1,4 +1,4 @@
-#etl_utils.py
+# etl_utils.py
 import dask
 import icechunk
 import xarray as xr
@@ -154,7 +154,7 @@ def virtualize_and_combine(
     """
     Parallellizes the virtualization of multiple files and combines them.
     """
-    
+
     delayed_datasets = [
         dask.delayed(virtualize_netcdf)(url, registry, parser, loadable_variables, preprocess_fn)
         for url in urls
