@@ -69,7 +69,7 @@ def calculate_baseline_climatology(
     da_baseline = da_baseline.sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
 
-    return da_baseline_clim
+    return da_baseline_clim.astype(da_baseline.dtype)
 
 
 def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataArray, xr.DataArray]:
@@ -95,7 +95,7 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataAr
     # Calculate detrended timeseries
     detrended = da - trend_on_daily_timestep
 
-    return detrended, trend_on_daily_timestep
+    return detrended.astype(da.dtype), trend_on_daily_timestep.astype(da.dtype)
 
 
 def retrend(
@@ -121,7 +121,7 @@ def interpolate_fine_to_coarse_grid(
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
     da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).as_numpy().persist()
 
-    return da_coarse
+    return da_coarse.astype(da_fine_to_coarsen.dtype)
 
 
 def interpolate_coarse_to_fine_grid(
@@ -134,7 +134,7 @@ def interpolate_coarse_to_fine_grid(
         method="slinear",
     )
 
-    return coarse_on_fine_grid
+    return coarse_on_fine_grid.astype(da_coarse_to_regrid.dtype)
 
 
 def fft_smooth_3harmonics(data):
@@ -153,32 +153,32 @@ def fft_smooth_3harmonics(data):
     Z_filtered[-3:] = Z[-3:]  # negative frequencies (harmonics 1-3)
 
     # Inverse FFT to get smoothed time series
-    smoothed = np.real(np.fft.ifft(Z_filtered))
+    smoothed = np.real(np.fft.ifft(Z_filtered)).astype(data.dtype)
 
     return smoothed
 
 
 def calculate_doy_means(
-    ds: xr.DataArray, clim_method: typing.Literal["simple", "fft"] = "simple"
+    da: xr.DataArray, clim_method: typing.Literal["simple", "fft"] = "simple"
 ) -> xr.DataArray:
     """
     Calculate the daily climatology of high-res observations.
     """
 
-    ds_xr_doy_mean = ds.groupby("time.dayofyear").mean("time")
+    da_xr_doy_mean = da.groupby("time.dayofyear").mean("time")
 
     if clim_method == "simple":
-        doy_means = ds_xr_doy_mean
+        doy_means = da_xr_doy_mean
     elif clim_method == "fft":
         # Apply FFT smoothing along the time dimension
         obs_fine_doy_means_smoothed = xr.apply_ufunc(
             fft_smooth_3harmonics,
-            ds_xr_doy_mean.load(),
+            da_xr_doy_mean.load(),
             input_core_dims=[["dayofyear"]],
             output_core_dims=[["dayofyear"]],
             vectorize=True,
             # dask='parallelized',
-            output_dtypes=[float],
+            output_dtypes=[da.dtype],
         )
 
         # transpose from ["lat", "lon", "dayofyear"] to original order of ["dayofyear", "lat", "lon"]
@@ -244,7 +244,7 @@ def save_data(
     s3_bucket: str = "s3://carbonplan-scratch/",
     prefix: str = "srm-scratch/v0.3_SouthAfrica/",
     print_fpath: bool = True,
-    chunks: dict = {"time": 5, "lat": -1, "lon": -1},
+    chunks: dict = {"time": "100MB", "lat": -1, "lon": -1},
 ):
     s3_path = f"{s3_bucket + prefix}{fname_key}.{output_suffix}"
 
@@ -291,7 +291,7 @@ def get_output_data(
     s3_bucket: str = "s3://carbonplan-scratch/",
     prefix: str = "srm-scratch/v0.3_SouthAfrica/",
 ):
-    dt = xr.open_datatree(s3_bucket + prefix + dtree_key, engine="zarr")
+    dt = xr.open_datatree(s3_bucket + prefix + dtree_key, engine="zarr", chunks={})
     ds = dt[fname_key]
 
     return ds
