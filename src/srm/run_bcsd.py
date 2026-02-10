@@ -105,13 +105,11 @@ def preprocess_data(
         with Timer("Detrended data", verbose=verbose):
             dict_all["historical_scenario"] = xr.concat(
                 [
-                    dict_all["model_hist"].where(
-                        dict_all["model_hist"]["time.year"] < predict_period_start,
-                        drop=True,
+                    dict_all["model_hist"].sel(
+                        time=dict_all["model_hist"]["time.year"] < predict_period_start
                     ),
-                    dict_all["model_scenario"].where(
-                        dict_all["model_scenario"]["time.year"] >= predict_period_start,
-                        drop=True,
+                    dict_all["model_scenario"].sel(
+                        time=dict_all["model_scenario"]["time.year"] >= predict_period_start
                     ),
                 ],
                 dim="time",
