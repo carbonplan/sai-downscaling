@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-import icechunk
 import xarray as xr
 
 if TYPE_CHECKING:
@@ -68,18 +67,6 @@ def lon_to_180(ds: xr.Dataset, lon_name: str = "lon") -> xr.Dataset:
     return ds.sortby(ds[lon_name])
 
 
-def icechunk_store_to_dataset(dataset_name, catalog):
-    catalog_entry = catalog.get(dataset_name)
-    icechunk_store = icechunk.s3_storage(
-        bucket=catalog_entry.bucket,
-        prefix=catalog_entry.prefix,
-        from_env=True,
-    )
-    icechunk_session = icechunk.Repository.open(icechunk_store).readonly_session("main")
-    ds = xr.open_zarr(icechunk_session.store, consolidated=False)
-    return ds
-
-
 def rename_variables(ds, model):
     if model == "CESM2-WACCM":
         ds = ds.rename({"TREFHT": "tas"})
@@ -115,16 +102,3 @@ def convert_precip_units(da, model):
     elif model == "CESM2-WACCM":
         # convert from m/s
         return da * 1000 * 86400
-
-
-def clean_up_dataset(ds, model):
-    ds = rename_variables(ds, model)
-    ds = rename_coords(ds)
-    # make sure coords go from -180 to 180 and not to 360
-    # this won't do anything if it's already on the -180-180 scale
-    ds = lon_to_180(ds, lon_name="longitude")
-    # add a geographic coordinate system
-    ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
-    ds["pr"] = convert_precip_units(ds["pr"], model)
-    ds = ds.drop("spatial_ref")
-    return ds

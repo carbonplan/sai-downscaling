@@ -1,7 +1,6 @@
 import xarray as xr
 
-from .datasets import catalog
-from .utils import clean_up_dataset, icechunk_store_to_dataset
+from srm import catalog
 
 
 def check_nans(ds):
@@ -59,10 +58,7 @@ def check_physical_constraints(ds):
 
 
 def confirm_coords(ds):
-    era5 = icechunk_store_to_dataset("ERA5", catalog)
-    era5 = clean_up_dataset(era5, "ERA5")
-    xr.testing.assert_equal(
-        era5[["latitude", "longitude"]].coords, ds[["latitude", "longitude"]].coords
-    )
+    era5 = catalog.get("ERA5").to_xarray()
+    xr.testing.assert_equal(era5[["lat", "lon"]].coords, ds[["lat", "lon"]].coords)
     # TODO: add in the expected time coordinates
     return "Latitude and longitude match expectation"
