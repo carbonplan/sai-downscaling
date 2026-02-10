@@ -3632,7 +3632,7 @@ requires-dist = [
     { name = "s3fs", specifier = ">=0.4.2" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "xarray", specifier = ">=2025.12.0" },
-    { name = "xarray-regrid", specifier = ">=0.4.1" },
+    { name = "xarray-regrid", specifier = ">=0.4.2" },
     { name = "xclim", specifier = ">=0.59.1" },
     { name = "zarr", specifier = ">=3.1.5" },
 ]
@@ -4184,7 +4184,7 @@ wheels = [
 
 [[package]]
 name = "xarray-regrid"
-version = "0.4.1"
+version = "0.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "flox" },
@@ -4192,9 +4192,9 @@ dependencies = [
     { name = "scipy" },
     { name = "xarray" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/58/23/d55ead2418c4421f337297e3413afd8e39f2f7f7dba7935bd374cef6d20f/xarray_regrid-0.4.1.tar.gz", hash = "sha256:2c8a7baa321c2451aa42b387fef3b22ecd7bdf693e7ee5c52ebe5168482a1e2a", size = 67694777, upload-time = "2025-04-08T17:37:23.366Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/9e/f3b0a63917a6bd4b7e2b290cebc447c8db8e6ff63b4125e30fdcd1e378e1/xarray_regrid-0.4.2.tar.gz", hash = "sha256:96525d39b0290efa59e0255cebd35be028052f1b347bfb10fd259b4380289673", size = 67694872, upload-time = "2026-02-06T09:52:54.567Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/70/af/5b36e319b559cc5713b66fcb5941fca1598a36d97f7c3bd50d6873c9d28c/xarray_regrid-0.4.1-py3-none-any.whl", hash = "sha256:92c7cf676292b29996149b06be56fe0b5cc6f6238fa9e88a45d8022c6a653468", size = 22715, upload-time = "2025-04-08T17:37:20.81Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/94/e7f02068c654a1d94e0d01dd0f6a35730a7284dd0dc3277c45b1ec3a48a6/xarray_regrid-0.4.2-py3-none-any.whl", hash = "sha256:85c575fd5683b296b18a333038f743617d06c1994cd52562e7cfae4a5b8d862f", size = 22781, upload-time = "2026-02-06T09:52:52.853Z" },
 ]
 
 [[package]]
