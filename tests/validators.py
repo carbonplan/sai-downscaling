@@ -84,13 +84,30 @@ class DatasetValidator:
         return self._validate_coord("lat", "lat", expected_range, check_monotonic)
 
     def validate_expected_chunking(self) -> ValidationResult:
-        actual_chunks = self.ds_info.get_chunking_dict()
-        is_valid = actual_chunks == self.ds_info.expected_chunks
-        issues = (
-            []
-            if is_valid
-            else [f"chunks {actual_chunks} != expected {self.ds_info.expected_chunks}"]
-        )
+        """Validate that chunks and shards match expected values for all variables."""
+        issues = []
+        ds = self.ds_info.to_xarray()
+        expected_chunks_dict = self.ds_info.expected_chunks
+        expected_shards_dict = self.ds_info.expected_shards
+
+        for var_spec in self.ds_info.expected_vars:
+            var_name = var_spec.name
+
+            var = ds[var_name]
+            enc = var.encoding
+
+            expected_chunks = tuple(expected_chunks_dict[dim] for dim in var.dims)
+            expected_shards = tuple(expected_shards_dict[dim] for dim in var.dims)
+
+            actual_chunks = enc.get("chunks")
+            if actual_chunks != expected_chunks:
+                issues.append(f"{var_name}: chunks {actual_chunks} != expected {expected_chunks}")
+
+            actual_shards = enc.get("shards")
+            if actual_shards != expected_shards:
+                issues.append(f"{var_name}: shards {actual_shards} != expected {expected_shards}")
+
+        is_valid = len(issues) == 0
         return ValidationResult(is_valid, issues)
 
     def validate_expected_variables(self) -> ValidationResult:
