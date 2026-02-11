@@ -140,7 +140,7 @@ class BCSDPipeline:
         with Timer("Saved to cache", verbose=self.config.verbose):
             obs_coarse.name = self.config.variable
             obs_coarse.attrs = obs_fine.attrs  # Preserve units and metadata
-            obs_coarse.to_zarr(output_path, mode="w")
+            obs_coarse.chunk({"time": "100MB"}).to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Cached observations: {output_path}")
@@ -303,7 +303,7 @@ class BCSDPipeline:
         with Timer("Saved to cache", verbose=self.config.verbose):
             model_hist_downscaled.name = self.config.variable
             model_hist_downscaled.attrs = model_hist.attrs  # Preserve units and metadata
-            model_hist_downscaled.to_zarr(output_path, mode="w")
+            model_hist_downscaled.chunk({"time": "100MB"}).to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Cached historical: {output_path}")
@@ -547,7 +547,7 @@ class BCSDPipeline:
         with Timer("Saved output", verbose=self.config.verbose):
             scenario_downscaled.name = self.config.variable
             scenario_downscaled.attrs = model_scenario.attrs  # Preserve units and metadata
-            scenario_downscaled.to_zarr(output_path, mode="w")
+            scenario_downscaled.chunk({"time": "100MB"}).to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Saved scenario output: {output_path}")
