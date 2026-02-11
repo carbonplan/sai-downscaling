@@ -31,7 +31,7 @@ class ArtifactCache:
     def __init__(
         self,
         base_path: str = "s3://carbonplan-scratch/srm/cache/",
-        cache_version: str = "v1",
+        environment: str = "qa",
         output_dir: str | None = None,
     ):
         """
@@ -41,13 +41,13 @@ class ArtifactCache:
         ----------
         base_path : str
             Base S3 or local path for cache storage (intermediate artifacts)
-        cache_version : str
-            Version string for cache invalidation
+        environment : str
+            Environment name (qa, staging, production) for cache namespace isolation
         output_dir : str, optional
             Directory for final scenario outputs. If None, scenarios go to cache.
         """
         self.base_path = base_path.rstrip("/")
-        self.cache_version = cache_version
+        self.environment = environment
         self.output_dir = output_dir.rstrip("/") if output_dir else None
 
         # Initialize filesystem (works for s3:// and local paths)
@@ -100,7 +100,7 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(subset_bounds)
-        return f"{self.base_path}/{self.cache_version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
+        return f"{self.base_path}/{self.environment}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
 
     def get_historical_path(
         self,
@@ -130,7 +130,7 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(subset_bounds)
         return (
-            f"{self.base_path}/{self.cache_version}/historical/"
+            f"{self.base_path}/{self.environment}/historical/"
             f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
         )
 
@@ -170,10 +170,10 @@ class ArtifactCache:
 
         # Use output_dir for final scenarios if specified, otherwise cache
         if self.output_dir:
-            return f"{self.output_dir}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
+            return f"{self.output_dir}/{self.environment}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
         else:
             return (
-                f"{self.base_path}/{self.cache_version}/scenarios/"
+                f"{self.base_path}/{self.environment}/scenarios/"
                 f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
             )
 
@@ -355,9 +355,9 @@ class ArtifactCache:
 
         # Build search patterns
         if stage:
-            search_base = f"{self.base_path}/{self.cache_version}/{stage}/"
+            search_base = f"{self.base_path}/{self.environment}/{stage}/"
         else:
-            search_base = f"{self.base_path}/{self.cache_version}/"
+            search_base = f"{self.base_path}/{self.environment}/"
 
         try:
             # List all zarr stores
@@ -432,9 +432,9 @@ class ArtifactCache:
             for stage_name in stages:
                 # Scenarios go to output_dir if specified, others to cache
                 if stage_name == "scenarios" and self.output_dir:
-                    search_base = f"{self.output_dir}/"
+                    search_base = f"{self.output_dir}/{self.environment}/"
                 else:
-                    search_base = f"{self.base_path}/{self.cache_version}/{stage_name}/"
+                    search_base = f"{self.base_path}/{self.environment}/{stage_name}/"
 
                 if self.base_path.startswith("s3://"):
                     search_base_no_scheme = search_base.replace("s3://", "")

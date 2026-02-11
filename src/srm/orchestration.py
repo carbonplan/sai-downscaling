@@ -48,14 +48,16 @@ class BCSDOrchestrator:
         Note: The cache is created on-demand using cache_dir from the configs
         to ensure consistency between orchestrator and batch jobs.
         """
-        self._cache_instances = {}  # Cache instances keyed by (cache_dir, cache_version)
+        self._cache_instances = {}  # Cache instances keyed by (cache_dir, environment)
 
     def _get_cache(self, config: BCSDConfig) -> ArtifactCache:
         """Get or create cache instance for config's cache_dir and output_dir."""
-        cache_key = (config.cache_dir, config.output_dir, "v1")
+        cache_key = (config.cache_dir, config.output_dir, config.environment)
         if cache_key not in self._cache_instances:
             self._cache_instances[cache_key] = ArtifactCache(
-                base_path=config.cache_dir, cache_version="v1", output_dir=config.output_dir
+                base_path=config.cache_dir,
+                environment=config.environment,
+                output_dir=config.output_dir,
             )
         return self._cache_instances[cache_key]
 
@@ -182,6 +184,7 @@ class BCSDOrchestrator:
             command=command,
             name=f"bcsd-{stage}-{configs[0].gcm}",
             vm_type=["r8g.2xlarge"],  # 64 GB RAM, 8 vCPUs
+            scheduler_vm_type=["r8g.2xlarge"],
             region="us-west-2",
             map_over_task_var_dicts=task_var_dicts,
             forward_aws_credentials=True,  # Forward AWS creds for S3 access

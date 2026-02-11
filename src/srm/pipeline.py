@@ -68,7 +68,7 @@ class BCSDPipeline:
         """
         self.config = config
         self.cache = ArtifactCache(
-            base_path=config.cache_dir, cache_version="v1", output_dir=config.output_dir
+            base_path=config.cache_dir, environment=config.environment, output_dir=config.output_dir
         )
 
         # State dictionary for intermediate results (mostly for debugging)

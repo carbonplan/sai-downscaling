@@ -105,6 +105,12 @@ class BCSDConfig(BaseModel):
     output_dir: str = Field(
         "s3://carbonplan-scratch/srm/outputs/", description="Directory for final downscaled outputs"
     )
+    environment: str = Field(
+        default="qa",
+        description="Environment name (qa, staging, production). Separates cache/outputs by deployment stage.",
+    )
+
+    model_config = {"env_prefix": "BCSD_"}
 
     # Variable-specific settings (auto-populated)
     variable_config: VariableConfig | None = Field(
@@ -293,7 +299,9 @@ class CacheConfig(BaseModel):
     force_recompute: bool = Field(
         False, description="Force recomputation even if cached artifacts exist"
     )
-    cache_version: str = Field("v1", description="Cache version for invalidating old artifacts")
+    environment: str = Field(
+        "qa", description="Environment for cache namespace (qa, staging, production)"
+    )
     check_integrity: bool = Field(
         True, description="Verify cached artifacts are valid before using"
     )

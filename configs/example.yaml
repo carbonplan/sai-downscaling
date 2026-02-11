@@ -31,6 +31,7 @@ subset_bounds: [-35, -22, 16, 33] # South Africa region
 # === Storage Configuration ===
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate artifacts (obs, historical)
 output_dir: "s3://carbonplan-scratch/srm/outputs/" # Final scenario outputs (published results)
+environment: "qa" # Environment: qa, staging, production (default: qa, can override with BCSD_ENVIRONMENT env var)
 
 # === Additional Options (optional) ===
 # verbose: true                       # Enable verbose logging (default: true)
