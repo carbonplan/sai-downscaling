@@ -541,7 +541,8 @@ class BCSDPipeline:
 
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
-            scenario_downscaled.to_zarr(output_path, mode="w")
+            print(f"scenario downscaled output: {scenario_downscaled}")
+            # scenario_downscaled.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Saved scenario output: {output_path}")
