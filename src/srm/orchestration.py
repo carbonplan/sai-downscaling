@@ -51,11 +51,11 @@ class BCSDOrchestrator:
         self._cache_instances = {}  # Cache instances keyed by (cache_dir, cache_version)
 
     def _get_cache(self, config: BCSDConfig) -> ArtifactCache:
-        """Get or create cache instance for config's cache_dir."""
-        cache_key = (config.cache_dir, "v1")  # Always use v1 for now
+        """Get or create cache instance for config's cache_dir and output_dir."""
+        cache_key = (config.cache_dir, config.output_dir, "v1")
         if cache_key not in self._cache_instances:
             self._cache_instances[cache_key] = ArtifactCache(
-                base_path=config.cache_dir, cache_version="v1"
+                base_path=config.cache_dir, cache_version="v1", output_dir=config.output_dir
             )
         return self._cache_instances[cache_key]
 

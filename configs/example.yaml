@@ -28,9 +28,9 @@ subset_bounds: [-35, -22, 16, 33] # South Africa region
 # For SAI scenarios (G6-*), you must specify the transition year when SAI starts
 # transition_year: 2020
 
-# === Cache Configuration ===
-cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # S3 or local path
-output_dir: "s3://carbonplan-scratch/srm/outputs/" # Output directory for final results
+# === Storage Configuration ===
+cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate artifacts (obs, historical)
+output_dir: "s3://carbonplan-scratch/srm/outputs/" # Final scenario outputs (published results)
 
 # === Additional Options (optional) ===
 # verbose: true                       # Enable verbose logging (default: true)

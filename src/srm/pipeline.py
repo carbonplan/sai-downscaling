@@ -67,7 +67,9 @@ class BCSDPipeline:
             Configuration for the BCSD run
         """
         self.config = config
-        self.cache = ArtifactCache(base_path=config.cache_dir, cache_version="v1")
+        self.cache = ArtifactCache(
+            base_path=config.cache_dir, cache_version="v1", output_dir=config.output_dir
+        )
 
         # State dictionary for intermediate results (mostly for debugging)
         self._state = {}
