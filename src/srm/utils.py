@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+import pint_xarray
 import xarray as xr
 
 if TYPE_CHECKING:
@@ -92,13 +93,9 @@ def rename_coords(ds):
     return ds
 
 
-def convert_precip_units(da, model):
-    # convert precip units from original to mm/day for intuition
-    # TODO: change this to using metpy for safer unit conversions
-    # OR : retain this conversion but update units in attrs
-    if model == "ERA5":
-        # convert from kg/m^2/s
-        return da * 86400
-    elif model == "CESM2-WACCM":
-        # convert from m/s
-        return da * 1000 * 86400
+def convert_precip_units(da: xr.DataArray) -> xr.DataArray:
+    """Convert precipitation units to mm/day."""
+
+    pint_xarray.unit_registry.enable_contexts("hydro")
+    result = da.pint.quantify().pint.to("mm/day").pint.dequantify().astype(da.dtype)
+    return result
