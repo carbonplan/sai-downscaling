@@ -373,7 +373,7 @@ class BCSDOrchestrator:
         obs_configs = self._deduplicate_obs_configs(configs)
         status["prepare_observations"]["total"] = len(obs_configs)
         for config in obs_configs:
-            path = cache.get_obs_path(config.gcm, config.variable)
+            path = cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)
             if cache.exists(path):
                 status["prepare_observations"]["cached"] += 1
             else:
@@ -383,7 +383,9 @@ class BCSDOrchestrator:
         hist_configs = self._deduplicate_historical_configs(configs)
         status["fit_historical"]["total"] = len(hist_configs)
         for config in hist_configs:
-            path = cache.get_historical_path(config.gcm, config.variable, config.ensemble_member)
+            path = cache.get_historical_path(
+                config.gcm, config.variable, config.ensemble_member, config.subset_bounds
+            )
             if cache.exists(path):
                 status["fit_historical"]["cached"] += 1
             else:
@@ -394,7 +396,11 @@ class BCSDOrchestrator:
         for config in configs:
             if config.scenario:
                 path = cache.get_scenario_path(
-                    config.gcm, config.variable, config.ensemble_member, config.scenario
+                    config.gcm,
+                    config.variable,
+                    config.ensemble_member,
+                    config.scenario,
+                    config.subset_bounds,
                 )
                 if cache.exists(path):
                     status["transform_scenario"]["cached"] += 1

@@ -52,7 +52,32 @@ class ArtifactCache:
         else:
             self.fs = fsspec.filesystem("local")
 
-    def get_obs_path(self, gcm: str, variable: str) -> str:
+    @staticmethod
+    def _get_subset_id(subset_bounds: tuple[float, float, float, float] | None) -> str:
+        """
+        Generate a unique identifier for spatial subset bounds.
+
+        Parameters
+        ----------
+        subset_bounds : tuple or None
+            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
+
+        Returns
+        -------
+        str
+            Human-readable subset identifier
+        """
+        if subset_bounds is None:
+            return "global"
+        lat_min, lat_max, lon_min, lon_max = subset_bounds
+        return f"lat{lat_min}to{lat_max}_lon{lon_min}to{lon_max}"
+
+    def get_obs_path(
+        self,
+        gcm: str,
+        variable: str,
+        subset_bounds: tuple[float, float, float, float] | None = None,
+    ) -> str:
         """
         Get path to cached observation regridding artifact.
 
@@ -62,15 +87,24 @@ class ArtifactCache:
             GCM name
         variable : str
             Variable name
+        subset_bounds : tuple or None
+            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
 
         Returns
         -------
         str
             S3 or local path to zarr store
         """
-        return f"{self.base_path}/{self.cache_version}/obs/{gcm}_{variable}_obs_regridded.zarr"
+        subset_id = self._get_subset_id(subset_bounds)
+        return f"{self.base_path}/{self.cache_version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
 
-    def get_historical_path(self, gcm: str, variable: str, ensemble: int) -> str:
+    def get_historical_path(
+        self,
+        gcm: str,
+        variable: str,
+        ensemble: int,
+        subset_bounds: tuple[float, float, float, float] | None = None,
+    ) -> str:
         """
         Get path to cached historical downscaling artifact.
 
@@ -82,18 +116,28 @@ class ArtifactCache:
             Variable name
         ensemble : int
             Ensemble member index
+        subset_bounds : tuple or None
+            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
 
         Returns
         -------
         str
             S3 or local path to zarr store
         """
+        subset_id = self._get_subset_id(subset_bounds)
         return (
             f"{self.base_path}/{self.cache_version}/historical/"
-            f"{gcm}_{variable}_{ensemble:03d}_historical.zarr"
+            f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
         )
 
-    def get_scenario_path(self, gcm: str, variable: str, ensemble: int, scenario: str) -> str:
+    def get_scenario_path(
+        self,
+        gcm: str,
+        variable: str,
+        ensemble: int,
+        scenario: str,
+        subset_bounds: tuple[float, float, float, float] | None = None,
+    ) -> str:
         """
         Get path to cached scenario downscaling artifact.
 
@@ -107,15 +151,18 @@ class ArtifactCache:
             Ensemble member index
         scenario : str
             Scenario name (e.g., 'ssp245', 'G6-1.5K')
+        subset_bounds : tuple or None
+            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
 
         Returns
         -------
         str
             S3 or local path to zarr store
         """
+        subset_id = self._get_subset_id(subset_bounds)
         return (
             f"{self.base_path}/{self.cache_version}/scenarios/"
-            f"{gcm}_{variable}_{ensemble:03d}_{scenario}.zarr"
+            f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
         )
 
     def exists(self, path: str) -> bool:
@@ -189,13 +236,13 @@ class ArtifactCache:
             return {}  # No dependencies
 
         elif stage == "fit_historical":
-            obs_path = self.get_obs_path(config.gcm, config.variable)
+            obs_path = self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
             return {"obs_regridded": (self.exists(obs_path), obs_path)}
 
         elif stage == "transform_scenario":
-            obs_path = self.get_obs_path(config.gcm, config.variable)
+            obs_path = self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
             hist_path = self.get_historical_path(
-                config.gcm, config.variable, config.ensemble_member
+                config.gcm, config.variable, config.ensemble_member, config.subset_bounds
             )
             return {
                 "obs_regridded": (self.exists(obs_path), obs_path),
@@ -248,16 +295,22 @@ class ArtifactCache:
             Full path to output artifact
         """
         if stage == "prepare_observations":
-            return self.get_obs_path(config.gcm, config.variable)
+            return self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
 
         elif stage == "fit_historical":
-            return self.get_historical_path(config.gcm, config.variable, config.ensemble_member)
+            return self.get_historical_path(
+                config.gcm, config.variable, config.ensemble_member, config.subset_bounds
+            )
 
         elif stage == "transform_scenario":
             if config.scenario is None:
                 raise ValueError("scenario must be specified for transform_scenario stage")
             return self.get_scenario_path(
-                config.gcm, config.variable, config.ensemble_member, config.scenario
+                config.gcm,
+                config.variable,
+                config.ensemble_member,
+                config.scenario,
+                config.subset_bounds,
             )
 
         else:
