@@ -2623,6 +2623,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pint-xarray"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pint" },
+    { name = "xarray" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/69/53/bb6bc9a461e32f61f34f57e26ffa9b5a3168081386bca87f2f41ec550320/pint_xarray-0.6.0.tar.gz", hash = "sha256:20955ebd3fa5161608eeb9f39268b4ff22e87f8619c652fea0a2822f11774ad7", size = 166335, upload-time = "2025-08-31T16:32:01.473Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/12/0e888c6c114589d8d32d30525d77dbf9cd5c2811a37bfa61748bf412ed6d/pint_xarray-0.6.0-py3-none-any.whl", hash = "sha256:a0bab1f1342b213a9a28d8d7b3fbf8afa23e29f94c7a8c77bda3779e9e00d51f", size = 43950, upload-time = "2025-08-31T16:32:00.014Z" },
+]
+
+[[package]]
 name = "pip"
 version = "26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3529,6 +3543,7 @@ name = "srm"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "cf-xarray" },
     { name = "cftime" },
     { name = "click" },
@@ -3540,6 +3555,7 @@ dependencies = [
     { name = "jupyter" },
     { name = "netcdf4" },
     { name = "obstore" },
+    { name = "pint-xarray" },
     { name = "pip" },
     { name = "s3fs" },
     { name = "tabulate" },
@@ -3617,6 +3633,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.42.22" },
     { name = "cf-xarray", specifier = ">=0.10.10" },
     { name = "cftime", specifier = ">=1.6.5" },
     { name = "click", specifier = ">=8.3.1" },
@@ -3628,6 +3645,7 @@ requires-dist = [
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "netcdf4", specifier = ">=1.7.4" },
     { name = "obstore", specifier = ">=0.8.2" },
+    { name = "pint-xarray", specifier = ">=0.6.0" },
     { name = "pip", specifier = ">=25.3" },
     { name = "s3fs", specifier = ">=0.4.2" },
     { name = "tabulate", specifier = ">=0.9.0" },

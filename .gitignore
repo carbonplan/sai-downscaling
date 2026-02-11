@@ -3,12 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-#Figures and data
-*.png
-*.pdf
-*.csv
-*.nc
-
 
 # C extensions
 *.so
@@ -185,13 +179,10 @@ cython_debug/
 *.egg-info
 
 
-uv.lock
 
 
 *.pyc
+*.png 
 *.json
 
 # *input_data_old/
-*.nc 
-*.csv
-*.parquet
