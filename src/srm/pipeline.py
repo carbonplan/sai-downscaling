@@ -138,6 +138,7 @@ class BCSDPipeline:
 
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
+            obs_coarse.name = self.config.variable
             obs_coarse.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
@@ -299,6 +300,7 @@ class BCSDPipeline:
 
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
+            model_hist_downscaled.name = self.config.variable
             model_hist_downscaled.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
@@ -541,8 +543,8 @@ class BCSDPipeline:
 
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
-            print(f"scenario downscaled output: {scenario_downscaled}")
-            # scenario_downscaled.to_zarr(output_path, mode="w")
+            scenario_downscaled.name = self.config.variable
+            scenario_downscaled.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Saved scenario output: {output_path}")
