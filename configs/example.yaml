@@ -8,7 +8,7 @@
 gcm: "CESM2-WACCM" # GCM model name
 variable: "tas" # Variable: tas, tasmax, tasmin, pr
 ensemble_member: 0 # Ensemble member (zero-indexed)
-scenario: "ssp245" # Scenario: historical, ssp245, G6-1pt5k, G6sulfur, G6solar
+scenario: "SSP245" # Scenario: historical, SSP245, G6-1pt5k, G6sulfur, G6solar
 
 # === Time Periods ===
 # Historical period for training bias correction

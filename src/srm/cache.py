@@ -339,6 +339,8 @@ class ArtifactCache:
         """
         List cached artifacts matching filters.
 
+        Uses efficient S3 prefix listing instead of recursive globbing.
+
         Parameters
         ----------
         stage : str, optional
@@ -353,39 +355,61 @@ class ArtifactCache:
         list[str]
             List of artifact paths
         """
-        artifacts = []
+        artifacts = set()
 
-        # Build search patterns
+        # Determine which stages to search
         if stage:
-            search_base = f"{self.base_path}/{self.cache_version}/{stage}/"
+            stages = [stage]
         else:
-            search_base = f"{self.base_path}/{self.cache_version}/"
+            stages = ["obs", "historical", "scenarios"]
 
         try:
-            # List all zarr stores
-            if self.base_path.startswith("s3://"):
-                search_base_no_scheme = search_base.replace("s3://", "")
-                all_paths = self.fs.glob(f"{search_base_no_scheme}**/*.zarr")
-                all_paths = [f"s3://{p}" for p in all_paths]
-            else:
-                if Path(search_base).exists():
-                    all_paths = list(Path(search_base).rglob("*.zarr"))
-                    all_paths = [str(p) for p in all_paths]
+            for stage_name in stages:
+                search_base = f"{self.base_path}/{self.cache_version}/{stage_name}/"
+
+                if self.base_path.startswith("s3://"):
+                    search_base_no_scheme = search_base.replace("s3://", "")
+
+                    # List all objects under the prefix (non-recursive, just first level)
+                    # This is much faster than recursive globbing
+                    try:
+                        all_files = self.fs.ls(search_base_no_scheme, detail=False)
+                    except FileNotFoundError:
+                        continue
+
+                    # Look for zarr stores (directories ending in .zarr)
+                    for path in all_files:
+                        if path.endswith(".zarr"):
+                            full_path = f"s3://{path}"
+
+                            # Apply filters
+                            path_parts = Path(path).name.split("_")
+                            if gcm and path_parts[0] != gcm:
+                                continue
+                            if variable and len(path_parts) > 1 and path_parts[1] != variable:
+                                continue
+
+                            # Verify it's a valid zarr store
+                            if self.exists(full_path):
+                                artifacts.add(full_path)
                 else:
-                    all_paths = []
+                    # Local filesystem
+                    search_path = Path(search_base)
+                    if not search_path.exists():
+                        continue
 
-            # Filter by GCM and variable if specified
-            for path in all_paths:
-                path_parts = Path(path).name.split("_")
+                    for path in search_path.glob("*.zarr"):
+                        # Apply filters
+                        path_parts = path.name.split("_")
+                        if gcm and path_parts[0] != gcm:
+                            continue
+                        if variable and len(path_parts) > 1 and path_parts[1] != variable:
+                            continue
 
-                if gcm and not path_parts[0] == gcm:
-                    continue
-                if variable and len(path_parts) > 1 and not path_parts[1] == variable:
-                    continue
-
-                artifacts.append(path)
+                        if self.exists(str(path)):
+                            artifacts.add(str(path))
 
         except Exception as e:
             logger.error(f"Error listing artifacts: {e}")
 
-        return sorted(artifacts)
+        return sorted(list(artifacts))
