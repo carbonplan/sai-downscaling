@@ -24,13 +24,16 @@ class VarStandards:
     HUSS: VarSpec = VarSpec(name="huss", units="1")
     RLDS: VarSpec = VarSpec(name="rlds", units="W m-2")
     PS: VarSpec = VarSpec(name="ps", units="Pa")
+    PSL: VarSpec = VarSpec(name="psl", units="Pa")
+    UAS: VarSpec = VarSpec(name="uas", units="Pa")
+    VAS: VarSpec = VarSpec(name="vas", units="m s-1")
 
 
 @dataclass
 class ClusterConfig:
-    n_workers: list = field(default_factory=lambda: [2, 50])
+    n_workers: list = field(default_factory=lambda: [1, 50])
     region: str = "us-west-2"
-    worker_vm_types: list = field(default_factory=lambda: ["r8g.xlarge", "m8g.2xlarge"])
+    worker_vm_types: list = field(default_factory=lambda: ["r8g.2xlarge"])
     scheduler_vm_types: str = "c8g.2xlarge"
     spot_policy: str = "spot_with_fallback"
     tags: dict = field(default_factory=lambda: {"Project": "SRM"})

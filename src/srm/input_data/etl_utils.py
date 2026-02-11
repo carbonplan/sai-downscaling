@@ -1,3 +1,4 @@
+# etl_utils.py
 import dask
 import icechunk
 import xarray as xr
@@ -101,28 +102,45 @@ def update_variable_attrs(ds: xr.Dataset, var_specs: dict[str, VarSpec]) -> xr.D
 def write_dataset_to_icechunk(
     ds: xr.Dataset,
     session,
-    encoding: dict,
-    shards: dict,
-    commit_message: str,
-    write_mode: str,
+    encoding: dict = None,
+    shards: dict = None,
+    commit_message: str = None,
+    write_mode: str = "a",
 ):
+    """
+    Write dataset to icechunk with optional rechunking.
+
+    For virtual datasets: set encoding=None and shards=None
+    For materialized datasets: provide encoding and shards for rechunking
+    """
     from icechunk.xarray import to_icechunk
 
-    ds = ds.chunk(shards)
+    if shards is not None:
+        ds = ds.chunk(shards)
     to_icechunk(ds, session, encoding=encoding, mode=write_mode)
-    session.commit(commit_message)
+
+    if commit_message:
+        session.commit(commit_message)
 
 
 def virtualize_netcdf(
     url: str,
     registry: ObjectStoreRegistry,
     parser: HDFParser,
+    loadable_variables: list[str] | None = None,
     preprocess_fn: callable = None,
 ) -> xr.Dataset:
-    manifest_store = parser(url=url, registry=registry)
-    ds = xr.open_zarr(manifest_store, consolidated=False, zarr_format=3)
+    """
+    Opens a single file virtually and applies the preprocessor with URL context.
+    """
+    from virtualizarr import open_virtual_dataset
+
+    ds = open_virtual_dataset(
+        url, registry=registry, parser=parser, loadable_variables=loadable_variables
+    )
     if preprocess_fn:
-        ds = preprocess_fn(ds, url)
+        ds = preprocess_fn(ds, url=url)
+
     return ds
 
 
@@ -131,11 +149,19 @@ def virtualize_and_combine(
     registry: ObjectStoreRegistry,
     parser: HDFParser,
     preprocess_fn: callable = None,
+    loadable_variables: list[str] | None = None,
 ) -> xr.Dataset:
+    """
+    Parallellizes the virtualization of multiple files and combines them.
+    """
+
     delayed_datasets = [
-        dask.delayed(virtualize_netcdf)(url, registry, parser, preprocess_fn) for url in urls
+        dask.delayed(virtualize_netcdf)(url, registry, parser, loadable_variables, preprocess_fn)
+        for url in urls
     ]
-    ds_list = dask.compute(delayed_datasets)[0]
+
+    ds_list = list(dask.compute(*delayed_datasets))
+
     return xr.combine_by_coords(
         ds_list,
         coords="minimal",
@@ -143,3 +169,54 @@ def virtualize_and_combine(
         compat="override",
         combine_attrs="override",
     )
+
+
+# def open_mfdataset_from_store(
+#     urls: list[str],
+#     store,
+#     bucket: str,
+#     preprocess=None,
+#     drop_variables=None,
+#     engine="h5netcdf",
+#     chunks="auto",
+#     max_cache_size=512 * 1024 * 1024,
+# ):
+#     store = SplittingReadableStore(store)
+#     caching_store = CachingReadableStore(store, max_size=max_cache_size)
+
+#     readers = []
+#     datasets = []
+
+#     for url in urls:
+#         path = url.replace(f"s3://{bucket}/", "")
+#         reader = BufferedStoreReader(caching_store, path)
+#         readers.append(reader)
+
+#         ds = xr.open_dataset(reader, engine=engine, drop_variables=drop_variables, chunks=chunks)
+#         if preprocess is not None:
+#             ds = preprocess(ds, url)
+
+#         datasets.append(ds)
+
+#     ds = xr.concat(datasets, dim="time", coords="minimal", data_vars="minimal", compat="override")
+
+#     return ds, readers
+
+
+# def virtualize_and_combine(
+#     urls: list[str],
+#     registry: ObjectStoreRegistry,
+#     parser: HDFParser,
+#     preprocess_fn: callable = None,
+# ) -> xr.Dataset:
+#     delayed_datasets = [
+#         dask.delayed(virtualize_netcdf)(url, registry, parser, preprocess_fn) for url in urls
+#     ]
+#     ds_list = dask.compute(delayed_datasets)[0]
+#     return xr.combine_by_coords(
+#         ds_list,
+#         coords="minimal",
+#         data_vars="minimal",
+#         compat="override",
+#         combine_attrs="override",
+#     )
