@@ -162,6 +162,9 @@ def status(
 
 @app.command()
 def cache_clear(
+    config_path: str = typer.Option(
+        "configs/example.yaml", "--config-path", "-c", help="Path to YAML config file"
+    ),
     stage: str = typer.Option(None, help="Clear specific stage: obs, historical, scenarios"),
     gcm: str = typer.Option(None, help="Clear only specific GCM"),
     variable: str = typer.Option(None, help="Clear only specific variable"),
@@ -169,7 +172,14 @@ def cache_clear(
 ):
     """Clear cached artifacts"""
 
-    cache = ArtifactCache()
+    # Load config to get cache_dir
+    configs = load_configs(config_path)
+    if not configs:
+        console.print("[red]Error: No valid configurations found[/red]")
+        raise typer.Exit(1)
+
+    # Use cache_dir from first config (all should have same cache_dir)
+    cache = ArtifactCache(base_path=configs[0].cache_dir)
 
     # Build description
     desc_parts = []
@@ -194,13 +204,23 @@ def cache_clear(
 
 @app.command()
 def cache_list(
+    config_path: str = typer.Option(
+        "configs/example.yaml", "--config-path", "-c", help="Path to YAML config file"
+    ),
     stage: str = typer.Option(None, help="List specific stage: obs, historical, scenarios"),
     gcm: str = typer.Option(None, help="List only specific GCM"),
     variable: str = typer.Option(None, help="List only specific variable"),
 ):
     """List cached artifacts"""
 
-    cache = ArtifactCache()
+    # Load config to get cache_dir
+    configs = load_configs(config_path)
+    if not configs:
+        console.print("[red]Error: No valid configurations found[/red]")
+        raise typer.Exit(1)
+
+    # Use cache_dir from first config (all should have same cache_dir)
+    cache = ArtifactCache(base_path=configs[0].cache_dir)
     artifacts = cache.list_artifacts(stage=stage, gcm=gcm, variable=variable)
 
     if not artifacts:
