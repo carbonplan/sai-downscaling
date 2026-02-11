@@ -191,7 +191,7 @@ class BCSDPipeline:
             # Load cached coarse observations
             deps = self.cache.check_dependencies("fit_historical", self.config)
             obs_coarse_path = deps["obs_regridded"][1]
-            obs_coarse = xr.open_zarr(obs_coarse_path)
+            obs_coarse = xr.open_zarr(obs_coarse_path)[self.config.variable]
 
             # Load fine observations
             obs_fine = get_obs(var=self.config.variable)
@@ -353,7 +353,7 @@ class BCSDPipeline:
         with Timer("Loaded data", verbose=self.config.verbose):
             # Load cached artifacts
             deps = self.cache.check_dependencies("transform_scenario", self.config)
-            obs_coarse = xr.open_zarr(deps["obs_regridded"][1])
+            obs_coarse = xr.open_zarr(deps["obs_regridded"][1])[self.config.variable]
             _ = xr.open_zarr(deps["historical"][1])
 
             # Load fine observations
