@@ -1,3 +1,4 @@
+import typing
 import warnings
 
 import dask.system
@@ -105,13 +106,11 @@ def preprocess_data(
         with Timer("Detrended data", verbose=verbose):
             dict_all["historical_scenario"] = xr.concat(
                 [
-                    dict_all["model_hist"].where(
-                        dict_all["model_hist"]["time.year"] < predict_period_start,
-                        drop=True,
+                    dict_all["model_hist"].sel(
+                        time=dict_all["model_hist"]["time.year"] < predict_period_start
                     ),
-                    dict_all["model_scenario"].where(
-                        dict_all["model_scenario"]["time.year"] >= predict_period_start,
-                        drop=True,
+                    dict_all["model_scenario"].sel(
+                        time=dict_all["model_scenario"]["time.year"] >= predict_period_start
                     ),
                 ],
                 dim="time",
@@ -252,8 +251,8 @@ def spatially_disaggregate(
     dict_all: dict,
     verbose: bool = True,
     rechunk_workflow: bool = True,
-    clim_method: str = "fft",
-    method: str = "subtract",
+    clim_method: typing.Literal["simple", "fft"] = "fft",
+    method: typing.Literal["subtract", "divide"] = "subtract",
 ):
     if rechunk_workflow:
         with Timer("Rechunked to full space for downscaling", verbose=verbose):
