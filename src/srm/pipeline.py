@@ -10,6 +10,7 @@ Stages:
 from __future__ import annotations
 
 import logging
+import warnings
 
 import dask.system
 import xarray as xr
@@ -132,9 +133,13 @@ class BCSDPipeline:
 
         # Regrid to coarse grid
         with Timer("Regridded observations to coarse grid", verbose=self.config.verbose):
-            obs_coarse = interpolate_fine_to_coarse_grid(
-                da_fine_to_coarsen=obs_fine, da_coarse_grid=model_grid
-            )
+            # Suppress expected warnings from sparse array operations during regridding
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="invalid value encountered in divide")
+                warnings.filterwarnings("ignore", message="divide by zero encountered in divide")
+                obs_coarse = interpolate_fine_to_coarse_grid(
+                    da_fine_to_coarsen=obs_fine, da_coarse_grid=model_grid
+                )
 
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
