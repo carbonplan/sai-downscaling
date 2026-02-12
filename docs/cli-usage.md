@@ -12,7 +12,7 @@ The CLI is installed as `bcsd` command via the package entry point.
 
 ## Demo Notebook
 
-For a complete walkthrough with visualizations, see [notebooks/demo_new_pipeline.ipynb](../notebooks/demo_new_pipeline.ipynb). the notebook demonstrates:
+For a complete walkthrough with visualizations, see [docs/demo-new-pipeline.ipynb](./demo-new-pipeline.ipynb). The notebook demonstrates:
 
 - configuration setup with regional subsetting (South Africa)
 - running the three-stage pipeline
@@ -520,7 +520,7 @@ the pipeline provides intelligent caching at multiple levels to enable efficient
    - observations regridded to GCM grid (shared across all ensembles/scenarios)
    - historical downscaling (shared across all scenarios for an ensemble)
 
-2. **output_dir**: final scenario outputs ready for publication/analysis
+2. **output_dir**: final scenario outputs 
    - downscaled scenario data with full metadata
    - organized by environment for clear separation
 
@@ -552,7 +552,7 @@ s3://carbonplan-scratch/srm/outputs/
 
 ### Resumability
 
-If you interrupt a run and restart with the same config:
+if you interrupt a run and restart with the same config:
 
 ```bash
 # Start run
@@ -584,7 +584,7 @@ Stage 3 (transform_scenario):
 
 ### Force Recompute
 
-To force recomputation (ignoring cache):
+to force recomputation (ignoring cache):
 
 ```bash
 # Force all stages
@@ -596,7 +596,7 @@ uv run bcsd run --config-path configs/example.yaml --stage transform_scenario --
 
 ### Cache Inspection
 
-You can inspect cached artifacts programmatically:
+you can inspect cached artifacts programmatically:
 
 ```python
 from srm.bcsd_config import BCSDConfig
@@ -620,7 +620,7 @@ print(f"Cached observation artifacts: {len(artifacts)}")
 
 ## Coiled Execution
 
-By default, the pipeline uses [Coiled](https://coiled.io) batch API for distributed, cloud-based execution.
+by default, the pipeline uses [Coiled](https://coiled.io) batch API for distributed, cloud-based execution.
 
 ### Architecture
 
@@ -688,7 +688,7 @@ uv run bcsd run --config-path configs/batch/ --no-coiled
 
 ### Multi-Model Ensemble
 
-Process multiple GCMs in one batch:
+process multiple GCMs in one batch:
 
 ```bash
 # Create configs for 3 GCMs, 3 ensembles each = 9 configs
@@ -721,7 +721,7 @@ uv run bcsd run --config-path configs/multi-model/ --coiled
 
 ### Code Organization
 
-The CLI is built on several key components:
+the CLI is built on several key components:
 
 1. **BCSDConfig** ([src/srm/bcsd_config.py](../src/srm/bcsd_config.py))
    - Pydantic v2 configuration with comprehensive validation
@@ -762,7 +762,7 @@ The CLI is built on several key components:
 
 ### Batch Execution Flow
 
-Detailed flow when running `uv run bcsd run --config-path configs/ --coiled`:
+detailed flow when running `uv run bcsd run --config-path configs/ --coiled`:
 
 ```mermaid
 flowchart TD
@@ -810,7 +810,7 @@ flowchart TD
 
 ### Cache Path Generation Logic
 
-The cache system generates deterministic paths based on configuration:
+the cache system generates deterministic paths based on configuration:
 
 ```python
 def _get_subset_id(subset_bounds):
