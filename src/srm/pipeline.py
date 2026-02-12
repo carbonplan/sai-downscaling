@@ -396,7 +396,7 @@ class BCSDPipeline:
             model_scenario = model_scenario.isel(ensemble_member=self.config.ensemble_member)
             model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
-            if self.config.scenario != 'SSP245':
+            if self.config.scenario != "SSP245":
                 ssp_timeseries = get_experiment(
                     gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
                 )
@@ -409,9 +409,10 @@ class BCSDPipeline:
                 obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
                 model_hist = subset_space(model_hist, [lat_min, lat_max, lon_min, lon_max])
                 model_scenario = subset_space(model_scenario, [lat_min, lat_max, lon_min, lon_max])
-                if self.config.scenario != 'SSP245':
-                    ssp_timeseries = subset_space(ssp_timeseries, [lat_min, lat_max, lon_min, lon_max])
-
+                if self.config.scenario != "SSP245":
+                    ssp_timeseries = subset_space(
+                        ssp_timeseries, [lat_min, lat_max, lon_min, lon_max]
+                    )
 
             # Subset time periods
             obs_coarse = obs_coarse.sel(
@@ -441,7 +442,7 @@ class BCSDPipeline:
                     model_scenario = rechunk(model_scenario, pattern="full_time")
                     model_hist = model_hist.persist()
                     model_scenario = model_scenario.persist()
-                    if self.config.scenario != 'SSP245':
+                    if self.config.scenario != "SSP245":
                         ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time")
                         ssp_timeseries = ssp_timeseries.persist()
 
@@ -453,19 +454,16 @@ class BCSDPipeline:
 
                     historical_and_ssp = xr.concat(
                         [
-                            model_hist.sel(
-                                time=model_hist["time.year"] < 2015
-                            ),
-                            ssp_timeseries.sel(
-                                time=ssp_timeseries["time.year"] >= 2015
-                            ),
+                            model_hist.sel(time=model_hist["time.year"] < 2015),
+                            ssp_timeseries.sel(time=ssp_timeseries["time.year"] >= 2015),
                         ],
                         dim="time",
                     )
                     historical_scenario = xr.concat(
                         [
                             historical_and_ssp.sel(
-                                time=historical_and_ssp["time.year"] < self.config.predict_period_start
+                                time=historical_and_ssp["time.year"]
+                                < self.config.predict_period_start
                             ),
                             model_scenario.sel(
                                 time=model_scenario["time.year"] >= self.config.predict_period_start
