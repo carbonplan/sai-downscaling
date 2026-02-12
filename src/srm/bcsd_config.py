@@ -20,18 +20,21 @@ class VariableConfig(BaseModel):
         BCSD_CONFIG = {
             "pr": {
                 "detrend_data": False,
+                "detrend_method": "mutliplicative",
                 "do_windowing": True,
                 "downscaling_method": "divide",
                 "downscaling_clim_method": "simple",
             },
             "tas": {
                 "detrend_data": True,
+                "detrend_method": "additive",
                 "do_windowing": True,
                 "downscaling_method": "subtract",
                 "downscaling_clim_method": "fft",
             },
             "tasmax": {
                 "detrend_data": True,
+                "detrend_method": "additive",
                 "do_windowing": True,
                 "downscaling_method": "subtract",
                 "downscaling_clim_method": "fft",
@@ -243,6 +246,11 @@ class BCSDConfig(BaseModel):
     def detrend_data(self) -> bool:
         """Convenience accessor for variable config"""
         return self.variable_config.detrend_data if self.variable_config else False
+
+    @computed_field
+    def detrend_method(self) -> str:
+        """Convenience accessor for variable config"""
+        return self.variable_config.detrend_method if self.variable_config else "additive"
 
     @computed_field
     def do_windowing(self) -> bool:
