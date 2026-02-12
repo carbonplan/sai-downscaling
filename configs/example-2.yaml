@@ -22,7 +22,7 @@ predict_period_end: 2100
 # === Spatial Subsetting (optional) ===
 # Subset the data to a specific region (e.g., South Africa)
 # Format: [lat_min, lat_max, lon_min, lon_max]
-subset_bounds: [-35, -22, 16, 33] # South Africa region
+# subset_bounds: [-35, -22, 16, 33] # South Africa region
 
 # === SAI Scenarios (optional) ===
 # For SAI scenarios (G6-*), you must specify the transition year when SAI starts
