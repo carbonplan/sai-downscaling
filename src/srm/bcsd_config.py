@@ -11,7 +11,7 @@ class VariableConfig(BaseModel):
 
     detrend_data: bool
     do_windowing: bool
-    downscaling_method: Literal["subtract", "divide"]
+    downscaling_method: Literal["additive", "multiplicative"]
     downscaling_clim_method: Literal["simple", "fft"]
 
     @classmethod
@@ -22,21 +22,21 @@ class VariableConfig(BaseModel):
                 "detrend_data": False,
                 "detrend_method": "mutliplicative",
                 "do_windowing": True,
-                "downscaling_method": "divide",
+                "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "simple",
             },
             "tas": {
                 "detrend_data": True,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "subtract",
+                "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
             },
             "tasmax": {
                 "detrend_data": True,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "subtract",
+                "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
             },
         }
@@ -260,7 +260,7 @@ class BCSDConfig(BaseModel):
     @computed_field
     def downscaling_method(self) -> str:
         """Convenience accessor for variable config"""
-        return self.variable_config.downscaling_method if self.variable_config else "subtract"
+        return self.variable_config.downscaling_method if self.variable_config else "additive"
 
     @computed_field
     def downscaling_clim_method(self) -> str:
@@ -346,7 +346,7 @@ config = BCSDConfig(
 
 print(config.run_id)  # "CESM2-WACCM_tas_e00_ssp245"
 print(config.detrend_data)  # True (auto-loaded from variable config)
-print(config.downscaling_method)  # "subtract"
+print(config.downscaling_method)  # "additive"
 
 # 2. SAI scenario (requires transition_year)
 sai_config = BCSDConfig(
@@ -384,7 +384,7 @@ custom_config = BCSDConfig(
     variable_config=VariableConfig(
         detrend_data=False,  # Custom: don't detrend
         do_windowing=True,
-        downscaling_method="subtract",
+        downscaling_method="additive",
         downscaling_clim_method="simple"
     )
 )
