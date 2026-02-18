@@ -1,0 +1,16 @@
+# CESM2-WACCM | G6-1.5K | pr | Ensemble member 2
+
+gcm: "CESM2-WACCM"
+variable: "pr"
+ensemble_member: 2
+scenario: "G6-1.5K"
+
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+
+cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+output_dir: "s3://carbonplan-srm/output"
+environment: "qa"
+version: "v1"

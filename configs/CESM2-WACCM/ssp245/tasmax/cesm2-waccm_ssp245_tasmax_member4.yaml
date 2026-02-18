@@ -1,0 +1,16 @@
+# CESM2-WACCM | SSP245 | tasmax | Ensemble member 4
+
+gcm: "CESM2-WACCM"
+variable: "tasmax"
+ensemble_member: 4
+scenario: "SSP245"
+
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+
+cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+output_dir: "s3://carbonplan-srm/output"
+environment: "qa"
+version: "v1"
