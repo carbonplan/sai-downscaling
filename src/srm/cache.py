@@ -32,6 +32,7 @@ class ArtifactCache:
         self,
         base_path: str = "s3://carbonplan-scratch/srm/cache/",
         environment: str = "qa",
+        version: str = "v1",
         output_dir: str | None = None,
     ):
         """
@@ -43,11 +44,15 @@ class ArtifactCache:
             Base S3 or local path for cache storage (intermediate artifacts)
         environment : str
             Environment name (qa, staging, production) for cache namespace isolation
+        version : str
+            Version identifier included in all paths (e.g. 'v1', 'v2'). Bump to
+            invalidate all cached artifacts without changing environment.
         output_dir : str, optional
             Directory for final scenario outputs. If None, scenarios go to cache.
         """
         self.base_path = base_path.rstrip("/")
         self.environment = environment
+        self.version = version
         self.output_dir = output_dir.rstrip("/") if output_dir else None
 
         # Initialize filesystem (works for s3:// and local paths)
@@ -100,7 +105,7 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(subset_bounds)
-        return f"{self.base_path}/{self.environment}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
+        return f"{self.base_path}/{self.environment}/{self.version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
 
     def get_historical_path(
         self,
@@ -130,10 +135,10 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(subset_bounds)
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
         else:
             return (
-                f"{self.base_path}/{self.environment}/historical/"
+                f"{self.base_path}/{self.environment}/{self.version}/historical/"
                 f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
             )
 
@@ -173,10 +178,10 @@ class ArtifactCache:
 
         # Use output_dir for final scenarios if specified, otherwise cache
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
+            return f"{self.output_dir}/{self.environment}/{self.version}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
         else:
             return (
-                f"{self.base_path}/{self.environment}/scenarios/"
+                f"{self.base_path}/{self.environment}/{self.version}/scenarios/"
                 f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
             )
 
@@ -358,9 +363,9 @@ class ArtifactCache:
 
         # Build search patterns
         if stage:
-            search_base = f"{self.base_path}/{self.environment}/{stage}/"
+            search_base = f"{self.base_path}/{self.environment}/{self.version}/{stage}/"
         else:
-            search_base = f"{self.base_path}/{self.environment}/"
+            search_base = f"{self.base_path}/{self.environment}/{self.version}/"
 
         try:
             # List all zarr stores
@@ -435,9 +440,11 @@ class ArtifactCache:
             for stage_name in stages:
                 # Scenarios go to output_dir if specified, others to cache
                 if stage_name == "scenarios" and self.output_dir:
-                    search_base = f"{self.output_dir}/{self.environment}/"
+                    search_base = f"{self.output_dir}/{self.environment}/{self.version}/"
                 else:
-                    search_base = f"{self.base_path}/{self.environment}/{stage_name}/"
+                    search_base = (
+                        f"{self.base_path}/{self.environment}/{self.version}/{stage_name}/"
+                    )
 
                 if self.base_path.startswith("s3://"):
                     search_base_no_scheme = search_base.replace("s3://", "")
