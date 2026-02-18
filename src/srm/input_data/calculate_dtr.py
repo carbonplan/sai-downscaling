@@ -58,8 +58,8 @@ def add_dtr(data_source: str = "CESM2-WACCM", scenario: str = "SSP245"):
 
 
 def process_all_data():
-    for data_source in ["CESM2-WACCM", "UKESM", "MIROC-ES2H"]:
+    for gcm in ["CESM2-WACCM", "UKESM", "MIROC-ES2H"]:
         for scenario in ["SSP245", "historical", "G6-1.5K"]:
-            add_dtr(data_source=data_source, scenario=scenario)
+            add_dtr(data_source=gcm, scenario=scenario)
 
     add_dtr(data_source="ERA5", scenario="historical")
