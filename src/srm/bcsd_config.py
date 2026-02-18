@@ -10,6 +10,7 @@ class VariableConfig(BaseModel):
     """Variable-specific BCSD configuration parameters"""
 
     detrend_data: bool
+    detrend_method: Literal["additive", "multiplicative"] = "additive"
     do_windowing: bool
     downscaling_method: Literal["subtract", "divide"]
     downscaling_clim_method: Literal["simple", "fft"]
@@ -20,21 +21,31 @@ class VariableConfig(BaseModel):
         BCSD_CONFIG = {
             "pr": {
                 "detrend_data": False,
+                "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "downscaling_method": "divide",
                 "downscaling_clim_method": "simple",
             },
             "tas": {
                 "detrend_data": True,
+                "detrend_method": "additive",
                 "do_windowing": True,
                 "downscaling_method": "subtract",
                 "downscaling_clim_method": "fft",
             },
             "tasmax": {
                 "detrend_data": True,
+                "detrend_method": "additive",
                 "do_windowing": True,
                 "downscaling_method": "subtract",
                 "downscaling_clim_method": "fft",
+            },
+            "rsds": {
+                "detrend_data": True,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "downscaling_method": "divide",
+                "downscaling_clim_method": "simple",
             },
         }
 
@@ -57,7 +68,9 @@ class BCSDConfig(BaseModel):
 
     # Model and data identifiers
     gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM', 'MIROC-ES2H', 'UKESM')")
-    variable: Literal["tas", "tasmax", "pr"] = Field(..., description="Variable to downscale")
+    variable: Literal["tas", "tasmax", "pr", "rsds"] = Field(
+        ..., description="Variable to downscale"
+    )
     ensemble_member: int = Field(..., ge=0, description="Ensemble member index")
     scenario: str | None = Field(
         None,
@@ -247,6 +260,11 @@ class BCSDConfig(BaseModel):
     def detrend_data(self) -> bool:
         """Convenience accessor for variable config"""
         return self.variable_config.detrend_data if self.variable_config else False
+
+    @computed_field
+    def detrend_method(self) -> str:
+        """Convenience accessor for variable config"""
+        return self.variable_config.detrend_method if self.variable_config else "additive"
 
     @computed_field
     def do_windowing(self) -> bool:
