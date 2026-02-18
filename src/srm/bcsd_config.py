@@ -13,6 +13,7 @@ class VariableConfig(BaseModel):
     do_windowing: bool
     downscaling_method: Literal["additive", "multiplicative"]
     downscaling_clim_method: Literal["simple", "fft"]
+    detrend_method: Literal["additive", "multiplicative"] = "additive"
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
@@ -39,6 +40,13 @@ class VariableConfig(BaseModel):
                 "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
             },
+            "rsds": {
+                "detrend_data": True,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "downscaling_method": "multiplicative",
+                "downscaling_clim_method": "simple",
+            },
         }
 
         if variable not in BCSD_CONFIG:
@@ -60,7 +68,9 @@ class BCSDConfig(BaseModel):
 
     # Model and data identifiers
     gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM', 'MIROC-ES2H', 'UKESM')")
-    variable: Literal["tas", "tasmax", "pr"] = Field(..., description="Variable to downscale")
+    variable: Literal["tas", "tasmax", "pr", "rsds"] = Field(
+        ..., description="Variable to downscale"
+    )
     ensemble_member: int = Field(..., ge=0, description="Ensemble member index")
     scenario: str | None = Field(
         None,
