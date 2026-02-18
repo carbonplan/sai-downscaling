@@ -14,6 +14,7 @@ class VariableConfig(BaseModel):
     do_windowing: bool
     downscaling_method: Literal["additive", "multiplicative"]
     downscaling_clim_method: Literal["simple", "fft"]
+    detrend_method: Literal["additive", "multiplicative"] = "additive"
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
@@ -44,7 +45,7 @@ class VariableConfig(BaseModel):
                 "detrend_data": True,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "divide",
+                "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "simple",
             },
         }
