@@ -10,7 +10,6 @@ class VariableConfig(BaseModel):
     """Variable-specific BCSD configuration parameters"""
 
     detrend_data: bool
-    detrend_method: Literal["additive", "multiplicative"] = "additive"
     do_windowing: bool
     downscaling_method: Literal["additive", "multiplicative"]
     downscaling_clim_method: Literal["simple", "fft"]
