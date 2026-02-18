@@ -71,11 +71,16 @@ def run(
     stage: str = typer.Option(None, help="Run specific stage: obs, historical, scenario, or all"),
     force: bool = typer.Option(False, help="Force recompute even if cached"),
     coiled: bool = typer.Option(True, help="Use Coiled for execution"),
+    version: str | None = typer.Option(
+        None, "--version", help="Override the version from config (e.g. 'v2')"
+    ),
 ):
     """Run BCSD pipeline with automatic caching and resumability"""
 
     # Load configs
     configs = load_configs(config_path)
+    if version is not None:
+        configs = [config.model_copy(update={"version": version}) for config in configs]
     console.print(f"[bold green]Loaded {len(configs)} configuration(s)[/bold green]")
 
     orchestrator = BCSDOrchestrator()
@@ -102,9 +107,14 @@ def run(
 def status(
     config_path: str = typer.Option(..., help="Path to config(s)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed path information"),
+    version: str | None = typer.Option(
+        None, "--version", help="Override the version from config (e.g. 'v2')"
+    ),
 ):
     """Check status of cached artifacts for given configs"""
     configs = load_configs(config_path)
+    if version is not None:
+        configs = [config.model_copy(update={"version": version}) for config in configs]
     orchestrator = BCSDOrchestrator()
 
     # Show cache configuration if verbose
@@ -114,6 +124,7 @@ def status(
         console.print(f"  Cache Path: {cache.base_path}")
         console.print(f"  Output Path: {cache.output_dir or '(same as cache)'}")
         console.print(f"  Environment: {cache.environment}")
+        console.print(f"  Version: {cache.version}")
         console.print("\n[cyan]Example Paths:[/cyan]")
         config = configs[0]
         console.print(
@@ -182,7 +193,11 @@ def cache_clear(
         raise typer.Exit(1)
 
     # Use cache_dir from first config (all should have same cache_dir)
-    cache = ArtifactCache(base_path=configs[0].cache_dir)
+    cache = ArtifactCache(
+        base_path=configs[0].cache_dir,
+        environment=configs[0].environment,
+        version=configs[0].version,
+    )
 
     # Build description
     desc_parts = []
@@ -223,7 +238,11 @@ def cache_list(
         raise typer.Exit(1)
 
     # Use cache_dir from first config (all should have same cache_dir)
-    cache = ArtifactCache(base_path=configs[0].cache_dir)
+    cache = ArtifactCache(
+        base_path=configs[0].cache_dir,
+        environment=configs[0].environment,
+        version=configs[0].version,
+    )
     artifacts = cache.list_artifacts(stage=stage, gcm=gcm, variable=variable)
 
     if not artifacts:

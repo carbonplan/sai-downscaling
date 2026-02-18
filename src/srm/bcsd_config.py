@@ -112,6 +112,10 @@ class BCSDConfig(BaseModel):
         default="qa",
         description="Environment name (qa, staging, production). Separates cache/outputs by deployment stage.",
     )
+    version: str = Field(
+        default="v1",
+        description="Version identifier for cache/output path namespacing (e.g. 'v1', 'v2'). Override with BCSD_VERSION env var.",
+    )
 
     model_config = {"env_prefix": "BCSD_"}
 
@@ -310,6 +314,9 @@ class CacheConfig(BaseModel):
     environment: str = Field(
         "qa", description="Environment for cache namespace (qa, staging, production)"
     )
+    version: str = Field(
+        "v1", description="Version identifier for cache path namespacing (e.g. 'v1', 'v2')"
+    )
     check_integrity: bool = Field(
         True, description="Verify cached artifacts are valid before using"
     )
@@ -398,6 +405,8 @@ ensemble_member: 0
 scenario: ssp245
 predict_period_start: 2015
 predict_period_end: 2100
+environment: qa
+version: v1
 """
 
 import yaml
