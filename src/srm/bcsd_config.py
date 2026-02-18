@@ -11,8 +11,9 @@ class VariableConfig(BaseModel):
 
     detrend_data: bool
     do_windowing: bool
-    downscaling_method: Literal["subtract", "divide"]
+    downscaling_method: Literal["additive", "multiplicative"]
     downscaling_clim_method: Literal["simple", "fft"]
+    detrend_method: Literal["additive", "multiplicative"] = "additive"
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
@@ -20,21 +21,31 @@ class VariableConfig(BaseModel):
         BCSD_CONFIG = {
             "pr": {
                 "detrend_data": False,
+                "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "divide",
+                "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "simple",
             },
             "tas": {
                 "detrend_data": True,
+                "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "subtract",
+                "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
             },
             "tasmax": {
                 "detrend_data": True,
+                "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "subtract",
+                "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
+            },
+            "rsds": {
+                "detrend_data": True,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "downscaling_method": "multiplicative",
+                "downscaling_clim_method": "simple",
             },
         }
 
@@ -57,7 +68,9 @@ class BCSDConfig(BaseModel):
 
     # Model and data identifiers
     gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM', 'MIROC-ES2H', 'UKESM')")
-    variable: Literal["tas", "tasmax", "pr"] = Field(..., description="Variable to downscale")
+    variable: Literal["tas", "tasmax", "pr", "rsds"] = Field(
+        ..., description="Variable to downscale"
+    )
     ensemble_member: int = Field(..., ge=0, description="Ensemble member index")
     scenario: str | None = Field(
         None,
@@ -108,6 +121,10 @@ class BCSDConfig(BaseModel):
     environment: str = Field(
         default="qa",
         description="Environment name (qa, staging, production). Separates cache/outputs by deployment stage.",
+    )
+    version: str = Field(
+        default="v1",
+        description="Version identifier for cache/output path namespacing (e.g. 'v1', 'v2'). Override with BCSD_VERSION env var.",
     )
 
     model_config = {"env_prefix": "BCSD_"}
@@ -245,6 +262,11 @@ class BCSDConfig(BaseModel):
         return self.variable_config.detrend_data if self.variable_config else False
 
     @computed_field
+    def detrend_method(self) -> str:
+        """Convenience accessor for variable config"""
+        return self.variable_config.detrend_method if self.variable_config else "additive"
+
+    @computed_field
     def do_windowing(self) -> bool:
         """Convenience accessor for variable config"""
         return self.variable_config.do_windowing if self.variable_config else False
@@ -252,7 +274,7 @@ class BCSDConfig(BaseModel):
     @computed_field
     def downscaling_method(self) -> str:
         """Convenience accessor for variable config"""
-        return self.variable_config.downscaling_method if self.variable_config else "subtract"
+        return self.variable_config.downscaling_method if self.variable_config else "additive"
 
     @computed_field
     def downscaling_clim_method(self) -> str:
@@ -302,6 +324,9 @@ class CacheConfig(BaseModel):
     environment: str = Field(
         "qa", description="Environment for cache namespace (qa, staging, production)"
     )
+    version: str = Field(
+        "v1", description="Version identifier for cache path namespacing (e.g. 'v1', 'v2')"
+    )
     check_integrity: bool = Field(
         True, description="Verify cached artifacts are valid before using"
     )
@@ -338,7 +363,7 @@ config = BCSDConfig(
 
 print(config.run_id)  # "CESM2-WACCM_tas_e00_ssp245"
 print(config.detrend_data)  # True (auto-loaded from variable config)
-print(config.downscaling_method)  # "subtract"
+print(config.downscaling_method)  # "additive"
 
 # 2. SAI scenario (requires transition_year)
 sai_config = BCSDConfig(
@@ -376,7 +401,7 @@ custom_config = BCSDConfig(
     variable_config=VariableConfig(
         detrend_data=False,  # Custom: don't detrend
         do_windowing=True,
-        downscaling_method="subtract",
+        downscaling_method="additive",
         downscaling_clim_method="simple"
     )
 )
@@ -390,6 +415,8 @@ ensemble_member: 0
 scenario: ssp245
 predict_period_start: 2015
 predict_period_end: 2100
+environment: qa
+version: v1
 """
 
 import yaml

@@ -72,7 +72,16 @@ def calculate_baseline_climatology(
     return da_baseline_clim.astype(da_baseline.dtype)
 
 
-def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataArray, xr.DataArray]:
+def detrend(
+    da: xr.DataArray,
+    da_baseline_clim: xr.DataArray,
+    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
+) -> tuple[xr.DataArray, xr.DataArray]:
+    valid_values = ["additive", "multiplicative"]
+    if detrend_method not in valid_values:
+        raise ValueError(
+            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
+        )
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
     da_mon = da_mon.chunk({"time": 120})
@@ -83,9 +92,14 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataAr
     # Apply a 9-year rolling mean within each month group
     da_mon_avg = g.map(lambda x: x.rolling(time=9, center=True, min_periods=1).mean())
 
-    da_mon_trend = da_mon_avg.groupby("time.month").map(
-        lambda x: x - da_baseline_clim.sel(month=x["time.month"][0].item())
-    )
+    if detrend_method == "additive":
+        da_mon_trend = da_mon_avg.groupby("time.month").map(
+            lambda x: x - da_baseline_clim.sel(month=x["time.month"][0].item())
+        )
+    elif detrend_method == "multiplicative":
+        da_mon_trend = da_mon_avg.groupby("time.month").map(
+            lambda x: x / da_baseline_clim.sel(month=x["time.month"][0].item())
+        )
 
     # Project that monthly trend onto the daily timestep
     trend_on_daily_timestep = (
@@ -93,7 +107,10 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataAr
     ).compute()
 
     # Calculate detrended timeseries
-    detrended = da - trend_on_daily_timestep
+    if detrend_method == "additive":
+        detrended = da - trend_on_daily_timestep
+    elif detrend_method == "multiplicative":
+        detrended = da / trend_on_daily_timestep
 
     return detrended.astype(da.dtype), trend_on_daily_timestep.astype(da.dtype)
 
@@ -101,16 +118,18 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataAr
 def retrend(
     bias_corrected_detrended: xr.DataArray,
     trend_on_daily_timestep: xr.DataArray,
-    detrending: typing.Literal["additive"] = "additive",
+    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
 ) -> xr.DataArray:
-    valid_values = ["additive"]
-    if detrending not in valid_values:
+    valid_values = ["additive", "multiplicative"]
+    if detrend_method not in valid_values:
         raise ValueError(
-            f"{detrending} is currently not supported. valid values are: {valid_values}"
+            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
         )
 
-    if detrending == "additive":
+    if detrend_method == "additive":
         retrended = bias_corrected_detrended + trend_on_daily_timestep
+    elif detrend_method == "multiplicative":
+        retrended = bias_corrected_detrended * trend_on_daily_timestep
 
     return retrended
 
@@ -194,7 +213,7 @@ def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    method: typing.Literal["subtract", "divide"] = "subtract",
+    method: typing.Literal["additive", "multiplicative"] = "additive",
     clim_method: typing.Literal["simple", "fft"] = "simple",
 ) -> xr.DataArray:
     valid_clim_methods = ["simple", "fft"]
@@ -212,13 +231,13 @@ def downscale_from_coarse(
     )
 
     # Step 3: Remove coarsened daily climatology from the bias-corrected fields
-    valid_values = ["subtract", "divide"]
+    valid_values = ["additive", "multiplicative"]
     if method not in valid_values:
         raise ValueError(f"{method} is currently not supported. valid values are: {valid_values}")
 
-    if method == "subtract":
+    if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
-    elif method == "divide":
+    elif method == "multiplicative":
         residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
 
     # Step 4: Bilinearly interpolate residuals to the high-res grid
@@ -228,9 +247,9 @@ def downscale_from_coarse(
 
     # Step 5: Return high-res climatology
     # Add or multiply a constant value to the residuals based on DOY
-    if method == "subtract":
+    if method == "additive":
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
-    elif method == "divide":
+    elif method == "multiplicative":
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
 
     return downscaled
