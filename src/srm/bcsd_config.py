@@ -20,7 +20,7 @@ class VariableConfig(BaseModel):
         BCSD_CONFIG = {
             "pr": {
                 "detrend_data": False,
-                "detrend_method": "mutliplicative",
+                "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "simple",

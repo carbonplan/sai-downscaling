@@ -460,7 +460,7 @@ class BCSDPipeline:
                 scenario_detrended, scenario_trend = detrend(
                     da=historical_scenario,
                     da_baseline_clim=da_baseline_clim,
-                    detrend=self.config.detrend_method,
+                    detrend_method=self.config.detrend_method,
                 )
 
                 # Extract just scenario period

@@ -73,7 +73,7 @@ def calculate_baseline_climatology(
 
 
 def detrend(
-    da: xr.DataArray, da_baseline_clim: xr.DataArray, detrend_method: str = "additive"
+    da: xr.DataArray, da_baseline_clim: xr.DataArray, detrend_method: typing.Literal["additive", "multiplicative"] = "additive"
 ) -> tuple[xr.DataArray, xr.DataArray]:
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
