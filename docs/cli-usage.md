@@ -43,13 +43,17 @@ subset_bounds: [-35, -22, 16, 33]  # [lat_min, lat_max, lon_min, lon_max]
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"  # Intermediate artifacts
 output_dir: "s3://carbonplan-scratch/srm/outputs/"   # Final outputs
 environment: "qa"  # qa, staging, or production
+version: "v1"      # version identifier for all output paths (default: v1)
 ```
 
 1. **Run the full pipeline**:
 
 ```bash
-# Use default environment from config
+# Use default environment and version from config
 uv run bcsd run --config-path configs/example.yaml
+
+# Override version at the command line (e.g. to write a new data version)
+uv run bcsd run --config-path configs/example.yaml --version v2
 
 # Override environment via environment variable
 BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
@@ -158,32 +162,36 @@ graph TB
 - **stage 1 (prepare_observations)**: runs once per (GCM, variable, spatial_subset) combination
 - **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination
 - **stage 3 (transform_scenario)**: runs for each scenario configuration
-- **green boxes**: cached intermediate artifacts in `cache_dir/{environment}/`
-- **gold box**: final output in `output_dir/{environment}/`
+- **green boxes**: cached intermediate artifacts in `cache_dir/{environment}/{version}/`
+- **gold box**: final output in `output_dir/{environment}/{version}/`
 - **dotted arrows**: cache dependencies (automatic validation)
 
 ### Cache Path Structure
 
 ```
-cache_dir/{environment}/
+cache_dir/{environment}/{version}/
 ├── obs/
 │   └── {gcm}_{variable}_{subset_id}_obs_regridded.zarr
 └── historical/
     └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr
 
-output_dir/{environment}/
+output_dir/{environment}/{version}/
+├── historical/
+│   └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr
 └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr
 ```
 
 Where:
 
 - `{environment}`: `qa`, `staging`, or `production`
+- `{version}`: `v1`, `v2`, etc. (default: `v1`)
 - `{subset_id}`: `global` or `lat{min}to{max}_lon{min}to{max}` (e.g., `lat-35.0to-22.0_lon16.0to33.0`)
 - `{ensemble:03d}`: Zero-padded ensemble member (e.g., `000`, `001`)
 
 this structure ensures complete isolation between:
 
 - different environments (no accidental production overwrites during testing)
+- different versions (bump `version` to invalidate all cached artifacts without changing environment)
 - different spatial subsets (regional vs global runs don't conflict)
 - different ensemble members and scenarios
 
@@ -203,6 +211,7 @@ uv run bcsd run --config-path PATH [OPTIONS]
 - `--stage TEXT`: run specific stage (`prepare_observations`/`fit_historical`/`transform_scenario`/`all`, default: `all`)
 - `--force`: force recompute even if cached
 - `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
+- `--version TEXT`: override the `version` field from the config (e.g. `v2`)
 
 **Examples:**
 
@@ -218,6 +227,9 @@ uv run bcsd run --config-path configs/example.yaml --stage fit_historical --forc
 
 # Batch process all configs in directory
 uv run bcsd run --config-path configs/cesm2-ensemble/
+
+# Override version (write outputs under v2/ path without editing config files)
+uv run bcsd run --config-path configs/example.yaml --version v2
 
 # Override environment for production run
 BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
@@ -242,6 +254,7 @@ uv run bcsd status --config-path PATH [--verbose]
 
 - `--config-path TEXT` (required): path to config file or directory
 - `--verbose`: show detailed cache and output paths
+- `--version TEXT`: override the `version` field from the config
 
 **example:**
 
@@ -255,8 +268,9 @@ uv run bcsd status --config-path configs/example.yaml --verbose
 # 
 # Configuration: configs/example.yaml
 #   Environment: qa
-#   Cache dir: s3://carbonplan-scratch/srm/bcsd-cache/qa/
-#   Output dir: s3://carbonplan-scratch/srm/outputs/qa/
+#   Version: v1
+#   Cache dir: s3://carbonplan-scratch/srm/bcsd-cache/qa/v1/
+#   Output dir: s3://carbonplan-scratch/srm/outputs/qa/v1/
 #   Spatial subset: lat-35.0to-22.0_lon16.0to33.0 (South Africa region)
 # 
 # Stage Progress:
@@ -269,9 +283,9 @@ uv run bcsd status --config-path configs/example.yaml --verbose
 # └──────────────────────┴───────┴────────┴─────────┴───────────┘
 # 
 # Example cached paths:
-#   Observations: s3://.../bcsd-cache/qa/obs/CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.zarr
-#   Historical: s3://.../bcsd-cache/qa/historical/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.zarr
-#   Scenario: s3://.../outputs/qa/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_SSP245.zarr
+#   Observations: s3://.../bcsd-cache/qa/v1/obs/CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.zarr
+#   Historical: s3://.../bcsd-cache/qa/v1/historical/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.zarr
+#   Scenario: s3://.../outputs/qa/v1/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_SSP245.zarr
 ```
 
 ### `bcsd cache-list` - List Cached Artifacts
@@ -366,7 +380,8 @@ subset_bounds: [-35, -22, 16, 33]     # [lat_min, lat_max, lon_min, lon_max]
 
 # Environment isolation (default: "qa")
 environment: "qa"                      # Environment: qa, staging, production
-
+# Version identifier (default: "v1")
+version: "v1"                          # Bump to invalidate all cached artifacts without changing environment
 # SAI scenarios (required for G6-* scenarios)
 transition_year: 2035                  # Year when SAI intervention starts
 
@@ -385,17 +400,27 @@ mapping_type: "parametric"             # QM method: "parametric" or "nonparametr
 
 ### Environment Variable Override
 
-you can override the `environment` field using the `BCSD_ENVIRONMENT` environment variable:
+you can override the `environment` field using the `BCSD_ENVIRONMENT` environment variable, and `version` using `BCSD_VERSION`:
 
 ```bash
-# Config file has environment: "qa"
-# Override to production for this run
+# Override environment for this run
 BCSD_ENVIRONMENT=production bcsd run --config-path configs/example.yaml
+
+# Override version for this run
+BCSD_VERSION=v2 bcsd run --config-path configs/example.yaml
+```
+
+you can also override `version` directly on the CLI without editing the config file:
+
+```bash
+# Write outputs under v2/ paths
+uv run bcsd run --config-path configs/example.yaml --version v2
 ```
 
 this is useful for:
 
 - testing configs locally with `qa` before running in `production`
+- bumping `version` to invalidate all cached artifacts (e.g. after a methodological change)
 - running the same config in different environments without editing the file
 - ci/cd pipelines that deploy to different environments
 
@@ -454,6 +479,7 @@ subset_bounds: [-35, -22, 16, 33]
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/outputs"
 environment: "qa"
+version: "v1"
 EOF
 done
 
@@ -501,6 +527,7 @@ predict_period_end: 2100
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/outputs"
 environment: "qa"
+version: "v1"
 EOF
 done
 
@@ -529,21 +556,29 @@ the pipeline provides intelligent caching at multiple levels to enable efficient
 ```
 s3://carbonplan-scratch/srm/bcsd-cache/
 ├── qa/                                    # QA environment (testing)
-│   ├── obs/
-│   │   ├── CESM2-WACCM_tas_global_obs_regridded.zarr
-│   │   └── CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.zarr
-│   └── historical/
-│       ├── CESM2-WACCM_tas_000_global_historical.zarr
-│       └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.zarr
-├── staging/                               # Staging environment
+│   ├── v1/                                # Version 1 artifacts
+│   │   ├── obs/
+│   │   │   ├── CESM2-WACCM_tas_global_obs_regridded.zarr
+│   │   │   └── CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.zarr
+│   │   └── historical/
+│   │       ├── CESM2-WACCM_tas_000_global_historical.zarr
+│   │       └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.zarr
+│   └── v2/                                # Version 2 (after methodological changes)
+│       └── ...
+├── staging/
 │   └── ...
-└── production/                            # Production environment
+└── production/
     └── ...
 
 s3://carbonplan-scratch/srm/outputs/
 ├── qa/
-│   ├── CESM2-WACCM_tas_000_global_SSP245.zarr
-│   └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_SSP245.zarr
+│   ├── v1/
+│   │   ├── historical/
+│   │   │   └── CESM2-WACCM_tas_000_global_historical.zarr
+│   │   ├── CESM2-WACCM_tas_000_global_SSP245.zarr
+│   │   └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_SSP245.zarr
+│   └── v2/
+│       └── ...
 ├── staging/
 │   └── ...
 └── production/
@@ -606,7 +641,8 @@ config = BCSDConfig(**yaml.safe_load(open("configs/example.yaml")))
 cache = ArtifactCache(
     base_path=config.cache_dir,
     environment=config.environment,
-    output_dir=config.output_dir
+    version=config.version,
+    output_dir=config.output_dir,
 )
 
 # Check if specific artifact exists
@@ -706,6 +742,7 @@ predict_period_end: 2100
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/outputs"
 environment: "production"
+version: "v1"
 EOF
   done
 done
@@ -827,18 +864,21 @@ def _get_subset_id(subset_bounds):
 
 def get_obs_path(gcm, variable, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
-    return f"{cache_dir}/{environment}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
+    return f"{cache_dir}/{environment}/{version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
 
 def get_historical_path(gcm, variable, ensemble, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
-    return f"{cache_dir}/{environment}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+    if output_dir:
+        return f"{output_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+    else:
+        return f"{cache_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
 
 def get_scenario_path(gcm, variable, ensemble, scenario, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
     if output_dir:
-        return f"{output_dir}/{environment}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
+        return f"{output_dir}/{environment}/{version}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
     else:
-        return f"{cache_dir}/{environment}/scenarios/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
+        return f"{cache_dir}/{environment}/{version}/scenarios/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
 ```
 
 this ensures:
