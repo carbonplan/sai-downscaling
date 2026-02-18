@@ -129,10 +129,13 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(subset_bounds)
-        return (
-            f"{self.base_path}/{self.environment}/historical/"
-            f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
-        )
+        if self.output_dir:
+            return f"{self.output_dir}/{self.environment}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+        else:
+            return (
+                f"{self.base_path}/{self.environment}/historical/"
+                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+            )
 
     def get_scenario_path(
         self,
