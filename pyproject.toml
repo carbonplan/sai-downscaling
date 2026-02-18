@@ -116,6 +116,7 @@
     test = [
         "ipdb>=0.13.13",
         "prek>=0.3.0",
+        "pytest-subtests>=0.14.1",
         "pytest-xdist>=3.8.0",
         "pytest>=9.0.2",
     ]
