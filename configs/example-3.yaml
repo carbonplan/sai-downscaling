@@ -26,7 +26,7 @@ predict_period_end: 2100
 
 # === SAI Scenarios (optional) ===
 # For SAI scenarios (G6-*), you must specify the transition year when SAI starts
-# transition_year: 2020
+
 
 # === Storage Configuration ===
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate artifacts (obs, historical)

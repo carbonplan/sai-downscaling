@@ -33,7 +33,7 @@ def scenario_config() -> BCSDConfig:
 
 @pytest.fixture
 def sai_config() -> BCSDConfig:
-    """BCSDConfig with a G6-SAI scenario (transition_year required)."""
+    """BCSDConfig with a G6-SAI scenario."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="pr",
@@ -41,7 +41,6 @@ def sai_config() -> BCSDConfig:
         scenario="G6-1.5K",
         predict_period_start=2015,
         predict_period_end=2100,
-        transition_year=2035,
     )
 
 
@@ -279,7 +278,6 @@ class TestBCSDConfigComputedFields:
             scenario="SAI-2050",
             predict_period_start=2015,
             predict_period_end=2100,
-            transition_year=2040,
         )
         assert cfg.is_sai_scenario
 
@@ -318,33 +316,6 @@ class TestBCSDConfigValidation:
                 scenario="ssp245",
                 predict_period_start=2015,
                 predict_period_end=None,  # explicit None triggers the validator
-            )
-
-    def test_sai_scenario_with_explicit_null_transition_year_raises(self):
-        # Pydantic v2 only runs field validators when the value is explicitly
-        # provided (validate_default=False).  Passing transition_year=None
-        # explicitly exercises the SAI guard in validate_transition_year.
-        with pytest.raises(ValidationError, match="transition_year"):
-            BCSDConfig(
-                gcm="CESM2-WACCM",
-                variable="tas",
-                ensemble_member=0,
-                scenario="G6-1.5K",
-                predict_period_start=2015,
-                predict_period_end=2100,
-                transition_year=None,  # explicit None triggers the validator
-            )
-
-    def test_non_sai_scenario_with_transition_year_raises(self):
-        with pytest.raises(ValidationError, match="transition_year"):
-            BCSDConfig(
-                gcm="CESM2-WACCM",
-                variable="tas",
-                ensemble_member=0,
-                scenario="ssp245",
-                predict_period_start=2015,
-                predict_period_end=2100,
-                transition_year=2035,  # invalid for non-SAI scenario
             )
 
     def test_train_period_end_before_start_raises(self):

@@ -395,12 +395,23 @@ class BCSDPipeline:
             model_scenario = model_scenario.isel(ensemble_member=self.config.ensemble_member)
             model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
+            if self.config.is_sai_scenario:
+                ssp_timeseries = get_experiment(
+                    gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
+                )
+                ssp_timeseries = ssp_timeseries.isel(ensemble_member=self.config.ensemble_member)
+                ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
+
             # Subset spatially if requested
             if self.config.subset_bounds:
                 lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
                 obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
                 model_hist = subset_space(model_hist, [lat_min, lat_max, lon_min, lon_max])
                 model_scenario = subset_space(model_scenario, [lat_min, lat_max, lon_min, lon_max])
+                if self.config.is_sai_scenario:
+                    ssp_timeseries = subset_space(
+                        ssp_timeseries, [lat_min, lat_max, lon_min, lon_max]
+                    )
 
             # Subset time periods
             obs_coarse = obs_coarse.sel(
@@ -430,20 +441,51 @@ class BCSDPipeline:
                     model_scenario = rechunk(model_scenario, pattern="full_time")
                     model_hist = model_hist.persist()
                     model_scenario = model_scenario.persist()
+                    if self.config.is_sai_scenario:
+                        ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time")
+                        ssp_timeseries = ssp_timeseries.persist()
 
             with Timer("Detrended scenario", verbose=self.config.verbose):
                 # Splice historical + scenario for smooth detrending
-                historical_scenario = xr.concat(
-                    [
-                        model_hist.sel(
-                            time=model_hist["time.year"] < self.config.predict_period_start
-                        ),
-                        model_scenario.sel(
-                            time=model_scenario["time.year"] >= self.config.predict_period_start
-                        ),
-                    ],
-                    dim="time",
-                )
+                if self.config.is_sai_scenario:
+                    # SAI simulations run from 2035 to 2084.
+                    # But historical ends in 2014/2015, so we stitch in SSP data for the gap when detrending
+
+                    historical_and_ssp = xr.concat(
+                        [
+                            model_hist.sel(
+                                time=model_hist["time.year"] < self.config.train_period_end
+                            ),
+                            ssp_timeseries.sel(
+                                time=ssp_timeseries["time.year"] >= self.config.train_period_end
+                            ),
+                        ],
+                        dim="time",
+                    )
+                    historical_scenario = xr.concat(
+                        [
+                            historical_and_ssp.sel(
+                                time=historical_and_ssp["time.year"]
+                                < self.config.predict_period_start
+                            ),
+                            model_scenario.sel(
+                                time=model_scenario["time.year"] >= self.config.predict_period_start
+                            ),
+                        ],
+                        dim="time",
+                    )
+                else:
+                    historical_scenario = xr.concat(
+                        [
+                            model_hist.sel(
+                                time=model_hist["time.year"] < self.config.predict_period_start
+                            ),
+                            model_scenario.sel(
+                                time=model_scenario["time.year"] >= self.config.predict_period_start
+                            ),
+                        ],
+                        dim="time",
+                    )
 
                 # Calculate baseline climatology
                 da_baseline_clim = calculate_baseline_climatology(

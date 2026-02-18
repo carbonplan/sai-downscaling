@@ -50,7 +50,7 @@ def base_config() -> BCSDConfig:
 
 @pytest.fixture
 def sai_config() -> BCSDConfig:
-    """SAI G6 scenario config with transition_year."""
+    """SAI G6 scenario config."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="pr",
@@ -58,7 +58,6 @@ def sai_config() -> BCSDConfig:
         scenario="G6-1.5K",
         predict_period_start=2015,
         predict_period_end=2100,
-        transition_year=2035,
     )
 
 

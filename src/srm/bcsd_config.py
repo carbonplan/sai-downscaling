@@ -97,14 +97,6 @@ class BCSDConfig(BaseModel):
         description="End year of prediction period. Required if scenario is specified.",
     )
 
-    # SAI-specific (for splicing Historical → SSP → SAI)
-    transition_year: int | None = Field(
-        None,
-        ge=2015,
-        le=2050,
-        description="Year when SAI intervention starts. Only used for SAI scenarios.",
-    )
-
     # Spatial subsetting (optional)
     subset_bounds: tuple[float, float, float, float] | None = Field(
         None, description="Spatial bounds as (lat_min, lat_max, lon_min, lon_max). None for global."
@@ -158,25 +150,6 @@ class BCSDConfig(BaseModel):
             raise ValueError(
                 "predict_period_start and predict_period_end must be specified when scenario is set"
             )
-        return v
-
-    @field_validator("transition_year")
-    @classmethod
-    def validate_transition_year(cls, v, info):
-        """Validate transition year for SAI scenarios"""
-        scenario = info.data.get("scenario", "")
-
-        # Check if this is an SAI scenario (contains "G6" or "SAI")
-        is_sai = "G6" in scenario.upper() or "SAI" in scenario.upper()
-
-        if is_sai and v is None:
-            raise ValueError(f"transition_year must be specified for SAI scenario: {scenario}")
-
-        if not is_sai and v is not None:
-            raise ValueError(
-                f"transition_year should only be set for SAI scenarios, not {scenario}"
-            )
-
         return v
 
     @field_validator("train_period_end")
@@ -365,7 +338,7 @@ print(config.run_id)  # "CESM2-WACCM_tas_e00_ssp245"
 print(config.detrend_data)  # True (auto-loaded from variable config)
 print(config.downscaling_method)  # "additive"
 
-# 2. SAI scenario (requires transition_year)
+# 2. SAI scenario
 sai_config = BCSDConfig(
     gcm="CESM2-WACCM",
     variable="pr",
@@ -373,7 +346,6 @@ sai_config = BCSDConfig(
     scenario="G6-1.5K",
     predict_period_start=2015,
     predict_period_end=2100,
-    transition_year=2035
 )
 
 print(sai_config.is_sai_scenario)  # True
@@ -428,18 +400,4 @@ config = BCSDConfig(**config_dict)
 legacy_kwargs = config.to_legacy_kwargs()
 from srm.run_bcsd import run_bcsd
 result = run_bcsd(**legacy_kwargs)
-
-# 7. Validation catches errors
-try:
-    bad_config = BCSDConfig(
-        gcm="CESM2-WACCM",
-        variable="tas",
-        ensemble_member=0,
-        scenario="G6-1.5K",
-        predict_period_start=2015,
-        predict_period_end=2100
-        # Missing transition_year!
-    )
-except ValueError as e:
-    print(e)  # "transition_year must be specified for SAI scenario: G6-1.5K"
 '''
