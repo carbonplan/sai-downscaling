@@ -73,8 +73,15 @@ def calculate_baseline_climatology(
 
 
 def detrend(
-    da: xr.DataArray, da_baseline_clim: xr.DataArray, detrend_method: typing.Literal["additive", "multiplicative"] = "additive"
+    da: xr.DataArray,
+    da_baseline_clim: xr.DataArray,
+    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
 ) -> tuple[xr.DataArray, xr.DataArray]:
+    valid_values = ["additive", "multiplicative"]
+    if detrend_method not in valid_values:
+        raise ValueError(
+            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
+        )
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
     da_mon = da_mon.chunk({"time": 120})
@@ -84,12 +91,6 @@ def detrend(
 
     # Apply a 9-year rolling mean within each month group
     da_mon_avg = g.map(lambda x: x.rolling(time=9, center=True, min_periods=1).mean())
-
-    valid_values = ["additive", "multiplicative"]
-    if detrend_method not in valid_values:
-        raise ValueError(
-            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
-        )
 
     if detrend_method == "additive":
         da_mon_trend = da_mon_avg.groupby("time.month").map(
@@ -117,7 +118,7 @@ def detrend(
 def retrend(
     bias_corrected_detrended: xr.DataArray,
     trend_on_daily_timestep: xr.DataArray,
-    detrend_method="additive",
+    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
 ) -> xr.DataArray:
     valid_values = ["additive", "multiplicative"]
     if detrend_method not in valid_values:
