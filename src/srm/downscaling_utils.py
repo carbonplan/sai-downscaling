@@ -82,7 +82,6 @@ def detrend(
         raise ValueError(
             f"{detrend_method} is currently not supported. valid values are: {valid_values}"
         )
-
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
     da_mon = da_mon.chunk({"time": 120})
@@ -97,7 +96,7 @@ def detrend(
         da_mon_trend = da_mon_avg.groupby("time.month").map(
             lambda x: x - da_baseline_clim.sel(month=x["time.month"][0].item())
         )
-    else:  # multiplicative
+    elif detrend_method == "multiplicative":
         da_mon_trend = da_mon_avg.groupby("time.month").map(
             lambda x: x / da_baseline_clim.sel(month=x["time.month"][0].item())
         )
@@ -110,7 +109,7 @@ def detrend(
     # Calculate detrended timeseries
     if detrend_method == "additive":
         detrended = da - trend_on_daily_timestep
-    else:  # multiplicative
+    elif detrend_method == "multiplicative":
         detrended = da / trend_on_daily_timestep
 
     return detrended.astype(da.dtype), trend_on_daily_timestep.astype(da.dtype)
@@ -129,7 +128,7 @@ def retrend(
 
     if detrend_method == "additive":
         retrended = bias_corrected_detrended + trend_on_daily_timestep
-    else:  # multiplicative
+    elif detrend_method == "multiplicative":
         retrended = bias_corrected_detrended * trend_on_daily_timestep
 
     return retrended
@@ -214,7 +213,7 @@ def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    method: typing.Literal["subtract", "divide"] = "subtract",
+    method: typing.Literal["additive", "multiplicative"] = "additive",
     clim_method: typing.Literal["simple", "fft"] = "simple",
 ) -> xr.DataArray:
     valid_clim_methods = ["simple", "fft"]
@@ -232,13 +231,13 @@ def downscale_from_coarse(
     )
 
     # Step 3: Remove coarsened daily climatology from the bias-corrected fields
-    valid_values = ["subtract", "divide"]
+    valid_values = ["additive", "multiplicative"]
     if method not in valid_values:
         raise ValueError(f"{method} is currently not supported. valid values are: {valid_values}")
 
-    if method == "subtract":
+    if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
-    elif method == "divide":
+    elif method == "multiplicative":
         residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
 
     # Step 4: Bilinearly interpolate residuals to the high-res grid
@@ -248,9 +247,9 @@ def downscale_from_coarse(
 
     # Step 5: Return high-res climatology
     # Add or multiply a constant value to the residuals based on DOY
-    if method == "subtract":
+    if method == "additive":
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
-    elif method == "divide":
+    elif method == "multiplicative":
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
 
     return downscaled
