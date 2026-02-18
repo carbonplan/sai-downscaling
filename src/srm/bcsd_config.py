@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from typing import Literal
 
+import pydantic_settings
 from pydantic import BaseModel, Field, computed_field, field_validator
 
 
@@ -57,7 +58,7 @@ class VariableConfig(BaseModel):
         return cls(**BCSD_CONFIG[variable])
 
 
-class BCSDConfig(BaseModel):
+class BCSDConfig(pydantic_settings.BaseSettings):
     """
     Main configuration for BCSD downscaling pipeline.
 
