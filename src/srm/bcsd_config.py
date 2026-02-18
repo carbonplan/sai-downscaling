@@ -397,6 +397,8 @@ ensemble_member: 0
 scenario: ssp245
 predict_period_start: 2015
 predict_period_end: 2100
+environment: qa
+version: v1
 """
 
 import yaml

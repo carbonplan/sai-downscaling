@@ -124,6 +124,7 @@ def status(
         console.print(f"  Cache Path: {cache.base_path}")
         console.print(f"  Output Path: {cache.output_dir or '(same as cache)'}")
         console.print(f"  Environment: {cache.environment}")
+        console.print(f"  Version: {cache.version}")
         console.print("\n[cyan]Example Paths:[/cyan]")
         config = configs[0]
         console.print(
