@@ -6,8 +6,8 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment management.
 
 ```bash
 # Clone the repo
-git clone https://github.com/carbonplan/carbonplan-srm.git
-cd carbonplan-srm
+git clone https://github.com/carbonplan/srm-downscaling.git
+cd srm-downscaling
 
 # Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -27,7 +27,7 @@ uv sync --all-groups
 
 ## Linting
 
-We use `prek` + `ruff`:
+We use `pre-commit` for linting and code formatting. Run the following command to check all files:
 
 ```bash
 uv run pre-commit run --all-files
