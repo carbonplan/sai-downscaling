@@ -399,7 +399,7 @@ class BCSDPipeline:
             model_scenario = model_scenario.isel(ensemble_member=self.config.ensemble_member)
             model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
-            if self.config.scenario != "SSP245":
+            if self.config.is_sai_scenario:
                 ssp_timeseries = get_experiment(
                     gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
                 )
@@ -412,7 +412,7 @@ class BCSDPipeline:
                 obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
                 model_hist = subset_space(model_hist, [lat_min, lat_max, lon_min, lon_max])
                 model_scenario = subset_space(model_scenario, [lat_min, lat_max, lon_min, lon_max])
-                if self.config.scenario != "SSP245":
+                if self.config.is_sai_scenario:
                     ssp_timeseries = subset_space(
                         ssp_timeseries, [lat_min, lat_max, lon_min, lon_max]
                     )
@@ -445,20 +445,24 @@ class BCSDPipeline:
                     model_scenario = rechunk(model_scenario, pattern="full_time")
                     model_hist = model_hist.persist()
                     model_scenario = model_scenario.persist()
-                    if self.config.scenario != "SSP245":
+                    if self.config.is_sai_scenario:
                         ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time")
                         ssp_timeseries = ssp_timeseries.persist()
 
             with Timer("Detrended scenario", verbose=self.config.verbose):
                 # Splice historical + scenario for smooth detrending
-                if self.config.scenario != "SSP245":
+                if self.config.is_sai_scenario:
                     # SAI simulations run from 2035 to 2084.
                     # But historical ends in 2014/2015, so we stitch in SSP data for the gap when detrending
 
                     historical_and_ssp = xr.concat(
                         [
-                            model_hist.sel(time=model_hist["time.year"] < 2015),
-                            ssp_timeseries.sel(time=ssp_timeseries["time.year"] >= 2015),
+                            model_hist.sel(
+                                time=model_hist["time.year"] < self.config.train_period_end
+                            ),
+                            ssp_timeseries.sel(
+                                time=ssp_timeseries["time.year"] >= self.config.train_period_end
+                            ),
                         ],
                         dim="time",
                     )
