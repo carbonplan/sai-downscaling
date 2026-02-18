@@ -383,7 +383,6 @@ environment: "qa"                      # Environment: qa, staging, production
 # Version identifier (default: "v1")
 version: "v1"                          # Bump to invalidate all cached artifacts without changing environment
 # SAI scenarios (required for G6-* scenarios)
-transition_year: 2035                  # Year when SAI intervention starts
 
 # Variable-specific settings (auto-loaded if not specified)
 variable_config:
@@ -444,10 +443,6 @@ the configuration system catches common errors:
 # ❌ Missing predict periods for scenario
 scenario: "SSP245"
 # Error: predict_period_start and predict_period_end must be specified when scenario is set
-
-# ❌ Missing transition_year for SAI scenario
-scenario: "G6-1.5K"
-# Error: transition_year must be specified for SAI scenario: G6-1.5K
 
 # ❌ Invalid bounds
 subset_bounds: [-35, -40, 16, 33]  # lat_min > lat_max
@@ -519,7 +514,6 @@ gcm: "CESM2-WACCM"
 variable: "tas"
 ensemble_member: 0
 scenario: "${scenario}"
-$([ "$scenario" == "G6-1.5K" ] && echo "transition_year: 2035")
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
