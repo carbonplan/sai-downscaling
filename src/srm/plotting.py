@@ -113,6 +113,50 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
 
     return raw_toplot, era5_toplot, ds1_toplot, ds2_toplot
 
+def plot_4regions_comparisons(raw, era5, ds1, stat, variable, ds2=None, regions=REGIONS_4):
+    """
+    One figure:
+      rows = 4 regions
+      cols = ERA5 | raw | ds1 | ds1-ERA5
+    """
+    # subset the datasets 
+    raw_sub  = get_4_subregions(raw,  regions)
+    era5_sub = get_4_subregions(era5, regions)
+    ds1_sub  = get_4_subregions(ds1,  regions)
+    ds2_sub  = get_4_subregions(ds2,  regions) if ds2 is not None else None
+
+    region_names = list(regions.keys())
+    nrows, ncols = len(region_names), 4
+    fig, axarr = plt.subplots(nrows=nrows, ncols=ncols, figsize=(22, 4.2*nrows))
+
+    # compute statistic and plot per region
+    for r, reg in enumerate(region_names):
+        raw_r  = raw_sub[reg]
+        era5_r = era5_sub[reg]
+        ds1_r  = ds1_sub[reg]
+        ds2_r  = ds2_sub[reg] if ds2 is not None else None
+
+        raw_toplot, era5_toplot, ds1_toplot, _ = calculate_statistic_to_plot(
+            raw_r, era5_r, ds1_r, stat, variable, ds2=ds2_r
+        )
+
+        # ERA5 defines clim for the first 3 cols 
+        cax = era5_toplot.plot(ax=axarr[r, 0], add_colorbar=True)
+        vmin, vmax = cax.get_clim()
+
+        raw_toplot.plot(ax=axarr[r, 1], vmin=vmin, vmax=vmax, add_colorbar=True)
+        ds1_toplot.plot(ax=axarr[r, 2], vmin=vmin, vmax=vmax, add_colorbar=True)
+        (ds1_toplot - era5_toplot).plot(ax=axarr[r, 3], add_colorbar=True)
+
+        # titles
+        axarr[r, 0].set_title(f"{reg}: ERA5")
+        axarr[r, 1].set_title(f"{reg}: Raw output")
+        axarr[r, 2].set_title(f"{reg}: BCSD")
+        axarr[r, 3].set_title(f"{reg}: BCSD minus ERA5")
+
+    fig.suptitle(f"{stat} ({variable}) — 4 subregions", fontsize=16, y=0.995)
+    plt.tight_layout()
+    return fig
 
 def prep_funky_calendar(ds, ds_timeindex_to_match, time_slice):
     ds_subset = ds.sel(time=time_slice)
