@@ -70,20 +70,30 @@ class TestVariableConfig:
     _EXPECTED = {
         "tas": {
             "detrend_data": True,
+            "detrend_method": "additive",
             "do_windowing": True,
-            "downscaling_method": "subtract",
+            "downscaling_method": "additive",
             "downscaling_clim_method": "fft",
         },
         "tasmax": {
             "detrend_data": True,
+            "detrend_method": "additive",
             "do_windowing": True,
-            "downscaling_method": "subtract",
+            "downscaling_method": "additive",
             "downscaling_clim_method": "fft",
         },
         "pr": {
             "detrend_data": False,
+            "detrend_method": "multiplicative",
             "do_windowing": True,
-            "downscaling_method": "divide",
+            "downscaling_method": "multiplicative",
+            "downscaling_clim_method": "simple",
+        },
+        "rsds": {
+            "detrend_data": True,
+            "detrend_method": "multiplicative",
+            "do_windowing": True,
+            "downscaling_method": "multiplicative",
             "downscaling_clim_method": "simple",
         },
     }
@@ -99,6 +109,7 @@ class TestVariableConfig:
             with subtests.test(variable=variable):
                 cfg = VariableConfig.for_variable(variable)
                 assert cfg.detrend_data == expected["detrend_data"]
+                assert cfg.detrend_method == expected["detrend_method"]
                 assert cfg.do_windowing == expected["do_windowing"]
                 assert cfg.downscaling_method == expected["downscaling_method"]
                 assert cfg.downscaling_clim_method == expected["downscaling_clim_method"]
@@ -111,11 +122,11 @@ class TestVariableConfig:
         cfg = VariableConfig(
             detrend_data=False,
             do_windowing=False,
-            downscaling_method="divide",
+            downscaling_method="multiplicative",
             downscaling_clim_method="simple",
         )
         assert cfg.detrend_data is False
-        assert cfg.downscaling_method == "divide"
+        assert cfg.downscaling_method == "multiplicative"
 
     def test_invalid_downscaling_method_raises(self):
         with pytest.raises(ValidationError):
@@ -173,7 +184,7 @@ class TestBCSDConfigConstruction:
         custom_vc = VariableConfig(
             detrend_data=False,
             do_windowing=False,
-            downscaling_method="subtract",
+            downscaling_method="additive",
             downscaling_clim_method="simple",
         )
         cfg = BCSDConfig(
