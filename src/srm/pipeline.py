@@ -13,6 +13,7 @@ import logging
 import warnings
 
 import dask.system
+import scipy.stats
 import xarray as xr
 
 from srm.bcsd_config import BCSDConfig
@@ -244,24 +245,19 @@ class BCSDPipeline:
         with Timer("Bias corrected historical", verbose=self.config.verbose):
             from ibicus.debias import QuantileMapping
 
-            if self.config.do_windowing:
-                debiaser = QuantileMapping.from_variable(
-                    variable=self.config.variable,
-                    mapping_type=self.config.mapping_type,
-                    detrending="no_detrending",
-                    running_window_mode=True,
-                    running_window_length=31,
-                    running_window_step_length=1,
-                    running_window_mode_over_years_of_cm_future=False,
-                )
-            else:
-                debiaser = QuantileMapping.from_variable(
-                    variable=self.config.variable,
-                    mapping_type=self.config.mapping_type,
-                    detrending="no_detrending",
-                    running_window_mode=False,
-                    running_window_mode_over_years_of_cm_future=False,
-                )
+            def _make_debiaser(**kwargs):
+                if self.config.variable == "rsds":
+                    return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
+                return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
+
+            debiaser = _make_debiaser(
+                mapping_type=self.config.mapping_type,
+                detrending="no_detrending",
+                running_window_mode=self.config.do_windowing,
+                running_window_length=31,
+                running_window_step_length=1,
+                running_window_mode_over_years_of_cm_future=False,
+            )
 
             # Convert to numpy for ibicus
             obs_np = obs_coarse.as_numpy().values
@@ -521,24 +517,19 @@ class BCSDPipeline:
         with Timer("Bias corrected scenario", verbose=self.config.verbose):
             from ibicus.debias import QuantileMapping
 
-            if self.config.do_windowing:
-                debiaser = QuantileMapping.from_variable(
-                    variable=self.config.variable,
-                    mapping_type=self.config.mapping_type,
-                    detrending="no_detrending",
-                    running_window_mode=True,
-                    running_window_length=31,
-                    running_window_step_length=1,
-                    running_window_mode_over_years_of_cm_future=False,
-                )
-            else:
-                debiaser = QuantileMapping.from_variable(
-                    variable=self.config.variable,
-                    mapping_type=self.config.mapping_type,
-                    detrending="no_detrending",
-                    running_window_mode=False,
-                    running_window_mode_over_years_of_cm_future=False,
-                )
+            def _make_debiaser(**kwargs):
+                if self.config.variable == "rsds":
+                    return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
+                return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
+
+            debiaser = _make_debiaser(
+                mapping_type=self.config.mapping_type,
+                detrending="no_detrending",
+                running_window_mode=self.config.do_windowing,
+                running_window_length=31,
+                running_window_step_length=1,
+                running_window_mode_over_years_of_cm_future=False,
+            )
 
             # Convert to numpy
             obs_np = obs_coarse.as_numpy().values
