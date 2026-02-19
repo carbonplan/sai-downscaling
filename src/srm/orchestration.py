@@ -173,7 +173,13 @@ class BCSDOrchestrator:
 
         # Build task variable dicts for each config
         # Each task gets CONFIG_JSON env var with serialized config
-        task_var_dicts = [{"CONFIG_JSON": json.dumps(config.model_dump())} for config in configs]
+        # Exclude computed fields (run_id, config_hash, detrend_data, etc.) since they
+        # are derived values and BCSDConfig does not accept them as constructor inputs.
+        computed_fields = set(BCSDConfig.model_computed_fields.keys())
+        task_var_dicts = [
+            {"CONFIG_JSON": json.dumps(config.model_dump(exclude=computed_fields))}
+            for config in configs
+        ]
 
         # Build command to run batch_runner
         # Config is read from CONFIG_JSON environment variable (no command-line args needed)
