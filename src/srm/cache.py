@@ -178,10 +178,10 @@ class ArtifactCache:
 
         # Use output_dir for final scenarios if specified, otherwise cache
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
+            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
         else:
             return (
-                f"{self.base_path}/{self.environment}/{self.version}/scenarios/"
+                f"{self.base_path}/{self.environment}/{self.version}/{scenario}/"
                 f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
             )
 
