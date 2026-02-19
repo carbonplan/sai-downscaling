@@ -175,14 +175,15 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(subset_bounds)
+        scenario_lower = scenario.lower()
 
         # Use output_dir for final scenarios if specified, otherwise cache
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
+            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.zarr"
         else:
             return (
-                f"{self.base_path}/{self.environment}/{self.version}/scenarios/"
-                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
+                f"{self.base_path}/{self.environment}/{self.version}/{scenario_lower}/"
+                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.zarr"
             )
 
     def exists(self, path: str) -> bool:

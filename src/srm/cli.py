@@ -5,6 +5,7 @@ Provides typer-based CLI for running BCSD downscaling with automatic caching,
 resumability, and Coiled integration for distributed execution.
 """
 
+import itertools
 import logging
 from pathlib import Path
 
@@ -65,9 +66,87 @@ def load_configs(config_path: str) -> list[BCSDConfig]:
     return configs
 
 
+def configs_from_matrix(
+    gcms: list[str],
+    variables: list[str],
+    members: list[int],
+    scenarios: list[str | None],
+    *,
+    train_period_start: int = 1978,
+    train_period_end: int = 2014,
+    predict_period_start: int | None = None,
+    predict_period_end: int | None = None,
+    cache_dir: str = "s3://carbonplan-scratch/srm/cache/",
+    output_dir: str = "s3://carbonplan-scratch/srm/outputs/",
+    environment: str = "qa",
+    version: str = "v1",
+    subset_bounds: tuple[float, float, float, float] | None = None,
+) -> list[BCSDConfig]:
+    """
+    Generate BCSDConfig objects for every cartesian-product combination of GCMs,
+    variables, ensemble members, and scenarios.
+
+    Parameters
+    ----------
+    gcms : list[str]
+        GCM names (e.g., ["CESM2-WACCM", "MIROC"])
+    variables : list[str]
+        Variables to downscale (e.g., ["tas", "pr"])
+    members : list[int]
+        Ensemble member indices (e.g., [0, 1, 2])
+    scenarios : list[str | None]
+        Scenario names. Pass [None] for historical-only runs.
+    train_period_start : int
+        Start year of training period
+    train_period_end : int
+        End year of training period
+    predict_period_start : int | None
+        Start year of prediction period. Required when scenarios contains non-None values.
+    predict_period_end : int | None
+        End year of prediction period. Required when scenarios contains non-None values.
+    cache_dir : str
+        Base directory for cached intermediate artifacts
+    output_dir : str
+        Directory for final downscaled outputs
+    environment : str
+        Environment name (qa, staging, production)
+    version : str
+        Version identifier
+    subset_bounds : tuple[float, float, float, float] | None
+        Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
+
+    Returns
+    -------
+    list[BCSDConfig]
+        One config per cartesian-product combination.
+    """
+    configs = []
+    for gcm, variable, member, scenario in itertools.product(gcms, variables, members, scenarios):
+        configs.append(
+            BCSDConfig(
+                gcm=gcm,
+                variable=variable,
+                ensemble_member=member,
+                scenario=scenario,
+                train_period_start=train_period_start,
+                train_period_end=train_period_end,
+                predict_period_start=predict_period_start,
+                predict_period_end=predict_period_end,
+                cache_dir=cache_dir,
+                output_dir=output_dir,
+                environment=environment,
+                version=version,
+                subset_bounds=subset_bounds,
+            )
+        )
+    return configs
+
+
 @app.command()
 def run(
-    config_path: str = typer.Option(..., help="Path to YAML config or directory of configs"),
+    config_path: list[str] = typer.Option(
+        ..., help="Path to YAML config or directory of configs (can be specified multiple times)"
+    ),
     stage: str = typer.Option(None, help="Run specific stage: obs, historical, scenario, or all"),
     force: bool = typer.Option(False, help="Force recompute even if cached"),
     coiled: bool = typer.Option(True, help="Use Coiled for execution"),
@@ -78,7 +157,7 @@ def run(
     """Run BCSD pipeline with automatic caching and resumability"""
 
     # Load configs
-    configs = load_configs(config_path)
+    configs = [cfg for path in config_path for cfg in load_configs(path)]
     if version is not None:
         configs = [config.model_copy(update={"version": version}) for config in configs]
     console.print(f"[bold green]Loaded {len(configs)} configuration(s)[/bold green]")
@@ -104,15 +183,158 @@ def run(
 
 
 @app.command()
+def run_matrix(
+    gcm: list[str] = typer.Option(..., help="GCM name (repeatable: --gcm CESM2-WACCM --gcm MIROC)"),
+    variable: list[str] = typer.Option(
+        ..., help="Variable to downscale (repeatable: --variable tas --variable pr)"
+    ),
+    member: list[int] = typer.Option(
+        ..., help="Ensemble member index (repeatable: --member 0 --member 1)"
+    ),
+    scenario: list[str] | None = typer.Option(
+        None,
+        help=(
+            "Scenario (repeatable: --scenario ssp245 --scenario G6-1pt5k). "
+            "Omit for historical-only runs."
+        ),
+    ),
+    train_period_start: int = typer.Option(1978, help="Start year of training period"),
+    train_period_end: int = typer.Option(2014, help="End year of training period"),
+    predict_period_start: int | None = typer.Option(
+        None, help="Start year of prediction period. Required when --scenario is provided."
+    ),
+    predict_period_end: int | None = typer.Option(
+        None, help="End year of prediction period. Required when --scenario is provided."
+    ),
+    cache_dir: str = typer.Option(
+        "s3://carbonplan-scratch/srm/cache/", help="Base directory for cached artifacts"
+    ),
+    output_dir: str = typer.Option(
+        "s3://carbonplan-scratch/srm/outputs/", help="Directory for final outputs"
+    ),
+    environment: str = typer.Option("qa", help="Environment (qa, staging, production)"),
+    version: str = typer.Option("v1", help="Version identifier (e.g. 'v1', 'v2')"),
+    subset_bounds: str | None = typer.Option(
+        None,
+        help="Spatial bounds as 'lat_min,lat_max,lon_min,lon_max' (e.g. '-35,-22,16,33')",
+    ),
+    stage: str | None = typer.Option(
+        None, help="Run specific stage: obs, historical, scenario, or all"
+    ),
+    force: bool = typer.Option(False, help="Force recompute even if cached"),
+    coiled: bool = typer.Option(True, help="Use Coiled for distributed execution"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show configs without executing"),
+):
+    """Run BCSD pipeline over cartesian product of GCMs x variables x members x scenarios.
+
+    Rather than pre-generating config files, specify each dimension as a repeatable
+    option and the CLI will run every combination.
+
+    Example (2 GCMs x 2 variables x 3 members x 2 scenarios = 24 runs):
+
+        bcsd run-matrix \\
+          --gcm CESM2-WACCM --gcm MIROC \\
+          --variable tas --variable pr \\
+          --member 0 --member 1 --member 2 \\
+          --scenario ssp245 --scenario G6-1pt5k \\
+          --predict-period-start 2015 --predict-period-end 2100
+
+    Omit --scenario for historical-only runs.
+    """
+    # Normalize: no --scenario given -> historical-only (scenario=None)
+    scenario_values: list[str | None] = scenario if scenario else [None]
+
+    # Validate predict periods are provided when scenarios are given
+    has_scenarios = any(s is not None for s in scenario_values)
+    if has_scenarios and (predict_period_start is None or predict_period_end is None):
+        console.print(
+            "[red]Error: --predict-period-start and --predict-period-end are required "
+            "when --scenario is specified.[/red]"
+        )
+        raise typer.Exit(1)
+
+    # Parse subset_bounds from "lat_min,lat_max,lon_min,lon_max" string
+    parsed_bounds: tuple[float, float, float, float] | None = None
+    if subset_bounds:
+        try:
+            parts = [float(x.strip()) for x in subset_bounds.split(",")]
+            if len(parts) != 4:
+                raise ValueError
+            parsed_bounds = (parts[0], parts[1], parts[2], parts[3])
+        except ValueError:
+            console.print(
+                "[red]Error: --subset-bounds must be 'lat_min,lat_max,lon_min,lon_max' "
+                "(e.g. '-35,-22,16,33')[/red]"
+            )
+            raise typer.Exit(1)
+
+    configs = configs_from_matrix(
+        gcms=gcm,
+        variables=variable,
+        members=member,
+        scenarios=scenario_values,
+        train_period_start=train_period_start,
+        train_period_end=train_period_end,
+        predict_period_start=predict_period_start,
+        predict_period_end=predict_period_end,
+        cache_dir=cache_dir,
+        output_dir=output_dir,
+        environment=environment,
+        version=version,
+        subset_bounds=parsed_bounds,
+    )
+
+    n = len(configs)
+    console.print(
+        f"[bold green]Generated {n} configuration(s): "
+        f"{len(gcm)} GCM(s) x {len(variable)} variable(s) x "
+        f"{len(member)} member(s) x {len(scenario_values)} scenario(s)[/bold green]"
+    )
+
+    if dry_run:
+        table = Table(
+            title=f"Matrix Configurations ({n})", show_header=True, header_style="bold magenta"
+        )
+        table.add_column("GCM", style="cyan")
+        table.add_column("Variable", style="magenta")
+        table.add_column("Member", justify="right")
+        table.add_column("Scenario", style="yellow")
+        for cfg in configs:
+            table.add_row(
+                cfg.gcm, cfg.variable, str(cfg.ensemble_member), cfg.scenario or "(historical)"
+            )
+        console.print(table)
+        return
+
+    orchestrator = BCSDOrchestrator()
+
+    if stage == "obs" or stage == "prepare_observations":
+        orchestrator.submit_stage("prepare_observations", configs, force=force, use_coiled=coiled)
+    elif stage == "historical" or stage == "fit_historical":
+        orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+    elif stage == "scenario" or stage == "transform_scenario":
+        orchestrator.submit_stage("transform_scenario", configs, force=force, use_coiled=coiled)
+    elif stage == "all" or stage is None:
+        orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+    else:
+        console.print(f"[red]Error: Unknown stage: {stage}[/red]")
+        raise typer.Exit(1)
+
+    console.print("[bold green]✓ Complete![/bold green]")
+
+
+@app.command()
 def status(
-    config_path: str = typer.Option(..., help="Path to config(s)"),
+    config_path: list[str] = typer.Option(
+        ..., help="Path to config(s) (can be specified multiple times)"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed path information"),
     version: str | None = typer.Option(
         None, "--version", help="Override the version from config (e.g. 'v2')"
     ),
 ):
     """Check status of cached artifacts for given configs"""
-    configs = load_configs(config_path)
+    configs = [cfg for path in config_path for cfg in load_configs(path)]
     if version is not None:
         configs = [config.model_copy(update={"version": version}) for config in configs]
     orchestrator = BCSDOrchestrator()
