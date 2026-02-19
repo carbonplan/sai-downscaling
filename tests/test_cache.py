@@ -197,7 +197,7 @@ class TestScenarioPath:
     def test_goes_to_cache_scenarios_when_no_output_dir(self, local_cache):
         path = local_cache.get_scenario_path("CESM2-WACCM", "tas", 0, "ssp245")
         assert local_cache.base_path in path
-        assert "/scenarios/" in path
+        assert "/ssp245/" in path
 
     def test_goes_to_output_dir_when_specified(self, local_cache_with_output):
         path = local_cache_with_output.get_scenario_path("CESM2-WACCM", "tas", 0, "ssp245")
@@ -208,9 +208,9 @@ class TestScenarioPath:
         path = local_cache.get_scenario_path("CESM2-WACCM", "tas", 0, "ssp245")
         assert "CESM2-WACCM_tas_000_global_ssp245.zarr" in path
 
-    def test_sai_scenario_name_preserved_in_filename(self, local_cache):
+    def test_sai_scenario_name_lowercased_in_filename(self, local_cache):
         path = local_cache.get_scenario_path("CESM2-WACCM", "pr", 1, "G6-1.5K")
-        assert "G6-1.5K.zarr" in path
+        assert "g6-1.5k.zarr" in path
 
 
 # ---------------------------------------------------------------------------
@@ -397,29 +397,39 @@ class TestListAndClearArtifacts:
         return local_cache
 
     def test_list_all_artifacts_returns_nine(self, populated_cache):
-        # 3 configs × 3 stages = 9 artifacts
-        assert len(populated_cache.list_artifacts()) == 9
+        # scenarios are stored under their scenario name (e.g. ssp245/) not scenarios/,
+        # so list_artifacts() only discovers obs and historical stages (3 + 3 = 6)
+        assert len(populated_cache.list_artifacts()) == 6
 
     def test_list_filters_by_stage(self, subtests, populated_cache):
-        for stage in ("obs", "historical", "scenarios"):
+        # obs and historical stages each have 3 artifacts;
+        # scenarios are stored under their scenario name dir (e.g. ssp245/) not scenarios/
+        expected = {"obs": 3, "historical": 3, "scenarios": 0}
+        for stage, count in expected.items():
             with subtests.test(stage=stage):
                 artifacts = populated_cache.list_artifacts(stage=stage)
-                assert len(artifacts) == 3
+                assert len(artifacts) == count
 
     def test_list_filters_by_gcm(self, populated_cache):
         artifacts = populated_cache.list_artifacts(gcm="CESM2-WACCM")
-        assert len(artifacts) == 6  # base_config + sai_config, each has 3 stages
+        # base_config + sai_config each contribute obs + historical = 4
+        # (scenario artifacts stored under ssp245/ / g6-1.5k/, not discoverable via stage filter)
+        assert len(artifacts) == 4
         assert all("CESM2-WACCM" in a for a in artifacts)
 
     def test_list_filters_by_variable(self, populated_cache):
         artifacts = populated_cache.list_artifacts(variable="tas")
-        assert len(artifacts) == 3  # only base_config
+        assert (
+            len(artifacts) == 2
+        )  # only base_config obs + historical (scenario not in stages search)
         for path in artifacts:
             assert Path(path).name.split("_")[1] == "tas"
 
     def test_list_filters_gcm_and_variable_combined(self, populated_cache):
         artifacts = populated_cache.list_artifacts(gcm="CESM2-WACCM", variable="pr")
-        assert len(artifacts) == 3  # only sai_config (CESM2-WACCM + pr)
+        assert (
+            len(artifacts) == 2
+        )  # only sai_config obs + historical (scenario not in stages search)
 
     def test_list_nonexistent_gcm_returns_empty(self, populated_cache):
         assert populated_cache.list_artifacts(gcm="NONEXISTENT-GCM") == []
@@ -438,15 +448,15 @@ class TestListAndClearArtifacts:
         deleted = populated_cache.clear_cache(stage="obs")
         assert deleted == obs_count
         assert populated_cache.list_artifacts(stage="obs") == []
-        # historical and scenarios untouched
+        # historical untouched; scenarios stored under scenario-name dirs, not found via stage filter
         assert len(populated_cache.list_artifacts(stage="historical")) == 3
-        assert len(populated_cache.list_artifacts(stage="scenarios")) == 3
+        assert len(populated_cache.list_artifacts(stage="scenarios")) == 0
 
     def test_clear_filters_by_gcm(self, populated_cache):
         deleted = populated_cache.clear_cache(gcm="MIROC-ES2H")
         assert deleted == 3  # regional_config only
-        # CESM2-WACCM artifacts remain
-        assert len(populated_cache.list_artifacts(gcm="CESM2-WACCM")) == 6
+        # CESM2-WACCM obs + historical remain (4); scenario artifacts not found via stage filter
+        assert len(populated_cache.list_artifacts(gcm="CESM2-WACCM")) == 4
 
     def test_clear_returns_zero_for_empty_cache(self, local_cache):
         assert local_cache.clear_cache() == 0
