@@ -60,18 +60,18 @@ class BaseDataset(ABC):
 
         config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 128))
 
-        storage = icechunk.s3_storage(
-            bucket=self.bucket, prefix=prefix, from_env=True, config=config
-        )
+        storage = icechunk.s3_storage(bucket=self.bucket, prefix=prefix, from_env=True)
 
         if is_virtual:
             credentials = icechunk.containers_credentials(
                 {self.bucket_uri: icechunk.s3_credentials()}
             )
-            repo = icechunk.Repository.open(storage, authorize_virtual_chunk_access=credentials)
+            repo = icechunk.Repository.open(
+                storage, authorize_virtual_chunk_access=credentials, config=config
+            )
             chunks = "auto"
         else:
-            repo = icechunk.Repository.open(storage)
+            repo = icechunk.Repository.open(storage, config=config)
             chunks = self.encoding["shards"]
 
         session = repo.readonly_session("main")
