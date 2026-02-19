@@ -247,6 +247,120 @@ class TestSubmitStage:
 
 
 # ---------------------------------------------------------------------------
+# _submit_to_coiled (retry logic)
+# ---------------------------------------------------------------------------
+
+
+class TestSubmitToCoiled:
+    """Tests for the retry logic in _submit_to_coiled."""
+
+    def _make_coiled_mock(self, job_states: list[str]):
+        """Return a mock coiled module that cycles through the given job states."""
+        mock_coiled = MagicMock()
+        mock_coiled.batch.run.return_value = {"job_id": 1}
+        mock_coiled.batch.wait_for_job_done.side_effect = job_states
+        return mock_coiled
+
+    def test_success_on_first_attempt(self, orchestrator, config):
+        """All tasks succeed on the first attempt — no retry needed."""
+        cache = orchestrator._get_cache(config)
+        output_path = cache.get_output_path("prepare_observations", config)
+        _make_zarr_store(output_path)
+
+        mock_coiled = self._make_coiled_mock(["done"])
+
+        with patch.dict("sys.modules", {"coiled": mock_coiled}):
+            result = orchestrator._submit_to_coiled("prepare_observations", [config])
+
+        assert result == [output_path]
+        assert mock_coiled.batch.run.call_count == 1
+
+    def test_retries_only_failed_tasks(self, orchestrator, multi_configs):
+        """After a partial failure, only the still-missing configs are retried."""
+        cfg_ok = multi_configs[0]  # will succeed on first attempt
+        cfg_fail = multi_configs[2]  # will fail first, succeed on retry
+
+        cache = orchestrator._get_cache(cfg_ok)
+        ok_path = cache.get_output_path("prepare_observations", cfg_ok)
+        fail_path = cache.get_output_path("prepare_observations", cfg_fail)
+
+        # First job: only cfg_ok writes its output
+        _make_zarr_store(ok_path)
+
+        batch_run_calls = []
+
+        def fake_run(**kwargs):
+            task_dicts = kwargs["map_over_task_var_dicts"]
+            batch_run_calls.append(task_dicts)
+            # On the second call (retry), write the fail output so it looks cached
+            if len(batch_run_calls) == 2:
+                _make_zarr_store(fail_path)
+            return {"job_id": len(batch_run_calls)}
+
+        mock_coiled = MagicMock()
+        mock_coiled.batch.run.side_effect = fake_run
+        mock_coiled.batch.wait_for_job_done.return_value = "done (errors)"
+
+        with patch.dict("sys.modules", {"coiled": mock_coiled}):
+            result = orchestrator._submit_to_coiled(
+                "prepare_observations", [cfg_ok, cfg_fail], max_retries=3
+            )
+
+        # Two batch.run calls: initial + one retry
+        assert mock_coiled.batch.run.call_count == 2
+        # Second call should only have sent cfg_fail
+        import json
+
+        retry_configs = [json.loads(d["CONFIG_JSON"]) for d in batch_run_calls[1]]
+        assert all(c["variable"] == cfg_fail.variable for c in retry_configs)
+        assert ok_path in result
+        assert fail_path in result
+
+    def test_raises_after_max_retries_exhausted(self, orchestrator, config):
+        """RuntimeError is raised when all retries are exhausted."""
+        # Output is never written → perpetually failing
+        mock_coiled = self._make_coiled_mock(["done (errors)", "done (errors)", "done (errors)"])
+
+        with patch.dict("sys.modules", {"coiled": mock_coiled}):
+            with pytest.raises(RuntimeError, match="failed after 3 attempt"):
+                orchestrator._submit_to_coiled("prepare_observations", [config], max_retries=3)
+
+        assert mock_coiled.batch.run.call_count == 3
+
+    def test_error_message_includes_run_ids(self, orchestrator, config):
+        """The RuntimeError message names the configs that failed."""
+        mock_coiled = self._make_coiled_mock(["done (errors)"])
+
+        with patch.dict("sys.modules", {"coiled": mock_coiled}):
+            with pytest.raises(RuntimeError, match=config.run_id):
+                orchestrator._submit_to_coiled("prepare_observations", [config], max_retries=1)
+
+    def test_succeeds_on_second_attempt(self, orchestrator, config):
+        """Task fails once then succeeds on retry."""
+        cache = orchestrator._get_cache(config)
+        output_path = cache.get_output_path("prepare_observations", config)
+
+        call_count = 0
+
+        def fake_run(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                _make_zarr_store(output_path)
+            return {"job_id": call_count}
+
+        mock_coiled = MagicMock()
+        mock_coiled.batch.run.side_effect = fake_run
+        mock_coiled.batch.wait_for_job_done.return_value = "done (errors)"
+
+        with patch.dict("sys.modules", {"coiled": mock_coiled}):
+            result = orchestrator._submit_to_coiled("prepare_observations", [config], max_retries=3)
+
+        assert mock_coiled.batch.run.call_count == 2
+        assert result == [output_path]
+
+
+# ---------------------------------------------------------------------------
 # _run_local
 # ---------------------------------------------------------------------------
 
