@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import dask.system
 from cloudpathlib import CloudPath
 
 # Importing your new config structures
@@ -55,7 +56,13 @@ class BaseDataset(ABC):
         import icechunk
         import xarray as xr
 
-        storage = icechunk.s3_storage(bucket=self.bucket, prefix=prefix, from_env=True)
+        # if dask.system.CPU_COUNT > 128 set max_concurrent_requests to 128 to avoid overwhelming the system, otherwise use the number of CPUs
+
+        config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 128))
+
+        storage = icechunk.s3_storage(
+            bucket=self.bucket, prefix=prefix, from_env=True, config=config
+        )
 
         if is_virtual:
             credentials = icechunk.containers_credentials(
