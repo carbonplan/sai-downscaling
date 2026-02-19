@@ -242,6 +242,72 @@ BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
 - `transform_scenario`: debias and downscale future scenario (final output)
 - `all`: run all three stages in sequence (default)
 
+### `bcsd run-matrix` - Run Pipeline Over a Matrix
+
+Run the BCSD pipeline over the cartesian product of GCMs, variables, ensemble members, and scenarios — **no config files needed**.
+
+```bash
+uv run bcsd run-matrix [OPTIONS]
+```
+
+**options:**
+
+- `--gcm TEXT` (required, repeatable): GCM name
+- `--variable TEXT` (required, repeatable): variable to downscale
+- `--member INTEGER` (required, repeatable): ensemble member index
+- `--scenario TEXT` (repeatable): scenario name. Omit for historical-only runs.
+- `--predict-period-start INTEGER`: start year of prediction period (required when `--scenario` is given)
+- `--predict-period-end INTEGER`: end year of prediction period (required when `--scenario` is given)
+- `--train-period-start INTEGER`: start year of training period (default: `1978`)
+- `--train-period-end INTEGER`: end year of training period (default: `2014`)
+- `--cache-dir TEXT`: base directory for cached artifacts
+- `--output-dir TEXT`: directory for final outputs
+- `--environment TEXT`: environment (default: `qa`)
+- `--version TEXT`: version identifier (default: `v1`)
+- `--subset-bounds TEXT`: spatial bounds as `'lat_min,lat_max,lon_min,lon_max'`
+- `--stage TEXT`: run specific stage (`obs`/`historical`/`scenario`/`all`, default: `all`)
+- `--force`: force recompute even if cached
+- `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
+- `--dry-run`: print the generated configs in a table without executing
+
+**Examples:**
+
+```bash
+# 2 GCMs x 2 variables x 3 members x 2 scenarios = 24 configs, full pipeline
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM --gcm MIROC \
+  --variable tas --variable pr \
+  --member 0 --member 1 --member 2 \
+  --scenario ssp245 --scenario G6-1pt5k \
+  --predict-period-start 2015 --predict-period-end 2100
+
+# Preview what would run without executing
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM --gcm MIROC \
+  --variable tas \
+  --member 0 --member 1 \
+  --scenario ssp245 \
+  --predict-period-start 2015 --predict-period-end 2100 \
+  --dry-run
+
+# Historical-only (omit --scenario)
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM \
+  --variable tas --variable pr \
+  --member 0 --member 1 --member 2
+
+# Regional subset
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM \
+  --variable tas \
+  --member 0 \
+  --scenario ssp245 \
+  --predict-period-start 2015 --predict-period-end 2100 \
+  --subset-bounds '-35,-22,16,33'
+```
+
+The matrix is equivalent to the cartesian product `GCMs × variables × members × scenarios`.  The orchestrator automatically deduplicates shared work (e.g. `prepare_observations` runs once per GCM/variable combination regardless of how many ensemble members are in the matrix).
+
 ### `bcsd status` - Check Cache Status
 
 Check which artifacts are cached and view pipeline progress.

@@ -135,7 +135,9 @@ class BCSDOrchestrator:
 
         return output_paths
 
-    def _submit_to_coiled(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
+    def _submit_to_coiled(
+        self, stage: str, configs: list[BCSDConfig], max_retries: int = 3
+    ) -> list[str]:
         """
         Submit tasks to Coiled using batch API.
 
@@ -171,58 +173,78 @@ class BCSDOrchestrator:
         except ImportError:
             raise ImportError("Coiled is not installed. Install with: uv pip install coiled")
 
-        # Build task variable dicts for each config
-        # Each task gets CONFIG_JSON env var with serialized config
         # Exclude computed fields (run_id, config_hash, detrend_data, etc.) since they
         # are derived values and BCSDConfig does not accept them as constructor inputs.
         computed_fields = set(BCSDConfig.model_computed_fields.keys())
-        task_var_dicts = [
-            {"CONFIG_JSON": json.dumps(config.model_dump(exclude=computed_fields))}
-            for config in configs
-        ]
-
-        # Build command to run batch_runner
-        # Config is read from CONFIG_JSON environment variable (no command-line args needed)
-        # Since batch_runner has only one command, we don't need to specify the command name
+        cache = self._get_cache(configs[0])
         command = ["python", "-m", "srm.batch_runner", stage]
 
-        # Submit batch job
-        job_result = coiled.batch.run(
-            command=command,
-            name=f"bcsd-{stage}-{configs[0].gcm}",
-            vm_type=["r8g.24xlarge"],
-            scheduler_vm_type=["r8g.24xlarge"],
-            region="us-west-2",
-            map_over_task_var_dicts=task_var_dicts,
-            forward_aws_credentials=True,  # Forward AWS creds for S3 access
-            logger=logger,
-            tag={"Project": "SRM"},
-        )
+        remaining = list(configs)
+        attempt = 0
 
-        job_id = job_result["job_id"]
-        logger.info(f"→ Submitted Coiled batch job {job_id} with {len(configs)} tasks")
+        while remaining and attempt < max_retries:
+            attempt += 1
+            if attempt > 1:
+                logger.warning(
+                    f"→ Retry {attempt}/{max_retries} for {len(remaining)} failed {stage} tasks"
+                )
 
-        # Wait for job completion
-        final_state = coiled.batch.wait_for_job_done(job_id)
+            task_var_dicts = [
+                {"CONFIG_JSON": json.dumps(config.model_dump(exclude=computed_fields))}
+                for config in remaining
+            ]
 
-        if final_state != "done":
-            raise RuntimeError(f"Batch job {job_id} failed with state: {final_state}")
+            job_result = coiled.batch.run(
+                command=command,
+                name=f"bcsd-{stage}-{remaining[0].gcm}",
+                vm_type=["r8g.48xlarge"],
+                scheduler_vm_type=["r8g.48xlarge"],
+                region="us-west-2",
+                map_over_task_var_dicts=task_var_dicts,
+                forward_aws_credentials=True,
+                logger=logger,
+                tag={"Project": "SRM"},
+            )
 
-        logger.info(f"✓ Batch job {job_id} completed successfully")
+            job_id = job_result["job_id"]
+            logger.info(
+                f"→ Submitted Coiled batch job {job_id} with {len(remaining)} tasks "
+                f"(attempt {attempt}/{max_retries})"
+            )
 
-        # Verify output paths exist in cache and collect them
-        cache = self._get_cache(configs[0])
-        completed_paths = []
-        for config in configs:
-            output_path = cache.get_output_path(stage, config)
+            final_state = coiled.batch.wait_for_job_done(job_id)
+            logger.info(f"Batch job {job_id} finished with state: {final_state}")
 
-            # Verify the output was created
-            if not cache.exists(output_path):
-                raise RuntimeError(f"Task completed but output not found in cache: {output_path}")
+            # Partition into succeeded / still-failed based on cache presence
+            still_failed = [
+                config
+                for config in remaining
+                if not cache.exists(cache.get_output_path(stage, config))
+            ]
 
-            completed_paths.append(output_path)
+            if not still_failed:
+                logger.info(f"✓ Batch job {job_id} completed successfully")
+                remaining = []
+                break
 
-        return completed_paths
+            logger.warning(
+                f"✗ {len(still_failed)}/{len(remaining)} tasks still missing after job {job_id} "
+                f"(state={final_state!r}). "
+                f"Failed run_ids: {[c.run_id for c in still_failed]}"
+            )
+            remaining = still_failed
+
+        if remaining:
+            raise RuntimeError(
+                f"Stage '{stage}' failed after {max_retries} attempt(s). "
+                f"{len(remaining)} task(s) did not produce output: "
+                f"{[c.run_id for c in remaining]}"
+            )
+
+        logger.info(f"✓ All {len(configs)} {stage} tasks completed")
+
+        # Collect and return all output paths (now guaranteed to exist)
+        return [cache.get_output_path(stage, config) for config in configs]
 
     def _run_local(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
         """
