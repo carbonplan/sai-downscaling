@@ -67,7 +67,9 @@ def load_configs(config_path: str) -> list[BCSDConfig]:
 
 @app.command()
 def run(
-    config_path: str = typer.Option(..., help="Path to YAML config or directory of configs"),
+    config_path: list[str] = typer.Option(
+        ..., help="Path to YAML config or directory of configs (can be specified multiple times)"
+    ),
     stage: str = typer.Option(None, help="Run specific stage: obs, historical, scenario, or all"),
     force: bool = typer.Option(False, help="Force recompute even if cached"),
     coiled: bool = typer.Option(True, help="Use Coiled for execution"),
@@ -78,7 +80,7 @@ def run(
     """Run BCSD pipeline with automatic caching and resumability"""
 
     # Load configs
-    configs = load_configs(config_path)
+    configs = [cfg for path in config_path for cfg in load_configs(path)]
     if version is not None:
         configs = [config.model_copy(update={"version": version}) for config in configs]
     console.print(f"[bold green]Loaded {len(configs)} configuration(s)[/bold green]")
@@ -105,14 +107,16 @@ def run(
 
 @app.command()
 def status(
-    config_path: str = typer.Option(..., help="Path to config(s)"),
+    config_path: list[str] = typer.Option(
+        ..., help="Path to config(s) (can be specified multiple times)"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed path information"),
     version: str | None = typer.Option(
         None, "--version", help="Override the version from config (e.g. 'v2')"
     ),
 ):
     """Check status of cached artifacts for given configs"""
-    configs = load_configs(config_path)
+    configs = [cfg for path in config_path for cfg in load_configs(path)]
     if version is not None:
         configs = [config.model_copy(update={"version": version}) for config in configs]
     orchestrator = BCSDOrchestrator()
