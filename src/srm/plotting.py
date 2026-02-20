@@ -112,8 +112,14 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
         raw_toplot, era5_toplot, ds1_toplot, ds2_toplot = out
 
     return raw_toplot, era5_toplot, ds1_toplot, ds2_toplot
+    
+def get_4_subregions(ds, regions=REGIONS_4):
+    """Return dictionary with 4 subset datasets/dataarrays."""
+    return {
+        name: subset_latlon(ds, bounds["lat"], bounds["lon"])
+        for name, bounds in regions.items()
 
-def plot_4regions_comparisons(raw, era5, ds1, stat, variable, ds2=None, regions=REGIONS_4):
+def plot_4regions_comparisons(raw, era5, ds1, stat, variable, ds2=None, regions=None):
     """
     One figure:
       rows = 4 regions
