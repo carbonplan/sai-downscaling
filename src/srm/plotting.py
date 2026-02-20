@@ -306,3 +306,40 @@ def plot_cdf(era5, raw, ds1, var=None, ds2=None, title=None, xlabel=None):
     plt.ylabel("Cumulative probability")
     plt.legend()
     plt.tight_layout()
+
+locations = {
+    "Cape Town": (-33.9221, 18.4231),
+    "Addis Ababa": (9.0192, 38.7525),
+    "Mumbai": (19.0728, 72.8826),
+    "Sao Paulo": (-23.5558, -46.6396),
+    "Berlin": (52.5200, 13.4050),
+    "New York": (40.7128, -74.0060),
+    "Sydney": (-33.8727, 151.2057),
+    "Kyiv": (50.4504, 30.5245),
+    "Beijing": (39.9042, 116.4074),
+    "Accra": (5.5593, -0.1974),
+    "Kualar Lumpur": (3.1319, 101.6841),
+    "Lagos": (6.6137, 3.3553),
+    "Rio de Janerio": (-22.9068, -43.1729),
+    "Ankara": (39.9334, 32.8597),
+    "Cairo": (30.0444, 31.2357),
+    "Melbourne": (-37.8136, 144.9631),
+    "Paris": (48.8575, 2.3514),
+    "Tokyo": (35.6764, 139.6500),
+    "Seoul": (37.5503, 126.9971),
+    "Chicago": (41.8832, -87.6324),
+    # TODO Temi: add in 9 more major cities around the world
+    # TODO Temi: add in 10 locations from a variety of climatic zones around the world
+}
+Climatezones = {
+    "Kualar Lumpur": (3.1319, 101.6841),
+    "Lagos": (6.6137, 3.3553),
+    "Rio de Janerio": (-22.9068, -43.1729),
+    "Ankara": (39.9334, 32.8597),
+    "Cairo": (30.0444, 31.2357),
+    "Melbourne": (-37.8136, 144.9631),
+    "Paris": (48.8575, 2.3514),
+    "Tokyo": (35.6764, 139.6500),
+    "Seoul": (37.5503, 126.9971),
+    "Chicago": (41.8832, -87.6324),
+}
