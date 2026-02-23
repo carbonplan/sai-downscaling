@@ -20,6 +20,9 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
     return da_subset
 
 
+_TARGET_CHUNK_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
 def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]) -> xr.DataArray:
     if pattern == "full_space":
         already_chunked = (
@@ -31,7 +34,10 @@ def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]
             and len(da.chunksizes["lon"]) == 1
         )
         if not already_chunked:
-            da = da.chunk(time=5, lat=-1, lon=-1)
+            n_lat = da.sizes["lat"]
+            n_lon = da.sizes["lon"]
+            time_chunk = max(1, int(_TARGET_CHUNK_BYTES / (n_lat * n_lon * da.dtype.itemsize)))
+            da = da.chunk(time=time_chunk, lat=-1, lon=-1)
     elif pattern == "full_time":
         already_chunked = (
             "time" in da.chunksizes
@@ -42,7 +48,14 @@ def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]
             and len(da.chunksizes["lon"]) > 1
         )
         if not already_chunked:
-            da = da.chunk(time=-1, lat=7, lon=14)
+            n_time = da.sizes["time"]
+            n_lat = da.sizes["lat"]
+            n_lon = da.sizes["lon"]
+            total_spatial = _TARGET_CHUNK_BYTES / (n_time * da.dtype.itemsize)
+            # split spatial pixels proportionally to preserve the lat/lon aspect ratio
+            lat_chunk = max(1, int(np.sqrt(total_spatial * n_lat / n_lon)))
+            lon_chunk = max(1, int(np.sqrt(total_spatial * n_lon / n_lat)))
+            da = da.chunk(time=-1, lat=lat_chunk, lon=lon_chunk)
     da_rechunk = dask.base.optimize(da)[0]
     return da_rechunk
 
