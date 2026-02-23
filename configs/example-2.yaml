@@ -1,0 +1,38 @@
+# Example BCSD configuration
+#
+# This shows all available configuration options for the BCSD downscaling pipeline.
+# You can create multiple config files (one per ensemble member/scenario) and run
+# the CLI on a directory to batch process them all.
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM" # GCM model name
+variable: "pr" # Variable: tas, tasmax, tasmin, pr
+ensemble_member: 0 # Ensemble member (zero-indexed)
+scenario: "SSP245" # Scenario: historical, SSP245, G6-1pt5k, G6sulfur, G6solar
+
+# === Time Periods ===
+# Historical period for training bias correction
+train_period_start: 1978
+train_period_end: 2014
+
+# Prediction periods for scenarios (not needed for historical-only)
+predict_period_start: 2015
+predict_period_end: 2100
+
+# === Spatial Subsetting (optional) ===
+# Subset the data to a specific region (e.g., South Africa)
+# Format: [lat_min, lat_max, lon_min, lon_max]
+# subset_bounds: [-35, -22, 16, 33] # South Africa region
+
+# === SAI Scenarios (optional) ===
+# For SAI scenarios (G6-*), you must specify the transition year when SAI starts
+
+# === Storage Configuration ===
+cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate artifacts (obs, historical)
+output_dir: "s3://carbonplan-scratch/srm/outputs/" # Final scenario outputs (published results)
+version: "v1" # Version identifier for all output paths (default: v1, can override with BCSD_VERSION env var or --version CLI flag)
+
+# === Additional Options (optional) ===
+# verbose: true                       # Enable verbose logging (default: true)
+# rechunk_workflow: true              # Enable strategic rechunking (default: true)
+# mapping_type: "parametric"          # Bias correction method: "parametric" or "nonparametric" (default: "parametric")

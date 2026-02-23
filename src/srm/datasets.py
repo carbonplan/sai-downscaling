@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import dask.system
 from cloudpathlib import CloudPath
 
 from srm.config import VarSpec, VarStandards
@@ -44,17 +45,24 @@ class BaseDataset(ABC):
         import icechunk
         import xarray as xr
 
+        # if dask.system.CPU_COUNT > 128 set max_concurrent_requests to 128 to avoid overwhelming the system, otherwise use the number of CPUs
+
+        config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 128))
+
         storage = icechunk.s3_storage(bucket=self.bucket, prefix=prefix, from_env=True)
 
         if is_virtual:
             credentials = icechunk.containers_credentials(
                 {self.bucket_uri: icechunk.s3_credentials()}
             )
-            repo = icechunk.Repository.open(storage, authorize_virtual_chunk_access=credentials)
-            # chunks = "auto"
-            chunks = {}
+            
+            repo = icechunk.Repository.open(
+                storage, authorize_virtual_chunk_access=credentials, config=config
+            )
+            chunks = "auto"
+
         else:
-            repo = icechunk.Repository.open(storage)
+            repo = icechunk.Repository.open(storage, config=config)
             chunks = self.encoding["shards"]
 
         session = repo.readonly_session("main")
