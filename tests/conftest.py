@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from srm import catalog  # Assume this is your main catalog object
+from srm import catalog
 
 
 @pytest.fixture(scope="session")

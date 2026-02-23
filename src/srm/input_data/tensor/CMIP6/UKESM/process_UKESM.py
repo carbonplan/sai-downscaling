@@ -19,9 +19,7 @@ from srm.config import (
 )
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
-    add_cf_bounds,
     build_encoding_dict,
-    compute_wind_speed,
     determine_write_mode,
     get_var_specs,
     trim_negative_precipitation,
@@ -32,6 +30,21 @@ from srm.input_data.etl_utils import (
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
+
+UKESM_ENSEMBLE_MEMBER_MAP = {
+    "001": "r12i1p1f2",
+    "002": "r2i1p1f2",
+    "003": "r3i1p1f2",
+}
+
+T_PR_VARS = ["pr", "tas", "tasmin", "tasmax"]
+
+VAR_PREFIX_MAP = {
+    "pr": "PRECT",
+    "tas": "T",
+    "tasmin": "T",
+    "tasmax": "T",
+}
 
 
 @dataclass
@@ -46,7 +59,7 @@ class BaseUKESM_Config(BaseETLConfig):
     virtualize_cluster: dict = field(
         default_factory=lambda: {
             "n_workers": [4, 24],
-            "worker_vm_types": ["r8g.2xlarge"],
+            "worker_vm_types": ["r8g.8xlarge"],
             "scheduler_vm_types": "c8g.2xlarge",
         }
     )
@@ -54,13 +67,12 @@ class BaseUKESM_Config(BaseETLConfig):
     process_cluster: dict = field(
         default_factory=lambda: {
             "n_workers": [4, 16],
-            "worker_vm_types": ["m8g.2xlarge"],
+            "worker_vm_types": ["r8g.4xlarge"],
             "scheduler_vm_types": "c8g.xlarge",
         }
     )
 
     def __post_init__(self):
-        super().__post_init__()
         sesh = boto3.Session()
         creds = sesh.get_credentials()
         self.aws_creds = {
@@ -78,17 +90,11 @@ class UKESM_SSP245_Config(BaseUKESM_Config):
 
 
 @dataclass
-class UKESM_SSP245_UAS_Config(BaseUKESM_Config):
-    scenario: str = "SSP245-uas"
-    catalog_key: str = "UKESM-SSP245-uas-virtual"
-    s3_input_prefix: str = "input/tensor/UKESM/transfer/SSP2-4.5/"
-
-
-@dataclass
-class UKESM_SSP245_VAS_Config(BaseUKESM_Config):
-    scenario: str = "SSP245-vas"
-    catalog_key: str = "UKESM-SSP245-vas-virtual"
-    s3_input_prefix: str = "input/tensor/UKESM/transfer/SSP2-4.5/"
+class UKESM_SSP245_T_PR_Config(BaseUKESM_Config):
+    scenario: str = "SSP245"
+    catalog_key: str = "UKESM-SSP245-t-pr-virtual"
+    materialized_key: str = "UKESM-SSP245-icechunk"
+    s3_input_prefix: str = "input/tensor/UKESM/netcdf/ssp245"
 
 
 @dataclass
@@ -96,21 +102,15 @@ class UKESM_G6_1p5K_Config(BaseUKESM_Config):
     scenario: str = "G6-1.5K"
     catalog_key: str = "UKESM-G6-1.5K-virtual"
     materialized_key: str = "UKESM-G6-1.5K-icechunk"
-    s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K/"
+    s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K"
 
 
 @dataclass
-class UKESM_G6_1p5K_UAS_Config(BaseUKESM_Config):
-    scenario: str = "G6-1.5K-uas"
-    catalog_key: str = "UKESM-G6-1.5K-uas-virtual"
-    s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K/"
-
-
-@dataclass
-class UKESM_G6_1p5K_VAS_Config(BaseUKESM_Config):
-    scenario: str = "G6-1.5K-vas"
-    catalog_key: str = "UKESM-G6-1.5K-vas-virtual"
-    s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K/"
+class UKESM_G6_1p5K_T_PR_Config(BaseUKESM_Config):
+    scenario: str = "G6-1.5K"
+    catalog_key: str = "UKESM-G6-1.5K-t-pr-virtual"
+    materialized_key: str = "UKESM-G6-1.5K-icechunk"
+    s3_input_prefix: str = "input/tensor/UKESM/G6-1.5K/netcdf"
 
 
 @dataclass
@@ -138,13 +138,13 @@ class UKESM_Historical_Config(BaseUKESM_Config):
 
 SCENARIO_CONFIG_MAP = {
     "SSP245": UKESM_SSP245_Config,
-    "SSP245-uas": UKESM_SSP245_UAS_Config,
-    "SSP245-vas": UKESM_SSP245_VAS_Config,
+    "SSP245-t-pr": UKESM_SSP245_T_PR_Config,
     "G6-1.5K": UKESM_G6_1p5K_Config,
-    "G6-1.5K-uas": UKESM_G6_1p5K_UAS_Config,
-    "G6-1.5K-vas": UKESM_G6_1p5K_VAS_Config,
+    "G6-1.5K-t-pr": UKESM_G6_1p5K_T_PR_Config,
     "historical": UKESM_Historical_Config,
 }
+
+T_PR_SCENARIOS = {UKESM_SSP245_T_PR_Config, UKESM_G6_1p5K_T_PR_Config}
 
 
 def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Config) -> None:
@@ -170,7 +170,6 @@ def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Confi
     urls = []
     for ens in config.ensemble_members:
         date_str = ensemble_dates.get(ens)
-
         for var in variables:
             for t_range in time_slices:
                 folder_path = f"{config.source_base_url}/{ens}/day/{var}/gn/files/{date_str}"
@@ -212,13 +211,29 @@ def _get_netcdf_urls(config: BaseUKESM_Config, variables: list[str]) -> list[str
     store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
     stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
     netcdf_list = list(stream["objects"]["path"].to_numpy())
-
     filtered_urls = [
         f"s3://{config.s3_bucket}/{path}"
         for path in netcdf_list
         if path.endswith(".nc") and any(f"{var}_".lower() in path.lower() for var in variables)
     ]
     return filtered_urls
+
+
+def _get_netcdf_urls_t_pr(config: BaseUKESM_Config, variables: list[str]) -> list[str]:
+    store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
+    urls = []
+
+    for var in variables:
+        prefix_dir = VAR_PREFIX_MAP[var]
+        prefix = f"{config.s3_input_prefix}/{prefix_dir}"
+        stream = obs.list_with_delimiter(store, prefix=prefix, return_arrow=True)
+        paths = list(stream["objects"]["path"].to_numpy())
+        urls.extend(
+            f"s3://{config.s3_bucket}/{path}"
+            for path in paths
+            if path.endswith(".nc") and f"_{var}_" in path and "_rechunked.nc" in path
+        )
+    return urls
 
 
 def _preprocess_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
@@ -229,13 +244,30 @@ def _preprocess_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
     return ds
 
 
+def _preprocess_ensemble_t_pr(ds: xr.Dataset, url: str = None) -> xr.Dataset:
+    """Extract ensemble member from filename pattern: PREFIX_001_var_corrected.nc
+    and normalize latitude/longitude dim names to lat/lon."""
+    if url is None:
+        raise ValueError("url parameter is required to determine ensemble member")
+    filename = url.split("/")[-1]
+    member_idx = filename.split("_")[1]
+    member = UKESM_ENSEMBLE_MEMBER_MAP[member_idx]
+    ds = ds.expand_dims({"ensemble_member": [member]})
+    if "latitude" in ds.dims:
+        ds = ds.rename({"latitude": "lat", "longitude": "lon"})
+    return ds
+
+
 def _preprocess_ukesm(
     ds: xr.Dataset,
     config: BaseUKESM_Config,
     subset: bool = False,
 ) -> xr.Dataset:
-    ds = ds.drop_duplicates(dim="time", keep="first")
+    # OUR TEMP/PR data has values from 2015-2099. it should be 2035-2085
+    if isinstance(config, (UKESM_G6_1p5K_Config, UKESM_G6_1p5K_T_PR_Config)):
+        ds = ds.sel(time=slice("2035-01-01", "2084-12-30"))
 
+    ds = ds.drop_duplicates(dim="time", keep="first")
     ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False, align_on="date")
     ds = ds.drop_encoding()
     ds = lon_to_180(ds, lon_name="lon")
@@ -253,7 +285,7 @@ def _preprocess_ukesm(
 
 def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> xr.Dataset:
     ds = update_variable_attrs(ds, var_specs)
-    ds = add_cf_bounds(ds)
+    # ds = add_cf_bounds(ds)
 
     ds.attrs.update(
         {
@@ -266,39 +298,13 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> 
     return ds
 
 
-def _get_wind_speed_dataset(config: BaseUKESM_Config, scenario: str, subset: bool) -> xr.Dataset:
-    """get wind components for sfcWind calc if needed."""
-    if isinstance(config, UKESM_Historical_Config):
-        virt_ds = catalog.get(config.catalog_key).to_xarray()
-        ds = virt_ds[["sfcWind"]]
-        ds = _preprocess_ukesm(ds, config, subset=subset)
-    else:
-        uas_ds = catalog.get(f"UKESM-{scenario}-uas-virtual").to_xarray()
-        vas_ds = catalog.get(f"UKESM-{scenario}-vas-virtual").to_xarray()
-
-        uas_ds = _preprocess_ukesm(uas_ds, config, subset=subset)
-        vas_ds = _preprocess_ukesm(vas_ds, config, subset=subset)
-        vas_ds_interp = vas_ds.interp_like(uas_ds, method="linear")
-        ds = compute_wind_speed(uas_ds[["uas"]], vas_ds_interp[["vas"]], "uas", "vas")
-
-    return ds
-
-
-# --- CLI ---
-
-
 @click.group()
 def cli():
     pass
 
 
 @click.command()
-@click.option(
-    "--variable",
-    multiple=True,
-    required=True,
-    help="UKESM variables to fetch",
-)
+@click.option("--variable", multiple=True, required=True, help="UKESM variables to fetch")
 @click.option(
     "--scenario",
     type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())),
@@ -337,20 +343,33 @@ def virtualize(scenario, coiled):
     else:
         client = setup_local_client()
 
+    is_t_pr = type(config) in T_PR_SCENARIOS
+
     try:
         base_store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
         registry = ObjectStoreRegistry(
             {f"s3://{config.s3_bucket}": CachingReadableStore(SplittingReadableStore(base_store))}
         )
-        parser = HDFParser(drop_variables=config.drop_variables, reader_factory=BufferedStoreReader)
 
-        netcdf_urls = _get_netcdf_urls(config, variables)
+        if is_t_pr:
+            parser = HDFParser(reader_factory=BufferedStoreReader)
+            netcdf_urls = _get_netcdf_urls_t_pr(config, variables)
+            preprocess_fn = _preprocess_ensemble_t_pr
+            loadable_variables = ["latitude", "longitude", "time"]
+        else:
+            parser = HDFParser(
+                drop_variables=config.drop_variables, reader_factory=BufferedStoreReader
+            )
+            netcdf_urls = _get_netcdf_urls(config, variables)
+            preprocess_fn = _preprocess_ensemble
+            loadable_variables = ["lat", "lon", "time"]
+
         combined_ds = virtualize_and_combine(
             urls=netcdf_urls,
             registry=registry,
             parser=parser,
-            loadable_variables=["lat", "lon", "time"],
-            preprocess_fn=_preprocess_ensemble,
+            loadable_variables=loadable_variables,
+            preprocess_fn=preprocess_fn,
         )
 
         repo_config = icechunk.RepositoryConfig.default()
@@ -375,11 +394,12 @@ def virtualize(scenario, coiled):
 
 
 @click.command()
-@click.option("--variable", multiple=True, required=True)
+@click.option("--variable", multiple=True, help="Specific variables to process")
 @click.option("--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True)
 @click.option("--coiled/--local", default=False)
+@click.option("--all-variables", is_flag=True, help="process all expected variables from catalog")
 @click.option("--subset/--no-subset", default=False)
-def process(variable, scenario, coiled, subset):
+def process(variable, scenario, coiled, all_variables, subset):
     """Read virtual icechunk stores, postprocess, rechunk, shard and write to icechunk"""
     config = SCENARIO_CONFIG_MAP[scenario]()
 
@@ -390,14 +410,25 @@ def process(variable, scenario, coiled, subset):
     else:
         client = setup_local_client()
 
-    mat_key = getattr(config, "materialized_key", "UKESM-SSP245-icechunk")
+    mat_key = getattr(config, "materialized_key", f"UKESM-{scenario}-icechunk")
     materialized_cat = catalog.get(mat_key)
     var_specs = get_var_specs(materialized_cat)
 
+    if all_variables:
+        variables = [var.name for var in materialized_cat.expected_vars]
+
+    elif variable:
+        variables = list(variable)
+    else:
+        raise click.UsageError("Must specify either --variable or --all-variables")
+
     try:
-        for var in list(variable):
-            if var == "sfcWind":
-                ds = _get_wind_speed_dataset(config, scenario, subset)
+        for var in variables:
+            if var in T_PR_VARS and hasattr(config, "materialized_key"):
+                t_pr_key = f"UKESM-{config.scenario}-t-pr-virtual"
+                virt_ds = catalog.get(t_pr_key).to_xarray()
+                ds = virt_ds[[var]]
+                ds = _preprocess_ukesm(ds, config, subset=subset)
             else:
                 virt_ds = catalog.get(config.catalog_key).to_xarray()
                 ds = virt_ds[[var]]
@@ -422,6 +453,7 @@ def process(variable, scenario, coiled, subset):
         client.shutdown()
 
 
+cli.add_command(fetch)
 cli.add_command(virtualize)
 cli.add_command(process)
 

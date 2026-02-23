@@ -10,7 +10,6 @@ from icechunk.xarray import to_icechunk
 
 from srm import catalog
 from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
-from srm.input_data.etl_utils import compute_wind_speed
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
@@ -18,7 +17,6 @@ zarr.config.set({"async.concurrency": 128})
 
 @dataclass
 class ERA5Config:
-    WIND_VARS = Literal["10m_u_component_of_wind", "10m_v_component_of_wind"]
     MAX_RESAMPLING = Literal["maximum_2m_temperature_since_previous_post_processing"]
     MIN_RESAMPLING = Literal["minimum_2m_temperature_since_previous_post_processing"]
     MEAN_RESAMPLING = Literal[
@@ -26,7 +24,6 @@ class ERA5Config:
         "2m_temperature",
         "mean_surface_downward_short_wave_radiation_flux",
         "mean_surface_downward_long_wave_radiation_flux",
-        "sfcWind",
         "surface_pressure",
     ]
     ALL_VARS = MAX_RESAMPLING | MIN_RESAMPLING | MEAN_RESAMPLING
@@ -36,10 +33,7 @@ class ERA5Config:
         "2m_temperature": "tas",
         "minimum_2m_temperature_since_previous_post_processing": "tasmin",
         "maximum_2m_temperature_since_previous_post_processing": "tasmax",
-        # 'ADDME_HURS': 'hurs',# we only have specific_humidity at levels in hpa, so can we back out 2m?
         "mean_surface_downward_short_wave_radiation_flux": "rsds",
-        "sfcWind": "sfcWind",
-        # 'ADDME_HUSS': 'huss',
         "mean_surface_downward_long_wave_radiation_flux": "rlds",
         "surface_pressure": "ps",
     }
@@ -213,17 +207,7 @@ def process_era5_pipeline(
             if verbose:
                 print(f"Processing {var}...")
 
-            if var == "sfcWind":
-                ds_u = _load_era5(variable="10m_u_component_of_wind", config=config)
-                ds_v = _load_era5(variable="10m_v_component_of_wind", config=config)
-                ds = compute_wind_speed(
-                    ds_u,
-                    ds_v,
-                    u_var_name="10m_u_component_of_wind",
-                    v_var_name="10m_v_component_of_wind",
-                )
-            else:
-                ds = _load_era5(variable=var, config=config)
+            ds = _load_era5(variable=var, config=config)
 
             ds = _preprocess_era5(ds, config)
             if var == "mean_total_precipitation_rate":
@@ -231,9 +215,6 @@ def process_era5_pipeline(
             ds = _resample_time(ds, var)
             ds = _update_attrs(ds, var, config)
             encoding = _encoding(ds, config)
-            print(ds)
-            print(encoding)
-            # try explicity chunking to shard size
             write_to_icechunk(
                 ds,
                 session,
