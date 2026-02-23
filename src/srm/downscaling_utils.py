@@ -22,10 +22,28 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
 
 def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]) -> xr.DataArray:
     if pattern == "full_space":
-        da_rechunk = da.chunk(time=5, lat=-1, lon=-1)
+        already_chunked = (
+            "time" in da.chunksizes
+            and len(da.chunksizes["time"]) > 1
+            and "lat" in da.chunksizes
+            and len(da.chunksizes["lat"]) == 1
+            and "lon" in da.chunksizes
+            and len(da.chunksizes["lon"]) == 1
+        )
+        if not already_chunked:
+            da = da.chunk(time=5, lat=-1, lon=-1)
     elif pattern == "full_time":
-        da_rechunk = da.chunk(time=-1, lat=7, lon=14)
-    da_rechunk = dask.base.optimize(da_rechunk)[0]
+        already_chunked = (
+            "time" in da.chunksizes
+            and len(da.chunksizes["time"]) == 1
+            and "lat" in da.chunksizes
+            and len(da.chunksizes["lat"]) > 1
+            and "lon" in da.chunksizes
+            and len(da.chunksizes["lon"]) > 1
+        )
+        if not already_chunked:
+            da = da.chunk(time=-1, lat=7, lon=14)
+    da_rechunk = dask.base.optimize(da)[0]
     return da_rechunk
 
 
