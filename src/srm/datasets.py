@@ -55,7 +55,7 @@ class BaseDataset(ABC):
             credentials = icechunk.containers_credentials(
                 {self.bucket_uri: icechunk.s3_credentials()}
             )
-            
+
             repo = icechunk.Repository.open(
                 storage, authorize_virtual_chunk_access=credentials, config=config
             )
