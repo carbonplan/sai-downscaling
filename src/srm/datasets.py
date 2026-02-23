@@ -59,7 +59,7 @@ class BaseDataset(ABC):
             repo = icechunk.Repository.open(
                 storage, authorize_virtual_chunk_access=credentials, config=config
             )
-            chunks = "auto"
+            chunks = {}
 
         else:
             repo = icechunk.Repository.open(storage, config=config)
