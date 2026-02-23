@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    # if needed
     pass
 
 
@@ -24,7 +23,7 @@ class ValidationResult:
 
 class DatasetValidator:
     def __init__(self, ds_info):
-        import cf_xarray  # noqa ignore
+        import cf_xarray  # noqa
         import xarray as xr
 
         if isinstance(ds_info, xr.Dataset):
@@ -33,8 +32,6 @@ class DatasetValidator:
         else:
             self.ds_info = ds_info
             self.ds = ds_info.to_xarray()
-
-        # self.ds: Unknown = self.ds
 
     def _validate_coord(
         self,
@@ -63,8 +60,7 @@ class DatasetValidator:
             )
 
         if check_monotonic:
-            is_increasing = (coord.diff(coord.name) > 0).all().item()
-            if not is_increasing:
+            if not (coord.diff(coord_name) > 0).all().item():
                 issues.append(f"{expected_name} is not monotonically increasing")
 
         return ValidationResult(len(issues) == 0, issues)
@@ -84,16 +80,13 @@ class DatasetValidator:
         return self._validate_coord("lat", "lat", expected_range, check_monotonic)
 
     def validate_expected_chunking(self) -> ValidationResult:
-        """Validate that chunks and shards match expected values for all variables."""
         issues = []
-        ds = self.ds_info.to_xarray()
         expected_chunks_dict = self.ds_info.expected_chunks
         expected_shards_dict = self.ds_info.expected_shards
 
         for var_spec in self.ds_info.expected_vars:
             var_name = var_spec.name
-
-            var = ds[var_name]
+            var = self.ds[var_name]
             enc = var.encoding
 
             expected_chunks = tuple(expected_chunks_dict[dim] for dim in var.dims)
@@ -107,25 +100,20 @@ class DatasetValidator:
             if actual_shards != expected_shards:
                 issues.append(f"{var_name}: shards {actual_shards} != expected {expected_shards}")
 
-        is_valid = len(issues) == 0
-        return ValidationResult(is_valid, issues)
+        return ValidationResult(len(issues) == 0, issues)
 
     def validate_expected_variables(self) -> ValidationResult:
         if not self.ds_info.expected_vars:
             return ValidationResult(True, [])
 
         actual_names = set(self.ds.data_vars)
-        expected_specs = self.ds_info.expected_vars
-        expected_names = {spec.name for spec in expected_specs}
-
+        expected_names = {spec.name for spec in self.ds_info.expected_vars}
         missing_names = expected_names - actual_names
 
         if missing_names:
             return ValidationResult(
                 False,
-                [
-                    f"Missing variables: {sorted(list(missing_names))}. Found: {sorted(list(actual_names))}"
-                ],
+                [f"Missing variables: {sorted(missing_names)}. Found: {sorted(actual_names)}"],
             )
 
         return ValidationResult(True, [])
@@ -165,15 +153,10 @@ class DatasetValidator:
         return ValidationResult(len(issues) == 0, issues)
 
     def validate_negative_precip(self) -> ValidationResult:
-        if "pr" not in list(self.ds):
-            return ValidationResult(
-                True,
-                [f"dataset has no variable named 'pr'. Available variables are: {list(self.ds)}"],
-            )
-        has_negatives = (
-            (self.ds["pr"] < 0).any().compute()
-        )  # materialize the calc from the lazy dask arrays
+        if "pr" not in self.ds:
+            return ValidationResult(True, [])
+
+        has_negatives = (self.ds["pr"] < 0).any().compute()
         if has_negatives:
             return ValidationResult(False, ["Found negative precipitation data"])
-        else:
-            return ValidationResult(True, [])
+        return ValidationResult(True, [])
