@@ -129,11 +129,6 @@ class BCSDPipeline:
                 obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
                 model_grid = subset_space(model_grid, [lat_min, lat_max, lon_min, lon_max])
 
-        # Rechunk for spatial operations
-        if self.config.rechunk_workflow:
-            with Timer("Rechunked to full space", verbose=self.config.verbose):
-                obs_fine = rechunk(obs_fine, pattern="full_space")
-
         # Regrid to coarse grid
         with Timer("Regridded observations to coarse grid", verbose=self.config.verbose):
             # Suppress expected warnings from sparse array operations during regridding
@@ -144,9 +139,13 @@ class BCSDPipeline:
                     da_fine_to_coarsen=obs_fine, da_coarse_grid=model_grid
                 )
 
+        # Rechunk for efficient cache writes and downstream spatial operations
+        if self.config.rechunk_workflow:
+            with Timer("Rechunked to full space", verbose=self.config.verbose):
+                obs_coarse = rechunk(obs_coarse, pattern="full_space")
+
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
-            obs_coarse = rechunk(obs_coarse, pattern="full_space")
             obs_coarse.name = self.config.variable
             obs_coarse.attrs = obs_fine.attrs  # Preserve units and metadata
             obs_coarse.to_zarr(output_path, mode="w")
