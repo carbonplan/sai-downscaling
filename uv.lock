@@ -2107,6 +2107,18 @@ wheels = [
 ]
 
 [[package]]
+name = "memory-profiler"
+version = "0.61.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "psutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b2/88/e1907e1ca3488f2d9507ca8b0ae1add7b1cd5d3ca2bc8e5b329382ea2c7b/memory_profiler-0.61.0.tar.gz", hash = "sha256:4e5b73d7864a1d1292fb76a03e82a3e78ef934d06828a698d9dada76da2067b0", size = 35935, upload-time = "2022-11-15T17:57:28.994Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/49/26/aaca612a0634ceede20682e692a6c55e35a94c21ba36b807cc40fe910ae1/memory_profiler-0.61.0-py3-none-any.whl", hash = "sha256:400348e61031e3942ad4d4109d18753b2fb08c2f6fb8290671c5513a34182d84", size = 31803, upload-time = "2022-11-15T17:57:27.031Z" },
+]
+
+[[package]]
 name = "mistune"
 version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2323,6 +2335,19 @@ wheels = [
 ]
 
 [[package]]
+name = "numbagg"
+version = "0.9.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numba" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/31/5c/0b84cf3e2dc71fc9061bdf9db9c8d0e8ea0eb079b8c98f526831d0d2c1c1/numbagg-0.9.4.tar.gz", hash = "sha256:4aaddc7ca306c38e991f8b812d129a81f31cb77a066282d1e0b18cea5c126250", size = 141712, upload-time = "2025-12-15T06:07:48.575Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ae/d3/ff8f1b9968aa4dcd1da1880322ed492314cc920998182e549b586c895a17/numbagg-0.9.4-py3-none-any.whl", hash = "sha256:4f48276333fae856810873122d77aa75fb2d33f9ffe7888c1cfc86209117408f", size = 77532, upload-time = "2025-12-15T06:07:47.099Z" },
+]
+
+[[package]]
 name = "numcodecs"
 version = "0.16.5"
 source = { registry = "https://pypi.org/simple" }
@@ -2430,6 +2455,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/33/59/d58c78aeb0a997f25567eb3e4a0c41287c80232495aed51ff51542240e2d/obstore-0.9.0-cp311-abi3-musllinux_1_2_i686.whl", hash = "sha256:5d3b3c0ae3688e09bcd9c149b71c60b739b376e6a5cfdf06231c1159c6d7cd30", size = 3916751, upload-time = "2026-02-22T18:29:48.086Z" },
     { url = "https://files.pythonhosted.org/packages/7a/f5/6ae2b14c695ad64e52643a219fc82c88cdf230d9f39bff7cf7fc9f4b452b/obstore-0.9.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:2f53d7288b6ba288ae77f7600a1bbc21ce6738ce68c2fdf78c6b5e9494581969", size = 4107668, upload-time = "2026-02-22T18:29:49.273Z" },
     { url = "https://files.pythonhosted.org/packages/50/63/c2b643752d07e0679ebeb82ffdd75ff5b4b34fe6859944a4b88a3b2efcfe/obstore-0.9.0-cp311-abi3-win_amd64.whl", hash = "sha256:93693c1e93671df1845a3236200880665a3737b2a17deaad3d840a89b58e7336", size = 4176058, upload-time = "2026-02-22T18:29:50.821Z" },
+]
+
+[[package]]
+name = "opt-einsum"
+version = "3.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8c/b9/2ac072041e899a52f20cf9510850ff58295003aa75525e58343591b0cbfb/opt_einsum-3.4.0.tar.gz", hash = "sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac", size = 63004, upload-time = "2024-09-26T14:33:24.483Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/cd/066e86230ae37ed0be70aae89aabf03ca8d9f39c8aea0dec8029455b5540/opt_einsum-3.4.0-py3-none-any.whl", hash = "sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd", size = 71932, upload-time = "2024-09-26T14:33:23.039Z" },
 ]
 
 [[package]]
@@ -3583,6 +3617,7 @@ dependencies = [
     { name = "cloudpathlib" },
     { name = "dask", extra = ["complete"] },
     { name = "distributed" },
+    { name = "flox" },
     { name = "gilknocker" },
     { name = "ibicus" },
     { name = "icechunk" },
@@ -3597,7 +3632,7 @@ dependencies = [
     { name = "s3fs" },
     { name = "tabulate" },
     { name = "typer" },
-    { name = "xarray" },
+    { name = "xarray", extra = ["accel"] },
     { name = "xarray-regrid" },
     { name = "xclim" },
     { name = "zarr" },
@@ -3626,6 +3661,7 @@ dev = [
     { name = "ipykernel" },
     { name = "jupyter-server-proxy" },
     { name = "matplotlib" },
+    { name = "memory-profiler" },
     { name = "obspec-utils" },
     { name = "pooch" },
     { name = "prek" },
@@ -3678,6 +3714,7 @@ requires-dist = [
     { name = "cloudpathlib", specifier = ">=0.23.0" },
     { name = "dask", extras = ["complete"], specifier = ">=2025.12.0" },
     { name = "distributed", specifier = ">=2025.12.0" },
+    { name = "flox", specifier = ">=0.11.1" },
     { name = "gilknocker", specifier = "==0.4.1" },
     { name = "ibicus", specifier = ">=1.2.0" },
     { name = "icechunk", specifier = ">=1.1.15" },
@@ -3692,7 +3729,7 @@ requires-dist = [
     { name = "s3fs", specifier = ">=0.4.2" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "typer", specifier = ">=0.21.2" },
-    { name = "xarray", specifier = ">=2025.12.0" },
+    { name = "xarray", extras = ["accel"], specifier = ">=2025.12.0" },
     { name = "xarray-regrid", specifier = ">=0.4.2" },
     { name = "xclim", specifier = ">=0.59.1" },
     { name = "zarr", specifier = ">=3.1.5" },
@@ -3721,6 +3758,7 @@ dev = [
     { name = "ipykernel", specifier = ">=7.1.0" },
     { name = "jupyter-server-proxy", specifier = ">=4.4.0" },
     { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "memory-profiler", specifier = ">=0.61.0" },
     { name = "obspec-utils", specifier = ">=0.9.0" },
     { name = "pooch", specifier = ">=1.8.2" },
     { name = "prek", specifier = ">=0.3.0" },
@@ -4256,6 +4294,16 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0f/03/e3353b72e518574b32993989d8f696277bf878e9d508c7dd22e86c0dab5b/xarray-2026.2.0.tar.gz", hash = "sha256:978b6acb018770554f8fd964af4eb02f9bcc165d4085dbb7326190d92aa74bcf", size = 3111388, upload-time = "2026-02-13T22:20:50.18Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/99/92/545eb2ca17fc0e05456728d7e4378bfee48d66433ae3b7e71948e46826fb/xarray-2026.2.0-py3-none-any.whl", hash = "sha256:e927d7d716ea71dea78a13417970850a640447d8dd2ceeb65c5687f6373837c9", size = 1405358, upload-time = "2026-02-13T22:20:47.847Z" },
+]
+
+[package.optional-dependencies]
+accel = [
+    { name = "bottleneck" },
+    { name = "flox" },
+    { name = "numba" },
+    { name = "numbagg" },
+    { name = "opt-einsum" },
+    { name = "scipy" },
 ]
 
 [[package]]
