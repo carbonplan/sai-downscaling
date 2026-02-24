@@ -141,8 +141,7 @@ class BCSDPipeline:
 
         # Rechunk for efficient cache writes and downstream spatial operations
         if self.config.rechunk_workflow:
-            with Timer("Rechunked to full space", verbose=self.config.verbose):
-                obs_coarse = rechunk(obs_coarse, pattern="full_space")
+            obs_coarse = rechunk(obs_coarse, pattern="full_space")
 
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
@@ -301,12 +300,13 @@ class BCSDPipeline:
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
             )
+            model_hist_downscaled = rechunk(model_hist_downscaled, pattern="full_space")
 
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
             model_hist_downscaled.name = self.config.variable
             model_hist_downscaled.attrs = model_hist.attrs  # Preserve units and metadata
-            model_hist_downscaled.chunk({"time": "100MB"}).to_zarr(output_path, mode="w")
+            model_hist_downscaled.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Cached historical: {output_path}")
@@ -583,12 +583,13 @@ class BCSDPipeline:
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
             )
+            scenario_downscaled = rechunk(scenario_downscaled, pattern="full_space")
 
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
             scenario_downscaled.name = self.config.variable
             scenario_downscaled.attrs = model_scenario.attrs  # Preserve units and metadata
-            scenario_downscaled.chunk({"time": "100MB"}).to_zarr(output_path, mode="w")
+            scenario_downscaled.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Saved scenario output: {output_path}")
