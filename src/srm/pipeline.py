@@ -285,12 +285,6 @@ class BCSDPipeline:
                 dims=["time", "lat", "lon"],
             )
 
-        # Rechunk for spatial operations
-        if self.config.rechunk_workflow:
-            with Timer("Rechunked for downscaling", verbose=self.config.verbose):
-                model_hist_debiased = rechunk(model_hist_debiased, pattern="full_space")
-                model_hist_debiased = model_hist_debiased.persist()
-
         # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
             model_hist_downscaled = downscale_from_coarse(
@@ -567,12 +561,6 @@ class BCSDPipeline:
                     trend_on_daily_timestep=scenario_trend,
                     detrend_method=self.config.detrend_method,
                 )
-
-        # Rechunk for spatial operations
-        if self.config.rechunk_workflow:
-            with Timer("Rechunked for downscaling", verbose=self.config.verbose):
-                scenario_debiased = rechunk(scenario_debiased, pattern="full_space")
-                scenario_debiased = scenario_debiased.persist()
 
         # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
