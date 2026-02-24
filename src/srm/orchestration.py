@@ -197,8 +197,8 @@ class BCSDOrchestrator:
             job_result = coiled.batch.run(
                 command=command,
                 name=f"bcsd-{stage}-{remaining[0].gcm}",
-                vm_type=["r8g.48xlarge"],
-                scheduler_vm_type=["r8g.48xlarge"],
+                vm_type=["c8g.8xlarge"],
+                scheduler_vm_type=["c8g.8xlarge"],
                 region="us-west-2",
                 map_over_task_var_dicts=task_var_dicts,
                 forward_aws_credentials=True,
