@@ -20,13 +20,10 @@ class VarStandards:
     TASMAX: VarSpec = VarSpec(name="tasmax", units="K")
     HURS: VarSpec = VarSpec(name="hurs", units="%")
     RSDS: VarSpec = VarSpec(name="rsds", units="W m-2")
-    SFCWIND: VarSpec = VarSpec(name="sfcWind", units="m s-1")
     HUSS: VarSpec = VarSpec(name="huss", units="1")
     RLDS: VarSpec = VarSpec(name="rlds", units="W m-2")
     PS: VarSpec = VarSpec(name="ps", units="Pa")
     PSL: VarSpec = VarSpec(name="psl", units="Pa")
-    UAS: VarSpec = VarSpec(name="uas", units="Pa")
-    VAS: VarSpec = VarSpec(name="vas", units="m s-1")
 
 
 @dataclass
@@ -39,7 +36,7 @@ class ClusterConfig:
     tags: dict = field(default_factory=lambda: {"Project": "SRM"})
 
 
-def setup_cluster(config: ClusterConfig = None):  # TODO: add type
+def setup_cluster(config: ClusterConfig = None):
     import coiled
 
     if config is None:

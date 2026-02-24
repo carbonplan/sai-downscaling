@@ -128,6 +128,7 @@ def virtualize_netcdf(
     registry: ObjectStoreRegistry,
     parser: HDFParser,
     loadable_variables: list[str] | None = None,
+    drop_variables: list[str] | None = None,
     preprocess_fn: callable = None,
 ) -> xr.Dataset:
     """
@@ -136,7 +137,11 @@ def virtualize_netcdf(
     from virtualizarr import open_virtual_dataset
 
     ds = open_virtual_dataset(
-        url, registry=registry, parser=parser, loadable_variables=loadable_variables
+        url,
+        registry=registry,
+        parser=parser,
+        loadable_variables=loadable_variables,
+        drop_variables=drop_variables,
     )
     if preprocess_fn:
         ds = preprocess_fn(ds, url=url)
@@ -150,18 +155,20 @@ def virtualize_and_combine(
     parser: HDFParser,
     preprocess_fn: callable = None,
     loadable_variables: list[str] | None = None,
+    drop_variables: list[str] | None = None,
 ) -> xr.Dataset:
     """
     Parallellizes the virtualization of multiple files and combines them.
     """
 
     delayed_datasets = [
-        dask.delayed(virtualize_netcdf)(url, registry, parser, loadable_variables, preprocess_fn)
+        dask.delayed(virtualize_netcdf)(
+            url, registry, parser, loadable_variables, drop_variables, preprocess_fn
+        )
         for url in urls
     ]
 
     ds_list = list(dask.compute(*delayed_datasets))
-
     return xr.combine_by_coords(
         ds_list,
         coords="minimal",
@@ -169,54 +176,3 @@ def virtualize_and_combine(
         compat="override",
         combine_attrs="override",
     )
-
-
-# def open_mfdataset_from_store(
-#     urls: list[str],
-#     store,
-#     bucket: str,
-#     preprocess=None,
-#     drop_variables=None,
-#     engine="h5netcdf",
-#     chunks="auto",
-#     max_cache_size=512 * 1024 * 1024,
-# ):
-#     store = SplittingReadableStore(store)
-#     caching_store = CachingReadableStore(store, max_size=max_cache_size)
-
-#     readers = []
-#     datasets = []
-
-#     for url in urls:
-#         path = url.replace(f"s3://{bucket}/", "")
-#         reader = BufferedStoreReader(caching_store, path)
-#         readers.append(reader)
-
-#         ds = xr.open_dataset(reader, engine=engine, drop_variables=drop_variables, chunks=chunks)
-#         if preprocess is not None:
-#             ds = preprocess(ds, url)
-
-#         datasets.append(ds)
-
-#     ds = xr.concat(datasets, dim="time", coords="minimal", data_vars="minimal", compat="override")
-
-#     return ds, readers
-
-
-# def virtualize_and_combine(
-#     urls: list[str],
-#     registry: ObjectStoreRegistry,
-#     parser: HDFParser,
-#     preprocess_fn: callable = None,
-# ) -> xr.Dataset:
-#     delayed_datasets = [
-#         dask.delayed(virtualize_netcdf)(url, registry, parser, preprocess_fn) for url in urls
-#     ]
-#     ds_list = dask.compute(delayed_datasets)[0]
-#     return xr.combine_by_coords(
-#         ds_list,
-#         coords="minimal",
-#         data_vars="minimal",
-#         compat="override",
-#         combine_attrs="override",
-#     )
