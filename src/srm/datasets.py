@@ -46,8 +46,7 @@ class BaseDataset(ABC):
         import xarray as xr
 
         # if dask.system.CPU_COUNT > 128 set max_concurrent_requests to 128 to avoid overwhelming the system, otherwise use the number of CPUs
-
-        config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 10))
+        config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 128))
 
         storage = icechunk.s3_storage(bucket=self.bucket, prefix=prefix, from_env=True)
 
