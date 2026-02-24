@@ -1,6 +1,5 @@
 import typing
 
-import dask.base
 import icechunk
 import icechunk.xarray
 import numpy as np
@@ -56,8 +55,7 @@ def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]
             lat_chunk = max(1, int(np.sqrt(total_spatial * n_lat / n_lon)))
             lon_chunk = max(1, int(np.sqrt(total_spatial * n_lon / n_lat)))
             da = da.chunk(time=-1, lat=lat_chunk, lon=lon_chunk)
-    da_rechunk = dask.base.optimize(da)[0]
-    return da_rechunk
+    return da
 
 
 def get_experiment(
