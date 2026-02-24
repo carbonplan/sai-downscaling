@@ -133,7 +133,6 @@ class BCSDPipeline:
         if self.config.rechunk_workflow:
             with Timer("Rechunked to full space", verbose=self.config.verbose):
                 obs_fine = rechunk(obs_fine, pattern="full_space")
-                obs_fine = obs_fine.persist()
 
         # Regrid to coarse grid
         with Timer("Regridded observations to coarse grid", verbose=self.config.verbose):
@@ -147,9 +146,10 @@ class BCSDPipeline:
 
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
+            obs_coarse = rechunk(obs_coarse, pattern="full_space")
             obs_coarse.name = self.config.variable
             obs_coarse.attrs = obs_fine.attrs  # Preserve units and metadata
-            obs_coarse.chunk({"time": "100MB"}).to_zarr(output_path, mode="w")
+            obs_coarse.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Cached observations: {output_path}")

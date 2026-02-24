@@ -204,6 +204,7 @@ class BCSDOrchestrator:
                 forward_aws_credentials=True,
                 logger=logger,
                 tag={"Project": "SRM"},
+                disk_size="100GB",
             )
 
             job_id = job_result["job_id"]

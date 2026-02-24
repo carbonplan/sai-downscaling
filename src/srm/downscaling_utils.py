@@ -169,8 +169,12 @@ def interpolate_fine_to_coarse_grid(
     da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray
 ) -> xr.DataArray:
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).as_numpy().persist()
+    # ensure da_coarse_grid consists of only lat/lon coordinates and a single time step (if time coordinate exists) to avoid issues with xarray_regrid
+    target_grid = da_coarse_grid.reset_coords(drop=True)
+    if "time" in target_grid.coords:
+        target_grid = target_grid.isel(time=[0])
 
+    da_coarse = da_fine_to_coarsen.regrid.conservative(target_grid, latitude_coord="lat")
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
 
