@@ -6,7 +6,7 @@
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM" # GCM model name
-variable: "tas" # Variable: tas, tasmax, tasmin, pr
+variable: "tas" # Variable: tas, tasmax, pr, rsds
 ensemble_member: 0 # Ensemble member (zero-indexed)
 scenario: "SSP245" # Scenario: historical, SSP245, G6-1pt5k, G6sulfur, G6solar
 
