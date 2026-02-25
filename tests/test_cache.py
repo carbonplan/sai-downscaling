@@ -75,11 +75,19 @@ def regional_config() -> BCSDConfig:
     )
 
 
-def make_zarr_store(path: str, marker: str = ".zmetadata") -> None:
-    """Create a minimal zarr store directory with the given metadata marker file."""
-    store = Path(path)
-    store.mkdir(parents=True, exist_ok=True)
-    (store / marker).touch()
+def make_icechunk_store(path: str) -> None:
+    """Create a minimal icechunk store with a 'write complete' commit."""
+    import icechunk
+    import numpy as np
+    import xarray as xr
+    from icechunk.xarray import to_icechunk
+
+    storage = icechunk.local_filesystem_storage(path=path)
+    repo = icechunk.Repository.open_or_create(storage)
+    session = repo.writable_session("main")
+    ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
+    to_icechunk(ds, session, mode="w")
+    session.commit("write complete")
 
 
 # ---------------------------------------------------------------------------
@@ -227,27 +235,18 @@ class TestExists:
         empty_store.mkdir()
         assert local_cache.exists(str(empty_store)) is False
 
-    def test_zarr_v2_zmetadata_detected(self, local_cache, tmp_path):
-        store = tmp_path / "v2_meta.zarr"
-        make_zarr_store(str(store), ".zmetadata")
+    def test_icechunk_store_with_write_commit_returns_true(self, local_cache, tmp_path):
+        store = tmp_path / "valid.zarr"
+        make_icechunk_store(str(store))
         assert local_cache.exists(str(store)) is True
 
-    def test_zarr_v2_zgroup_detected(self, local_cache, tmp_path):
-        store = tmp_path / "v2_group.zarr"
-        make_zarr_store(str(store), ".zgroup")
-        assert local_cache.exists(str(store)) is True
+    def test_icechunk_store_without_write_commit_returns_false(self, local_cache, tmp_path):
+        import icechunk
 
-    def test_zarr_v3_zarr_json_detected(self, local_cache, tmp_path):
-        store = tmp_path / "v3.zarr"
-        make_zarr_store(str(store), "zarr.json")
-        assert local_cache.exists(str(store)) is True
-
-    def test_any_valid_marker_is_sufficient(self, subtests, local_cache, tmp_path):
-        for marker in (".zmetadata", ".zgroup", "zarr.json"):
-            with subtests.test(marker=marker):
-                store = tmp_path / f"store_{marker.strip('.')}.zarr"
-                make_zarr_store(str(store), marker)
-                assert local_cache.exists(str(store)) is True
+        store = tmp_path / "empty_repo.zarr"
+        storage = icechunk.local_filesystem_storage(path=str(store))
+        icechunk.Repository.open_or_create(storage)
+        assert local_cache.exists(str(store)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +292,7 @@ class TestValidateDependencies:
         obs_path = local_cache.get_obs_path(
             base_config.gcm, base_config.variable, base_config.subset_bounds
         )
-        make_zarr_store(obs_path)
+        make_icechunk_store(obs_path)
         # Should not raise
         local_cache.validate_dependencies("fit_historical", base_config)
 
@@ -301,7 +300,7 @@ class TestValidateDependencies:
         obs_path = local_cache.get_obs_path(
             base_config.gcm, base_config.variable, base_config.subset_bounds
         )
-        make_zarr_store(obs_path)
+        make_icechunk_store(obs_path)
         with pytest.raises(ValueError, match="Missing dependencies"):
             local_cache.validate_dependencies("transform_scenario", base_config)
 
@@ -315,8 +314,8 @@ class TestValidateDependencies:
             base_config.ensemble_member,
             base_config.subset_bounds,
         )
-        make_zarr_store(obs_path)
-        make_zarr_store(hist_path)
+        make_icechunk_store(obs_path)
+        make_icechunk_store(hist_path)
         # Should not raise
         local_cache.validate_dependencies("transform_scenario", base_config)
 
@@ -383,13 +382,13 @@ class TestListAndClearArtifacts:
     ) -> ArtifactCache:
         """Create one obs/historical/scenario artifact for each of three configs."""
         for cfg in (base_config, sai_config, regional_config):
-            make_zarr_store(local_cache.get_obs_path(cfg.gcm, cfg.variable, cfg.subset_bounds))
-            make_zarr_store(
+            make_icechunk_store(local_cache.get_obs_path(cfg.gcm, cfg.variable, cfg.subset_bounds))
+            make_icechunk_store(
                 local_cache.get_historical_path(
                     cfg.gcm, cfg.variable, cfg.ensemble_member, cfg.subset_bounds
                 )
             )
-            make_zarr_store(
+            make_icechunk_store(
                 local_cache.get_scenario_path(
                     cfg.gcm, cfg.variable, cfg.ensemble_member, cfg.scenario, cfg.subset_bounds
                 )

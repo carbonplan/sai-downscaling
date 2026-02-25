@@ -190,51 +190,39 @@ class ArtifactCache:
         """
         Check if artifact exists in cache.
 
+        Uses icechunk repository ancestry to verify a successful write, ensuring
+        the store is complete and not partially written.
+
         Parameters
         ----------
         path : str
-            Full path to artifact
+            Full path to icechunk store
 
         Returns
         -------
         bool
-            True if artifact exists and is valid
+            True if the store exists and has a 'write complete' commit in its ancestry
         """
         try:
-            # For zarr stores, check if zarr metadata exists
-            # Support both Zarr v2 (.zmetadata, .zgroup) and Zarr v3 (zarr.json)
+            import icechunk
+
             if path.startswith("s3://"):
-                # Remove s3:// prefix for fsspec
-                path_no_scheme = path.replace("s3://", "")
-
-                # Check if zarr metadata exists (v2 or v3 format)
-                metadata_exists = (
-                    self.fs.exists(f"{path_no_scheme}/.zmetadata")
-                    or self.fs.exists(f"{path_no_scheme}/.zgroup")
-                    or self.fs.exists(f"{path_no_scheme}/zarr.json")
-                )
-
-                if metadata_exists:
-                    logger.debug(f"Cache hit: {path}")
-                    return True
-                else:
-                    logger.debug(f"Cache miss: {path}")
-                    return False
+                path_no_scheme = path[len("s3://") :]
+                bucket, _, prefix = path_no_scheme.partition("/")
+                storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
             else:
-                # Local filesystem
-                metadata_path = Path(path) / ".zmetadata"
-                group_path = Path(path) / ".zgroup"
-                zarr_json_path = Path(path) / "zarr.json"
-                exists = metadata_path.exists() or group_path.exists() or zarr_json_path.exists()
+                storage = icechunk.local_filesystem_storage(path=path)
 
-                if exists:
-                    logger.debug(f"Cache hit: {path}")
-                else:
-                    logger.debug(f"Cache miss: {path}")
-
-                return exists
+            repo = icechunk.Repository.open(storage)
+            messages = [c.message for c in repo.ancestry(branch="main")]
+            result = "write complete" in messages
+            if result:
+                logger.debug(f"Cache hit: {path}")
+            else:
+                logger.debug(f"Cache miss (no write complete commit): {path}")
+            return result
         except Exception as e:
-            logger.warning(f"Error checking cache existence for {path}: {e}")
+            logger.debug(f"Cache miss: {path}: {e}")
             return False
 
     def check_dependencies(self, stage: str, config: BCSDConfig) -> dict[str, tuple[bool, str]]:
