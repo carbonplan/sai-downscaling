@@ -430,10 +430,10 @@ class BCSDPipeline:
             # Rechunk for temporal operations
             if self.config.rechunk_workflow:
                 with Timer("Rechunked for detrending", verbose=self.config.verbose):
-                    model_hist = rechunk(model_hist, pattern="full_time")
-                    model_scenario = rechunk(model_scenario, pattern="full_time")
+                    model_hist = rechunk(model_hist, pattern="full_time").persist()
+                    model_scenario = rechunk(model_scenario, pattern="full_time").persist()
                     if self.config.is_sai_scenario:
-                        ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time")
+                        ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time").persist()
 
             with Timer("Detrended scenario", verbose=self.config.verbose):
                 # Splice historical + scenario for smooth detrending
