@@ -13,8 +13,10 @@ import logging
 import warnings
 
 import dask.system
+import icechunk
 import scipy.stats
 import xarray as xr
+from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
@@ -78,6 +80,31 @@ class BCSDPipeline:
 
         # State dictionary for intermediate results (mostly for debugging)
         self._state = {}
+
+    @staticmethod
+    def _icechunk_storage(path: str):
+        """Create icechunk Storage from an S3 or local path."""
+        if path.startswith("s3://"):
+            path_no_scheme = path[len("s3://") :]
+            bucket, _, prefix = path_no_scheme.partition("/")
+            return icechunk.s3_storage(bucket=bucket, prefix=prefix)
+        else:
+            return icechunk.local_filesystem_storage(path=path)
+
+    def _write_to_icechunk(self, da: xr.DataArray, path: str, commit_message: str) -> str:
+        """Write a DataArray to an icechunk store and commit atomically."""
+        storage = self._icechunk_storage(path)
+        repo = icechunk.Repository.open_or_create(storage)
+        session = repo.writable_session("main")
+        to_icechunk(da.to_dataset(), session, mode="w")
+        return session.commit(commit_message, rebase_with=icechunk.ConflictDetector())
+
+    def _open_from_icechunk(self, path: str) -> xr.Dataset:
+        """Open a dataset from an icechunk store."""
+        storage = self._icechunk_storage(path)
+        repo = icechunk.Repository.open(storage)
+        session = repo.readonly_session("main")
+        return xr.open_dataset(session.store, engine="zarr", consolidated=False)
 
     def prepare_observations(self, force: bool = False) -> str:
         """
@@ -147,7 +174,7 @@ class BCSDPipeline:
         with Timer("Saved to cache", verbose=self.config.verbose):
             obs_coarse.name = self.config.variable
             obs_coarse.attrs = obs_fine.attrs  # Preserve units and metadata
-            obs_coarse.to_zarr(output_path, mode="w")
+            self._write_to_icechunk(obs_coarse, output_path, "write complete")
 
         if self.config.verbose:
             logger.info(f"✓ Cached observations: {output_path}")
@@ -207,7 +234,7 @@ class BCSDPipeline:
             # Load cached coarse observations
             deps = self.cache.check_dependencies("fit_historical", self.config)
             obs_coarse_path = deps["obs_regridded"][1]
-            obs_coarse = xr.open_zarr(obs_coarse_path)[self.config.variable]
+            obs_coarse = self._open_from_icechunk(obs_coarse_path)[self.config.variable]
 
             # Load fine observations
             obs_fine = get_obs(var=self.config.variable)
@@ -300,7 +327,7 @@ class BCSDPipeline:
         with Timer("Saved to cache", verbose=self.config.verbose):
             model_hist_downscaled.name = self.config.variable
             model_hist_downscaled.attrs = model_hist.attrs  # Preserve units and metadata
-            model_hist_downscaled.to_zarr(output_path, mode="w")
+            self._write_to_icechunk(model_hist_downscaled, output_path, "write complete")
 
         if self.config.verbose:
             logger.info(f"✓ Cached historical: {output_path}")
@@ -365,8 +392,7 @@ class BCSDPipeline:
         with Timer("Loaded data", verbose=self.config.verbose):
             # Load cached artifacts
             deps = self.cache.check_dependencies("transform_scenario", self.config)
-            obs_coarse = xr.open_zarr(deps["obs_regridded"][1])[self.config.variable]
-            _ = xr.open_zarr(deps["historical"][1])
+            obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
 
             # Load fine observations
             obs_fine = get_obs(var=self.config.variable)
@@ -574,7 +600,7 @@ class BCSDPipeline:
         with Timer("Saved output", verbose=self.config.verbose):
             scenario_downscaled.name = self.config.variable
             scenario_downscaled.attrs = model_scenario.attrs  # Preserve units and metadata
-            scenario_downscaled.to_zarr(output_path, mode="w")
+            self._write_to_icechunk(scenario_downscaled, output_path, "write complete")
 
         if self.config.verbose:
             logger.info(f"✓ Saved scenario output: {output_path}")

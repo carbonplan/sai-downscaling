@@ -14,7 +14,6 @@ BCSDPipeline is always mocked so no real compute or S3 access is required.
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,10 +27,18 @@ from srm.orchestration import BCSDOrchestrator
 # ---------------------------------------------------------------------------
 
 
-def _make_zarr_store(path: str) -> None:
-    store = Path(path)
-    store.mkdir(parents=True, exist_ok=True)
-    (store / ".zmetadata").touch()
+def _make_icechunk_store(path: str) -> None:
+    import icechunk
+    import numpy as np
+    import xarray as xr
+    from icechunk.xarray import to_icechunk
+
+    storage = icechunk.local_filesystem_storage(path=path)
+    repo = icechunk.Repository.open_or_create(storage)
+    session = repo.writable_session("main")
+    ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
+    to_icechunk(ds, session, mode="w")
+    session.commit("write complete")
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +188,7 @@ class TestSubmitStage:
     def test_skips_all_when_all_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
         obs_path = cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)
-        _make_zarr_store(obs_path)
+        _make_icechunk_store(obs_path)
 
         with patch.object(orchestrator, "_run_local") as mock_local:
             result = orchestrator.submit_stage("prepare_observations", [config], use_coiled=False)
@@ -209,7 +216,7 @@ class TestSubmitStage:
     def test_force_runs_even_when_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
         obs_path = cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)
-        _make_zarr_store(obs_path)
+        _make_icechunk_store(obs_path)
 
         with patch.object(orchestrator, "_run_local", return_value=[obs_path]) as mock_local:
             orchestrator.submit_stage(
@@ -229,7 +236,7 @@ class TestSubmitStage:
         obs_cached_path = cache.get_obs_path(
             cfg_cached.gcm, cfg_cached.variable, cfg_cached.subset_bounds
         )
-        _make_zarr_store(obs_cached_path)
+        _make_icechunk_store(obs_cached_path)
 
         computed_path = "newly_computed"
 
@@ -265,7 +272,7 @@ class TestSubmitToCoiled:
         """All tasks succeed on the first attempt — no retry needed."""
         cache = orchestrator._get_cache(config)
         output_path = cache.get_output_path("prepare_observations", config)
-        _make_zarr_store(output_path)
+        _make_icechunk_store(output_path)
 
         mock_coiled = self._make_coiled_mock(["done"])
 
@@ -285,7 +292,7 @@ class TestSubmitToCoiled:
         fail_path = cache.get_output_path("prepare_observations", cfg_fail)
 
         # First job: only cfg_ok writes its output
-        _make_zarr_store(ok_path)
+        _make_icechunk_store(ok_path)
 
         batch_run_calls = []
 
@@ -294,7 +301,7 @@ class TestSubmitToCoiled:
             batch_run_calls.append(task_dicts)
             # On the second call (retry), write the fail output so it looks cached
             if len(batch_run_calls) == 2:
-                _make_zarr_store(fail_path)
+                _make_icechunk_store(fail_path)
             return {"job_id": len(batch_run_calls)}
 
         mock_coiled = MagicMock()
@@ -346,7 +353,7 @@ class TestSubmitToCoiled:
             nonlocal call_count
             call_count += 1
             if call_count == 2:
-                _make_zarr_store(output_path)
+                _make_icechunk_store(output_path)
             return {"job_id": call_count}
 
         mock_coiled = MagicMock()
@@ -562,7 +569,7 @@ class TestGetStatus:
 
     def test_obs_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        _make_zarr_store(cache.get_obs_path(config.gcm, config.variable, config.subset_bounds))
+        _make_icechunk_store(cache.get_obs_path(config.gcm, config.variable, config.subset_bounds))
 
         status = orchestrator.get_status([config])
         assert status["prepare_observations"]["cached"] == 1
@@ -570,7 +577,7 @@ class TestGetStatus:
 
     def test_historical_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        _make_zarr_store(
+        _make_icechunk_store(
             cache.get_historical_path(
                 config.gcm, config.variable, config.ensemble_member, config.subset_bounds
             )
@@ -582,7 +589,7 @@ class TestGetStatus:
 
     def test_scenario_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        _make_zarr_store(
+        _make_icechunk_store(
             cache.get_scenario_path(
                 config.gcm,
                 config.variable,
@@ -619,7 +626,7 @@ class TestGetStatus:
     def test_cached_plus_missing_equals_total(self, orchestrator, multi_configs, subtests):
         # Cache one obs artifact and verify counts are consistent
         cache = orchestrator._get_cache(multi_configs[0])
-        _make_zarr_store(
+        _make_icechunk_store(
             cache.get_obs_path(
                 multi_configs[0].gcm,
                 multi_configs[0].variable,
