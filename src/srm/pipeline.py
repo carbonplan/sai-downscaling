@@ -22,6 +22,7 @@ from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
+    calculate_doy_means,
     detrend,
     downscale_from_coarse,
     get_experiment,
@@ -91,12 +92,15 @@ class BCSDPipeline:
         else:
             return icechunk.local_filesystem_storage(path=path)
 
-    def _write_to_icechunk(self, da: xr.DataArray, path: str, commit_message: str) -> str:
-        """Write a DataArray to an icechunk store and commit atomically."""
+    def _write_to_icechunk(
+        self, data: xr.DataArray | xr.Dataset, path: str, commit_message: str
+    ) -> str:
+        """Write a DataArray or Dataset to an icechunk store and commit atomically."""
         storage = self._icechunk_storage(path)
         repo = icechunk.Repository.open_or_create(storage)
         session = repo.writable_session("main")
-        to_icechunk(da.to_dataset(), session, mode="w")
+        ds = data if isinstance(data, xr.Dataset) else data.to_dataset()
+        to_icechunk(ds, session, mode="w")
         return session.commit(commit_message, rebase_with=icechunk.ConflictDetector())
 
     def _open_from_icechunk(self, path: str) -> xr.Dataset:
@@ -181,6 +185,93 @@ class BCSDPipeline:
 
         return output_path
 
+    def prepare_doy_climatology(self, force: bool = False) -> str:
+        """
+        Stage 1.5: Compute and cache ERA5 daily climatology at fine and coarse resolution.
+
+        This stage computes the ERA5 DOY climatology (used in spatial disaggregation)
+        and caches it so it is not recomputed on every fit_historical / transform_scenario
+        call. Both the fine-resolution and coarse-resolution versions are stored together,
+        keyed on (gcm, variable, subset_bounds, clim_method).
+
+        Parameters
+        ----------
+        force : bool, optional
+            Force recomputation even if cached artifact exists
+
+        Returns
+        -------
+        str
+            S3 path to cached artifact
+
+        Raises
+        ------
+        ValueError
+            If obs_regridded dependency is missing
+        """
+        # Validate dependencies
+        self.cache.validate_dependencies("prepare_doy_climatology", self.config)
+
+        output_path = self.cache.get_doy_clim_path(
+            self.config.gcm,
+            self.config.variable,
+            self.config.subset_bounds,
+            self.config.downscaling_clim_method,
+        )
+
+        # Check cache
+        if self.cache.exists(output_path) and not force:
+            if self.config.verbose:
+                logger.info(f"✓ Using cached DOY climatology: {output_path}")
+            return output_path
+
+        if self.config.verbose:
+            logger.info(f"Computing DOY climatology for {self.config.gcm}/{self.config.variable}")
+
+        with Timer("Loaded data", verbose=self.config.verbose):
+            # Load obs_coarse from cache (grid reference only)
+            deps = self.cache.check_dependencies("prepare_doy_climatology", self.config)
+            obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
+
+            # Load fine-resolution observations
+            obs_fine = get_obs(var=self.config.variable)
+            obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+
+            # Subset spatially if requested
+            if self.config.subset_bounds:
+                lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
+                obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
+
+            # Time-slice to training period
+            obs_fine = obs_fine.sel(
+                time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
+            )
+
+        with Timer("Computed DOY climatology", verbose=self.config.verbose):
+            obs_fine_doy_means = calculate_doy_means(
+                obs_fine, clim_method=self.config.downscaling_clim_method
+            )
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="invalid value encountered in divide")
+                warnings.filterwarnings("ignore", message="divide by zero encountered in divide")
+                obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
+                    da_fine_to_coarsen=obs_fine_doy_means, da_coarse_grid=obs_coarse
+                )
+
+        with Timer("Saved to cache", verbose=self.config.verbose):
+            ds = xr.Dataset(
+                {
+                    "obs_fine_doy_means": obs_fine_doy_means,
+                    "obs_coarse_doy_means": obs_coarse_doy_means,
+                }
+            )
+            self._write_to_icechunk(ds, output_path, "write complete")
+
+        if self.config.verbose:
+            logger.info(f"✓ Cached DOY climatology: {output_path}")
+
+        return output_path
+
     def fit_historical(self, force: bool = False) -> str:
         """
         Stage 2: Downscale historical period.
@@ -236,7 +327,12 @@ class BCSDPipeline:
             obs_coarse_path = deps["obs_regridded"][1]
             obs_coarse = self._open_from_icechunk(obs_coarse_path)[self.config.variable]
 
-            # Load fine observations
+            # Load cached DOY climatology
+            doy_clim_ds = self._open_from_icechunk(deps["obs_doy_clim"][1])
+            obs_fine_doy_means = doy_clim_ds["obs_fine_doy_means"]
+            obs_coarse_doy_means = doy_clim_ds["obs_coarse_doy_means"]
+
+            # Load fine observations (still needed as spatial grid reference)
             obs_fine = get_obs(var=self.config.variable)
             obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
@@ -320,6 +416,8 @@ class BCSDPipeline:
                 obs_fine=obs_fine.as_numpy(),
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
+                obs_fine_doy_means=obs_fine_doy_means,
+                obs_coarse_doy_means=obs_coarse_doy_means,
             )
             model_hist_downscaled = rechunk(model_hist_downscaled, pattern="full_space")
 
@@ -394,7 +492,12 @@ class BCSDPipeline:
             deps = self.cache.check_dependencies("transform_scenario", self.config)
             obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
 
-            # Load fine observations
+            # Load cached DOY climatology
+            doy_clim_ds = self._open_from_icechunk(deps["obs_doy_clim"][1])
+            obs_fine_doy_means = doy_clim_ds["obs_fine_doy_means"]
+            obs_coarse_doy_means = doy_clim_ds["obs_coarse_doy_means"]
+
+            # Load fine observations (still needed as spatial grid reference)
             obs_fine = get_obs(var=self.config.variable)
             obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
@@ -593,6 +696,8 @@ class BCSDPipeline:
                 obs_fine=obs_fine.as_numpy(),
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
+                obs_fine_doy_means=obs_fine_doy_means,
+                obs_coarse_doy_means=obs_coarse_doy_means,
             )
             scenario_downscaled = rechunk(scenario_downscaled, pattern="full_space")
 
@@ -625,5 +730,6 @@ class BCSDPipeline:
             S3 path to final scenario output
         """
         self.prepare_observations(force=force)
+        self.prepare_doy_climatology(force=force)
         self.fit_historical(force=force)
         return self.transform_scenario(force=force)

@@ -58,6 +58,20 @@ def _mock_prepare_obs_compute():
 
 
 @contextmanager
+def _mock_prepare_doy_clim_compute():
+    """Mock all compute-heavy imports used by prepare_doy_climatology."""
+    with (
+        patch("srm.pipeline.get_obs") as mock_get_obs,
+        patch("srm.pipeline.calculate_doy_means") as mock_doy,
+        patch("srm.pipeline.interpolate_fine_to_coarse_grid") as mock_interp,
+        patch("srm.pipeline.subset_space") as mock_subset,
+        patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
+        patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
+    ):
+        yield mock_get_obs, mock_doy, mock_interp, mock_subset
+
+
+@contextmanager
 def _mock_fit_historical_compute():
     """Mock all compute-heavy imports used by fit_historical."""
     with (
@@ -150,10 +164,18 @@ def pipeline_pr(pr_config) -> BCSDPipeline:
 
 @pytest.fixture
 def all_deps_present(pipeline) -> BCSDPipeline:
-    """Pipeline whose obs and historical dependencies are pre-created locally."""
+    """Pipeline whose obs, DOY clim, and historical dependencies are pre-created locally."""
     _make_icechunk_store(
         pipeline.cache.get_obs_path(
             pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
+        )
+    )
+    _make_icechunk_store(
+        pipeline.cache.get_doy_clim_path(
+            pipeline.config.gcm,
+            pipeline.config.variable,
+            pipeline.config.subset_bounds,
+            pipeline.config.downscaling_clim_method,
         )
     )
     _make_icechunk_store(
@@ -310,6 +332,96 @@ class TestPrepareObservationsCompute:
 
 
 # ---------------------------------------------------------------------------
+# prepare_doy_climatology – cache routing
+# ---------------------------------------------------------------------------
+
+
+class TestPrepareDoyClimatologyCache:
+    def test_returns_doy_clim_path_when_cached(self, pipeline):
+        obs_path = pipeline.cache.get_obs_path(
+            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
+        )
+        _make_icechunk_store(obs_path)
+        doy_path = pipeline.cache.get_doy_clim_path(
+            pipeline.config.gcm,
+            pipeline.config.variable,
+            pipeline.config.subset_bounds,
+            pipeline.config.downscaling_clim_method,
+        )
+        _make_icechunk_store(doy_path)
+
+        with patch("srm.pipeline.get_obs") as mock_get_obs:
+            result = pipeline.prepare_doy_climatology()
+
+        assert result == doy_path
+        mock_get_obs.assert_not_called()
+
+    def test_does_not_compute_when_cached(self, pipeline):
+        obs_path = pipeline.cache.get_obs_path(
+            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
+        )
+        _make_icechunk_store(obs_path)
+        doy_path = pipeline.cache.get_doy_clim_path(
+            pipeline.config.gcm,
+            pipeline.config.variable,
+            pipeline.config.subset_bounds,
+            pipeline.config.downscaling_clim_method,
+        )
+        _make_icechunk_store(doy_path)
+
+        with _mock_prepare_doy_clim_compute() as (get_obs, doy, interp, _):
+            pipeline.prepare_doy_climatology()
+            get_obs.assert_not_called()
+            doy.assert_not_called()
+            interp.assert_not_called()
+
+    def test_raises_when_obs_dep_missing(self, pipeline):
+        with pytest.raises(ValueError, match="Missing dependencies"):
+            pipeline.prepare_doy_climatology()
+
+    def test_force_runs_compute_even_when_cached(self, pipeline):
+        obs_path = pipeline.cache.get_obs_path(
+            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
+        )
+        _make_icechunk_store(obs_path)
+        doy_path = pipeline.cache.get_doy_clim_path(
+            pipeline.config.gcm,
+            pipeline.config.variable,
+            pipeline.config.subset_bounds,
+            pipeline.config.downscaling_clim_method,
+        )
+        _make_icechunk_store(doy_path)
+
+        with _mock_prepare_doy_clim_compute() as (mock_get_obs, *_):
+            pipeline.prepare_doy_climatology(force=True)
+            mock_get_obs.assert_called_once()
+
+    def test_returns_doy_clim_path_after_compute(self, pipeline):
+        obs_path = pipeline.cache.get_obs_path(
+            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
+        )
+        _make_icechunk_store(obs_path)
+        expected = pipeline.cache.get_doy_clim_path(
+            pipeline.config.gcm,
+            pipeline.config.variable,
+            pipeline.config.subset_bounds,
+            pipeline.config.downscaling_clim_method,
+        )
+        with _mock_prepare_doy_clim_compute():
+            result = pipeline.prepare_doy_climatology()
+        assert result == expected
+
+    def test_get_obs_receives_correct_variable(self, pipeline):
+        obs_path = pipeline.cache.get_obs_path(
+            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
+        )
+        _make_icechunk_store(obs_path)
+        with _mock_prepare_doy_clim_compute() as (mock_get_obs, *_):
+            pipeline.prepare_doy_climatology()
+        mock_get_obs.assert_called_once_with(var="tas")
+
+
+# ---------------------------------------------------------------------------
 # fit_historical – dependency validation & cache routing
 # ---------------------------------------------------------------------------
 
@@ -434,6 +546,14 @@ class TestTransformScenarioBehavior:
             p.cache.get_obs_path(p.config.gcm, p.config.variable, p.config.subset_bounds)
         )
         _make_icechunk_store(
+            p.cache.get_doy_clim_path(
+                p.config.gcm,
+                p.config.variable,
+                p.config.subset_bounds,
+                p.config.downscaling_clim_method,
+            )
+        )
+        _make_icechunk_store(
             p.cache.get_historical_path(
                 p.config.gcm, p.config.variable, p.config.ensemble_member, p.config.subset_bounds
             )
@@ -460,6 +580,14 @@ class TestTransformScenarioBehavior:
             p.cache.get_obs_path(p.config.gcm, p.config.variable, p.config.subset_bounds)
         )
         _make_icechunk_store(
+            p.cache.get_doy_clim_path(
+                p.config.gcm,
+                p.config.variable,
+                p.config.subset_bounds,
+                p.config.downscaling_clim_method,
+            )
+        )
+        _make_icechunk_store(
             p.cache.get_historical_path(
                 p.config.gcm, p.config.variable, p.config.ensemble_member, p.config.subset_bounds
             )
@@ -483,6 +611,14 @@ class TestTransformScenarioBehavior:
                 pr_pipeline.config.gcm,
                 pr_pipeline.config.variable,
                 pr_pipeline.config.subset_bounds,
+            )
+        )
+        _make_icechunk_store(
+            pr_pipeline.cache.get_doy_clim_path(
+                pr_pipeline.config.gcm,
+                pr_pipeline.config.variable,
+                pr_pipeline.config.subset_bounds,
+                pr_pipeline.config.downscaling_clim_method,
             )
         )
         _make_icechunk_store(
@@ -528,6 +664,11 @@ class TestRunFullPipeline:
             ),
             patch.object(
                 pipeline,
+                "prepare_doy_climatology",
+                side_effect=lambda force=False: call_order.append("doy_clim") or "doy_clim_path",
+            ),
+            patch.object(
+                pipeline,
                 "fit_historical",
                 side_effect=lambda force=False: call_order.append("hist") or "hist_path",
             ),
@@ -539,12 +680,13 @@ class TestRunFullPipeline:
         ):
             result = pipeline.run_full_pipeline()
 
-        assert call_order == ["obs", "hist", "scenario"]
+        assert call_order == ["obs", "doy_clim", "hist", "scenario"]
         assert result == "scenario_path"
 
     def test_returns_scenario_output_path(self, pipeline):
         with (
             patch.object(pipeline, "prepare_observations", return_value="obs_path"),
+            patch.object(pipeline, "prepare_doy_climatology", return_value="doy_clim_path"),
             patch.object(pipeline, "fit_historical", return_value="hist_path"),
             patch.object(pipeline, "transform_scenario", return_value="final_path"),
         ):
@@ -553,6 +695,7 @@ class TestRunFullPipeline:
     def test_force_propagated_to_all_stages(self, pipeline, subtests):
         stages = {
             "prepare_observations": "obs_path",
+            "prepare_doy_climatology": "doy_clim_path",
             "fit_historical": "hist_path",
             "transform_scenario": "scenario_path",
         }
@@ -561,12 +704,14 @@ class TestRunFullPipeline:
         }
         with (
             mocks["prepare_observations"] as mo,
+            mocks["prepare_doy_climatology"] as md,
             mocks["fit_historical"] as mh,
             mocks["transform_scenario"] as ms,
         ):
             pipeline.run_full_pipeline(force=True)
             for name, mock in [
                 ("prepare_observations", mo),
+                ("prepare_doy_climatology", md),
                 ("fit_historical", mh),
                 ("transform_scenario", ms),
             ]:
@@ -576,10 +721,12 @@ class TestRunFullPipeline:
     def test_force_false_by_default(self, pipeline):
         with (
             patch.object(pipeline, "prepare_observations", return_value="obs") as mo,
+            patch.object(pipeline, "prepare_doy_climatology", return_value="doy") as md,
             patch.object(pipeline, "fit_historical", return_value="hist") as mh,
             patch.object(pipeline, "transform_scenario", return_value="scen") as ms,
         ):
             pipeline.run_full_pipeline()
             mo.assert_called_once_with(force=False)
+            md.assert_called_once_with(force=False)
             mh.assert_called_once_with(force=False)
             ms.assert_called_once_with(force=False)

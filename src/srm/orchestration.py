@@ -45,6 +45,7 @@ class BCSDOrchestrator:
     # so it runs on a larger instance; the other two stages are fine on the base size.
     _STAGE_VM_TYPES: dict[str, list[str]] = {
         "prepare_observations": ["r8g.4xlarge"],
+        "prepare_doy_climatology": ["r8g.4xlarge"],
         "fit_historical": ["r8g.12xlarge"],
         "transform_scenario": ["r8g.24xlarge"],
     }
@@ -72,7 +73,12 @@ class BCSDOrchestrator:
 
     def submit_stage(
         self,
-        stage: Literal["prepare_observations", "fit_historical", "transform_scenario"],
+        stage: Literal[
+            "prepare_observations",
+            "prepare_doy_climatology",
+            "fit_historical",
+            "transform_scenario",
+        ],
         configs: list[BCSDConfig],
         force: bool = False,
         use_coiled: bool = True,
@@ -279,6 +285,8 @@ class BCSDOrchestrator:
 
             if stage == "prepare_observations":
                 path = pipeline.prepare_observations()
+            elif stage == "prepare_doy_climatology":
+                path = pipeline.prepare_doy_climatology()
             elif stage == "fit_historical":
                 path = pipeline.fit_historical()
             elif stage == "transform_scenario":
@@ -325,6 +333,13 @@ class BCSDOrchestrator:
         logger.info(f"║ Stage 1: prepare_observations ({len(obs_configs)} unique tasks)")
         self.submit_stage("prepare_observations", obs_configs, force=force, use_coiled=use_coiled)
 
+        # Stage 1.5: Unique DOY climatology tasks (one per GCM/variable/clim_method combination)
+        doy_clim_configs = self._deduplicate_doy_clim_configs(configs)
+        logger.info(f"║ Stage 1.5: prepare_doy_climatology ({len(doy_clim_configs)} unique tasks)")
+        self.submit_stage(
+            "prepare_doy_climatology", doy_clim_configs, force=force, use_coiled=use_coiled
+        )
+
         # Stage 2: Unique historical tasks
         hist_configs = self._deduplicate_historical_configs(configs)
         logger.info(f"║ Stage 2: fit_historical ({len(hist_configs)} unique tasks)")
@@ -358,6 +373,35 @@ class BCSDOrchestrator:
         unique = []
         for config in configs:
             key = (config.gcm, config.variable)
+            if key not in seen:
+                seen.add(key)
+                unique.append(config)
+        return unique
+
+    def _deduplicate_doy_clim_configs(self, configs: list[BCSDConfig]) -> list[BCSDConfig]:
+        """
+        Extract unique (GCM, variable, subset_bounds, clim_method) combinations
+        for DOY climatology computation.
+
+        Parameters
+        ----------
+        configs : list[BCSDConfig]
+            All configurations
+
+        Returns
+        -------
+        list[BCSDConfig]
+            Deduplicated configs for DOY climatology stage
+        """
+        seen = set()
+        unique = []
+        for config in configs:
+            key = (
+                config.gcm,
+                config.variable,
+                config.subset_bounds,
+                config.downscaling_clim_method,
+            )
             if key not in seen:
                 seen.add(key)
                 unique.append(config)

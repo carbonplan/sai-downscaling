@@ -2,8 +2,9 @@
 Artifact caching system for BCSD pipeline.
 
 Manages S3-based cache storage with dependency tracking and automatic
-cache validation. Supports three stages:
+cache validation. Supports four stages:
 - obs_regridded: Observation data regridded to GCM grid
+- obs_doy_clim: ERA5 daily climatology at fine and coarse resolution
 - historical: Downscaled historical period
 - scenario: Downscaled future scenario
 """
@@ -106,6 +107,38 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(subset_bounds)
         return f"{self.base_path}/{self.environment}/{self.version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
+
+    def get_doy_clim_path(
+        self,
+        gcm: str,
+        variable: str,
+        subset_bounds: tuple[float, float, float, float] | None = None,
+        clim_method: str = "simple",
+    ) -> str:
+        """
+        Get path to cached DOY climatology artifact.
+
+        Stores both obs_fine_doy_means and obs_coarse_doy_means together,
+        keyed on (gcm, variable, subset_bounds, clim_method).
+
+        Parameters
+        ----------
+        gcm : str
+            GCM name (determines the coarse target grid)
+        variable : str
+            Variable name
+        subset_bounds : tuple or None
+            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
+        clim_method : str
+            Climatology method ('simple' or 'fft')
+
+        Returns
+        -------
+        str
+            S3 or local path to icechunk store
+        """
+        subset_id = self._get_subset_id(subset_bounds)
+        return f"{self.base_path}/{self.environment}/{self.version}/obs/{gcm}_{variable}_{subset_id}_{clim_method}_doy_clim.icechunk"
 
     def get_historical_path(
         self,
@@ -244,17 +277,31 @@ class ArtifactCache:
         if stage == "prepare_observations":
             return {}  # No dependencies
 
-        elif stage == "fit_historical":
+        elif stage == "prepare_doy_climatology":
             obs_path = self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
             return {"obs_regridded": (self.exists(obs_path), obs_path)}
 
+        elif stage == "fit_historical":
+            obs_path = self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+            doy_path = self.get_doy_clim_path(
+                config.gcm, config.variable, config.subset_bounds, config.downscaling_clim_method
+            )
+            return {
+                "obs_regridded": (self.exists(obs_path), obs_path),
+                "obs_doy_clim": (self.exists(doy_path), doy_path),
+            }
+
         elif stage == "transform_scenario":
             obs_path = self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+            doy_path = self.get_doy_clim_path(
+                config.gcm, config.variable, config.subset_bounds, config.downscaling_clim_method
+            )
             hist_path = self.get_historical_path(
                 config.gcm, config.variable, config.ensemble_member, config.subset_bounds
             )
             return {
                 "obs_regridded": (self.exists(obs_path), obs_path),
+                "obs_doy_clim": (self.exists(doy_path), doy_path),
                 "historical": (self.exists(hist_path), hist_path),
             }
 
@@ -305,6 +352,14 @@ class ArtifactCache:
         """
         if stage == "prepare_observations":
             return self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+
+        elif stage == "prepare_doy_climatology":
+            return self.get_doy_clim_path(
+                config.gcm,
+                config.variable,
+                config.subset_bounds,
+                config.downscaling_clim_method,
+            )
 
         elif stage == "fit_historical":
             return self.get_historical_path(

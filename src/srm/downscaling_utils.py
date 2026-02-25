@@ -248,6 +248,8 @@ def downscale_from_coarse(
     obs_fine: xr.DataArray,
     method: typing.Literal["additive", "multiplicative"] = "additive",
     clim_method: typing.Literal["simple", "fft"] = "simple",
+    obs_fine_doy_means: xr.DataArray | None = None,
+    obs_coarse_doy_means: xr.DataArray | None = None,
 ) -> xr.DataArray:
     valid_clim_methods = ["simple", "fft"]
     if clim_method not in valid_clim_methods:
@@ -256,12 +258,16 @@ def downscale_from_coarse(
         )
 
     # Step 1: calculate the daily climatology of high-res observations
-    obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
+    # (skipped when pre-computed DOY means are passed in from cache)
+    if obs_fine_doy_means is None:
+        obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
 
     # Step 2: Aggregate daily climatology to the low-resolution grid of the GCM being processed
-    obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
-        da_fine_to_coarsen=obs_fine_doy_means, da_coarse_grid=obs_coarse
-    )
+    # (skipped when pre-computed DOY means are passed in from cache)
+    if obs_coarse_doy_means is None:
+        obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
+            da_fine_to_coarsen=obs_fine_doy_means, da_coarse_grid=obs_coarse
+        )
 
     # Step 3: Remove coarsened daily climatology from the bias-corrected fields
     valid_values = ["additive", "multiplicative"]

@@ -461,7 +461,7 @@ class TestRunFullWorkflow:
         with patch.object(orchestrator, "submit_stage", return_value=["path"]) as mock_submit:
             orchestrator.run_full_workflow([config], use_coiled=False)
 
-        assert mock_submit.call_count == 3
+        assert mock_submit.call_count == 4
 
     def test_stages_called_in_correct_order(self, orchestrator, config):
         call_order = []
@@ -473,7 +473,12 @@ class TestRunFullWorkflow:
         with patch.object(orchestrator, "submit_stage", side_effect=record_stage):
             orchestrator.run_full_workflow([config], use_coiled=False)
 
-        assert call_order == ["prepare_observations", "fit_historical", "transform_scenario"]
+        assert call_order == [
+            "prepare_observations",
+            "prepare_doy_climatology",
+            "fit_historical",
+            "transform_scenario",
+        ]
 
     def test_obs_stage_receives_deduplicated_configs(self, orchestrator, multi_configs):
         submitted = {}

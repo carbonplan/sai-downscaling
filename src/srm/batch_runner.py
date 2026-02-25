@@ -53,6 +53,8 @@ def run_stage(
 
         if stage == "prepare_observations":
             result_path = pipeline.prepare_observations()
+        elif stage == "prepare_doy_climatology":
+            result_path = pipeline.prepare_doy_climatology()
         elif stage == "fit_historical":
             result_path = pipeline.fit_historical()
         elif stage == "transform_scenario":

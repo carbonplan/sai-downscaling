@@ -221,6 +221,43 @@ class TestScenarioPath:
         assert "g6-1.5k.icechunk" in path
 
 
+class TestDoyClimPath:
+    def test_contained_in_obs_directory(self, local_cache):
+        path = local_cache.get_doy_clim_path("CESM2-WACCM", "tas")
+        assert "/obs/" in path
+
+    def test_filename_contains_clim_method(self, local_cache):
+        path = local_cache.get_doy_clim_path("CESM2-WACCM", "tas", clim_method="fft")
+        assert "fft" in path
+
+    def test_filename_ends_with_doy_clim(self, local_cache):
+        path = local_cache.get_doy_clim_path("CESM2-WACCM", "tas")
+        assert "doy_clim.icechunk" in path
+
+    def test_paths_differ_per_clim_method(self, local_cache):
+        simple = local_cache.get_doy_clim_path("CESM2-WACCM", "tas", clim_method="simple")
+        fft = local_cache.get_doy_clim_path("CESM2-WACCM", "tas", clim_method="fft")
+        assert simple != fft
+
+    def test_default_clim_method_is_simple(self, local_cache):
+        path = local_cache.get_doy_clim_path("CESM2-WACCM", "tas")
+        assert "simple" in path
+
+    def test_global_subset_id_in_filename(self, local_cache):
+        path = local_cache.get_doy_clim_path("CESM2-WACCM", "tas")
+        assert "global" in path
+
+    def test_regional_subset_id_in_filename(self, local_cache):
+        path = local_cache.get_doy_clim_path("CESM2-WACCM", "tas", (-35.0, -22.0, 16.0, 33.0))
+        assert "lat-35.0to-22.0_lon16.0to33.0" in path
+        assert "global" not in path
+
+    def test_paths_differ_per_gcm(self, local_cache):
+        cesm = local_cache.get_doy_clim_path("CESM2-WACCM", "tas")
+        miroc = local_cache.get_doy_clim_path("MIROC-ES2H", "tas")
+        assert cesm != miroc
+
+
 # ---------------------------------------------------------------------------
 # exists() – local filesystem
 # ---------------------------------------------------------------------------
@@ -259,13 +296,19 @@ class TestCheckDependencies:
         deps = local_cache.check_dependencies("prepare_observations", base_config)
         assert deps == {}
 
-    def test_fit_historical_requires_obs_only(self, local_cache, base_config):
-        deps = local_cache.check_dependencies("fit_historical", base_config)
+    def test_prepare_doy_climatology_requires_obs_only(self, local_cache, base_config):
+        deps = local_cache.check_dependencies("prepare_doy_climatology", base_config)
         assert set(deps.keys()) == {"obs_regridded"}
 
-    def test_transform_scenario_requires_obs_and_historical(self, local_cache, base_config):
+    def test_fit_historical_requires_obs_and_doy_clim(self, local_cache, base_config):
+        deps = local_cache.check_dependencies("fit_historical", base_config)
+        assert set(deps.keys()) == {"obs_regridded", "obs_doy_clim"}
+
+    def test_transform_scenario_requires_obs_doy_clim_and_historical(
+        self, local_cache, base_config
+    ):
         deps = local_cache.check_dependencies("transform_scenario", base_config)
-        assert set(deps.keys()) == {"obs_regridded", "historical"}
+        assert set(deps.keys()) == {"obs_regridded", "obs_doy_clim", "historical"}
 
     def test_dependency_values_are_bool_path_tuples(self, local_cache, base_config):
         deps = local_cache.check_dependencies("transform_scenario", base_config)
@@ -288,13 +331,28 @@ class TestValidateDependencies:
         with pytest.raises(ValueError, match="Missing dependencies"):
             local_cache.validate_dependencies("fit_historical", base_config)
 
-    def test_passes_when_obs_store_exists(self, local_cache, base_config):
+    def test_passes_when_obs_and_doy_clim_stores_exist(self, local_cache, base_config):
+        obs_path = local_cache.get_obs_path(
+            base_config.gcm, base_config.variable, base_config.subset_bounds
+        )
+        doy_path = local_cache.get_doy_clim_path(
+            base_config.gcm,
+            base_config.variable,
+            base_config.subset_bounds,
+            base_config.downscaling_clim_method,
+        )
+        make_icechunk_store(obs_path)
+        make_icechunk_store(doy_path)
+        # Should not raise
+        local_cache.validate_dependencies("fit_historical", base_config)
+
+    def test_raises_when_only_obs_present_for_fit_historical(self, local_cache, base_config):
         obs_path = local_cache.get_obs_path(
             base_config.gcm, base_config.variable, base_config.subset_bounds
         )
         make_icechunk_store(obs_path)
-        # Should not raise
-        local_cache.validate_dependencies("fit_historical", base_config)
+        with pytest.raises(ValueError, match="Missing dependencies"):
+            local_cache.validate_dependencies("fit_historical", base_config)
 
     def test_raises_when_only_obs_present_for_scenario_stage(self, local_cache, base_config):
         obs_path = local_cache.get_obs_path(
@@ -308,6 +366,12 @@ class TestValidateDependencies:
         obs_path = local_cache.get_obs_path(
             base_config.gcm, base_config.variable, base_config.subset_bounds
         )
+        doy_path = local_cache.get_doy_clim_path(
+            base_config.gcm,
+            base_config.variable,
+            base_config.subset_bounds,
+            base_config.downscaling_clim_method,
+        )
         hist_path = local_cache.get_historical_path(
             base_config.gcm,
             base_config.variable,
@@ -315,6 +379,7 @@ class TestValidateDependencies:
             base_config.subset_bounds,
         )
         make_icechunk_store(obs_path)
+        make_icechunk_store(doy_path)
         make_icechunk_store(hist_path)
         # Should not raise
         local_cache.validate_dependencies("transform_scenario", base_config)
@@ -331,6 +396,15 @@ class TestGetOutputPath:
             base_config.gcm, base_config.variable, base_config.subset_bounds
         )
         assert local_cache.get_output_path("prepare_observations", base_config) == expected
+
+    def test_prepare_doy_climatology_returns_doy_clim_path(self, local_cache, base_config):
+        expected = local_cache.get_doy_clim_path(
+            base_config.gcm,
+            base_config.variable,
+            base_config.subset_bounds,
+            base_config.downscaling_clim_method,
+        )
+        assert local_cache.get_output_path("prepare_doy_climatology", base_config) == expected
 
     def test_fit_historical_returns_historical_path(self, local_cache, base_config):
         expected = local_cache.get_historical_path(
@@ -361,7 +435,12 @@ class TestGetOutputPath:
             local_cache.get_output_path("bad_stage", base_config)
 
     def test_all_valid_stages_return_strings(self, subtests, local_cache, base_config):
-        for stage in ("prepare_observations", "fit_historical", "transform_scenario"):
+        for stage in (
+            "prepare_observations",
+            "prepare_doy_climatology",
+            "fit_historical",
+            "transform_scenario",
+        ):
             with subtests.test(stage=stage):
                 path = local_cache.get_output_path(stage, base_config)
                 assert isinstance(path, str)
