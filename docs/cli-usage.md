@@ -21,45 +21,43 @@ For a complete walkthrough with visualizations, see [docs/demo-new-pipeline.ipyn
 
 ## Quick Start
 
-1. **Create a configuration file** (see `configs/example.yaml`):
-
-```yaml
-# Model and scenario
-gcm: "CESM2-WACCM"
-variable: "tas"
-ensemble_member: 0
-scenario: "SSP245"
-
-# Time periods
-train_period_start: 1978
-train_period_end: 2014
-predict_period_start: 2015
-predict_period_end: 2100
-
-# Optional: Regional subsetting (e.g., South Africa)
-subset_bounds: [-35, -22, 16, 33]  # [lat_min, lat_max, lon_min, lon_max]
-
-# Storage configuration
-cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"  # Intermediate artifacts
-output_dir: "s3://carbonplan-scratch/srm/outputs/"   # Final outputs
-environment: "qa"  # qa, staging, or production
-version: "v1"      # version identifier for all output paths (default: v1)
-```
-
-1. **Run the full pipeline**:
+The recommended way to run the pipeline — especially across multiple GCMs, variables, ensemble members, or scenarios — is `bcsd run-matrix`. It generates and runs every combination from the command line without needing any config files:
 
 ```bash
-# Use default environment and version from config
+# 2 GCMs × 2 variables × 3 members × 2 scenarios
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM --gcm MIROC-ES2H \
+  --variable tas --variable pr \
+  --member 0 --member 1 --member 2 \
+  --scenario ssp245 --scenario G6-1pt5k \
+  --predict-period-start 2015 --predict-period-end 2100 \
+  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --output-dir "s3://carbonplan-scratch/srm/outputs/"
+```
+
+Use `--dry-run` to preview the generated matrix before executing:
+
+```bash
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM --variable tas --member 0 \
+  --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
+  --dry-run
+```
+
+For a **single run** or when you already have a config file, use `bcsd run`:
+
+```bash
+# Run from a config file
 uv run bcsd run --config-path configs/example.yaml
 
-# Override version at the command line (e.g. to write a new data version)
+# Override version without editing the file
 uv run bcsd run --config-path configs/example.yaml --version v2
 
 # Override environment via environment variable
 BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
 ```
 
-1. **Check status**:
+Check pipeline status at any time:
 
 ```bash
 uv run bcsd status --config-path configs/example.yaml --verbose
@@ -171,14 +169,15 @@ graph TB
 ```
 cache_dir/{environment}/{version}/
 ├── obs/
-│   └── {gcm}_{variable}_{subset_id}_obs_regridded.zarr
+│   └── {gcm}_{variable}_{subset_id}_obs_regridded.icechunk
 └── historical/
-    └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr
+    └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk
 
 output_dir/{environment}/{version}/
 ├── historical/
-│   └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr
-└── {gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr
+│   └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk
+└── {scenario_lower}/
+    └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk
 ```
 
 Where:
@@ -187,6 +186,7 @@ Where:
 - `{version}`: `v1`, `v2`, etc. (default: `v1`)
 - `{subset_id}`: `global` or `lat{min}to{max}_lon{min}to{max}` (e.g., `lat-35.0to-22.0_lon16.0to33.0`)
 - `{ensemble:03d}`: Zero-padded ensemble member (e.g., `000`, `001`)
+- `{scenario_lower}`: Scenario name in lowercase (e.g., `ssp245`, `g6-1.5k`)
 
 this structure ensures complete isolation between:
 
@@ -197,54 +197,9 @@ this structure ensures complete isolation between:
 
 ## Commands
 
-### `bcsd run` - Execute Pipeline
+### `bcsd run-matrix` - Run Pipeline Over a Matrix (Recommended)
 
-run the BCSD downscaling pipeline with automatic caching and resumability.
-
-```bash
-uv run bcsd run --config-path PATH [OPTIONS]
-```
-
-**options:**
-
-- `--config-path TEXT` (required): path to YAML config file or directory of configs
-- `--stage TEXT`: run specific stage (`prepare_observations`/`fit_historical`/`transform_scenario`/`all`, default: `all`)
-- `--force`: force recompute even if cached
-- `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
-- `--version TEXT`: override the `version` field from the config (e.g. `v2`)
-
-**Examples:**
-
-```bash
-# Run full pipeline with Coiled (all three stages)
-uv run bcsd run --config-path configs/example.yaml
-
-# Run only observation regridding stage locally
-uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --no-coiled
-
-# Force recompute of historical stage (ignores cache)
-uv run bcsd run --config-path configs/example.yaml --stage fit_historical --force
-
-# Batch process all configs in directory
-uv run bcsd run --config-path configs/cesm2-ensemble/
-
-# Override version (write outputs under v2/ path without editing config files)
-uv run bcsd run --config-path configs/example.yaml --version v2
-
-# Override environment for production run
-BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
-```
-
-**stage details:**
-
-- `prepare_observations`: regrid ERA5 to GCM grid (shared across ensembles)
-- `fit_historical`: debias and downscale historical period (shared across scenarios)
-- `transform_scenario`: debias and downscale future scenario (final output)
-- `all`: run all three stages in sequence (default)
-
-### `bcsd run-matrix` - Run Pipeline Over a Matrix
-
-Run the BCSD pipeline over the cartesian product of GCMs, variables, ensemble members, and scenarios — **no config files needed**.
+> **Recommended for multi-run workflows.** Specify each dimension as a repeatable option and the CLI runs every combination — no config files needed. The orchestrator automatically deduplicates shared work across stages.
 
 ```bash
 uv run bcsd run-matrix [OPTIONS]
@@ -273,17 +228,19 @@ uv run bcsd run-matrix [OPTIONS]
 **Examples:**
 
 ```bash
-# 2 GCMs x 2 variables x 3 members x 2 scenarios = 24 configs, full pipeline
+# 2 GCMs x 2 variables x 3 members x 2 scenarios 
 uv run bcsd run-matrix \
-  --gcm CESM2-WACCM --gcm MIROC \
+  --gcm CESM2-WACCM --gcm MIROC-ES2H \
   --variable tas --variable pr \
   --member 0 --member 1 --member 2 \
   --scenario ssp245 --scenario G6-1pt5k \
-  --predict-period-start 2015 --predict-period-end 2100
+  --predict-period-start 2015 --predict-period-end 2100 \
+  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --output-dir "s3://carbonplan-scratch/srm/outputs/"
 
 # Preview what would run without executing
 uv run bcsd run-matrix \
-  --gcm CESM2-WACCM --gcm MIROC \
+  --gcm CESM2-WACCM --gcm MIROC-ES2H \
   --variable tas \
   --member 0 --member 1 \
   --scenario ssp245 \
@@ -304,9 +261,88 @@ uv run bcsd run-matrix \
   --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33'
+
+# Run only a specific stage
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM --variable tas --member 0 \
+  --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
+  --stage scenario
+
+# Force recompute of all runs
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM --variable tas --member 0 \
+  --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
+  --force
 ```
 
-The matrix is equivalent to the cartesian product `GCMs × variables × members × scenarios`.  The orchestrator automatically deduplicates shared work (e.g. `prepare_observations` runs once per GCM/variable combination regardless of how many ensemble members are in the matrix).
+The matrix is the cartesian product `GCMs × variables × members × scenarios`. The orchestrator automatically deduplicates shared work: `prepare_observations` runs once per (GCM, variable) combination and `fit_historical` runs once per (GCM, variable, ensemble) combination, regardless of how many scenarios are in the matrix.
+
+**How Deduplication Works:**
+
+```
+Example: CESM2-WACCM, tas, ensembles [0,1,2], ssp245
+
+stage 1 (prepare_observations):
+  - 1 task runs (shared across all ensembles and scenarios)
+  - key: (CESM2-WACCM, tas)
+  - output: obs_regridded cached once, reused 3 times
+
+stage 2 (fit_historical):
+  - 3 tasks run (one per ensemble member)
+  - keys: (CESM2-WACCM, tas, 0), (CESM2-WACCM, tas, 1), (CESM2-WACCM, tas, 2)
+  - outputs: historical cached for each ensemble, reused across scenarios
+
+stage 3 (transform_scenario):
+  - 3 tasks run (one per ensemble/scenario combination)
+  - all run in parallel since dependencies are already cached
+```
+
+### `bcsd run` - Execute Pipeline from Config File
+
+run the BCSD downscaling pipeline for a **single config** or a **directory of pre-existing config files**.
+
+> For new multi-run workflows, prefer `bcsd run-matrix` instead.
+
+```bash
+uv run bcsd run --config-path PATH [OPTIONS]
+```
+
+**options:**
+
+- `--config-path TEXT` (required, repeatable): path to YAML config file or directory of configs (can be specified multiple times)
+- `--stage TEXT`: run specific stage (`prepare_observations`/`fit_historical`/`transform_scenario`/`all`, default: `all`)
+- `--force`: force recompute even if cached
+- `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
+- `--version TEXT`: override the `version` field from the config (e.g. `v2`)
+
+**Examples:**
+
+```bash
+# Run full pipeline for a single config
+uv run bcsd run --config-path configs/example.yaml
+
+# Run only observation regridding stage locally
+uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --no-coiled
+
+# Force recompute of historical stage (ignores cache)
+uv run bcsd run --config-path configs/example.yaml --stage fit_historical --force
+
+# Override version (write outputs under v2/ path without editing config files)
+uv run bcsd run --config-path configs/example.yaml --version v2
+
+# Override environment for production run
+BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
+
+# Process all configs in a directory
+uv run bcsd run --config-path configs/cesm2-ensemble/
+```
+
+**stage details:**
+
+- `prepare_observations`: regrid ERA5 to GCM grid (shared across ensembles)
+- `fit_historical`: debias and downscale historical period (shared across scenarios)
+- `transform_scenario`: debias and downscale future scenario (final output)
+- `all`: run all three stages in sequence (default)
 
 ### `bcsd status` - Check Cache Status
 
@@ -328,30 +364,25 @@ uv run bcsd status --config-path PATH [--verbose]
 uv run bcsd status --config-path configs/example.yaml --verbose
 
 # Output:
-# ╔══════════════════════════════════════════════════════════════╗
-# ║              BCSD Pipeline Status                            ║
-# ╚══════════════════════════════════════════════════════════════╝
-# 
-# Configuration: configs/example.yaml
+# Cache Configuration:
+#   Cache Path: s3://carbonplan-scratch/srm/bcsd-cache
+#   Output Path: s3://carbonplan-scratch/srm/outputs
 #   Environment: qa
 #   Version: v1
-#   Cache dir: s3://carbonplan-scratch/srm/bcsd-cache/qa/v1/
-#   Output dir: s3://carbonplan-scratch/srm/outputs/qa/v1/
-#   Spatial subset: lat-35.0to-22.0_lon16.0to33.0 (South Africa region)
-# 
+#
+# Example Paths:
+#   Obs: s3://.../bcsd-cache/qa/v1/obs/CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.icechunk
+#   Historical: s3://.../outputs/qa/v1/historical/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.icechunk
+#   Scenario: s3://.../outputs/qa/v1/ssp245/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_ssp245.icechunk
+#
 # Stage Progress:
-# ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┓
-# ┃ Stage                ┃ Total ┃ Cached ┃ Missing ┃ Progress  ┃
-# ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━┩
-# │ prepare_observations │     1 │      1 │       0 │ 1/1 ✓     │
-# │ fit_historical       │     1 │      1 │       0 │ 1/1 ✓     │
-# │ transform_scenario   │     1 │      0 │       1 │ 0/1       │
-# └──────────────────────┴───────┴────────┴─────────┴───────────┘
-# 
-# Example cached paths:
-#   Observations: s3://.../bcsd-cache/qa/v1/obs/CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.zarr
-#   Historical: s3://.../bcsd-cache/qa/v1/historical/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.zarr
-#   Scenario: s3://.../outputs/qa/v1/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_SSP245.zarr
+# ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+# ┃ Stage                ┃ Total ┃ Cached ┃ Missing ┃ Progress        ┃
+# ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+# │ Prepare Observations │     1 │      1 │       0 │ 1/1 (100%)      │
+# │ Fit Historical       │     1 │      1 │       0 │ 1/1 (100%)      │
+# │ Transform Scenario   │     1 │      0 │       1 │ 0/1 (0%)        │
+# └──────────────────────┴───────┴────────┴─────────┴─────────────────┘
 ```
 
 ### `bcsd cache-list` - List Cached Artifacts
@@ -423,7 +454,7 @@ Configuration files use YAML format with Pydantic validation. all fields are val
 ```yaml
 # Model identifiers
 gcm: "CESM2-WACCM"                    # GCM model name
-variable: "tas"                        # Variable: tas, tasmax, pr
+variable: "tas"                        # Variable: tas, tasmax, pr, rsds
 ensemble_member: 0                     # Ensemble member (0-indexed)
 scenario: "SSP245"                     # Scenario: SSP245, G6-1.5K, etc.
 
@@ -448,13 +479,13 @@ subset_bounds: [-35, -22, 16, 33]     # [lat_min, lat_max, lon_min, lon_max]
 environment: "qa"                      # Environment: qa, staging, production
 # Version identifier (default: "v1")
 version: "v1"                          # Bump to invalidate all cached artifacts without changing environment
-# SAI scenarios (required for G6-* scenarios)
+
 
 # Variable-specific settings (auto-loaded if not specified)
 variable_config:
   detrend_data: true                   # Whether to detrend (auto-set based on variable)
   do_windowing: true                   # Use 31-day running window for QM
-  downscaling_method: "subtract"       # "subtract" for temp, "divide" for precip
+  downscaling_method: "additive"       # "additive" for temp, "multiplicative" for precip
   downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
 
 # Runtime options
@@ -495,9 +526,10 @@ The pipeline automatically sets variable-specific parameters based on `BCSD_CONF
 
 | Variable | detrend_data | do_windowing | downscaling_method | downscaling_clim_method |
 |----------|--------------|--------------|-------------------|------------------------|
-| `tas`    | `true`       | `true`       | `subtract`        | `fft`                  |
-| `tasmax` | `true`       | `true`       | `subtract`        | `fft`                  |
-| `pr`     | `false`      | `true`       | `divide`          | `simple`               |
+| `tas`    | `true`       | `true`       | `additive`        | `fft`                  |
+| `tasmax` | `true`       | `true`       | `additive`        | `fft`                  |
+| `pr`     | `false`      | `true`       | `multiplicative`  | `simple`               |
+| `rsds`   | `true`       | `true`       | `multiplicative`  | `simple`               |
 
 you can override these in the config file if needed.
 
@@ -522,10 +554,49 @@ train_period_end: 1980
 
 ## Batch Processing
 
-the CLI supports batch processing by pointing to a directory of config files. the orchestrator automatically deduplicates work across configs:
+The recommended approach for all multi-run workflows is `bcsd run-matrix`. It takes the cartesian product of the dimensions you specify and handles everything — no config files to write or manage.
 
 ```bash
-# Create configs for multiple ensemble members
+# 3 members × 2 scenarios for CESM2-WACCM tas, with deduplication
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM \
+  --variable tas \
+  --member 0 --member 1 --member 2 \
+  --scenario SSP245 --scenario G6-1.5K \
+  --predict-period-start 2015 --predict-period-end 2100 \
+  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --output-dir "s3://carbonplan-scratch/srm/outputs/" \
+  --environment qa --version v1
+```
+
+The orchestrator automatically deduplicates shared work across the matrix:
+
+- **1** `prepare_observations` task (one per GCM/variable, shared across all members and scenarios)
+- **3** `fit_historical` tasks (one per ensemble member, shared across scenarios)
+- **6** `transform_scenario` tasks (one per member/scenario combination)
+
+### Multi-Scenario Example
+
+```bash
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM \
+  --variable tas \
+  --member 0 \
+  --scenario SSP245 --scenario G6-1.5K \
+  --predict-period-start 2015 --predict-period-end 2100 \
+  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --output-dir "s3://carbonplan-scratch/srm/outputs/"
+# obs and historical artifacts are computed once and reused for both scenarios
+```
+
+### Using Config Files (Alternative)
+
+For workflows that are driven by version-controlled YAML config files, `bcsd run` accepts a directory of configs and applies the same deduplication logic:
+
+<details>
+<summary>Example: generating and running a directory of config files</summary>
+
+```bash
 for i in {0..2}; do
   cat > configs/batch/cesm2-tas-ssp245-e${i}.yaml <<EOF
 gcm: "CESM2-WACCM"
@@ -536,7 +607,6 @@ train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
 predict_period_end: 2100
-subset_bounds: [-35, -22, 16, 33]
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/outputs"
 environment: "qa"
@@ -544,56 +614,10 @@ version: "v1"
 EOF
 done
 
-# Process all configs in parallel with Coiled
 uv run bcsd run --config-path configs/batch/
 ```
 
-**How Deduplication Works:**
-
-When processing multiple configs, the orchestrator intelligently shares work:
-
-```
-3 configs: CESM2-WACCM, tas, ensembles [0,1,2], SSP245, South Africa
-
-stage 1 (prepare_observations):
-  - only 1 task runs (shared across all ensembles)
-  - key: (CESM2-WACCM, tas, South Africa)
-  - output: obs_regridded cached once, reused 3 times
-
-stage 2 (fit_historical):
-  - 3 tasks run (one per ensemble member)
-  - keys: (CESM2-WACCM, tas, 0, SA), (CESM2-WACCM, tas, 1, SA), (CESM2-WACCM, tas, 2, SA)
-  - outputs: historical cached for each ensemble, reused across scenarios
-
-stage 3 (transform_scenario):
-  - 3 tasks run (one per config)
-  - all scenarios can run in parallel since dependencies are cached
-```
-
-### Multi-Scenario Example
-
-```bash
-# Create configs for multiple scenarios with same ensemble
-for scenario in SSP245 G6-1.5K; do
-  cat > configs/multi/cesm2-tas-e0-${scenario}.yaml <<EOF
-gcm: "CESM2-WACCM"
-variable: "tas"
-ensemble_member: 0
-scenario: "${scenario}"
-train_period_start: 1978
-train_period_end: 2014
-predict_period_start: 2015
-predict_period_end: 2100
-cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
-output_dir: "s3://carbonplan-scratch/srm/outputs"
-environment: "qa"
-version: "v1"
-EOF
-done
-
-# Both scenarios share the same obs and historical artifacts
-uv run bcsd run --config-path configs/multi/
-```
+</details>
 
 ## Caching & Resumability
 
@@ -607,7 +631,7 @@ the pipeline provides intelligent caching at multiple levels to enable efficient
    - observations regridded to GCM grid (shared across all ensembles/scenarios)
    - historical downscaling (shared across all scenarios for an ensemble)
 
-2. **output_dir**: final scenario outputs 
+2. **output_dir**: final scenario outputs
    - downscaled scenario data with full metadata
    - organized by environment for clear separation
 
@@ -618,11 +642,11 @@ s3://carbonplan-scratch/srm/bcsd-cache/
 ├── qa/                                    # QA environment (testing)
 │   ├── v1/                                # Version 1 artifacts
 │   │   ├── obs/
-│   │   │   ├── CESM2-WACCM_tas_global_obs_regridded.zarr
-│   │   │   └── CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.zarr
+│   │   │   ├── CESM2-WACCM_tas_global_obs_regridded.icechunk
+│   │   │   └── CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.icechunk
 │   │   └── historical/
-│   │       ├── CESM2-WACCM_tas_000_global_historical.zarr
-│   │       └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.zarr
+│   │       ├── CESM2-WACCM_tas_000_global_historical.icechunk
+│   │       └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.icechunk
 │   └── v2/                                # Version 2 (after methodological changes)
 │       └── ...
 ├── staging/
@@ -634,9 +658,12 @@ s3://carbonplan-scratch/srm/outputs/
 ├── qa/
 │   ├── v1/
 │   │   ├── historical/
-│   │   │   └── CESM2-WACCM_tas_000_global_historical.zarr
-│   │   ├── CESM2-WACCM_tas_000_global_SSP245.zarr
-│   │   └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_SSP245.zarr
+│   │   │   └── CESM2-WACCM_tas_000_global_historical.icechunk
+│   │   ├── ssp245/
+│   │   │   ├── CESM2-WACCM_tas_000_global_ssp245.icechunk
+│   │   │   └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_ssp245.icechunk
+│   │   └── g6-1.5k/
+│   │       └── CESM2-WACCM_tas_000_global_g6-1.5k.icechunk
 │   └── v2/
 │       └── ...
 ├── staging/
@@ -735,7 +762,7 @@ sequenceDiagram
     Note over Orch: Filter to uncached configs<br/>(12 configs → 8 need computation)
     
     Orch->>Coiled: batch.run(command, task_var_dicts)
-    Note over Coiled: Create 8 isolated VMs<br/>(r8g.2xlarge, 64GB RAM)
+    Note over Coiled: Create 8 isolated VMs<br/>(stage-specific VM type)
     
     loop For each task
         Coiled->>VM: Start VM with CONFIG_JSON env var
@@ -761,12 +788,17 @@ sequenceDiagram
 
 ### VM Configuration
 
-Default configuration:
+VM types are selected per pipeline stage to match resource requirements:
 
-- **instance type**: [`r8g.24xlarge`](https://instances.vantage.sh/aws/ec2/r8g.24xlarge?currency=USD) (768GB RAM, 96 vCPUs, AWS Graviton)
+| Stage | Instance type | Notes |
+|-------|---------------|-------|
+| `prepare_observations` | `r8g.4xlarge` | Light data processing |
+| `fit_historical` | `r8g.12xlarge` | Memory-intensive QM fitting |
+| `transform_scenario` | `r8g.24xlarge` | 768GB RAM, 96 vCPUs, AWS Graviton |
+
 - **region**: `us-west-2` (same as S3 data)
 - **keepalive**: VMs stay alive briefly after task completion for follow-up work
-- **AWS credentials**: Automatically forwarded for S3 access
+- **AWS credentials**: Not forwarded to VMs; VMs use instance profile or environment-level credentials
 
 ### Local Execution
 
@@ -782,36 +814,125 @@ uv run bcsd run --config-path configs/batch/ --no-coiled
 
 ## Advanced Usage
 
-### Multi-Model Ensemble
+### Comparing Outputs Across Code Versions
 
-process multiple GCMs in one batch:
+A common development workflow is to run the pipeline on a small test region against the current code, then run it again after merging new changes, and compare the two sets of outputs to validate that the changes behave as expected. The `version` field is the key mechanism for this: each run writes to a completely isolated path, so both versions of the data coexist in S3 and can be compared at any time.
+
+**Step 1 — Run with the current code on a test region**
+
+Pick a small region (`subset_bounds`) and use `environment: qa` so outputs stay isolated from production data. Use a version string that describes the code state, e.g. the branch name or a short commit hash.
 
 ```bash
-# Create configs for 3 GCMs, 3 ensembles each = 9 configs
-for gcm in CESM2-WACCM MIROC-ES2H UKESM; do
-  for ens in {0..2}; do
-    cat > configs/multi-model/${gcm,,}-e${ens}.yaml <<EOF
-gcm: "${gcm}"
-variable: "tas"
-ensemble_member: ${ens}
-scenario: "SSP245"
-train_period_start: 1978
-train_period_end: 2014
-predict_period_start: 2015
-predict_period_end: 2100
-cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
-output_dir: "s3://carbonplan-scratch/srm/outputs"
-environment: "production"
-version: "v1"
-EOF
-  done
-done
+# Run the pipeline with the current code (e.g. pre-merge main)
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM \
+  --variable tas \
+  --member 0 \
+  --scenario ssp245 \
+  --predict-period-start 2015 --predict-period-end 2100 \
+  --subset-bounds '-35,-22,16,33' \
+  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --output-dir "s3://carbonplan-scratch/srm/outputs/" \
+  --environment qa --version main-baseline 
+```
 
-# Run all 9 configs
+Outputs will be written under `.../outputs/qa/main-baseline/...`.
+
+**Step 2 — Merge the new code and run again with a new version**
+
+After merging (or checking out) the new code, re-run with a different `--version`. Because the version is different, all three stages run from scratch on the same test region, producing a fully independent dataset.
+
+```bash
+# Run the pipeline with the new code (e.g. after merging a refactor branch)
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM \
+  --variable tas \
+  --member 0 \
+  --scenario ssp245 \
+  --predict-period-start 2015 --predict-period-end 2100 \
+  --subset-bounds '-35,-22,16,33' \
+  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --output-dir "s3://carbonplan-scratch/srm/outputs/" \
+  --environment qa --version refactor-icechunk 
+```
+
+Outputs will be written under `.../outputs/qa/refactor-icechunk/...`.
+
+**Step 3 — Compare the two outputs**
+
+Both datasets are now available at their respective version paths and can be loaded and compared side by side:
+
+```python
+import xarray as xr
+import icechunk
+
+def open_version(output_dir, environment, version, gcm, variable, member, scenario, subset_id):
+    path = (
+        f"{output_dir}/{environment}/{version}/{scenario.lower()}/"
+        f"{gcm}_{variable}_{member:03d}_{subset_id}_{scenario.lower()}.icechunk"
+    )
+    bucket, _, prefix = path.removeprefix("s3://").partition("/")
+    storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
+    repo = icechunk.Repository.open(storage)
+    ds = xr.open_dataset(repo.session, engine='zarr', chunks={})
+    return ds
+
+
+kwargs = dict(
+    output_dir="s3://carbonplan-scratch/srm/outputs",
+    environment="qa",
+    gcm="CESM2-WACCM",
+    variable="tas",
+    member=0,
+    scenario="ssp245",
+    subset_id="lat-35.0to-22.0_lon16.0to33.0",
+)
+
+ds_baseline = open_version(**kwargs, version="main-baseline")
+ds_new      = open_version(**kwargs, version="refactor-icechunk")
+
+diff = ds_new["tas"] - ds_baseline["tas"]
+print(diff.max().values, diff.min().values)  # should be ~0 for a pure refactor
+```
+
+**Tips**
+
+- Keep `environment: qa` for all test runs so they never touch staging or production paths.
+- Use descriptive `--version` strings (branch names, commit hashes, date stamps) rather than `v1`/`v2` so it is always clear which code produced which data.
+- Use `bcsd status` to confirm both versions completed before comparing:
+
+  ```bash
+  uv run bcsd status --config-path configs/example.yaml --version main-baseline
+  uv run bcsd status --config-path configs/example.yaml --version refactor-icechunk
+  ```
+
+- Once you are done comparing, clean up test artifacts with `bcsd cache-clear`:
+
+  ```bash
+  # The cache-clear command uses the version from your config;
+  # point it at a config that has the version you want to remove.
+  uv run bcsd cache-clear --config-path configs/example.yaml --yes
+  ```
+
+### Multi-Model Ensemble
+
+The easiest way to process multiple GCMs, variables, ensemble members, and scenarios is a single `run-matrix` invocation:
+
+```bash
+# 3 GCMs × 1 variable × 3 members × 1 scenario = 9 runs
 # Stage 1: 3 obs tasks (one per GCM)
 # Stage 2: 9 historical tasks (3 per GCM)
 # Stage 3: 9 scenario tasks
-uv run bcsd run --config-path configs/multi-model/ --coiled
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM --gcm MIROC-ES2H --gcm UKESM \
+  --variable tas \
+  --member 0 --member 1 --member 2 \
+  --scenario SSP245 \
+  --predict-period-start 2015 --predict-period-end 2100 \
+  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --output-dir "s3://carbonplan-scratch/srm/outputs/" \
+  --environment production --version v1 \
+  --coiled
 ```
 
 ## Architecture & Implementation
@@ -830,7 +951,7 @@ the CLI is built on several key components:
    - S3-based cache with fsspec backend
    - dependency tracking and validation
    - environment and spatial subset awareness
-   - Zarr v2 and v3 format support
+   - icechunk format with commit-based write verification
    - efficient prefix-based listing (not recursive globbing)
 
 3. **BCSDPipeline** ([src/srm/pipeline.py](../src/srm/pipeline.py))
@@ -896,7 +1017,7 @@ flowchart TD
     S3 --> T
     
     T --> U[Add variable name + metadata]
-    U --> V[Write to S3 Zarr store]
+    U --> V[Write to S3 icechunk store]
     V --> W[VM: Task complete]
     
     W --> X[Orch: Wait for all tasks]
@@ -924,21 +1045,22 @@ def _get_subset_id(subset_bounds):
 
 def get_obs_path(gcm, variable, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
-    return f"{cache_dir}/{environment}/{version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
+    return f"{cache_dir}/{environment}/{version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
 
 def get_historical_path(gcm, variable, ensemble, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
     if output_dir:
-        return f"{output_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+        return f"{output_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
     else:
-        return f"{cache_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+        return f"{cache_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
 
 def get_scenario_path(gcm, variable, ensemble, scenario, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
+    scenario_lower = scenario.lower()
     if output_dir:
-        return f"{output_dir}/{environment}/{version}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
+        return f"{output_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
     else:
-        return f"{cache_dir}/{environment}/{version}/scenarios/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario}.zarr"
+        return f"{cache_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
 ```
 
 this ensures:
