@@ -41,6 +41,14 @@ class BCSDOrchestrator:
     >>> output_paths = orchestrator.run_full_workflow(configs, use_coiled=True)
     """
 
+    # VM sizes per pipeline stage. fit_historical is memory-intensive (QM fitting),
+    # so it runs on a larger instance; the other two stages are fine on the base size.
+    _STAGE_VM_TYPES: dict[str, list[str]] = {
+        "prepare_observations": ["r8g.4xlarge"],
+        "fit_historical": ["r8g.12xlarge"],
+        "transform_scenario": ["r8g.24xlarge"],
+    }
+
     def __init__(self):
         """
         Initialize orchestrator.
@@ -194,16 +202,18 @@ class BCSDOrchestrator:
                 for config in remaining
             ]
 
+            vm_type = self._STAGE_VM_TYPES.get(stage, ["c8g.12xlarge"])
             job_result = coiled.batch.run(
                 command=command,
                 name=f"bcsd-{stage}-{remaining[0].gcm}",
-                vm_type=["r8g.48xlarge"],
-                scheduler_vm_type=["r8g.48xlarge"],
+                vm_type=vm_type,
+                scheduler_vm_type=vm_type,
                 region="us-west-2",
                 map_over_task_var_dicts=task_var_dicts,
-                forward_aws_credentials=True,
+                forward_aws_credentials=False,
                 logger=logger,
                 tag={"Project": "SRM"},
+                disk_size="100GB",
             )
 
             job_id = job_result["job_id"]

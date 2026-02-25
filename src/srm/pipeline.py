@@ -129,12 +129,6 @@ class BCSDPipeline:
                 obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
                 model_grid = subset_space(model_grid, [lat_min, lat_max, lon_min, lon_max])
 
-        # Rechunk for spatial operations
-        if self.config.rechunk_workflow:
-            with Timer("Rechunked to full space", verbose=self.config.verbose):
-                obs_fine = rechunk(obs_fine, pattern="full_space")
-                obs_fine = obs_fine.persist()
-
         # Regrid to coarse grid
         with Timer("Regridded observations to coarse grid", verbose=self.config.verbose):
             # Suppress expected warnings from sparse array operations during regridding
@@ -145,11 +139,15 @@ class BCSDPipeline:
                     da_fine_to_coarsen=obs_fine, da_coarse_grid=model_grid
                 )
 
+        # Rechunk for efficient cache writes and downstream spatial operations
+        if self.config.rechunk_workflow:
+            obs_coarse = rechunk(obs_coarse, pattern="full_space")
+
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
             obs_coarse.name = self.config.variable
             obs_coarse.attrs = obs_fine.attrs  # Preserve units and metadata
-            obs_coarse.chunk({"time": "100MB"}).to_zarr(output_path, mode="w")
+            obs_coarse.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Cached observations: {output_path}")
@@ -287,12 +285,6 @@ class BCSDPipeline:
                 dims=["time", "lat", "lon"],
             )
 
-        # Rechunk for spatial operations
-        if self.config.rechunk_workflow:
-            with Timer("Rechunked for downscaling", verbose=self.config.verbose):
-                model_hist_debiased = rechunk(model_hist_debiased, pattern="full_space")
-                model_hist_debiased = model_hist_debiased.persist()
-
         # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
             model_hist_downscaled = downscale_from_coarse(
@@ -302,12 +294,13 @@ class BCSDPipeline:
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
             )
+            model_hist_downscaled = rechunk(model_hist_downscaled, pattern="full_space")
 
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
             model_hist_downscaled.name = self.config.variable
             model_hist_downscaled.attrs = model_hist.attrs  # Preserve units and metadata
-            model_hist_downscaled.chunk({"time": "100MB"}).to_zarr(output_path, mode="w")
+            model_hist_downscaled.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Cached historical: {output_path}")
@@ -437,13 +430,10 @@ class BCSDPipeline:
             # Rechunk for temporal operations
             if self.config.rechunk_workflow:
                 with Timer("Rechunked for detrending", verbose=self.config.verbose):
-                    model_hist = rechunk(model_hist, pattern="full_time")
-                    model_scenario = rechunk(model_scenario, pattern="full_time")
-                    model_hist = model_hist.persist()
-                    model_scenario = model_scenario.persist()
+                    model_hist = rechunk(model_hist, pattern="full_time").persist()
+                    model_scenario = rechunk(model_scenario, pattern="full_time").persist()
                     if self.config.is_sai_scenario:
-                        ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time")
-                        ssp_timeseries = ssp_timeseries.persist()
+                        ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time").persist()
 
             with Timer("Detrended scenario", verbose=self.config.verbose):
                 # Splice historical + scenario for smooth detrending
@@ -569,12 +559,6 @@ class BCSDPipeline:
                     detrend_method=self.config.detrend_method,
                 )
 
-        # Rechunk for spatial operations
-        if self.config.rechunk_workflow:
-            with Timer("Rechunked for downscaling", verbose=self.config.verbose):
-                scenario_debiased = rechunk(scenario_debiased, pattern="full_space")
-                scenario_debiased = scenario_debiased.persist()
-
         # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
             scenario_downscaled = downscale_from_coarse(
@@ -584,12 +568,13 @@ class BCSDPipeline:
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
             )
+            scenario_downscaled = rechunk(scenario_downscaled, pattern="full_space")
 
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
             scenario_downscaled.name = self.config.variable
             scenario_downscaled.attrs = model_scenario.attrs  # Preserve units and metadata
-            scenario_downscaled.chunk({"time": "100MB"}).to_zarr(output_path, mode="w")
+            scenario_downscaled.to_zarr(output_path, mode="w")
 
         if self.config.verbose:
             logger.info(f"✓ Saved scenario output: {output_path}")
