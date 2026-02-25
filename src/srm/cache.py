@@ -105,7 +105,7 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(subset_bounds)
-        return f"{self.base_path}/{self.environment}/{self.version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
+        return f"{self.base_path}/{self.environment}/{self.version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
 
     def get_historical_path(
         self,
@@ -135,11 +135,11 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(subset_bounds)
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
         else:
             return (
                 f"{self.base_path}/{self.environment}/{self.version}/historical/"
-                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
             )
 
     def get_scenario_path(
@@ -179,11 +179,11 @@ class ArtifactCache:
 
         # Use output_dir for final scenarios if specified, otherwise cache
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.zarr"
+            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
         else:
             return (
                 f"{self.base_path}/{self.environment}/{self.version}/{scenario_lower}/"
-                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.zarr"
+                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
             )
 
     def exists(self, path: str) -> bool:
@@ -360,10 +360,10 @@ class ArtifactCache:
             # List all zarr stores
             if self.base_path.startswith("s3://"):
                 search_base_no_scheme = search_base.replace("s3://", "")
-                all_paths = self.fs.glob(f"{search_base_no_scheme}**/*.zarr")
+                all_paths = self.fs.glob(f"{search_base_no_scheme}**/*.icechunk")
                 all_paths = [f"s3://{p}" for p in all_paths]
             else:
-                all_paths = list(Path(search_base).rglob("*.zarr"))
+                all_paths = list(Path(search_base).rglob("*.icechunk"))
                 all_paths = [str(p) for p in all_paths]
 
             # Filter by GCM and variable if specified
@@ -445,9 +445,9 @@ class ArtifactCache:
                     except FileNotFoundError:
                         continue
 
-                    # Look for zarr stores (directories ending in .zarr)
+                    # Look for icechunk stores (directories ending in .icechunk)
                     for path in all_files:
-                        if path.endswith(".zarr"):
+                        if path.endswith(".icechunk"):
                             full_path = f"s3://{path}"
 
                             # Apply filters
@@ -466,7 +466,7 @@ class ArtifactCache:
                     if not search_path.exists():
                         continue
 
-                    for path in search_path.glob("*.zarr"):
+                    for path in search_path.glob("*.icechunk"):
                         # Apply filters
                         path_parts = path.name.split("_")
                         if gcm and path_parts[0] != gcm:

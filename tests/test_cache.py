@@ -159,7 +159,7 @@ class TestObsPath:
 
     def test_global_subset_id_in_filename(self, local_cache):
         path = local_cache.get_obs_path("CESM2-WACCM", "tas")
-        assert "CESM2-WACCM_tas_global_obs_regridded.zarr" in path
+        assert "CESM2-WACCM_tas_global_obs_regridded.icechunk" in path
 
     def test_regional_subset_id_in_filename(self, local_cache):
         path = local_cache.get_obs_path("CESM2-WACCM", "tas", (-35.0, -22.0, 16.0, 33.0))
@@ -198,7 +198,7 @@ class TestHistoricalPath:
 
     def test_filename_format(self, local_cache):
         path = local_cache.get_historical_path("CESM2-WACCM", "tas", 0)
-        assert "CESM2-WACCM_tas_000_global_historical.zarr" in path
+        assert "CESM2-WACCM_tas_000_global_historical.icechunk" in path
 
 
 class TestScenarioPath:
@@ -214,11 +214,11 @@ class TestScenarioPath:
 
     def test_filename_format(self, local_cache):
         path = local_cache.get_scenario_path("CESM2-WACCM", "tas", 0, "ssp245")
-        assert "CESM2-WACCM_tas_000_global_ssp245.zarr" in path
+        assert "CESM2-WACCM_tas_000_global_ssp245.icechunk" in path
 
     def test_sai_scenario_name_lowercased_in_filename(self, local_cache):
         path = local_cache.get_scenario_path("CESM2-WACCM", "pr", 1, "G6-1.5K")
-        assert "g6-1.5k.zarr" in path
+        assert "g6-1.5k.icechunk" in path
 
 
 # ---------------------------------------------------------------------------
@@ -228,22 +228,22 @@ class TestScenarioPath:
 
 class TestExists:
     def test_nonexistent_path_returns_false(self, local_cache, tmp_path):
-        assert local_cache.exists(str(tmp_path / "missing.zarr")) is False
+        assert local_cache.exists(str(tmp_path / "missing.icechunk")) is False
 
     def test_empty_directory_returns_false(self, local_cache, tmp_path):
-        empty_store = tmp_path / "empty.zarr"
+        empty_store = tmp_path / "empty.icechunk"
         empty_store.mkdir()
         assert local_cache.exists(str(empty_store)) is False
 
     def test_icechunk_store_with_write_commit_returns_true(self, local_cache, tmp_path):
-        store = tmp_path / "valid.zarr"
+        store = tmp_path / "valid.icechunk"
         make_icechunk_store(str(store))
         assert local_cache.exists(str(store)) is True
 
     def test_icechunk_store_without_write_commit_returns_false(self, local_cache, tmp_path):
         import icechunk
 
-        store = tmp_path / "empty_repo.zarr"
+        store = tmp_path / "empty_repo.icechunk"
         storage = icechunk.local_filesystem_storage(path=str(store))
         icechunk.Repository.open_or_create(storage)
         assert local_cache.exists(str(store)) is False
@@ -365,7 +365,7 @@ class TestGetOutputPath:
             with subtests.test(stage=stage):
                 path = local_cache.get_output_path(stage, base_config)
                 assert isinstance(path, str)
-                assert path.endswith(".zarr")
+                assert path.endswith(".icechunk")
 
 
 # ---------------------------------------------------------------------------
