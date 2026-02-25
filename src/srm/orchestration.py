@@ -46,7 +46,7 @@ class BCSDOrchestrator:
     _STAGE_VM_TYPES: dict[str, list[str]] = {
         "prepare_observations": ["r8g.4xlarge"],
         "fit_historical": ["r8g.12xlarge"],
-        "transform_scenario": ["r8g.12xlarge"],
+        "transform_scenario": ["r8g.16xlarge"],
     }
 
     def __init__(self):
