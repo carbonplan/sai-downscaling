@@ -58,7 +58,8 @@ def open_version(output_dir, environment, version, gcm, variable, member, scenar
     bucket, _, prefix = path.removeprefix("s3://").partition("/")
     storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
     repo = icechunk.Repository.open(storage)
-    ds = xr.open_dataset(repo.session, engine='zarr', chunks={})
+    session = repo.readonly_session("main")
+    ds = xr.open_dataset(session.store, engine='zarr', chunks={})
     return ds
 
 
