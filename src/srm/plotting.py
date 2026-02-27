@@ -1,14 +1,16 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import random
+import calendar
 from xclim.indices import dry_days, growing_degree_days, hot_days, tx_max
 
 
-def plot_comparisons(obs, raw, ds1, ds2=None, bias="absolute"):
+def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_name=None, title=''):
     fig, axarr = plt.subplots(figsize=(20, 8), nrows=2, ncols=4)
 
     varname = str(obs.name) if obs.name is not None else ""
-    fig.suptitle(f"1978 mean {varname}", fontsize=16, y=0.98)
+    fig.suptitle(title, fontsize=16, y=0.98)
 
     cax = obs.plot(ax=axarr[0, 0])
     axarr[0, 0].set_title("ERA5")
@@ -17,24 +19,24 @@ def plot_comparisons(obs, raw, ds1, ds2=None, bias="absolute"):
     axarr[0, 1].set_title("GCM raw output")
 
     ds1.plot(ax=axarr[0, 2], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-    axarr[0, 2].set_title("GCM BCSD nonparametric")
+    axarr[0, 2].set_title(ds1_name)
 
     if ds2 is not None:
         ds2.plot(ax=axarr[0, 3], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-        axarr[0, 3].set_title("GCM BCSD parametric")
+        axarr[0, 3].set_title(ds2_name)
     else:
         axarr[0, 3].axis("off")
 
     if bias == "absolute":
         (ds1 - obs).plot(ax=axarr[1, 0])
-        axarr[1, 0].set_title("Nonparametric minus ERA5")
+        axarr[1, 0].set_title(f'{ds1_name} minus ERA5')
 
         if ds2 is not None:
             (ds2 - obs).plot(ax=axarr[1, 1])
-            axarr[1, 1].set_title("Parametric minus ERA5")
+            axarr[1, 1].set_title(f'{ds2_name} minus ERA5')
 
             (ds2 - ds1).plot(ax=axarr[1, 2])
-            axarr[1, 2].set_title("Parametric minus Nonparametric")
+            axarr[1, 2].set_title(f'{ds2_name} minus {ds1_name}')
         else:
             axarr[1, 1].axis("off")
             axarr[1, 2].axis("off")
@@ -83,6 +85,7 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
         for ds in ds_list:
             tasmax = ds[variable]
             tasmax.attrs.setdefault("units", "K")
+            # tx_max doesn't fail
             out.append(tx_max(tasmax, freq="YS").mean("time").compute())
         out = [da.rename("hottest_day") for da in out]
 
@@ -112,14 +115,51 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
         raw_toplot, era5_toplot, ds1_toplot, ds2_toplot = out
 
     return raw_toplot, era5_toplot, ds1_toplot, ds2_toplot
-    
+
+# 4 subregions to focus on
+REGIONS_4 = {
+    "India":        dict(lat=(5, 35),     lon=(68, 97)),
+    "South Africa": dict(lat=(-35, -20),  lon=(16, 33)),
+    "Brazil":       dict(lat=(-35, 6),    lon=(-75, -34)),
+    "West Africa":  dict(lat=(0, 20),     lon=(-20, 15)),
+}
+
+def subset_latlon(ds, lat_bounds, lon_bounds, lat_name="lat", lon_name="lon"):
+    """Subset an xarray Dataset or DataArray to lat/lon bounds."""
+    lat0, lat1 = lat_bounds
+    lon0, lon1 = lon_bounds
+
+    # handle lat ordering
+    lat = ds[lat_name]
+    lat_slice = slice(lat0, lat1) if lat[0] < lat[-1] else slice(lat1, lat0)
+
+    # handle 0–360 vs -180–180 longitude
+    lon = ds[lon_name]
+    uses_360 = (lon.min() >= 0) and (lon.max() > 180)
+
+    def to_360(x):
+        return (x + 360) % 360
+
+    if uses_360:
+        lon0c, lon1c = to_360(lon0), to_360(lon1)
+    else:
+        lon0c, lon1c = lon0, lon1
+
+    if uses_360 and lon0c > lon1c:
+        a = ds.sel({lat_name: lat_slice, lon_name: slice(lon0c, 360)})
+        b = ds.sel({lat_name: lat_slice, lon_name: slice(0, lon1c)})
+        return xr.concat([a, b], dim=lon_name)
+
+    return ds.sel({lat_name: lat_slice, lon_name: slice(lon0c, lon1c)})
+
+
 def get_4_subregions(ds, regions=REGIONS_4):
     """Return dictionary with 4 subset datasets/dataarrays."""
     return {
         name: subset_latlon(ds, bounds["lat"], bounds["lon"])
-        for name, bounds in regions.items()
+        for name, bounds in regions.items()}
 
-def plot_4regions_comparisons(raw, era5, ds1, stat, variable, ds2=None, regions=None):
+def plot_4regions_comparisons(raw, era5, ds1, stat, variable, ds1_title, ds2=None, regions=REGIONS_4):
     """
     One figure:
       rows = 4 regions
@@ -157,8 +197,8 @@ def plot_4regions_comparisons(raw, era5, ds1, stat, variable, ds2=None, regions=
         # titles
         axarr[r, 0].set_title(f"{reg}: ERA5")
         axarr[r, 1].set_title(f"{reg}: Raw output")
-        axarr[r, 2].set_title(f"{reg}: BCSD")
-        axarr[r, 3].set_title(f"{reg}: BCSD minus ERA5")
+        axarr[r, 2].set_title(f"{reg}: {ds1_title}")
+        axarr[r, 3].set_title(f"{reg}: {ds1_title} minus ERA5")
 
     fig.suptitle(f"{stat} ({variable}) — 4 subregions", fontsize=16, y=0.995)
     plt.tight_layout()
@@ -175,6 +215,15 @@ def prep_funky_calendar(ds, ds_timeindex_to_match, time_slice):
 
 def sel_point(ds, lat, lon):
     return ds.sel(lat=lat, lon=lon, method="nearest")
+
+
+def random_non_leap_year(start=1984, end=2014):
+    """pick a random year in the range that isn't a leap year - 
+    we'll use this to plot random years in the record.
+    """
+    years = [y for y in np.arange(start, end + 1) if not calendar.isleap(y)]
+    chosen_year = random.choice(years)
+    return chosen_year
 
 
 def prep_datasets_for_daily_timeseries_plotting(era5, raw, ds1, time_slice, lat, lon, ds2=None):
