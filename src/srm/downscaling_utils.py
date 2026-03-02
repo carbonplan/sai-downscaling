@@ -1,6 +1,5 @@
 import typing
 
-import dask.base
 import icechunk
 import icechunk.xarray
 import numpy as np
@@ -20,13 +19,43 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
     return da_subset
 
 
+_TARGET_CHUNK_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
 def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]) -> xr.DataArray:
     if pattern == "full_space":
-        da_rechunk = da.chunk(time=5, lat=-1, lon=-1)
+        already_chunked = (
+            "time" in da.chunksizes
+            and len(da.chunksizes["time"]) > 1
+            and "lat" in da.chunksizes
+            and len(da.chunksizes["lat"]) == 1
+            and "lon" in da.chunksizes
+            and len(da.chunksizes["lon"]) == 1
+        )
+        if not already_chunked:
+            n_lat = da.sizes["lat"]
+            n_lon = da.sizes["lon"]
+            time_chunk = max(1, int(_TARGET_CHUNK_BYTES / (n_lat * n_lon * da.dtype.itemsize)))
+            da = da.chunk(time=time_chunk, lat=-1, lon=-1)
     elif pattern == "full_time":
-        da_rechunk = da.chunk(time=-1, lat=7, lon=14)
-    da_rechunk = dask.base.optimize(da_rechunk)[0]
-    return da_rechunk
+        already_chunked = (
+            "time" in da.chunksizes
+            and len(da.chunksizes["time"]) == 1
+            and "lat" in da.chunksizes
+            and len(da.chunksizes["lat"]) > 1
+            and "lon" in da.chunksizes
+            and len(da.chunksizes["lon"]) > 1
+        )
+        if not already_chunked:
+            n_time = da.sizes["time"]
+            n_lat = da.sizes["lat"]
+            n_lon = da.sizes["lon"]
+            total_spatial = _TARGET_CHUNK_BYTES / (n_time * da.dtype.itemsize)
+            # split spatial pixels proportionally to preserve the lat/lon aspect ratio
+            lat_chunk = max(1, int(np.sqrt(total_spatial * n_lat / n_lon)))
+            lon_chunk = max(1, int(np.sqrt(total_spatial * n_lon / n_lat)))
+            da = da.chunk(time=-1, lat=lat_chunk, lon=lon_chunk)
+    return da
 
 
 def get_experiment(
@@ -72,7 +101,16 @@ def calculate_baseline_climatology(
     return da_baseline_clim.astype(da_baseline.dtype)
 
 
-def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataArray, xr.DataArray]:
+def detrend(
+    da: xr.DataArray,
+    da_baseline_clim: xr.DataArray,
+    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
+) -> tuple[xr.DataArray, xr.DataArray]:
+    valid_values = ["additive", "multiplicative"]
+    if detrend_method not in valid_values:
+        raise ValueError(
+            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
+        )
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
     da_mon = da_mon.chunk({"time": 120})
@@ -83,9 +121,14 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataAr
     # Apply a 9-year rolling mean within each month group
     da_mon_avg = g.map(lambda x: x.rolling(time=9, center=True, min_periods=1).mean())
 
-    da_mon_trend = da_mon_avg.groupby("time.month").map(
-        lambda x: x - da_baseline_clim.sel(month=x["time.month"][0].item())
-    )
+    if detrend_method == "additive":
+        da_mon_trend = da_mon_avg.groupby("time.month").map(
+            lambda x: x - da_baseline_clim.sel(month=x["time.month"][0].item())
+        )
+    elif detrend_method == "multiplicative":
+        da_mon_trend = da_mon_avg.groupby("time.month").map(
+            lambda x: x / da_baseline_clim.sel(month=x["time.month"][0].item())
+        )
 
     # Project that monthly trend onto the daily timestep
     trend_on_daily_timestep = (
@@ -93,7 +136,10 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataAr
     ).compute()
 
     # Calculate detrended timeseries
-    detrended = da - trend_on_daily_timestep
+    if detrend_method == "additive":
+        detrended = da - trend_on_daily_timestep
+    elif detrend_method == "multiplicative":
+        detrended = da / trend_on_daily_timestep
 
     return detrended.astype(da.dtype), trend_on_daily_timestep.astype(da.dtype)
 
@@ -101,16 +147,18 @@ def detrend(da: xr.DataArray, da_baseline_clim: xr.DataArray) -> tuple[xr.DataAr
 def retrend(
     bias_corrected_detrended: xr.DataArray,
     trend_on_daily_timestep: xr.DataArray,
-    detrending: typing.Literal["additive"] = "additive",
+    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
 ) -> xr.DataArray:
-    valid_values = ["additive"]
-    if detrending not in valid_values:
+    valid_values = ["additive", "multiplicative"]
+    if detrend_method not in valid_values:
         raise ValueError(
-            f"{detrending} is currently not supported. valid values are: {valid_values}"
+            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
         )
 
-    if detrending == "additive":
+    if detrend_method == "additive":
         retrended = bias_corrected_detrended + trend_on_daily_timestep
+    elif detrend_method == "multiplicative":
+        retrended = bias_corrected_detrended * trend_on_daily_timestep
 
     return retrended
 
@@ -119,8 +167,12 @@ def interpolate_fine_to_coarse_grid(
     da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray
 ) -> xr.DataArray:
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).as_numpy().persist()
+    # ensure da_coarse_grid consists of only lat/lon coordinates and a single time step (if time coordinate exists) to avoid issues with xarray_regrid
+    target_grid = da_coarse_grid.reset_coords(drop=True)
+    if "time" in target_grid.coords:
+        target_grid = target_grid.isel(time=[0])
 
+    da_coarse = da_fine_to_coarsen.regrid.conservative(target_grid, latitude_coord="lat")
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
 
@@ -194,7 +246,7 @@ def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    method: typing.Literal["subtract", "divide"] = "subtract",
+    method: typing.Literal["additive", "multiplicative"] = "additive",
     clim_method: typing.Literal["simple", "fft"] = "simple",
 ) -> xr.DataArray:
     valid_clim_methods = ["simple", "fft"]
@@ -212,13 +264,13 @@ def downscale_from_coarse(
     )
 
     # Step 3: Remove coarsened daily climatology from the bias-corrected fields
-    valid_values = ["subtract", "divide"]
+    valid_values = ["additive", "multiplicative"]
     if method not in valid_values:
         raise ValueError(f"{method} is currently not supported. valid values are: {valid_values}")
 
-    if method == "subtract":
+    if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
-    elif method == "divide":
+    elif method == "multiplicative":
         residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
 
     # Step 4: Bilinearly interpolate residuals to the high-res grid
@@ -228,9 +280,9 @@ def downscale_from_coarse(
 
     # Step 5: Return high-res climatology
     # Add or multiply a constant value to the residuals based on DOY
-    if method == "subtract":
+    if method == "additive":
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
-    elif method == "divide":
+    elif method == "multiplicative":
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
 
     return downscaled

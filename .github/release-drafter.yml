@@ -1,0 +1,54 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+categories:
+  - title: "✨ Features & Enhancements"
+    labels:
+      - "enhancement"
+      - "performance"
+  - title: "🐛 Bug Fixes"
+    labels:
+      - "bug"
+  - title: "🧪 Testing & QA"
+    labels:
+      - "testing"
+      - "qa/qc"
+      - "slow-test"
+  - title: "📦 Dependencies"
+    labels:
+      - "dependencies"
+  - title: "🌱 Environment"
+    labels:
+      - "environment"
+  - title: "📚 Documentation"
+    labels:
+      - "documentation"
+  - title: "🗂️ Input Data"
+    labels:
+      - "input-data"
+  - title: "🌀 Pipeline"
+    labels:
+      - "pipeline"
+  - title: "🔧 Access Utilities"
+    labels:
+      - "access-utilities"
+  - title: "🎨 Design"
+    labels:
+      - "design"
+change-template: "- $TITLE @$AUTHOR ([#$NUMBER]($URL))"
+change-title-escapes: '\<*_&#@'
+version-resolver:
+  major:
+    labels:
+      - "major"
+  minor:
+    labels:
+      - "enhancement"
+  default: patch
+exclude-labels:
+  - "wontfix"
+  - "duplicate"
+  - "invalid"
+template: |
+  ## Release v$RESOLVED_VERSION (20YY/MM/DD)
+
+  $CHANGES

@@ -6,22 +6,39 @@ from srm.config import ClusterConfig
 
 @dataclass
 class BaseETLConfig:
-    scenario: str
-    catalog_key: str
+    scenario: str = ""
+    catalog_key: str = ""
     s3_bucket: str = "carbonplan-srm"
     cluster: ClusterConfig = field(default_factory=ClusterConfig)
 
-    def __post_init__(self):
-        self.dataset_entry = catalog.get(self.catalog_key)
+    @property
+    def dataset_entry(self):
+        return catalog.get(self.catalog_key)
 
-        self.bucket = self.dataset_entry.bucket
-        self.prefix = self.dataset_entry.prefix
+    @property
+    def bucket(self):
+        return self.dataset_entry.bucket
 
-        self.output_path = getattr(self.dataset_entry, "path", None)
+    @property
+    def prefix(self):
+        return self.dataset_entry.prefix
 
-        self.all_variables = [var.name for var in self.dataset_entry.expected_vars]
+    @property
+    def output_path(self):
+        return getattr(self.dataset_entry, "path", None)
 
-        self.encoding = {
-            "chunks": self.dataset_entry.expected_chunks,
-            "shards": self.dataset_entry.expected_shards,
+    @property
+    def all_variables(self):
+        return [var.name for var in self.dataset_entry.expected_vars]
+
+    @property
+    def encoding(self):
+        encoding_entry = (
+            catalog.get(self.materialized_key)
+            if hasattr(self, "materialized_key")
+            else self.dataset_entry
+        )
+        return {
+            "chunks": getattr(encoding_entry, "expected_chunks", None),
+            "shards": getattr(encoding_entry, "expected_shards", None),
         }

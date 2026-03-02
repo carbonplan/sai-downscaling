@@ -41,7 +41,7 @@ class BaseMIROC_ES2H_Config(BaseETLConfig):
     )
 
     def __post_init__(self):
-        super().__post_init__()
+        # super().__post_init__()
         self._set_source_url()
 
     def _set_source_url(self):
