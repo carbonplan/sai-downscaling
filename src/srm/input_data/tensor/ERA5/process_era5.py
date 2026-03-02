@@ -1,4 +1,3 @@
-import time
 from dataclasses import dataclass, field
 from typing import Literal, get_args
 
@@ -10,7 +9,6 @@ from icechunk.xarray import to_icechunk
 
 from srm import catalog
 from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
-from srm.input_data.etl_utils import compute_wind_speed
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
@@ -18,7 +16,6 @@ zarr.config.set({"async.concurrency": 128})
 
 @dataclass
 class ERA5Config:
-    WIND_VARS = Literal["10m_u_component_of_wind", "10m_v_component_of_wind"]
     MAX_RESAMPLING = Literal["maximum_2m_temperature_since_previous_post_processing"]
     MIN_RESAMPLING = Literal["minimum_2m_temperature_since_previous_post_processing"]
     MEAN_RESAMPLING = Literal[
@@ -26,7 +23,6 @@ class ERA5Config:
         "2m_temperature",
         "mean_surface_downward_short_wave_radiation_flux",
         "mean_surface_downward_long_wave_radiation_flux",
-        "sfcWind",
         "surface_pressure",
     ]
     ALL_VARS = MAX_RESAMPLING | MIN_RESAMPLING | MEAN_RESAMPLING
@@ -36,10 +32,7 @@ class ERA5Config:
         "2m_temperature": "tas",
         "minimum_2m_temperature_since_previous_post_processing": "tasmin",
         "maximum_2m_temperature_since_previous_post_processing": "tasmax",
-        # 'ADDME_HURS': 'hurs',# we only have specific_humidity at levels in hpa, so can we back out 2m?
         "mean_surface_downward_short_wave_radiation_flux": "rsds",
-        "sfcWind": "sfcWind",
-        # 'ADDME_HUSS': 'huss',
         "mean_surface_downward_long_wave_radiation_flux": "rlds",
         "surface_pressure": "ps",
     }
@@ -57,6 +50,7 @@ class ERA5Config:
         + list(get_args(MIN_RESAMPLING))
         + list(get_args(MEAN_RESAMPLING))
     )
+    DERIVED_VARS = ["dtr"]
 
     def __post_init__(self):
         """Fetch output location from catalog and unpack"""
@@ -179,6 +173,18 @@ def write_to_icechunk(
     session.commit(commit_message)
 
 
+def _load_dtr_from_store(config: ERA5Config) -> xr.Dataset:
+    storage = icechunk.s3_storage(bucket=config.bucket, prefix=config.prefix, region="us-west-2")
+    repo = icechunk.Repository.open(storage)
+    session = repo.readonly_session("main")
+    ds = xr.open_dataset(session.store, engine="zarr", chunks=config.encoding["shards"])
+    if "tasmax" not in ds or "tasmin" not in ds:
+        raise ValueError("tasmax and tasmin must be processed before dtr")
+    dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")
+    dtr.attrs["units"] = "K"
+    return dtr.to_dataset()
+
+
 def _determine_mode_based_on_ancestry(repo: icechunk.Repository, branch: str = "main") -> str:
     # check the icechunk ancestry to see if data already exists. Change mode to append if so.
     history = list(repo.ancestry(branch=branch))
@@ -203,37 +209,27 @@ def process_era5_pipeline(
     else:
         client = setup_local_client()
 
-    repo, session = init_repo(era5_cat.bucket, era5_cat.prefix, readonly=False)
-
     try:
         for var in variables:
             repo, session = init_repo(era5_cat.bucket, era5_cat.prefix, readonly=False)
             write_mode = _determine_mode_based_on_ancestry(repo)
 
             if verbose:
-                print(f"Processing {var}...")
+                print(f"processing {var}")
 
-            if var == "sfcWind":
-                ds_u = _load_era5(variable="10m_u_component_of_wind", config=config)
-                ds_v = _load_era5(variable="10m_v_component_of_wind", config=config)
-                ds = compute_wind_speed(
-                    ds_u,
-                    ds_v,
-                    u_var_name="10m_u_component_of_wind",
-                    v_var_name="10m_v_component_of_wind",
-                )
+            if var == "dtr":
+                ds = _load_dtr_from_store(config=config)
             else:
                 ds = _load_era5(variable=var, config=config)
+                ds = _preprocess_era5(ds, config)
 
-            ds = _preprocess_era5(ds, config)
-            if var == "mean_total_precipitation_rate":
-                ds = _trim_negative(ds)
-            ds = _resample_time(ds, var)
+                if var == "mean_total_precipitation_rate":
+                    ds = _trim_negative(ds)
+                ds = _resample_time(ds, var)
+
             ds = _update_attrs(ds, var, config)
+
             encoding = _encoding(ds, config)
-            print(ds)
-            print(encoding)
-            # try explicity chunking to shard size
             write_to_icechunk(
                 ds,
                 session,
@@ -242,15 +238,6 @@ def process_era5_pipeline(
                 write_mode=write_mode,
                 config=config,
             )
-
-            # if we're doing multiple vars, switch to append after the first group is written
-            write_mode = "a"
-            if verbose:
-                print(f"Committed {var}")
-
-            time.sleep(
-                10
-            )  # Try to slow down a bit for GCS: obstore.exceptions.GenericError: Generic GCS error: Error performing GET
 
     finally:
         client.shutdown()
@@ -265,7 +252,7 @@ def cli():
 @click.option(
     "--variable",
     multiple=True,
-    type=click.Choice(ERA5Config.ALL_VARS_LIST),
+    type=click.Choice(ERA5Config.ALL_VARS_LIST + ERA5Config.DERIVED_VARS),
     required=True,
 )
 @click.option("--start-year", type=int, default=1950)
