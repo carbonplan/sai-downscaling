@@ -1,13 +1,9 @@
 from __future__ import annotations
-#brendanc comment
+
 import time
-from typing import TYPE_CHECKING
 
 import pint_xarray
 import xarray as xr
-
-if TYPE_CHECKING:
-    import xarray as xr
 
 
 class Timer:
@@ -92,7 +88,6 @@ def rename_coords(ds):
         ds = ds.rename({"lat": "latitude"})
     return ds
 
-import xarray as xr
 
 def convert_precip_units(da: xr.DataArray) -> xr.DataArray:
     """Convert precipitation units to mm/day."""

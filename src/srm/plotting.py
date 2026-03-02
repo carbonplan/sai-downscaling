@@ -1,15 +1,17 @@
+import calendar
+import random
+
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-import random
-import calendar
+import xarray as xr
 from xclim.indices import dry_days, growing_degree_days, hot_days, tx_max
 
 
-def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_name=None, title=''):
+def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_name=None, title=""):
     fig, axarr = plt.subplots(figsize=(20, 8), nrows=2, ncols=4)
 
-    varname = str(obs.name) if obs.name is not None else ""
+    _ = str(obs.name) if obs.name is not None else ""
     fig.suptitle(title, fontsize=16, y=0.98)
 
     cax = obs.plot(ax=axarr[0, 0])
@@ -29,14 +31,14 @@ def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_nam
 
     if bias == "absolute":
         (ds1 - obs).plot(ax=axarr[1, 0])
-        axarr[1, 0].set_title(f'{ds1_name} minus ERA5')
+        axarr[1, 0].set_title(f"{ds1_name} minus ERA5")
 
         if ds2 is not None:
             (ds2 - obs).plot(ax=axarr[1, 1])
-            axarr[1, 1].set_title(f'{ds2_name} minus ERA5')
+            axarr[1, 1].set_title(f"{ds2_name} minus ERA5")
 
             (ds2 - ds1).plot(ax=axarr[1, 2])
-            axarr[1, 2].set_title(f'{ds2_name} minus {ds1_name}')
+            axarr[1, 2].set_title(f"{ds2_name} minus {ds1_name}")
         else:
             axarr[1, 1].axis("off")
             axarr[1, 2].axis("off")
@@ -116,13 +118,15 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
 
     return raw_toplot, era5_toplot, ds1_toplot, ds2_toplot
 
+
 # 4 subregions to focus on
 REGIONS_4 = {
-    "India":        dict(lat=(5, 35),     lon=(68, 97)),
-    "South Africa": dict(lat=(-35, -20),  lon=(16, 33)),
-    "Brazil":       dict(lat=(-35, 6),    lon=(-75, -34)),
-    "West Africa":  dict(lat=(0, 20),     lon=(-20, 15)),
+    "India": dict(lat=(5, 35), lon=(68, 97)),
+    "South Africa": dict(lat=(-35, -20), lon=(16, 33)),
+    "Brazil": dict(lat=(-35, 6), lon=(-75, -34)),
+    "West Africa": dict(lat=(0, 20), lon=(-20, 15)),
 }
+
 
 def subset_latlon(ds, lat_bounds, lon_bounds, lat_name="lat", lon_name="lon"):
     """Subset an xarray Dataset or DataArray to lat/lon bounds."""
@@ -156,37 +160,40 @@ def subset_latlon(ds, lat_bounds, lon_bounds, lat_name="lat", lon_name="lon"):
 def get_4_subregions(ds, regions=REGIONS_4):
     """Return dictionary with 4 subset datasets/dataarrays."""
     return {
-        name: subset_latlon(ds, bounds["lat"], bounds["lon"])
-        for name, bounds in regions.items()}
+        name: subset_latlon(ds, bounds["lat"], bounds["lon"]) for name, bounds in regions.items()
+    }
 
-def plot_4regions_comparisons(raw, era5, ds1, stat, variable, ds1_title, ds2=None, regions=REGIONS_4):
+
+def plot_4regions_comparisons(
+    raw, era5, ds1, stat, variable, ds1_title, ds2=None, regions=REGIONS_4
+):
     """
     One figure:
       rows = 4 regions
       cols = ERA5 | raw | ds1 | ds1-ERA5
     """
-    # subset the datasets 
-    raw_sub  = get_4_subregions(raw,  regions)
+    # subset the datasets
+    raw_sub = get_4_subregions(raw, regions)
     era5_sub = get_4_subregions(era5, regions)
-    ds1_sub  = get_4_subregions(ds1,  regions)
-    ds2_sub  = get_4_subregions(ds2,  regions) if ds2 is not None else None
+    ds1_sub = get_4_subregions(ds1, regions)
+    ds2_sub = get_4_subregions(ds2, regions) if ds2 is not None else None
 
     region_names = list(regions.keys())
     nrows, ncols = len(region_names), 4
-    fig, axarr = plt.subplots(nrows=nrows, ncols=ncols, figsize=(22, 4.2*nrows))
+    fig, axarr = plt.subplots(nrows=nrows, ncols=ncols, figsize=(22, 4.2 * nrows))
 
     # compute statistic and plot per region
     for r, reg in enumerate(region_names):
-        raw_r  = raw_sub[reg]
+        raw_r = raw_sub[reg]
         era5_r = era5_sub[reg]
-        ds1_r  = ds1_sub[reg]
-        ds2_r  = ds2_sub[reg] if ds2 is not None else None
+        ds1_r = ds1_sub[reg]
+        ds2_r = ds2_sub[reg] if ds2 is not None else None
 
         raw_toplot, era5_toplot, ds1_toplot, _ = calculate_statistic_to_plot(
             raw_r, era5_r, ds1_r, stat, variable, ds2=ds2_r
         )
 
-        # ERA5 defines clim for the first 3 cols 
+        # ERA5 defines clim for the first 3 cols
         cax = era5_toplot.plot(ax=axarr[r, 0], add_colorbar=True)
         vmin, vmax = cax.get_clim()
 
@@ -204,6 +211,7 @@ def plot_4regions_comparisons(raw, era5, ds1, stat, variable, ds1_title, ds2=Non
     plt.tight_layout()
     return fig
 
+
 def prep_funky_calendar(ds, ds_timeindex_to_match, time_slice):
     ds_subset = ds.sel(time=time_slice)
     # overwrite the time index because some calendars are weird and won't play nice in plotting
@@ -218,7 +226,7 @@ def sel_point(ds, lat, lon):
 
 
 def random_non_leap_year(start=1984, end=2014):
-    """pick a random year in the range that isn't a leap year - 
+    """pick a random year in the range that isn't a leap year -
     we'll use this to plot random years in the record.
     """
     years = [y for y in np.arange(start, end + 1) if not calendar.isleap(y)]
@@ -355,6 +363,7 @@ def plot_cdf(era5, raw, ds1, var=None, ds2=None, title=None, xlabel=None):
     plt.ylabel("Cumulative probability")
     plt.legend()
     plt.tight_layout()
+
 
 locations = {
     "Cape Town": (-33.9221, 18.4231),
