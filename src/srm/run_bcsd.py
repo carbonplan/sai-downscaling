@@ -53,7 +53,9 @@ def get_all_data(
 ):
     with Timer("Loaded data", verbose=verbose):
         model_scenario = get_experiment(gcm=gcm, scenario="SSP245", var=var_name)
-        model_scenario = model_scenario.isel(ensemble_member=0)
+        model_scenario = model_scenario.isel(
+            ensemble_member=0
+        )  # TODO: update to .sel() with string label (e.g. 'r1i1p1f1')
         model_scenario = model_scenario.drop_vars("spatial_ref")
 
         model_historical = get_experiment(gcm=gcm, scenario="Historical", var=var_name)

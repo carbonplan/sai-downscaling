@@ -69,7 +69,7 @@ def load_configs(config_path: str) -> list[BCSDConfig]:
 def configs_from_matrix(
     gcms: list[str],
     variables: list[str],
-    members: list[int],
+    members: list[str],
     scenarios: list[str | None],
     *,
     train_period_start: int = 1978,
@@ -92,8 +92,8 @@ def configs_from_matrix(
         GCM names (e.g., ["CESM2-WACCM", "MIROC"])
     variables : list[str]
         Variables to downscale (e.g., ["tas", "pr"])
-    members : list[int]
-        Ensemble member indices (e.g., [0, 1, 2])
+    members : list[str]
+        Ensemble member labels (e.g., ["r1i1p1f1", "r2i1p1f1"])
     scenarios : list[str | None]
         Scenario names. Pass [None] for historical-only runs.
     train_period_start : int
