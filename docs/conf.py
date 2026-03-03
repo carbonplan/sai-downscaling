@@ -4,8 +4,8 @@ import srm
 
 project = "SRM Downscaling"
 this_year = datetime.datetime.now().year
-copyright = f"{this_year}, CarbonPlan and contributors"
 author = "CarbonPlan and contributors"
+copyright = f"{this_year}, {author}"
 version = srm.__version__
 
 
