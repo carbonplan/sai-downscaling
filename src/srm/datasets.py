@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class BaseDataset(ABC):
     name: str
     format: typing.Literal["zarr", "icechunk"]
+    region: str = "us-west-2"
     expected_vars: list[VarSpec] | None = None
 
     @property
@@ -41,7 +42,9 @@ class BaseDataset(ABC):
     def to_xarray(self) -> xr.Dataset:
         pass
 
-    def _open_icechunk(self, prefix: str, is_virtual: bool) -> xr.Dataset:
+    def _open_icechunk(
+        self, prefix: str, is_virtual: bool, virtual_chunk_container: str | None = None
+    ) -> xr.Dataset:
         import icechunk
         import xarray as xr
 
@@ -51,8 +54,20 @@ class BaseDataset(ABC):
         storage = icechunk.s3_storage(bucket=self.bucket, prefix=prefix, from_env=True)
 
         if is_virtual:
+            if virtual_chunk_container is not None:
+                config.set_virtual_chunk_container(
+                    icechunk.VirtualChunkContainer(
+                        virtual_chunk_container.uri,
+                        store=icechunk.s3_store(region=virtual_chunk_container.region),
+                    )
+                )
+
             credentials = icechunk.containers_credentials(
-                {self.bucket_uri: icechunk.s3_credentials()}
+                {
+                    virtual_chunk_container.uri: icechunk.s3_credentials(
+                        anonymous=virtual_chunk_container.anonymous
+                    )
+                }
             )
 
             repo = icechunk.Repository.open(
@@ -118,9 +133,17 @@ class Dataset(BaseDataset):
             raise ValueError(f"Unknown format: {self.format}")
 
 
+@dataclass
+class VirtualChunkContainerConfig:
+    uri: str
+    anonymous: bool = True
+    region: str = "us-west-2"
+
+
 @dataclass(kw_only=True)
 class VirtualDataset(BaseDataset):
     virtual_path: str | CloudPath
+    virtual_chunk_container: VirtualChunkContainerConfig | None = None
 
     def __post_init__(self):
         if isinstance(self.virtual_path, str):
@@ -140,7 +163,9 @@ class VirtualDataset(BaseDataset):
 
     def to_xarray(self) -> xr.Dataset:
         if self.format == "icechunk":
-            return self._open_icechunk(self.prefix, is_virtual=True)
+            return self._open_icechunk(
+                self.prefix, is_virtual=True, virtual_chunk_container=self.virtual_chunk_container
+            )
         else:
             raise ValueError(f"icechunk only for virtual datasets {self.format}")
 
@@ -416,6 +441,24 @@ class Catalog:
                     VarStandards.TASMIN,
                     VarStandards.DTR,
                 ],
+            ),
+            "NASA-NEX-SSP245": VirtualDataset(
+                name="NASA-NEX-SSP245",
+                virtual_path="s3://carbonplan-srm/input/tensor/nasa-nex/ssp245/virtual.icechunk",
+                format="icechunk",
+                virtual_chunk_container=VirtualChunkContainerConfig(
+                    uri="s3://nex-gddp-cmip6/", anonymous=True
+                ),
+                expected_vars=[VarStandards.TAS],
+            ),
+            "NASA-NEX-Historical": VirtualDataset(
+                name="NASA-NEX-Historical",
+                virtual_path="s3://carbonplan-srm/input/tensor/nasa-nex/historical/virtual.icechunk",
+                virtual_chunk_container=VirtualChunkContainerConfig(
+                    uri="s3://nex-gddp-cmip6/", anonymous=True
+                ),
+                format="icechunk",
+                expected_vars=[VarStandards.TAS],
             ),
         }
 
