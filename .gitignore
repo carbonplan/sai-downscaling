@@ -182,7 +182,8 @@ cython_debug/
 
 
 *.pyc
-*.png 
+*.png
+!docs/assets/*.png
 *.json
 
 # *input_data_old/
