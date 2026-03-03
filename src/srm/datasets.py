@@ -16,6 +16,13 @@ if TYPE_CHECKING:
     import xarray as xr
 
 
+@dataclass
+class VirtualChunkContainerConfig:
+    uri: str
+    anonymous: bool = True
+    region: str = "us-west-2"
+
+
 @dataclass(kw_only=True)
 class BaseDataset(ABC):
     name: str
@@ -43,33 +50,35 @@ class BaseDataset(ABC):
         pass
 
     def _open_icechunk(
-        self, prefix: str, is_virtual: bool, virtual_chunk_container: str | None = None
+        self,
+        prefix: str,
+        is_virtual: bool,
+        virtual_chunk_container: VirtualChunkContainerConfig | None = None,
     ) -> xr.Dataset:
         import icechunk
         import xarray as xr
-
         # if dask.system.CPU_COUNT > 128 set max_concurrent_requests to 128 to avoid overwhelming the system, otherwise use the number of CPUs
-        config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 128))
 
+        config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 128))
         storage = icechunk.s3_storage(bucket=self.bucket, prefix=prefix, from_env=True)
 
         if is_virtual:
             if virtual_chunk_container is not None:
+                container_uri = virtual_chunk_container.uri
+                anon = virtual_chunk_container.anonymous
                 config.set_virtual_chunk_container(
                     icechunk.VirtualChunkContainer(
-                        virtual_chunk_container.uri,
+                        container_uri,
                         store=icechunk.s3_store(region=virtual_chunk_container.region),
                     )
                 )
+            else:
+                container_uri = self.bucket_uri
+                anon = False
 
             credentials = icechunk.containers_credentials(
-                {
-                    virtual_chunk_container.uri: icechunk.s3_credentials(
-                        anonymous=virtual_chunk_container.anonymous
-                    )
-                }
+                {container_uri: icechunk.s3_credentials(anonymous=anon)}
             )
-
             repo = icechunk.Repository.open(
                 storage, authorize_virtual_chunk_access=credentials, config=config
             )
@@ -131,13 +140,6 @@ class Dataset(BaseDataset):
             return xr.open_zarr(self.path)
         else:
             raise ValueError(f"Unknown format: {self.format}")
-
-
-@dataclass
-class VirtualChunkContainerConfig:
-    uri: str
-    anonymous: bool = True
-    region: str = "us-west-2"
 
 
 @dataclass(kw_only=True)
