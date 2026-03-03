@@ -1,64 +1,3 @@
-
-[tool.ruff]
-    builtins = ["ellipsis"]
-    exclude = [
-        ".bzr",
-        ".direnv",
-        ".eggs",
-        ".git",
-        ".git-rewrite",
-        ".hg",
-        ".ipynb_checkpoints",
-        ".mypy_cache",
-        ".nox",
-        ".pants.d",
-        ".pyenv",
-        ".pytest_cache",
-        ".pytype",
-        ".ruff_cache",
-        ".svn",
-        ".tox",
-        ".venv",
-        ".vscode",
-        "__pypackages__",
-        "_build",
-        "buck-out",
-        "build",
-        "dist",
-        "node_modules",
-        "site-packages",
-        "venv",
-    ]
-    extend-include = ["*.ipynb"]
-    line-length = 100
-    target-version = "py313"
-
-[tool.ruff.lint]
-    ignore = [
-        "E501", # Conflicts with ruff format
-        "E721", # Comparing types instead of isinstance
-        "E741", # Ambiguous variable names
-    ]
-    per-file-ignores = {}
-    select = ["E", "F", "I", "UP", "W"]
-
-[tool.ruff.lint.mccabe]
-    max-complexity = 18
-
-[tool.ruff.lint.isort]
-    combine-as-imports = true
-    known-first-party  = []
-
-[tool.ruff.format]
-    docstring-code-format = true
-    quote-style           = "double"
-
-[tool.ruff.lint.pydocstyle]
-    convention = "numpy"
-
-[tool.ruff.lint.pyupgrade]
-    keep-runtime-typing = true
-
 [project]
     dependencies = [
         "boto3>=1.42.22",
@@ -87,19 +26,24 @@
         "xarray[accel]>=2025.12.0",
         "xclim>=0.59.1",
         "zarr>=3.1.5",
-]
+    ]
     description = "SRM"
+    dynamic = ["version"]
     name = "srm"
     readme = "README.md"
     requires-python = ">=3.13, <3.13.6"
-    version = "0.1.0"
 
 [project.scripts]
     bcsd = "srm.cli:app"
 
 [build-system]
-    build-backend = "uv_build"
-    requires      = ["uv_build>=0.8.14,<0.9.0"]
+    build-backend = "setuptools.build_meta"
+    requires      = ["setuptools-scm[toml]>=6.2", "setuptools>=64", "wheel"]
+
+[tool.setuptools_scm]
+    fallback_version = "999"
+    local_scheme     = "node-and-date"
+    version_scheme   = "post-release"
 
 [tool.uv]
     no-build-package = ["netcdf4"]
@@ -160,3 +104,73 @@
         { include-group = "qa" },
         { include-group = "test" },
     ]
+
+    docs = [
+        "myst-nb>=1.4.0",
+        "sphinx-autobuild>=2025.8.25",
+        "sphinx-book-theme>=1.1.4",
+        "sphinx-copybutton>=0.5.2",
+        "sphinx-design>=0.7.0",
+        "sphinxcontrib-mermaid>=2.0.0",
+        "sphinxext-opengraph>=0.13.0",
+    ]
+
+[tool.ruff]
+    builtins = ["ellipsis"]
+    exclude = [
+        ".bzr",
+        ".direnv",
+        ".eggs",
+        ".git",
+        ".git-rewrite",
+        ".hg",
+        ".ipynb_checkpoints",
+        ".mypy_cache",
+        ".nox",
+        ".pants.d",
+        ".pyenv",
+        ".pytest_cache",
+        ".pytype",
+        ".ruff_cache",
+        ".svn",
+        ".tox",
+        ".venv",
+        ".vscode",
+        "__pypackages__",
+        "_build",
+        "buck-out",
+        "build",
+        "dist",
+        "node_modules",
+        "site-packages",
+        "venv",
+    ]
+    extend-include = ["*.ipynb"]
+    line-length = 100
+    target-version = "py313"
+
+[tool.ruff.lint]
+    ignore = [
+        "E501", # Conflicts with ruff format
+        "E721", # Comparing types instead of isinstance
+        "E741", # Ambiguous variable names
+    ]
+    per-file-ignores = {}
+    select = ["E", "F", "I", "UP", "W"]
+
+[tool.ruff.lint.mccabe]
+    max-complexity = 18
+
+[tool.ruff.lint.isort]
+    combine-as-imports = true
+    known-first-party  = []
+
+[tool.ruff.format]
+    docstring-code-format = true
+    quote-style           = "double"
+
+[tool.ruff.lint.pydocstyle]
+    convention = "numpy"
+
+[tool.ruff.lint.pyupgrade]
+    keep-runtime-typing = true
