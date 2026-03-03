@@ -1,3 +1,7 @@
+"""ETL script for creating virtual zarr stores of a subset of the NASA-NEX dataset, specially:
+CESM2-WACCM, [historical, SSP245], r3i1p1f1, tas.
+"""
+
 import logging
 
 import click
