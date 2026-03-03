@@ -63,9 +63,19 @@ def get_experiment(
     scenario: str = "SSP245",
     var: str = "tas",
     coord_bounds_list: list | None = None,
+    ensemble_member: str | None = None,
 ):
     cat_name = gcm + "-" + scenario + "-icechunk"
-    ds_scenario = catalog.get(cat_name).to_xarray()
+    dataset = catalog.get(cat_name)
+
+    if ensemble_member is not None and dataset.ensemble_members is not None:
+        if ensemble_member not in dataset.ensemble_members:
+            raise ValueError(
+                f"Invalid ensemble_member '{ensemble_member}' for '{cat_name}'. "
+                f"Valid options: {dataset.ensemble_members}"
+            )
+
+    ds_scenario = dataset.to_xarray()
 
     ds_scenario = ds_scenario.proj.assign_crs(spatial_ref="epsg:4326")
 

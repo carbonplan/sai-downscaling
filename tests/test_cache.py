@@ -41,7 +41,7 @@ def base_config() -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="tas",
-        ensemble_member=0,
+        ensemble_member="r1i1p1f1",
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -54,7 +54,7 @@ def sai_config() -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="pr",
-        ensemble_member=1,
+        ensemble_member="r2i1p1f1",
         scenario="G6-1.5K",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -67,7 +67,7 @@ def regional_config() -> BCSDConfig:
     return BCSDConfig(
         gcm="MIROC-ES2H",
         variable="tasmax",
-        ensemble_member=2,
+        ensemble_member="01",
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -181,43 +181,43 @@ class TestObsPath:
 
 class TestHistoricalPath:
     def test_goes_to_cache_when_no_output_dir(self, local_cache):
-        path = local_cache.get_historical_path("CESM2-WACCM", "tas", 0)
+        path = local_cache.get_historical_path("CESM2-WACCM", "tas", "r1i1p1f1")
         assert local_cache.base_path in path
         assert "/historical/" in path
 
     def test_goes_to_output_dir_when_specified(self, local_cache_with_output):
-        path = local_cache_with_output.get_historical_path("CESM2-WACCM", "tas", 0)
+        path = local_cache_with_output.get_historical_path("CESM2-WACCM", "tas", "r1i1p1f1")
         assert local_cache_with_output.output_dir in path
         assert local_cache_with_output.base_path not in path
 
-    def test_ensemble_member_zero_padded_in_filename(self, subtests, local_cache):
-        for member, expected_pad in [(0, "000"), (1, "001"), (9, "009"), (10, "010"), (99, "099")]:
-            with subtests.test(member=member):
-                path = local_cache.get_historical_path("CESM2-WACCM", "tas", member)
-                assert f"_{expected_pad}_" in path
+    def test_ensemble_label_in_filename(self, subtests, local_cache):
+        for label in ("r1i1p1f1", "r12i1p1f2", "01", "r10i1p1f2"):
+            with subtests.test(label=label):
+                path = local_cache.get_historical_path("CESM2-WACCM", "tas", label)
+                assert f"_{label}_" in path
 
     def test_filename_format(self, local_cache):
-        path = local_cache.get_historical_path("CESM2-WACCM", "tas", 0)
-        assert "CESM2-WACCM_tas_000_global_historical.icechunk" in path
+        path = local_cache.get_historical_path("CESM2-WACCM", "tas", "r1i1p1f1")
+        assert "CESM2-WACCM_tas_r1i1p1f1_global_historical.icechunk" in path
 
 
 class TestScenarioPath:
     def test_goes_to_cache_scenarios_when_no_output_dir(self, local_cache):
-        path = local_cache.get_scenario_path("CESM2-WACCM", "tas", 0, "ssp245")
+        path = local_cache.get_scenario_path("CESM2-WACCM", "tas", "r1i1p1f1", "ssp245")
         assert local_cache.base_path in path
         assert "/ssp245/" in path
 
     def test_goes_to_output_dir_when_specified(self, local_cache_with_output):
-        path = local_cache_with_output.get_scenario_path("CESM2-WACCM", "tas", 0, "ssp245")
+        path = local_cache_with_output.get_scenario_path("CESM2-WACCM", "tas", "r1i1p1f1", "ssp245")
         assert local_cache_with_output.output_dir in path
         assert "/scenarios/" not in path
 
     def test_filename_format(self, local_cache):
-        path = local_cache.get_scenario_path("CESM2-WACCM", "tas", 0, "ssp245")
-        assert "CESM2-WACCM_tas_000_global_ssp245.icechunk" in path
+        path = local_cache.get_scenario_path("CESM2-WACCM", "tas", "r1i1p1f1", "ssp245")
+        assert "CESM2-WACCM_tas_r1i1p1f1_global_ssp245.icechunk" in path
 
     def test_sai_scenario_name_lowercased_in_filename(self, local_cache):
-        path = local_cache.get_scenario_path("CESM2-WACCM", "pr", 1, "G6-1.5K")
+        path = local_cache.get_scenario_path("CESM2-WACCM", "pr", "r2i1p1f1", "G6-1.5K")
         assert "g6-1.5k.icechunk" in path
 
 
@@ -284,7 +284,7 @@ class TestCheckDependencies:
 
 
 class TestValidateDependencies:
-    def test_raises_when_deps_missing(self, local_cache, base_config):
+    def test_raises_missing(self, local_cache, base_config):
         with pytest.raises(ValueError, match="Missing dependencies"):
             local_cache.validate_dependencies("fit_historical", base_config)
 
@@ -352,7 +352,7 @@ class TestGetOutputPath:
         assert local_cache.get_output_path("transform_scenario", base_config) == expected
 
     def test_transform_scenario_without_scenario_field_raises(self, local_cache):
-        config = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=0)
+        config = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
         with pytest.raises(ValueError, match="scenario must be specified"):
             local_cache.get_output_path("transform_scenario", config)
 

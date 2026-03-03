@@ -111,7 +111,7 @@ class ArtifactCache:
         self,
         gcm: str,
         variable: str,
-        ensemble: int,
+        ensemble: str,
         subset_bounds: tuple[float, float, float, float] | None = None,
     ) -> str:
         """
@@ -123,8 +123,8 @@ class ArtifactCache:
             GCM name
         variable : str
             Variable name
-        ensemble : int
-            Ensemble member index
+        ensemble : str
+            Ensemble member label (e.g. 'r1i1p1f1', '01')
         subset_bounds : tuple or None
             Spatial bounds (lat_min, lat_max, lon_min, lon_max)
 
@@ -135,18 +135,18 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(subset_bounds)
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
+            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{gcm}_{variable}_{ensemble}_{subset_id}_historical.icechunk"
         else:
             return (
                 f"{self.base_path}/{self.environment}/{self.version}/historical/"
-                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
+                f"{gcm}_{variable}_{ensemble}_{subset_id}_historical.icechunk"
             )
 
     def get_scenario_path(
         self,
         gcm: str,
         variable: str,
-        ensemble: int,
+        ensemble: str,
         scenario: str,
         subset_bounds: tuple[float, float, float, float] | None = None,
     ) -> str:
@@ -162,8 +162,8 @@ class ArtifactCache:
             GCM name
         variable : str
             Variable name
-        ensemble : int
-            Ensemble member index
+        ensemble : str
+            Ensemble member label (e.g. 'r1i1p1f1', '01')
         scenario : str
             Scenario name (e.g., 'ssp245', 'G6-1.5K')
         subset_bounds : tuple or None
@@ -179,11 +179,11 @@ class ArtifactCache:
 
         # Use output_dir for final scenarios if specified, otherwise cache
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
+            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble}_{subset_id}_{scenario_lower}.icechunk"
         else:
             return (
                 f"{self.base_path}/{self.environment}/{self.version}/{scenario_lower}/"
-                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
+                f"{gcm}_{variable}_{ensemble}_{subset_id}_{scenario_lower}.icechunk"
             )
 
     def exists(self, path: str) -> bool:
