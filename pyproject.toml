@@ -109,11 +109,12 @@
         "myst-nb>=1.4.0",
         "sphinx-autobuild>=2025.8.25",
         "sphinx-book-theme>=1.1.4",
+        "sphinx-click>=6.2.0",
         "sphinx-copybutton>=0.5.2",
         "sphinx-design>=0.7.0",
         "sphinxcontrib-mermaid>=2.0.0",
         "sphinxext-opengraph>=0.13.0",
-    ]
+]
 
 [tool.ruff]
     builtins = ["ellipsis"]

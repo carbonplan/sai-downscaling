@@ -10,7 +10,7 @@ The CLI is installed as `bcsd` command via the package entry point.
 
 ## Demo Notebook
 
-For a complete walkthrough with visualizations, see [docs/demo-new-pipeline.ipynb](../demo-new-pipeline.ipynb). The notebook demonstrates:
+For a complete walkthrough with visualizations, see [demo-new-pipeline.ipynb](./demo-new-pipeline.ipynb). The notebook demonstrates:
 
 - configuration setup with regional subsetting (South Africa)
 - running the three-stage pipeline
