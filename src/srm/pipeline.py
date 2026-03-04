@@ -248,6 +248,12 @@ class BCSDPipeline:
                 model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
             model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
+            # Subset spatially if requested
+            if self.config.subset_bounds:
+                lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
+                obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
+                model_hist = subset_space(model_hist, [lat_min, lat_max, lon_min, lon_max])
+
             # Subset time to training period
             obs_coarse = obs_coarse.sel(
                 time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
