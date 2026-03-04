@@ -188,8 +188,8 @@ def run_matrix(
     variable: list[str] = typer.Option(
         ..., help="Variable to downscale (repeatable: --variable tas --variable pr)"
     ),
-    member: list[int] = typer.Option(
-        ..., help="Ensemble member index (repeatable: --member 0 --member 1)"
+    member: list[str] = typer.Option(
+        ..., help="Ensemble member label (repeatable: --member r1i1p1f1 --member r2i1p1f1)"
     ),
     scenario: list[str] | None = typer.Option(
         None,
@@ -235,7 +235,7 @@ def run_matrix(
         bcsd run-matrix \\
           --gcm CESM2-WACCM --gcm MIROC \\
           --variable tas --variable pr \\
-          --member 0 --member 1 --member 2 \\
+          --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \\
           --scenario ssp245 --scenario G6-1pt5k \\
           --predict-period-start 2015 --predict-period-end 2100
 
