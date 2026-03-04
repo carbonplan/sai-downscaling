@@ -16,7 +16,7 @@ class TestConfigsFromMatrix:
         configs = configs_from_matrix(
             gcms=["CESM2-WACCM"],
             variables=["tas"],
-            members=[0],
+            members=["r1i1p1f1"],
             scenarios=[None],
         )
         assert len(configs) == 1
@@ -25,7 +25,7 @@ class TestConfigsFromMatrix:
         configs = configs_from_matrix(
             gcms=["CESM2-WACCM", "MIROC"],
             variables=["tas", "pr"],
-            members=[0, 1, 2],
+            members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
             scenarios=["ssp245", "G6-1pt5k"],
             predict_period_start=2015,
             predict_period_end=2100,
@@ -36,7 +36,7 @@ class TestConfigsFromMatrix:
         configs = configs_from_matrix(
             gcms=["CESM2-WACCM"],
             variables=["tas"],
-            members=[0],
+            members=["r1i1p1f1"],
             scenarios=[None],
         )
         assert all(isinstance(c, BCSDConfig) for c in configs)
@@ -45,7 +45,7 @@ class TestConfigsFromMatrix:
         configs = configs_from_matrix(
             gcms=["CESM2-WACCM"],
             variables=["tas"],
-            members=[0, 1],
+            members=["r1i1p1f1", "r2i1p1f1"],
             scenarios=[None],
         )
         assert len(configs) == 2
@@ -54,7 +54,7 @@ class TestConfigsFromMatrix:
     def test_all_combinations_present(self):
         gcms = ["CESM2-WACCM", "MIROC"]
         variables = ["tas", "pr"]
-        members = [0, 1]
+        members = ["r1i1p1f1", "r2i1p1f1"]
         scenarios = ["ssp245"]
         configs = configs_from_matrix(
             gcms=gcms,
@@ -72,7 +72,7 @@ class TestConfigsFromMatrix:
         configs = configs_from_matrix(
             gcms=["CESM2-WACCM", "MIROC"],
             variables=["tas"],
-            members=[0],
+            members=["r1i1p1f1"],
             scenarios=[None],
             environment="staging",
             version="v2",
@@ -89,7 +89,7 @@ class TestConfigsFromMatrix:
         configs = configs_from_matrix(
             gcms=["CESM2-WACCM"],
             variables=["tas"],
-            members=[0],
+            members=["r1i1p1f1"],
             scenarios=[None],
             subset_bounds=bounds,
         )
@@ -101,7 +101,7 @@ class TestConfigsFromMatrix:
             configs_from_matrix(
                 gcms=["CESM2-WACCM"],
                 variables=["tas"],
-                members=[0],
+                members=["r1i1p1f1"],
                 scenarios=["ssp245"],
                 # predict_period_start / predict_period_end intentionally omitted
             )
@@ -111,7 +111,7 @@ class TestConfigsFromMatrix:
         configs = configs_from_matrix(
             gcms=["CESM2-WACCM"],
             variables=["tas"],
-            members=[0],
+            members=["r1i1p1f1"],
             scenarios=scenarios,
             predict_period_start=2015,
             predict_period_end=2100,
@@ -132,7 +132,7 @@ class TestConfigsFromMatrix:
         configs = configs_from_matrix(
             gcms=["CESM2-WACCM"],
             variables=["pr"],
-            members=[2],
+            members=["r3i1p1f1"],
             scenarios=["ssp245"],
             predict_period_start=2020,
             predict_period_end=2080,
@@ -140,7 +140,7 @@ class TestConfigsFromMatrix:
         cfg = configs[0]
         assert cfg.gcm == "CESM2-WACCM"
         assert cfg.variable == "pr"
-        assert cfg.ensemble_member == 2
+        assert cfg.ensemble_member == "r3i1p1f1"
         assert cfg.scenario == "ssp245"
         assert cfg.predict_period_start == 2020
         assert cfg.predict_period_end == 2080

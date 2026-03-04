@@ -29,6 +29,7 @@ class BaseDataset(ABC):
     format: typing.Literal["zarr", "icechunk"]
     region: str = "us-west-2"
     expected_vars: list[VarSpec] | None = None
+    ensemble_members: list[str] | None = None
 
     @property
     @abstractmethod
@@ -57,6 +58,7 @@ class BaseDataset(ABC):
     ) -> xr.Dataset:
         import icechunk
         import xarray as xr
+
         # if dask.system.CPU_COUNT > 128 set max_concurrent_requests to 128 to avoid overwhelming the system, otherwise use the number of CPUs
 
         config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 128))
@@ -215,6 +217,7 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
                 expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
+                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.TAS,
@@ -249,6 +252,17 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
                 expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
+                ensemble_members=[
+                    "r1i1p1f1",
+                    "r2i1p1f1",
+                    "r3i1p1f1",
+                    "r4i1p1f1",
+                    "r5i1p1f1",
+                    "r7i1p1f1",
+                    "r8i1p1f1",
+                    "r9i1p1f1",
+                    "r10i1p1f1",
+                ],
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.TAS,
@@ -299,6 +313,7 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 18263, "lat": 8, "lon": 16},
                 expected_shards={"ensemble_member": 1, "time": 18263, "lat": 64, "lon": 128},
+                ensemble_members=["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"],
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.RSDS,
@@ -313,6 +328,18 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
+                ensemble_members=[
+                    "r10i1p1f2",
+                    "r1i1p1f2",
+                    "r2i1p1f2",
+                    "r3i1p1f2",
+                    "r4i1p1f2",
+                    "r5i1p1f3",
+                    "r6i1p1f3",
+                    "r7i1p1f3",
+                    "r8i1p1f2",
+                    "r9i1p1f2",
+                ],
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.TAS,
@@ -347,6 +374,7 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
+                ensemble_members=["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"],
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.TAS,
@@ -392,6 +420,7 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
+                ensemble_members=["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"],
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.TAS,

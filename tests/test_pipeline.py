@@ -110,7 +110,7 @@ def config(tmp_path) -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="tas",
-        ensemble_member=0,
+        ensemble_member="r1i1p1f1",
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -127,7 +127,7 @@ def pr_config(tmp_path) -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="pr",
-        ensemble_member=0,
+        ensemble_member="r1i1p1f1",
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -269,7 +269,7 @@ class TestPrepareObservationsCompute:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
-            ensemble_member=0,
+            ensemble_member="r1i1p1f1",
             subset_bounds=(-35.0, -22.0, 16.0, 33.0),
             cache_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
@@ -292,7 +292,7 @@ class TestPrepareObservationsCompute:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
-            ensemble_member=0,
+            ensemble_member="r1i1p1f1",
             cache_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
@@ -382,7 +382,7 @@ class TestTransformScenarioBehavior:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
-            ensemble_member=0,
+            ensemble_member="r1i1p1f1",
             cache_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,

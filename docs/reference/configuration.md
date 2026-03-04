@@ -8,7 +8,7 @@ Configuration files use YAML format with Pydantic validation. All fields are val
 # Model identifiers
 gcm: "CESM2-WACCM"                    # GCM model name
 variable: "tas"                        # Variable: tas, tasmax, pr, rsds
-ensemble_member: 0                     # Ensemble member (0-indexed)
+ensemble_member: "r1i1p1f1"            # Ensemble member label (e.g. "r1i1p1f1", "01")
 scenario: "SSP245"                     # Scenario: SSP245, G6-1.5K, etc.
 
 # Time periods

@@ -14,7 +14,7 @@ uv run bcsd run-matrix [OPTIONS]
 
 - `--gcm TEXT` (required, repeatable): GCM name
 - `--variable TEXT` (required, repeatable): variable to downscale
-- `--member INTEGER` (required, repeatable): ensemble member index
+- `--member TEXT` (required, repeatable): ensemble member label (e.g. `r1i1p1f1`, `01`)
 - `--scenario TEXT` (repeatable): scenario name. Omit for historical-only runs.
 - `--predict-period-start INTEGER`: start year of prediction period (required when `--scenario` is given)
 - `--predict-period-end INTEGER`: end year of prediction period (required when `--scenario` is given)
@@ -37,7 +37,7 @@ uv run bcsd run-matrix [OPTIONS]
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM --gcm MIROC-ES2H \
   --variable tas --variable pr \
-  --member 0 --member 1 --member 2 \
+  --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario ssp245 --scenario G6-1pt5k \
   --predict-period-start 2015 --predict-period-end 2100 \
   --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
@@ -47,7 +47,7 @@ uv run bcsd run-matrix \
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM --gcm MIROC-ES2H \
   --variable tas \
-  --member 0 --member 1 \
+  --member r1i1p1f1 --member r2i1p1f1 \
   --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --dry-run
@@ -56,26 +56,26 @@ uv run bcsd run-matrix \
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM \
   --variable tas --variable pr \
-  --member 0 --member 1 --member 2
+  --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1
 
 # Regional subset
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM \
   --variable tas \
-  --member 0 \
+  --member r1i1p1f1 \
   --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33'
 
 # Run only a specific stage
 uv run bcsd run-matrix \
-  --gcm CESM2-WACCM --variable tas --member 0 \
+  --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --stage scenario
 
 # Force recompute of all runs
 uv run bcsd run-matrix \
-  --gcm CESM2-WACCM --variable tas --member 0 \
+  --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --force
 ```
@@ -85,7 +85,7 @@ The matrix is the cartesian product `GCMs × variables × members × scenarios`.
 **How Deduplication Works:**
 
 ```
-Example: CESM2-WACCM, tas, ensembles [0,1,2], ssp245
+Example: CESM2-WACCM, tas, ensembles [r1i1p1f1, r2i1p1f1, r3i1p1f1], ssp245
 
 stage 1 (prepare_observations):
   - 1 task runs (shared across all ensembles and scenarios)
@@ -94,7 +94,7 @@ stage 1 (prepare_observations):
 
 stage 2 (fit_historical):
   - 3 tasks run (one per ensemble member)
-  - keys: (CESM2-WACCM, tas, 0), (CESM2-WACCM, tas, 1), (CESM2-WACCM, tas, 2)
+  - keys: (CESM2-WACCM, tas, r1i1p1f1), (CESM2-WACCM, tas, r2i1p1f1), (CESM2-WACCM, tas, r3i1p1f1)
   - outputs: historical cached for each ensemble, reused across scenarios
 
 stage 3 (transform_scenario):

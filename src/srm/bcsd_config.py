@@ -72,7 +72,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     variable: Literal["tas", "tasmax", "pr", "rsds"] = Field(
         ..., description="Variable to downscale"
     )
-    ensemble_member: int = Field(..., ge=0, description="Ensemble member index")
+    ensemble_member: str = Field(..., description="Ensemble member label (e.g. 'r1i1p1f1', '01')")
     scenario: str | None = Field(
         None,
         description="Scenario name (e.g., 'ssp245', 'G6-1.5K'). None for historical-only runs.",
@@ -196,7 +196,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         parts = [
             self.gcm,
             self.variable,
-            f"{self.ensemble_member:03d}",
+            self.ensemble_member,
         ]
 
         if self.scenario:
