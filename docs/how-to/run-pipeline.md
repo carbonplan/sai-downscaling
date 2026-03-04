@@ -26,7 +26,7 @@ The recommended way to run the pipeline — especially across multiple GCMs, var
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM --gcm MIROC-ES2H \
   --variable tas --variable pr \
-  --member 0 --member 1 --member 2 \
+  --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario ssp245 --scenario G6-1pt5k \
   --predict-period-start 2015 --predict-period-end 2100 \
   --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
@@ -37,7 +37,7 @@ Use `--dry-run` to preview the generated matrix before executing:
 
 ```bash
 uv run bcsd run-matrix \
-  --gcm CESM2-WACCM --variable tas --member 0 \
+  --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --dry-run
 ```
@@ -70,7 +70,7 @@ The recommended approach for all multi-run workflows is `bcsd run-matrix`. It ta
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM \
   --variable tas \
-  --member 0 --member 1 --member 2 \
+  --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 --scenario G6-1.5K \
   --predict-period-start 2015 --predict-period-end 2100 \
   --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
@@ -90,7 +90,7 @@ The orchestrator automatically deduplicates shared work across the matrix:
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM \
   --variable tas \
-  --member 0 \
+  --member r1i1p1f1 \
   --scenario SSP245 --scenario G6-1.5K \
   --predict-period-start 2015 --predict-period-end 2100 \
   --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
@@ -106,11 +106,11 @@ For workflows that are driven by version-controlled YAML config files, `bcsd run
 <summary>Example: generating and running a directory of config files</summary>
 
 ```bash
-for i in {0..2}; do
-  cat > configs/batch/cesm2-tas-ssp245-e${i}.yaml <<EOF
+for member in r1i1p1f1 r2i1p1f1 r3i1p1f1; do
+  cat > configs/batch/cesm2-tas-ssp245-e${member}.yaml <<EOF
 gcm: "CESM2-WACCM"
 variable: "tas"
-ensemble_member: ${i}
+ensemble_member: "${member}"
 scenario: "SSP245"
 train_period_start: 1978
 train_period_end: 2014
@@ -138,7 +138,7 @@ uv run bcsd run --config-path configs/example.yaml --no-coiled
 
 # Matrix run locally (useful for testing)
 uv run bcsd run-matrix \
-  --gcm CESM2-WACCM --variable tas --member 0 \
+  --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33' \
   --no-coiled

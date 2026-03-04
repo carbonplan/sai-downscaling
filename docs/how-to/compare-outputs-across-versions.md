@@ -11,7 +11,7 @@ Pick a small region (`subset_bounds`) and use `environment: qa` so outputs stay 
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM \
   --variable tas \
-  --member 0 \
+  --member r1i1p1f1 \
   --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33' \
@@ -31,7 +31,7 @@ After merging (or checking out) the new code, re-run with a different `--version
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM \
   --variable tas \
-  --member 0 \
+  --member r1i1p1f1 \
   --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33' \
@@ -53,7 +53,7 @@ import icechunk
 def open_version(output_dir, environment, version, gcm, variable, member, scenario, subset_id):
     path = (
         f"{output_dir}/{environment}/{version}/{scenario.lower()}/"
-        f"{gcm}_{variable}_{member:03d}_{subset_id}_{scenario.lower()}.icechunk"
+        f"{gcm}_{variable}_{member}_{subset_id}_{scenario.lower()}.icechunk"
     )
     bucket, _, prefix = path.removeprefix("s3://").partition("/")
     storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
@@ -68,7 +68,7 @@ kwargs = dict(
     environment="qa",
     gcm="CESM2-WACCM",
     variable="tas",
-    member=0,
+    member="r1i1p1f1",
     scenario="ssp245",
     subset_id="lat-35.0to-22.0_lon16.0to33.0",
 )

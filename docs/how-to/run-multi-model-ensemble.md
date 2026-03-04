@@ -10,7 +10,7 @@ The easiest way to process multiple GCMs, variables, ensemble members, and scena
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM --gcm MIROC-ES2H --gcm UKESM \
   --variable tas \
-  --member 0 --member 1 --member 2 \
+  --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
@@ -27,7 +27,7 @@ Always preview the matrix before submitting to Coiled:
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM --gcm MIROC-ES2H --gcm UKESM \
   --variable tas \
-  --member 0 --member 1 --member 2 \
+  --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --dry-run
@@ -42,7 +42,7 @@ For large ensembles, you can run each stage separately to monitor progress:
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM --gcm MIROC-ES2H --gcm UKESM \
   --variable tas \
-  --member 0 --member 1 --member 2 \
+  --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --stage obs --coiled
@@ -51,7 +51,7 @@ uv run bcsd run-matrix \
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM --gcm MIROC-ES2H --gcm UKESM \
   --variable tas \
-  --member 0 --member 1 --member 2 \
+  --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --stage historical --coiled
@@ -60,7 +60,7 @@ uv run bcsd run-matrix \
 uv run bcsd run-matrix \
   --gcm CESM2-WACCM --gcm MIROC-ES2H --gcm UKESM \
   --variable tas \
-  --member 0 --member 1 --member 2 \
+  --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --stage scenario --coiled
