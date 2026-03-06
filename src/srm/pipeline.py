@@ -14,6 +14,7 @@ import warnings
 
 import dask.system
 import icechunk
+import numpy as np
 import scipy.stats
 import xarray as xr
 from icechunk.xarray import to_icechunk
@@ -554,8 +555,6 @@ class BCSDPipeline:
 
             # If method is parametric or nonparametric, only debias one time. If hybrid, debias twice (one time parametric and one time nonparametric) and blend results.
             if self.config.mapping_type in ["parametric", "nonparametric"]:
-                if self.config.verbose:
-                    logger.info("Here2")
                 debiaser = _make_debiaser(
                     mapping_type=self.config.mapping_type,
                     detrending="no_detrending",
@@ -579,8 +578,6 @@ class BCSDPipeline:
                 )
 
             elif self.config.mapping_type == "nonparametric_hybrid":
-                if self.config.verbose:
-                    logger.info("Here!")
                 debiaser_parametric = _make_debiaser(
                     mapping_type="parametric",
                     detrending="no_detrending",
@@ -623,14 +620,17 @@ class BCSDPipeline:
                     progressbar=False,
                 )
 
-                # max_hist = model_hist.max(dim='time')
-                # min_hist = model_hist.min(dim='time')
-                # out_of_range = scenario_detrended>max_hist | scenario_detrended<min_hist
-
                 # Blend results
-                # Temporary test: only use nonparametric to check that this runs
-                scenario_debiased_np = (
-                    0.5 * scenario_debiased_nonparametric_np + 0.5 * scenario_debiased_parametric_np
+                # Nonparametric mapping when in range of the modeled historical
+                # Parametric mapping when out of range of the modeled historical
+                max_hist = model_hist.max(dim="time")
+                min_hist = model_hist.min(dim="time")
+                out_of_range = (scenario_detrended > max_hist) | (scenario_detrended < min_hist)
+                out_of_range_np = out_of_range.values
+                scenario_debiased_np = np.where(
+                    out_of_range_np,
+                    scenario_debiased_parametric_np,
+                    scenario_debiased_nonparametric_np,
                 )
 
             # Convert back to xarray
