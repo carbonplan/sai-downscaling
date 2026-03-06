@@ -132,7 +132,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     rechunk_workflow: bool = Field(
         True, description="Enable strategic rechunking between pipeline stages"
     )
-    mapping_type: Literal["parametric", "nonparametric"] = Field(
+    mapping_type: Literal["parametric", "nonparametric", "nonparametric_hybrid"] = Field(
         "parametric", description="Quantile mapping method for bias correction"
     )
 

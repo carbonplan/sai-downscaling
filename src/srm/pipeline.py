@@ -274,14 +274,24 @@ class BCSDPipeline:
                     return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
                 return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
 
-            debiaser = _make_debiaser(
-                mapping_type=self.config.mapping_type,
-                detrending="no_detrending",
-                running_window_mode=self.config.do_windowing,
-                running_window_length=31,
-                running_window_step_length=1,
-                running_window_mode_over_years_of_cm_future=False,
-            )
+            if self.config.mapping_type == "nonparametric_hybrid":
+                debiaser = _make_debiaser(
+                    mapping_type="nonparametric",
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=31,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
+            else:
+                debiaser = _make_debiaser(
+                    mapping_type=self.config.mapping_type,
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=31,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
 
             # Convert to numpy for ibicus
             obs_np = obs_coarse.as_numpy().values
@@ -532,37 +542,96 @@ class BCSDPipeline:
         with Timer("Bias corrected scenario", verbose=self.config.verbose):
             from ibicus.debias import QuantileMapping
 
-            def _make_debiaser(**kwargs):
-                if self.config.variable == "rsds":
-                    return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
-                return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
-
-            debiaser = _make_debiaser(
-                mapping_type=self.config.mapping_type,
-                detrending="no_detrending",
-                running_window_mode=self.config.do_windowing,
-                running_window_length=31,
-                running_window_step_length=1,
-                running_window_mode_over_years_of_cm_future=False,
-            )
-
             # Convert to numpy
             obs_np = obs_coarse.as_numpy().values
             cm_hist_np = model_hist.as_numpy().values
             cm_future_np = scenario_detrended.load().values
 
-            # Apply quantile mapping
-            scenario_debiased_np = debiaser.apply(
-                obs=obs_np,
-                cm_hist=cm_hist_np,
-                cm_future=cm_future_np,
-                time_obs=obs_coarse["time"].values,
-                time_cm_hist=model_hist["time"].values,
-                time_cm_future=scenario_detrended["time"].values,
-                parallel=True,
-                nr_processes=dask.system.CPU_COUNT,
-                progressbar=False,
-            )
+            def _make_debiaser(**kwargs):
+                if self.config.variable == "rsds":
+                    return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
+                return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
+
+            # If method is parametric or nonparametric, only debias one time. If hybrid, debias twice (one time parametric and one time nonparametric) and blend results.
+            if self.config.mapping_type in ["parametric", "nonparametric"]:
+                if self.config.verbose:
+                    logger.info("Here2")
+                debiaser = _make_debiaser(
+                    mapping_type=self.config.mapping_type,
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=31,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
+
+                # Apply quantile mapping
+                scenario_debiased_np = debiaser.apply(
+                    obs=obs_np,
+                    cm_hist=cm_hist_np,
+                    cm_future=cm_future_np,
+                    time_obs=obs_coarse["time"].values,
+                    time_cm_hist=model_hist["time"].values,
+                    time_cm_future=scenario_detrended["time"].values,
+                    parallel=True,
+                    nr_processes=dask.system.CPU_COUNT,
+                    progressbar=False,
+                )
+
+            elif self.config.mapping_type == "nonparametric_hybrid":
+                if self.config.verbose:
+                    logger.info("Here!")
+                debiaser_parametric = _make_debiaser(
+                    mapping_type="parametric",
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=31,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
+                debiaser_nonparametric = _make_debiaser(
+                    mapping_type="nonparametric",
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=31,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
+
+                # Apply quantile mapping twice
+                scenario_debiased_parametric_np = debiaser_parametric.apply(
+                    obs=obs_np,
+                    cm_hist=cm_hist_np,
+                    cm_future=cm_future_np,
+                    time_obs=obs_coarse["time"].values,
+                    time_cm_hist=model_hist["time"].values,
+                    time_cm_future=scenario_detrended["time"].values,
+                    parallel=True,
+                    nr_processes=dask.system.CPU_COUNT,
+                    progressbar=False,
+                )
+
+                scenario_debiased_nonparametric_np = debiaser_nonparametric.apply(
+                    obs=obs_np,
+                    cm_hist=cm_hist_np,
+                    cm_future=cm_future_np,
+                    time_obs=obs_coarse["time"].values,
+                    time_cm_hist=model_hist["time"].values,
+                    time_cm_future=scenario_detrended["time"].values,
+                    parallel=True,
+                    nr_processes=dask.system.CPU_COUNT,
+                    progressbar=False,
+                )
+
+                # max_hist = model_hist.max(dim='time')
+                # min_hist = model_hist.min(dim='time')
+                # out_of_range = scenario_detrended>max_hist | scenario_detrended<min_hist
+
+                # Blend results
+                # Temporary test: only use nonparametric to check that this runs
+                scenario_debiased_np = (
+                    0.5 * scenario_debiased_nonparametric_np + 0.5 * scenario_debiased_parametric_np
+                )
 
             # Convert back to xarray
             scenario_debiased = xr.DataArray(
