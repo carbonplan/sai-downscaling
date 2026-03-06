@@ -41,14 +41,14 @@ GEOMIP_ENSEMBLE_MEMBER_MAP = {f"r{i:02d}": f"r{i}i1p1f1" for i in range(1, 11)}
 
 CMIP6_ENSEMBLE_VERSIONS: dict[str, dict[str, str]] = {
     "historical": {
-        "r1i1p4f2": "v20220214",  
-        "r2i1p4f2": "v20220214",  
-        "r3i1p4f2": "v20220214",  
+        "r1i1p4f2": "v20220214",
+        "r2i1p4f2": "v20220214",
+        "r3i1p4f2": "v20220214",
     },
     "ssp245": {
-        "r1i1p4f2": "v20220214", 
-        "r2i1p4f2": "v20220214", 
-        "r3i1p4f2": "v20220214", 
+        "r1i1p4f2": "v20220214",
+        "r2i1p4f2": "v20220214",
+        "r3i1p4f2": "v20220214",
     },
 }
 
