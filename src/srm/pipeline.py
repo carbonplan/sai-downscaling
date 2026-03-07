@@ -322,6 +322,22 @@ class BCSDPipeline:
                 dims=["time", "lat", "lon"],
             )
 
+            if self.config.save_intermediate:
+                with Timer("Saved coarse debiased to cache", verbose=self.config.verbose):
+                    debiased_path = self.cache.get_debiased_historical_path(
+                        gcm=self.config.gcm,
+                        variable=self.config.variable,
+                        subset_bounds=self.config.subset_bounds,
+                        ensemble=self.config.ensemble_member,
+                    )
+                    model_hist_debiased.name = self.config.variable
+                    model_hist_debiased.attrs = (
+                        model_hist_debiased.attrs
+                    )  # Preserve units and metadata
+                    self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
+                    if self.config.verbose:
+                        logger.info(f"✓ Saved debiased historical: {debiased_path}")
+
         # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
             model_hist_downscaled = downscale_from_coarse(
@@ -656,9 +672,63 @@ class BCSDPipeline:
                 # Blend results
                 # Nonparametric mapping when in range of the modeled historical
                 # Parametric mapping when out of range of the modeled historical
-                max_hist = model_hist.max(dim="time")
-                min_hist = model_hist.min(dim="time")
-                out_of_range = (scenario_detrended > max_hist) | (scenario_detrended < min_hist)
+
+                def _calculate_out_of_range_mask(
+                    model_hist, scenario_detrended, center_window=31, pad=15
+                ):
+                    """
+                    Calculate mask of where scenario is out of range of modeled historical
+                    on a day-of-year basis. The historical range for any day-of-year is the max and min
+                    of modeled historical values that fall within a centered window around that day-of-year.
+                    This should be the same window size used in the debiaser if using running_window_mode.
+                    """
+                    doy_max = model_hist.groupby("time.dayofyear").max()
+                    doy_min = model_hist.groupby("time.dayofyear").min()
+
+                    # Pad the dayofyear dimension to handle the rolling window at the edges, using values from the opposite end of the year
+                    doy_max_padded = xr.concat(
+                        [
+                            doy_max.isel(dayofyear=slice(-pad, None)),
+                            doy_max,
+                            doy_max.isel(dayofyear=slice(None, pad)),
+                        ],
+                        dim="dayofyear",
+                    )
+
+                    rolling_doy_max = doy_max_padded.rolling(
+                        dayofyear=center_window, center=True
+                    ).max()
+                    rolling_doy_max = rolling_doy_max.isel(
+                        dayofyear=slice(pad, pad + len(doy_max.dayofyear))
+                    )
+
+                    doy_min_padded = xr.concat(
+                        [
+                            doy_min.isel(dayofyear=slice(-pad, None)),
+                            doy_min,
+                            doy_min.isel(dayofyear=slice(None, pad)),
+                        ],
+                        dim="dayofyear",
+                    )
+
+                    rolling_doy_min = doy_min_padded.rolling(
+                        dayofyear=center_window, center=True
+                    ).min()
+                    rolling_doy_min = rolling_doy_min.isel(
+                        dayofyear=slice(pad, pad + len(doy_min.dayofyear))
+                    )
+
+                    doy = scenario_detrended["time.dayofyear"]
+
+                    out_of_range = (scenario_detrended > rolling_doy_max.sel(dayofyear=doy)) | (
+                        scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
+                    )
+
+                    return out_of_range
+
+                out_of_range = _calculate_out_of_range_mask(
+                    model_hist=model_hist, scenario_detrended=scenario_detrended
+                )
                 out_of_range_np = out_of_range.values
                 scenario_debiased_np = np.where(
                     out_of_range_np,
@@ -677,6 +747,21 @@ class BCSDPipeline:
                 dims=["time", "lat", "lon"],
             )
 
+        if self.config.save_intermediate:
+            with Timer("Saved coarse debiased scenario to cache", verbose=self.config.verbose):
+                debiased_path = self.cache.get_debiased_scenario_path(
+                    gcm=self.config.gcm,
+                    variable=self.config.variable,
+                    subset_bounds=self.config.subset_bounds,
+                    scenario=self.config.scenario,
+                    ensemble=self.config.ensemble_member,
+                )
+                scenario_debiased.name = self.config.variable
+                scenario_debiased.attrs = scenario_debiased.attrs  # Preserve units and metadata
+                self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+                if self.config.verbose:
+                    logger.info(f"✓ Saved debiased scenario: {debiased_path}")
+
         # Re-trend if needed
         if self.config.detrend_data and scenario_trend is not None:
             with Timer("Re-trended scenario", verbose=self.config.verbose):
@@ -685,6 +770,21 @@ class BCSDPipeline:
                     trend_on_daily_timestep=scenario_trend,
                     detrend_method=self.config.detrend_method,
                 )
+
+        if self.config.save_intermediate:
+            with Timer("Saved coarse debiased, retrended to cache", verbose=self.config.verbose):
+                debiased_path = self.cache.get_debiased_retrended_scenario_path(
+                    gcm=self.config.gcm,
+                    variable=self.config.variable,
+                    subset_bounds=self.config.subset_bounds,
+                    scenario=self.config.scenario,
+                    ensemble=self.config.ensemble_member,
+                )
+                scenario_debiased.name = self.config.variable
+                scenario_debiased.attrs = scenario_debiased.attrs  # Preserve units and metadata
+                self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+                if self.config.verbose:
+                    logger.info(f"✓ Saved debiased scenario: {debiased_path}")
 
         # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
