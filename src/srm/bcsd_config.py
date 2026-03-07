@@ -136,6 +136,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         "parametric", description="Quantile mapping method for bias correction"
     )
 
+    save_intermediate: bool = Field(
+        False,
+        description="Save intermediate artifacts (e.g. detrended data, quantile mapping results) to cache for debugging and analysis)",
+    )
+
     def model_post_init(self, __context) -> None:
         """Post-initialization validation and auto-population"""
         # Auto-populate variable_config if not provided

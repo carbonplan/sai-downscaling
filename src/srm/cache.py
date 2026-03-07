@@ -186,6 +186,81 @@ class ArtifactCache:
                 f"{gcm}_{variable}_{ensemble}_{subset_id}_{scenario_lower}.icechunk"
             )
 
+    def get_detrended_scenario_path(
+        self,
+        gcm: str,
+        variable: str,
+        ensemble: str,
+        scenario: str,
+        subset_bounds: tuple[float, float, float, float] | None = None,
+    ) -> str:
+        """
+        Get path to scenario downscaling output.
+
+        Final scenario outputs are written to output_dir (if specified) rather than
+        cache_dir, since they are the final deliverable products.
+
+        Parameters
+        ----------
+        gcm : str
+            GCM name
+        variable : str
+            Variable name
+        ensemble : str
+            Ensemble member label (e.g. 'r1i1p1f1', '01')
+        scenario : str
+            Scenario name (e.g., 'ssp245', 'G6-1.5K')
+        subset_bounds : tuple or None
+            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
+
+        Returns
+        -------
+        str
+            S3 or local path to zarr store
+        """
+        subset_id = self._get_subset_id(subset_bounds)
+        scenario_lower = scenario.lower()
+
+        return f"{self.base_path}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble}_{subset_id}_{scenario_lower}_detrended.icechunk"
+
+    def get_trend_scenario_path(
+        self,
+        gcm: str,
+        variable: str,
+        ensemble: str,
+        scenario: str,
+        subset_bounds: tuple[float, float, float, float] | None = None,
+    ) -> str:
+        """
+        Get path to scenario downscaling output.
+
+        Final scenario outputs are written to output_dir (if specified) rather than
+        cache_dir, since they are the final deliverable products.
+
+        Parameters
+        ----------
+        gcm : str
+            GCM name
+        variable : str
+            Variable name
+        ensemble : str
+            Ensemble member label (e.g. 'r1i1p1f1', '01')
+        scenario : str
+            Scenario name (e.g., 'ssp245', 'G6-1.5K')
+        subset_bounds : tuple or None
+            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
+
+        Returns
+        -------
+        str
+            S3 or local path to zarr store
+        """
+        subset_id = self._get_subset_id(subset_bounds)
+        scenario_lower = scenario.lower()
+
+        # Use output_dir for final scenarios if specified, otherwise cache
+        return f"{self.base_path}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble}_{subset_id}_{scenario_lower}_trend.icechunk"
+
     def exists(self, path: str) -> bool:
         """
         Check if artifact exists in cache.
