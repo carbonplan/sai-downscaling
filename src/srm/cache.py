@@ -61,6 +61,28 @@ class ArtifactCache:
         else:
             self.fs = fsspec.filesystem("local")
 
+    @classmethod
+    def from_config(cls, config: BCSDConfig) -> ArtifactCache:
+        """
+        Create ArtifactCache instance from BCSDConfig.
+
+        Parameters
+        ----------
+        config : BCSDConfig
+            Configuration object containing cache parameters
+
+        Returns
+        -------
+        ArtifactCache
+            Initialized cache manager
+        """
+        return cls(
+            base_path=config.cache_dir,
+            environment=config.environment,
+            version=config.version,
+            output_dir=config.output_dir,
+        )
+
     @staticmethod
     def _get_subset_id(subset_bounds: tuple[float, float, float, float] | None) -> str:
         """
