@@ -15,7 +15,7 @@ from pathlib import Path
 
 import fsspec
 
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, VariableConfig
 
 logger = logging.getLogger(__name__)
 
@@ -103,75 +103,70 @@ class ArtifactCache:
         lat_min, lat_max, lon_min, lon_max = subset_bounds
         return f"lat{lat_min}to{lat_max}_lon{lon_min}to{lon_max}"
 
-    def get_obs_path(
-        self,
-        gcm: str,
-        variable: str,
-        subset_bounds: tuple[float, float, float, float] | None = None,
-    ) -> str:
+    @staticmethod
+    def _get_varconfig_id(variable_config: VariableConfig, mapping_type: str) -> str:
+        """
+        Generate a human-readable path segment encoding VariableConfig and mapping type.
+
+        Included in historical and scenario cache paths so that runs with non-default
+        VariableConfig or mapping_type never collide with standard runs.
+
+        Parameters
+        ----------
+        variable_config : VariableConfig
+            Variable-specific BCSD parameters.
+        mapping_type : str
+            Quantile mapping method ('parametric' or 'nonparametric').
+
+        Returns
+        -------
+        str
+            Path segment, e.g. ``dt1-win1-dsadditive-dscfft-dtmadditive-parametric``.
+        """
+        return f"{variable_config.to_path_id()}-{mapping_type}"
+
+    def get_obs_path(self, config: BCSDConfig) -> str:
         """
         Get path to cached observation regridding artifact.
 
         Parameters
         ----------
-        gcm : str
-            GCM name
-        variable : str
-            Variable name
-        subset_bounds : tuple or None
-            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
+        config : BCSDConfig
+            Run configuration
 
         Returns
         -------
         str
             S3 or local path to zarr store
         """
-        subset_id = self._get_subset_id(subset_bounds)
-        return f"{self.base_path}/{self.environment}/{self.version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
+        subset_id = self._get_subset_id(config.subset_bounds)
+        return f"{self.base_path}/{self.environment}/{self.version}/obs/{config.gcm}_{config.variable}_{subset_id}_obs_regridded.icechunk"
 
-    def get_historical_path(
-        self,
-        gcm: str,
-        variable: str,
-        ensemble: str,
-        subset_bounds: tuple[float, float, float, float] | None = None,
-    ) -> str:
+    def get_historical_path(self, config: BCSDConfig) -> str:
         """
         Get path to cached historical downscaling artifact.
 
         Parameters
         ----------
-        gcm : str
-            GCM name
-        variable : str
-            Variable name
-        ensemble : str
-            Ensemble member label (e.g. 'r1i1p1f1', '01')
-        subset_bounds : tuple or None
-            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
+        config : BCSDConfig
+            Run configuration
 
         Returns
         -------
         str
             S3 or local path to zarr store
         """
-        subset_id = self._get_subset_id(subset_bounds)
+        subset_id = self._get_subset_id(config.subset_bounds)
+        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{gcm}_{variable}_{ensemble}_{subset_id}_historical.icechunk"
+            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{config.gcm}_{config.variable}_{config.ensemble_member}_{subset_id}_{varconfig_id}_historical.icechunk"
         else:
             return (
                 f"{self.base_path}/{self.environment}/{self.version}/historical/"
-                f"{gcm}_{variable}_{ensemble}_{subset_id}_historical.icechunk"
+                f"{config.gcm}_{config.variable}_{config.ensemble_member}_{subset_id}_{varconfig_id}_historical.icechunk"
             )
 
-    def get_scenario_path(
-        self,
-        gcm: str,
-        variable: str,
-        ensemble: str,
-        scenario: str,
-        subset_bounds: tuple[float, float, float, float] | None = None,
-    ) -> str:
+    def get_scenario_path(self, config: BCSDConfig) -> str:
         """
         Get path to scenario downscaling output.
 
@@ -180,32 +175,25 @@ class ArtifactCache:
 
         Parameters
         ----------
-        gcm : str
-            GCM name
-        variable : str
-            Variable name
-        ensemble : str
-            Ensemble member label (e.g. 'r1i1p1f1', '01')
-        scenario : str
-            Scenario name (e.g., 'ssp245', 'G6-1.5K')
-        subset_bounds : tuple or None
-            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
+        config : BCSDConfig
+            Run configuration
 
         Returns
         -------
         str
             S3 or local path to zarr store
         """
-        subset_id = self._get_subset_id(subset_bounds)
-        scenario_lower = scenario.lower()
+        subset_id = self._get_subset_id(config.subset_bounds)
+        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        scenario_lower = config.scenario.lower()
 
         # Use output_dir for final scenarios if specified, otherwise cache
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble}_{subset_id}_{scenario_lower}.icechunk"
+            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{config.gcm}_{config.variable}_{config.ensemble_member}_{subset_id}_{varconfig_id}_{scenario_lower}.icechunk"
         else:
             return (
                 f"{self.base_path}/{self.environment}/{self.version}/{scenario_lower}/"
-                f"{gcm}_{variable}_{ensemble}_{subset_id}_{scenario_lower}.icechunk"
+                f"{config.gcm}_{config.variable}_{config.ensemble_member}_{subset_id}_{varconfig_id}_{scenario_lower}.icechunk"
             )
 
     def exists(self, path: str) -> bool:
@@ -267,14 +255,12 @@ class ArtifactCache:
             return {}  # No dependencies
 
         elif stage == "fit_historical":
-            obs_path = self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+            obs_path = self.get_obs_path(config)
             return {"obs_regridded": (self.exists(obs_path), obs_path)}
 
         elif stage == "transform_scenario":
-            obs_path = self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
-            hist_path = self.get_historical_path(
-                config.gcm, config.variable, config.ensemble_member, config.subset_bounds
-            )
+            obs_path = self.get_obs_path(config)
+            hist_path = self.get_historical_path(config)
             return {
                 "obs_regridded": (self.exists(obs_path), obs_path),
                 "historical": (self.exists(hist_path), hist_path),
@@ -326,23 +312,15 @@ class ArtifactCache:
             Full path to output artifact
         """
         if stage == "prepare_observations":
-            return self.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+            return self.get_obs_path(config)
 
         elif stage == "fit_historical":
-            return self.get_historical_path(
-                config.gcm, config.variable, config.ensemble_member, config.subset_bounds
-            )
+            return self.get_historical_path(config)
 
         elif stage == "transform_scenario":
             if config.scenario is None:
                 raise ValueError("scenario must be specified for transform_scenario stage")
-            return self.get_scenario_path(
-                config.gcm,
-                config.variable,
-                config.ensemble_member,
-                config.scenario,
-                config.subset_bounds,
-            )
+            return self.get_scenario_path(config)
 
         else:
             raise ValueError(f"Unknown stage: {stage}")

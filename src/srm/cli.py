@@ -349,16 +349,10 @@ def status(
         console.print(f"  Version: {cache.version}")
         console.print("\n[cyan]Example Paths:[/cyan]")
         config = configs[0]
-        console.print(
-            f"  Obs: {cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)}"
-        )
-        console.print(
-            f"  Historical: {cache.get_historical_path(config.gcm, config.variable, config.ensemble_member, config.subset_bounds)}"
-        )
+        console.print(f"  Obs: {cache.get_obs_path(config)}")
+        console.print(f"  Historical: {cache.get_historical_path(config)}")
         if config.scenario:
-            console.print(
-                f"  Scenario: {cache.get_scenario_path(config.gcm, config.variable, config.ensemble_member, config.scenario, config.subset_bounds)}\n"
-            )
+            console.print(f"  Scenario: {cache.get_scenario_path(config)}\n")
 
     status_info = orchestrator.get_status(configs)
 

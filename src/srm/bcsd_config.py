@@ -57,6 +57,25 @@ class VariableConfig(BaseModel):
 
         return cls(**BCSD_CONFIG[variable])
 
+    def to_path_id(self) -> str:
+        """
+        Short human-readable path segment encoding all VariableConfig fields.
+
+        Used in cache paths to prevent collisions when VariableConfig is overridden.
+
+        Examples
+        --------
+        Default ``tas``:  ``dt1-win1-dsadditive-dscfft-dtmadditive``
+        ``tas`` with ``do_windowing=False``:  ``dt1-win0-dsadditive-dscfft-dtmadditive``
+        """
+        return (
+            f"dt{int(self.detrend_data)}"
+            f"-win{int(self.do_windowing)}"
+            f"-ds{self.downscaling_method}"
+            f"-dsc{self.downscaling_clim_method}"
+            f"-dtm{self.detrend_method}"
+        )
+
 
 class BCSDConfig(pydantic_settings.BaseSettings):
     """

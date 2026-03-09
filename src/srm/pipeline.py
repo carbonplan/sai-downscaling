@@ -124,9 +124,7 @@ class BCSDPipeline:
         str
             S3 path to cached artifact
         """
-        output_path = self.cache.get_obs_path(
-            self.config.gcm, self.config.variable, self.config.subset_bounds
-        )
+        output_path = self.cache.get_obs_path(self.config)
 
         # Check cache
         if self.cache.exists(output_path) and not force:
@@ -210,12 +208,7 @@ class BCSDPipeline:
         # Validate dependencies
         self.cache.validate_dependencies("fit_historical", self.config)
 
-        output_path = self.cache.get_historical_path(
-            self.config.gcm,
-            self.config.variable,
-            self.config.ensemble_member,
-            self.config.subset_bounds,
-        )
+        output_path = self.cache.get_historical_path(self.config)
 
         # Check cache
         if self.cache.exists(output_path) and not force:
@@ -367,13 +360,7 @@ class BCSDPipeline:
         # Validate dependencies
         self.cache.validate_dependencies("transform_scenario", self.config)
 
-        output_path = self.cache.get_scenario_path(
-            self.config.gcm,
-            self.config.variable,
-            self.config.ensemble_member,
-            self.config.scenario,
-            self.config.subset_bounds,
-        )
+        output_path = self.cache.get_scenario_path(self.config)
 
         # Check cache
         if self.cache.exists(output_path) and not force:
