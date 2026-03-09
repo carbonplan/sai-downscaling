@@ -45,9 +45,7 @@ def load_cached_data(s3_uri: str) -> xr.Dataset:
         Lazily loaded dataset from the icechunk store.
     """
     parts = s3_uri.split("/")
-    storage = icechunk.s3_storage(
-        bucket=parts[2], prefix="/".join(parts[3:]), from_env=True
-    )
+    storage = icechunk.s3_storage(bucket=parts[2], prefix="/".join(parts[3:]), from_env=True)
     repo = icechunk.Repository.open(storage)
     session = repo.readonly_session(branch="main")
     ds = xr.open_dataset(session.store, engine="zarr", chunks="auto")
@@ -113,9 +111,7 @@ class BCSDRun:
             return self._location_cache[(lat, lon)]
         except KeyError:
             self._location_cache[(lat, lon)] = {
-                k: ds[self.config.variable]
-                .sel(lon=lon, lat=lat, method="nearest")
-                .to_numpy()
+                k: ds[self.config.variable].sel(lon=lon, lat=lat, method="nearest").to_numpy()
                 for k, ds in self.run_data.items()
             }
             return self._location_cache[(lat, lon)]
