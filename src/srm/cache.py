@@ -54,6 +54,7 @@ class ArtifactCache:
         self.environment = environment
         self.version = version
         self.output_dir = output_dir.rstrip("/") if output_dir else None
+        self.config: BCSDConfig | None = None
 
         # Initialize filesystem (works for s3:// and local paths)
         if base_path.startswith("s3://"):
@@ -76,12 +77,14 @@ class ArtifactCache:
         ArtifactCache
             Initialized cache manager
         """
-        return cls(
+        cache = cls(
             base_path=config.cache_dir,
             environment=config.environment,
             version=config.version,
             output_dir=config.output_dir,
         )
+        cache.config = config
+        return cache
 
     @staticmethod
     def _get_subset_id(subset_bounds: tuple[float, float, float, float] | None) -> str:
@@ -124,6 +127,29 @@ class ArtifactCache:
             Path segment, e.g. ``dt1-win1-dsadditive-dscfft-dtmadditive-parametric``.
         """
         return f"{variable_config.to_path_id()}-{mapping_type}"
+
+    def _require_config(self) -> BCSDConfig:
+        if self.config is None:
+            raise RuntimeError(
+                "No config bound to this cache. Use ArtifactCache.from_config(config) "
+                "or pass config explicitly to the path methods."
+            )
+        return self.config
+
+    @property
+    def obs_path(self) -> str:
+        """Path to the obs regridding artifact for the bound config."""
+        return self.get_obs_path(self._require_config())
+
+    @property
+    def historical_path(self) -> str:
+        """Path to the historical downscaling artifact for the bound config."""
+        return self.get_historical_path(self._require_config())
+
+    @property
+    def scenario_path(self) -> str:
+        """Path to the scenario downscaling artifact for the bound config."""
+        return self.get_scenario_path(self._require_config())
 
     def get_obs_path(self, config: BCSDConfig) -> str:
         """
