@@ -30,7 +30,7 @@ from srm.bcsd_config import BCSDConfig
 _MINIMAL_CONFIG = {
     "gcm": "CESM2-WACCM",
     "variable": "tas",
-    "ensemble_member": 0,
+    "ensemble_member": "r1i1p1f1",
     "scenario": "ssp245",
     "predict_period_start": 2015,
     "predict_period_end": 2100,
@@ -76,7 +76,7 @@ class TestConfigJsonReading:
 
     def test_raises_on_json_with_invalid_bcsd_fields(self):
         os.environ["CONFIG_JSON"] = json.dumps(
-            {"gcm": "X", "variable": "sfcWind", "ensemble_member": 0}
+            {"gcm": "X", "variable": "sfcWind", "ensemble_member": "r1i1p1f1"}
         )
         with pytest.raises(Exception):
             run_stage("prepare_observations")
@@ -97,7 +97,7 @@ class TestConfigJsonReading:
         assert isinstance(captured["config"], BCSDConfig)
         assert captured["config"].gcm == "CESM2-WACCM"
         assert captured["config"].variable == "tas"
-        assert captured["config"].ensemble_member == 0
+        assert captured["config"].ensemble_member == "r1i1p1f1"
 
 
 # ---------------------------------------------------------------------------

@@ -52,7 +52,7 @@ def orchestrator() -> BCSDOrchestrator:
 
 
 def _make_config(
-    tmp_path, gcm="CESM2-WACCM", variable="tas", ensemble_member=0, scenario="ssp245"
+    tmp_path, gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", scenario="ssp245"
 ) -> BCSDConfig:
     return BCSDConfig(
         gcm=gcm,
@@ -76,10 +76,10 @@ def config(tmp_path) -> BCSDConfig:
 def multi_configs(tmp_path) -> list[BCSDConfig]:
     """Three configs covering two GCMs and two variables for deduplication tests."""
     return [
-        _make_config(tmp_path, gcm="CESM2-WACCM", variable="tas", ensemble_member=0),
-        _make_config(tmp_path, gcm="CESM2-WACCM", variable="tas", ensemble_member=1),
-        _make_config(tmp_path, gcm="CESM2-WACCM", variable="pr", ensemble_member=0),
-        _make_config(tmp_path, gcm="MIROC-ES2H", variable="tas", ensemble_member=0),
+        _make_config(tmp_path, gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"),
+        _make_config(tmp_path, gcm="CESM2-WACCM", variable="tas", ensemble_member="r2i1p1f1"),
+        _make_config(tmp_path, gcm="CESM2-WACCM", variable="pr", ensemble_member="r1i1p1f1"),
+        _make_config(tmp_path, gcm="MIROC-ES2H", variable="tas", ensemble_member="01"),
     ]
 
 

@@ -226,10 +226,9 @@ class BCSDPipeline:
         if self.config.verbose:
             logger.info(
                 f"Computing historical downscaling for "
-                f"{self.config.gcm}/{self.config.variable}/{self.config.ensemble_member:03d}"
+                f"{self.config.gcm}/{self.config.variable}/{self.config.ensemble_member}"
             )
 
-        # Load data
         with Timer("Loaded data", verbose=self.config.verbose):
             # Load cached coarse observations
             deps = self.cache.check_dependencies("fit_historical", self.config)
@@ -246,7 +245,7 @@ class BCSDPipeline:
             )
             # Historical data may not have ensemble_member dimension
             if "ensemble_member" in model_hist.dims:
-                model_hist = model_hist.isel(ensemble_member=self.config.ensemble_member)
+                model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
             model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
             # Subset spatially if requested
@@ -385,7 +384,7 @@ class BCSDPipeline:
         if self.config.verbose:
             logger.info(
                 f"Computing scenario downscaling for "
-                f"{self.config.gcm}/{self.config.variable}/{self.config.ensemble_member:03d}/{self.config.scenario}"
+                f"{self.config.gcm}/{self.config.variable}/{self.config.ensemble_member}/{self.config.scenario}"
             )
 
         # Load data
@@ -404,21 +403,21 @@ class BCSDPipeline:
             )
             # Historical data may not have ensemble_member dimension
             if "ensemble_member" in model_hist.dims:
-                model_hist = model_hist.isel(ensemble_member=self.config.ensemble_member)
+                model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
             model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
             # Load scenario
             model_scenario = get_experiment(
                 gcm=self.config.gcm, scenario=self.config.scenario, var=self.config.variable
             )
-            model_scenario = model_scenario.isel(ensemble_member=self.config.ensemble_member)
+            model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
             model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
             if self.config.is_sai_scenario:
                 ssp_timeseries = get_experiment(
                     gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
                 )
-                ssp_timeseries = ssp_timeseries.isel(ensemble_member=self.config.ensemble_member)
+                ssp_timeseries = ssp_timeseries.sel(ensemble_member=self.config.ensemble_member)
                 ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
 
             # Subset spatially if requested

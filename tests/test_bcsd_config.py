@@ -15,7 +15,7 @@ from srm.bcsd_config import BCSDConfig, CacheConfig, RuntimeConfig, VariableConf
 @pytest.fixture
 def minimal_config() -> BCSDConfig:
     """Minimal valid BCSDConfig for a historical-only run (no scenario)."""
-    return BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=0)
+    return BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def scenario_config() -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="tas",
-        ensemble_member=0,
+        ensemble_member="r1i1p1f1",
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -37,7 +37,7 @@ def sai_config() -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="pr",
-        ensemble_member=1,
+        ensemble_member="r2i1p1f1",
         scenario="G6-1.5K",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -50,7 +50,7 @@ def regional_config() -> BCSDConfig:
     return BCSDConfig(
         gcm="MIROC-ES2H",
         variable="tasmax",
-        ensemble_member=0,
+        ensemble_member="01",
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -148,7 +148,7 @@ class TestBCSDConfigConstruction:
     def test_minimal_historical_config(self, minimal_config):
         assert minimal_config.gcm == "CESM2-WACCM"
         assert minimal_config.variable == "tas"
-        assert minimal_config.ensemble_member == 0
+        assert minimal_config.ensemble_member == "r1i1p1f1"
         assert minimal_config.scenario is None
 
     def test_variable_config_auto_populated(self, minimal_config):
@@ -189,7 +189,7 @@ class TestBCSDConfigConstruction:
         cfg = BCSDConfig(
             gcm="UKESM",
             variable="tas",
-            ensemble_member=2,
+            ensemble_member="r2i1p1f2",
             scenario="ssp245",
             predict_period_start=2015,
             predict_period_end=2100,
@@ -201,13 +201,13 @@ class TestBCSDConfigConstruction:
     def test_all_supported_variables_construct(self, subtests):
         for var in ("tas", "tasmax", "pr"):
             with subtests.test(variable=var):
-                cfg = BCSDConfig(gcm="CESM2-WACCM", variable=var, ensemble_member=0)
+                cfg = BCSDConfig(gcm="CESM2-WACCM", variable=var, ensemble_member="r1i1p1f1")
                 assert cfg.variable == var
 
     def test_all_supported_gcms_construct(self, subtests):
         for gcm in ("CESM2-WACCM", "MIROC-ES2H", "UKESM"):
             with subtests.test(gcm=gcm):
-                cfg = BCSDConfig(gcm=gcm, variable="tas", ensemble_member=0)
+                cfg = BCSDConfig(gcm=gcm, variable="tas", ensemble_member="r1i1p1f1")
                 assert cfg.gcm == gcm
 
     def test_model_copy_version_override(self, scenario_config):
@@ -225,19 +225,19 @@ class TestBCSDConfigComputedFields:
     """run_id, config_hash, and is_sai_scenario computed fields."""
 
     def test_run_id_historical_only(self, minimal_config):
-        assert minimal_config.run_id == "CESM2-WACCM_tas_000"
+        assert minimal_config.run_id == "CESM2-WACCM_tas_r1i1p1f1"
 
     def test_run_id_with_scenario(self, scenario_config):
-        assert scenario_config.run_id == "CESM2-WACCM_tas_000_ssp245"
+        assert scenario_config.run_id == "CESM2-WACCM_tas_r1i1p1f1_ssp245"
 
     def test_run_id_includes_subset_marker(self, regional_config):
         assert "subset" in regional_config.run_id
 
-    def test_run_id_ensemble_zero_padding(self, subtests):
-        for member, expected_pad in [(0, "000"), (1, "001"), (9, "009"), (10, "010"), (99, "099")]:
-            with subtests.test(member=member):
-                cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=member)
-                assert f"_{expected_pad}" in cfg.run_id
+    def test_run_id_contains_ensemble_label(self, subtests):
+        for label in ("r1i1p1f1", "r12i1p1f2", "01", "r10i1p1f2"):
+            with subtests.test(label=label):
+                cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=label)
+                assert f"_{label}" in cfg.run_id
 
     def test_config_hash_is_12_char_hex(self, minimal_config):
         h = minimal_config.config_hash
@@ -245,8 +245,8 @@ class TestBCSDConfigComputedFields:
         assert all(c in "0123456789abcdef" for c in h)
 
     def test_config_hash_is_stable(self):
-        cfg_a = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=0)
-        cfg_b = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=0)
+        cfg_a = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        cfg_b = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
         assert cfg_a.config_hash == cfg_b.config_hash
 
     def test_config_hash_differs_across_configs(
@@ -274,7 +274,7 @@ class TestBCSDConfigComputedFields:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
-            ensemble_member=0,
+            ensemble_member="r1i1p1f1",
             scenario="SAI-2050",
             predict_period_start=2015,
             predict_period_end=2100,
@@ -301,7 +301,7 @@ class TestBCSDConfigValidation:
             BCSDConfig(
                 gcm="CESM2-WACCM",
                 variable="tas",
-                ensemble_member=0,
+                ensemble_member="r1i1p1f1",
                 scenario="ssp245",
                 predict_period_start=None,  # explicit None triggers the validator
                 predict_period_end=2100,
@@ -312,7 +312,7 @@ class TestBCSDConfigValidation:
             BCSDConfig(
                 gcm="CESM2-WACCM",
                 variable="tas",
-                ensemble_member=0,
+                ensemble_member="r1i1p1f1",
                 scenario="ssp245",
                 predict_period_start=2015,
                 predict_period_end=None,  # explicit None triggers the validator
@@ -323,7 +323,7 @@ class TestBCSDConfigValidation:
             BCSDConfig(
                 gcm="CESM2-WACCM",
                 variable="tas",
-                ensemble_member=0,
+                ensemble_member="r1i1p1f1",
                 train_period_start=2000,
                 train_period_end=1990,  # end before start
             )
@@ -333,7 +333,7 @@ class TestBCSDConfigValidation:
             BCSDConfig(
                 gcm="CESM2-WACCM",
                 variable="tas",
-                ensemble_member=0,
+                ensemble_member="r1i1p1f1",
                 scenario="ssp245",
                 predict_period_start=2080,
                 predict_period_end=2015,  # end before start
@@ -341,18 +341,14 @@ class TestBCSDConfigValidation:
 
     def test_unsupported_variable_raises(self):
         with pytest.raises(ValidationError):
-            BCSDConfig(gcm="CESM2-WACCM", variable="sfcWind", ensemble_member=0)
-
-    def test_negative_ensemble_member_raises(self):
-        with pytest.raises(ValidationError):
-            BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=-1)
+            BCSDConfig(gcm="CESM2-WACCM", variable="sfcWind", ensemble_member="r1i1p1f1")
 
     def test_subset_bounds_lat_min_ge_max_raises(self):
         with pytest.raises(ValidationError, match="lat_min"):
             BCSDConfig(
                 gcm="CESM2-WACCM",
                 variable="tas",
-                ensemble_member=0,
+                ensemble_member="r1i1p1f1",
                 subset_bounds=(20.0, 10.0, 0.0, 30.0),  # lat_min > lat_max
             )
 
@@ -361,7 +357,7 @@ class TestBCSDConfigValidation:
             BCSDConfig(
                 gcm="CESM2-WACCM",
                 variable="tas",
-                ensemble_member=0,
+                ensemble_member="r1i1p1f1",
                 subset_bounds=(10.0, 20.0, 50.0, 30.0),  # lon_min > lon_max
             )
 
@@ -376,7 +372,7 @@ class TestBCSDConfigValidation:
                     BCSDConfig(
                         gcm="CESM2-WACCM",
                         variable="tas",
-                        ensemble_member=0,
+                        ensemble_member="r1i1p1f1",
                         subset_bounds=bounds,
                     )
 
