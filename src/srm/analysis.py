@@ -1,3 +1,5 @@
+from functools import cached_property
+
 import icechunk
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -48,7 +50,7 @@ def load_cached_data(s3_uri: str) -> xr.Dataset:
     storage = icechunk.s3_storage(bucket=parts[2], prefix="/".join(parts[3:]), from_env=True)
     repo = icechunk.Repository.open(storage)
     session = repo.readonly_session(branch="main")
-    ds = xr.open_dataset(session.store, engine="zarr", chunks="auto")
+    ds = xr.open_dataset(session.store, engine="zarr", chunks={})
     return ds
 
 
@@ -64,32 +66,26 @@ class BCSDRun:
 
     def __init__(self, bcsd_config: BCSDConfig):
         self.config = bcsd_config
-        self.run_data = self._get_run_data()
         self._location_cache = {}
 
     def __repr__(self):
         return f"BCSDRun(gcm={self.config.gcm}, ensemble={self.config.ensemble_member}, var={self.config.variable}, scenario={self.config.scenario})"
 
-    def _get_run_data(self) -> dict:
-        """
-        Load all cached artifacts for a BCSD run.
+    @cached_property
+    def _cache(self) -> ArtifactCache:
+        return cache_from_config(self.config)
 
-        Returns
-        -------
-        dict
-            Dictionary with keys ``'obs'``, ``'historical'``, and ``'scenario'``,
-            each containing the corresponding xr.Dataset.
-        """
-        cache = cache_from_config(self.config)
-        historical_path = cache.get_output_path("fit_historical", self.config)
-        obs_path = cache.get_output_path("prepare_observations", self.config)
-        scenario_path = cache.get_output_path("transform_scenario", self.config)
+    @cached_property
+    def obs(self) -> xr.Dataset:
+        return load_cached_data(self._cache.get_output_path("prepare_observations"), self.config)
 
-        return {
-            "historical": load_cached_data(historical_path),
-            "scenario": load_cached_data(scenario_path),
-            "obs": load_cached_data(obs_path),
-        }
+    @cached_property
+    def historical(self) -> xr.Dataset:
+        return load_cached_data(self._cache.get_output_path("fit_historical", self.config))
+
+    @cached_property
+    def scenario(self) -> xr.Dataset:
+        return load_cached_data(self._cache.get_output_path("transform_scenario", self.config))
 
     def get_location_data(self, lat, lon):
         """
@@ -110,9 +106,12 @@ class BCSDRun:
         try:
             return self._location_cache[(lat, lon)]
         except KeyError:
+            sel = dict(lon=lon, lat=lat, method="nearest")
+            v = self.config.variable
             self._location_cache[(lat, lon)] = {
-                k: ds[self.config.variable].sel(lon=lon, lat=lat, method="nearest").to_numpy()
-                for k, ds in self.run_data.items()
+                "obs": self.obs[v].sel(**sel).to_numpy(),
+                "scenario": self.scenario[v].sel(**sel).to_numpy(),
+                "historical": self.historical[v].sel(**sel).to_numpy(),
             }
             return self._location_cache[(lat, lon)]
 
