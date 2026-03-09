@@ -16,7 +16,6 @@ Tests focus on:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,11 +28,19 @@ from srm.pipeline import BCSDPipeline
 # ---------------------------------------------------------------------------
 
 
-def _make_zarr_store(path: str, marker: str = ".zmetadata") -> None:
-    """Create a minimal valid zarr store at a local path."""
-    store = Path(path)
-    store.mkdir(parents=True, exist_ok=True)
-    (store / marker).touch()
+def _make_icechunk_store(path: str) -> None:
+    """Create a minimal icechunk store with a 'write complete' commit."""
+    import icechunk
+    import numpy as np
+    import xarray as xr
+    from icechunk.xarray import to_icechunk
+
+    storage = icechunk.local_filesystem_storage(path=path)
+    repo = icechunk.Repository.open_or_create(storage)
+    session = repo.writable_session("main")
+    ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
+    to_icechunk(ds, session, mode="w")
+    session.commit("write complete")
 
 
 @contextmanager
@@ -45,6 +52,7 @@ def _mock_prepare_obs_compute():
         patch("srm.pipeline.interpolate_fine_to_coarse_grid") as mock_interp,
         patch("srm.pipeline.subset_space") as mock_subset,
         patch("srm.pipeline.rechunk") as mock_rechunk,
+        patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         yield mock_get_obs, mock_get_exp, mock_interp, mock_subset, mock_rechunk
 
@@ -55,14 +63,14 @@ def _mock_fit_historical_compute():
     with (
         patch("srm.pipeline.get_obs"),
         patch("srm.pipeline.get_experiment"),
-        patch("srm.pipeline.xr") as mock_xr,
+        patch("srm.pipeline.xr.DataArray", return_value=MagicMock()),
         patch("srm.pipeline.rechunk"),
         patch("srm.pipeline.downscale_from_coarse"),
         patch("ibicus.debias.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
+        patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
+        patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
-        # open_zarr must return a subscriptable mock
-        mock_xr.open_zarr.return_value = MagicMock()
         # debiaser.apply returns something downstream code treats as an array
         mock_qm.from_variable.return_value.apply.return_value = MagicMock()
         yield
@@ -74,7 +82,8 @@ def _mock_transform_scenario_compute():
     with (
         patch("srm.pipeline.get_obs"),
         patch("srm.pipeline.get_experiment"),
-        patch("srm.pipeline.xr") as mock_xr,
+        patch("srm.pipeline.xr.DataArray", return_value=MagicMock()),
+        patch("srm.pipeline.xr.concat", return_value=MagicMock()),
         patch("srm.pipeline.rechunk"),
         patch("srm.pipeline.subset_space"),
         patch("srm.pipeline.calculate_baseline_climatology"),
@@ -83,8 +92,9 @@ def _mock_transform_scenario_compute():
         patch("srm.pipeline.downscale_from_coarse"),
         patch("ibicus.debias.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
+        patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
+        patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
-        mock_xr.open_zarr.return_value = MagicMock()
         mock_qm.from_variable.return_value.apply.return_value = MagicMock()
         yield
 
@@ -100,7 +110,7 @@ def config(tmp_path) -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="tas",
-        ensemble_member=0,
+        ensemble_member="r1i1p1f1",
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -117,7 +127,7 @@ def pr_config(tmp_path) -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="pr",
-        ensemble_member=0,
+        ensemble_member="r1i1p1f1",
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -141,12 +151,12 @@ def pipeline_pr(pr_config) -> BCSDPipeline:
 @pytest.fixture
 def all_deps_present(pipeline) -> BCSDPipeline:
     """Pipeline whose obs and historical dependencies are pre-created locally."""
-    _make_zarr_store(
+    _make_icechunk_store(
         pipeline.cache.get_obs_path(
             pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
         )
     )
-    _make_zarr_store(
+    _make_icechunk_store(
         pipeline.cache.get_historical_path(
             pipeline.config.gcm,
             pipeline.config.variable,
@@ -190,7 +200,7 @@ class TestPrepareObservationsCache:
         obs_path = pipeline.cache.get_obs_path(
             pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
         )
-        _make_zarr_store(obs_path)
+        _make_icechunk_store(obs_path)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
             result = pipeline.prepare_observations()
@@ -202,7 +212,7 @@ class TestPrepareObservationsCache:
         obs_path = pipeline.cache.get_obs_path(
             pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
         )
-        _make_zarr_store(obs_path)
+        _make_icechunk_store(obs_path)
 
         with _mock_prepare_obs_compute() as (get_obs, get_exp, interp, *_):
             pipeline.prepare_observations()
@@ -214,7 +224,7 @@ class TestPrepareObservationsCache:
         obs_path = pipeline.cache.get_obs_path(
             pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
         )
-        _make_zarr_store(obs_path)
+        _make_icechunk_store(obs_path)
 
         with _mock_prepare_obs_compute() as (mock_get_obs, *_):
             pipeline.prepare_observations(force=True)
@@ -259,7 +269,7 @@ class TestPrepareObservationsCompute:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
-            ensemble_member=0,
+            ensemble_member="r1i1p1f1",
             subset_bounds=(-35.0, -22.0, 16.0, 33.0),
             cache_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
@@ -282,7 +292,7 @@ class TestPrepareObservationsCompute:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
-            ensemble_member=0,
+            ensemble_member="r1i1p1f1",
             cache_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
@@ -325,7 +335,7 @@ class TestFitHistoricalBehavior:
             pipeline.config.ensemble_member,
             pipeline.config.subset_bounds,
         )
-        _make_zarr_store(hist_path)
+        _make_icechunk_store(hist_path)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
             result = pipeline.fit_historical()
@@ -341,7 +351,7 @@ class TestFitHistoricalBehavior:
             pipeline.config.ensemble_member,
             pipeline.config.subset_bounds,
         )
-        _make_zarr_store(hist_path)
+        _make_icechunk_store(hist_path)
 
         with _mock_fit_historical_compute():
             with patch("srm.pipeline.get_obs") as mock_get_obs:
@@ -372,7 +382,7 @@ class TestTransformScenarioBehavior:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
-            ensemble_member=0,
+            ensemble_member="r1i1p1f1",
             cache_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
@@ -388,7 +398,7 @@ class TestTransformScenarioBehavior:
         obs_path = pipeline.cache.get_obs_path(
             pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
         )
-        _make_zarr_store(obs_path)
+        _make_icechunk_store(obs_path)
         with pytest.raises(ValueError, match="Missing dependencies"):
             pipeline.transform_scenario()
 
@@ -409,7 +419,7 @@ class TestTransformScenarioBehavior:
             pipeline.config.scenario,
             pipeline.config.subset_bounds,
         )
-        _make_zarr_store(scenario_path)
+        _make_icechunk_store(scenario_path)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
             result = pipeline.transform_scenario()
@@ -420,10 +430,10 @@ class TestTransformScenarioBehavior:
     def test_force_bypasses_cached_scenario(self, pipeline_pr, tmp_path):
         # Use pr config: detrend_data=False avoids the xr.concat detrend branch
         p = pipeline_pr
-        _make_zarr_store(
+        _make_icechunk_store(
             p.cache.get_obs_path(p.config.gcm, p.config.variable, p.config.subset_bounds)
         )
-        _make_zarr_store(
+        _make_icechunk_store(
             p.cache.get_historical_path(
                 p.config.gcm, p.config.variable, p.config.ensemble_member, p.config.subset_bounds
             )
@@ -435,7 +445,7 @@ class TestTransformScenarioBehavior:
             p.config.scenario,
             p.config.subset_bounds,
         )
-        _make_zarr_store(scenario_path)
+        _make_icechunk_store(scenario_path)
 
         with _mock_transform_scenario_compute():
             with patch("srm.pipeline.get_obs") as mock_get_obs:
@@ -446,10 +456,10 @@ class TestTransformScenarioBehavior:
     def test_returns_scenario_path_after_compute(self, pipeline_pr):
         # Use pr config: detrend_data=False avoids the xr.concat detrend branch
         p = pipeline_pr
-        _make_zarr_store(
+        _make_icechunk_store(
             p.cache.get_obs_path(p.config.gcm, p.config.variable, p.config.subset_bounds)
         )
-        _make_zarr_store(
+        _make_icechunk_store(
             p.cache.get_historical_path(
                 p.config.gcm, p.config.variable, p.config.ensemble_member, p.config.subset_bounds
             )
@@ -468,14 +478,14 @@ class TestTransformScenarioBehavior:
     def test_detrend_not_called_for_pr(self, all_deps_present, pipeline_pr, tmp_path):
         # Recreate all_deps_present for the pr pipeline
         pr_pipeline = pipeline_pr
-        _make_zarr_store(
+        _make_icechunk_store(
             pr_pipeline.cache.get_obs_path(
                 pr_pipeline.config.gcm,
                 pr_pipeline.config.variable,
                 pr_pipeline.config.subset_bounds,
             )
         )
-        _make_zarr_store(
+        _make_icechunk_store(
             pr_pipeline.cache.get_historical_path(
                 pr_pipeline.config.gcm,
                 pr_pipeline.config.variable,

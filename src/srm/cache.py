@@ -105,13 +105,13 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(subset_bounds)
-        return f"{self.base_path}/{self.environment}/{self.version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.zarr"
+        return f"{self.base_path}/{self.environment}/{self.version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
 
     def get_historical_path(
         self,
         gcm: str,
         variable: str,
-        ensemble: int,
+        ensemble: str,
         subset_bounds: tuple[float, float, float, float] | None = None,
     ) -> str:
         """
@@ -123,8 +123,8 @@ class ArtifactCache:
             GCM name
         variable : str
             Variable name
-        ensemble : int
-            Ensemble member index
+        ensemble : str
+            Ensemble member label (e.g. 'r1i1p1f1', '01')
         subset_bounds : tuple or None
             Spatial bounds (lat_min, lat_max, lon_min, lon_max)
 
@@ -135,18 +135,18 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(subset_bounds)
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{gcm}_{variable}_{ensemble}_{subset_id}_historical.icechunk"
         else:
             return (
                 f"{self.base_path}/{self.environment}/{self.version}/historical/"
-                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.zarr"
+                f"{gcm}_{variable}_{ensemble}_{subset_id}_historical.icechunk"
             )
 
     def get_scenario_path(
         self,
         gcm: str,
         variable: str,
-        ensemble: int,
+        ensemble: str,
         scenario: str,
         subset_bounds: tuple[float, float, float, float] | None = None,
     ) -> str:
@@ -162,8 +162,8 @@ class ArtifactCache:
             GCM name
         variable : str
             Variable name
-        ensemble : int
-            Ensemble member index
+        ensemble : str
+            Ensemble member label (e.g. 'r1i1p1f1', '01')
         scenario : str
             Scenario name (e.g., 'ssp245', 'G6-1.5K')
         subset_bounds : tuple or None
@@ -179,62 +179,50 @@ class ArtifactCache:
 
         # Use output_dir for final scenarios if specified, otherwise cache
         if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.zarr"
+            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{gcm}_{variable}_{ensemble}_{subset_id}_{scenario_lower}.icechunk"
         else:
             return (
                 f"{self.base_path}/{self.environment}/{self.version}/{scenario_lower}/"
-                f"{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.zarr"
+                f"{gcm}_{variable}_{ensemble}_{subset_id}_{scenario_lower}.icechunk"
             )
 
     def exists(self, path: str) -> bool:
         """
         Check if artifact exists in cache.
 
+        Uses icechunk repository ancestry to verify a successful write, ensuring
+        the store is complete and not partially written.
+
         Parameters
         ----------
         path : str
-            Full path to artifact
+            Full path to icechunk store
 
         Returns
         -------
         bool
-            True if artifact exists and is valid
+            True if the store exists and has a 'write complete' commit in its ancestry
         """
         try:
-            # For zarr stores, check if zarr metadata exists
-            # Support both Zarr v2 (.zmetadata, .zgroup) and Zarr v3 (zarr.json)
+            import icechunk
+
             if path.startswith("s3://"):
-                # Remove s3:// prefix for fsspec
-                path_no_scheme = path.replace("s3://", "")
-
-                # Check if zarr metadata exists (v2 or v3 format)
-                metadata_exists = (
-                    self.fs.exists(f"{path_no_scheme}/.zmetadata")
-                    or self.fs.exists(f"{path_no_scheme}/.zgroup")
-                    or self.fs.exists(f"{path_no_scheme}/zarr.json")
-                )
-
-                if metadata_exists:
-                    logger.debug(f"Cache hit: {path}")
-                    return True
-                else:
-                    logger.debug(f"Cache miss: {path}")
-                    return False
+                path_no_scheme = path[len("s3://") :]
+                bucket, _, prefix = path_no_scheme.partition("/")
+                storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
             else:
-                # Local filesystem
-                metadata_path = Path(path) / ".zmetadata"
-                group_path = Path(path) / ".zgroup"
-                zarr_json_path = Path(path) / "zarr.json"
-                exists = metadata_path.exists() or group_path.exists() or zarr_json_path.exists()
+                storage = icechunk.local_filesystem_storage(path=path)
 
-                if exists:
-                    logger.debug(f"Cache hit: {path}")
-                else:
-                    logger.debug(f"Cache miss: {path}")
-
-                return exists
+            repo = icechunk.Repository.open(storage)
+            messages = [c.message for c in repo.ancestry(branch="main")]
+            result = "write complete" in messages
+            if result:
+                logger.debug(f"Cache hit: {path}")
+            else:
+                logger.debug(f"Cache miss (no write complete commit): {path}")
+            return result
         except Exception as e:
-            logger.warning(f"Error checking cache existence for {path}: {e}")
+            logger.debug(f"Cache miss: {path}: {e}")
             return False
 
     def check_dependencies(self, stage: str, config: BCSDConfig) -> dict[str, tuple[bool, str]]:
@@ -372,10 +360,10 @@ class ArtifactCache:
             # List all zarr stores
             if self.base_path.startswith("s3://"):
                 search_base_no_scheme = search_base.replace("s3://", "")
-                all_paths = self.fs.glob(f"{search_base_no_scheme}**/*.zarr")
+                all_paths = self.fs.glob(f"{search_base_no_scheme}**/*.icechunk")
                 all_paths = [f"s3://{p}" for p in all_paths]
             else:
-                all_paths = list(Path(search_base).rglob("*.zarr"))
+                all_paths = list(Path(search_base).rglob("*.icechunk"))
                 all_paths = [str(p) for p in all_paths]
 
             # Filter by GCM and variable if specified
@@ -457,9 +445,9 @@ class ArtifactCache:
                     except FileNotFoundError:
                         continue
 
-                    # Look for zarr stores (directories ending in .zarr)
+                    # Look for icechunk stores (directories ending in .icechunk)
                     for path in all_files:
-                        if path.endswith(".zarr"):
+                        if path.endswith(".icechunk"):
                             full_path = f"s3://{path}"
 
                             # Apply filters
@@ -478,7 +466,7 @@ class ArtifactCache:
                     if not search_path.exists():
                         continue
 
-                    for path in search_path.glob("*.zarr"):
+                    for path in search_path.glob("*.icechunk"):
                         # Apply filters
                         path_parts = path.name.split("_")
                         if gcm and path_parts[0] != gcm:

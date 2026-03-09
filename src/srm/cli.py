@@ -69,7 +69,7 @@ def load_configs(config_path: str) -> list[BCSDConfig]:
 def configs_from_matrix(
     gcms: list[str],
     variables: list[str],
-    members: list[int],
+    members: list[str],
     scenarios: list[str | None],
     *,
     train_period_start: int = 1978,
@@ -92,8 +92,8 @@ def configs_from_matrix(
         GCM names (e.g., ["CESM2-WACCM", "MIROC"])
     variables : list[str]
         Variables to downscale (e.g., ["tas", "pr"])
-    members : list[int]
-        Ensemble member indices (e.g., [0, 1, 2])
+    members : list[str]
+        Ensemble member labels (e.g., ["r1i1p1f1", "r2i1p1f1"])
     scenarios : list[str | None]
         Scenario names. Pass [None] for historical-only runs.
     train_period_start : int
@@ -188,8 +188,8 @@ def run_matrix(
     variable: list[str] = typer.Option(
         ..., help="Variable to downscale (repeatable: --variable tas --variable pr)"
     ),
-    member: list[int] = typer.Option(
-        ..., help="Ensemble member index (repeatable: --member 0 --member 1)"
+    member: list[str] = typer.Option(
+        ..., help="Ensemble member label (repeatable: --member r1i1p1f1 --member r2i1p1f1)"
     ),
     scenario: list[str] | None = typer.Option(
         None,
@@ -235,7 +235,7 @@ def run_matrix(
         bcsd run-matrix \\
           --gcm CESM2-WACCM --gcm MIROC \\
           --variable tas --variable pr \\
-          --member 0 --member 1 --member 2 \\
+          --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \\
           --scenario ssp245 --scenario G6-1pt5k \\
           --predict-period-start 2015 --predict-period-end 2100
 

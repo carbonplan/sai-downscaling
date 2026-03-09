@@ -55,4 +55,4 @@ ds = xr.open_zarr(session.store, consolidated=False)
 print(ds)
 ```
 
-See also the [subsetting and exporting notebook](../data-access-notebooks/subsetting-and-exporting.ipynb) for examples of working with spatial subsets.
+See also the [subsetting and exporting notebook](data-access-notebooks/subsetting-and-exporting.ipynb) for examples of working with spatial subsets.

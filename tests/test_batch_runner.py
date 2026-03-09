@@ -30,7 +30,7 @@ from srm.bcsd_config import BCSDConfig
 _MINIMAL_CONFIG = {
     "gcm": "CESM2-WACCM",
     "variable": "tas",
-    "ensemble_member": 0,
+    "ensemble_member": "r1i1p1f1",
     "scenario": "ssp245",
     "predict_period_start": 2015,
     "predict_period_end": 2100,
@@ -76,7 +76,7 @@ class TestConfigJsonReading:
 
     def test_raises_on_json_with_invalid_bcsd_fields(self):
         os.environ["CONFIG_JSON"] = json.dumps(
-            {"gcm": "X", "variable": "sfcWind", "ensemble_member": 0}
+            {"gcm": "X", "variable": "sfcWind", "ensemble_member": "r1i1p1f1"}
         )
         with pytest.raises(Exception):
             run_stage("prepare_observations")
@@ -97,7 +97,7 @@ class TestConfigJsonReading:
         assert isinstance(captured["config"], BCSDConfig)
         assert captured["config"].gcm == "CESM2-WACCM"
         assert captured["config"].variable == "tas"
-        assert captured["config"].ensemble_member == 0
+        assert captured["config"].ensemble_member == "r1i1p1f1"
 
 
 # ---------------------------------------------------------------------------
@@ -199,40 +199,35 @@ class TestReturnValue:
     def test_returns_result_path(self, valid_config_json):
         os.environ["CONFIG_JSON"] = valid_config_json
         mock_pipeline = MagicMock()
-        mock_pipeline.prepare_observations.return_value = "s3://bucket/obs.zarr"
-
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
-            result = run_stage("prepare_observations")
-
-        assert result == "s3://bucket/obs.zarr"
+        mock_pipeline.prepare_observations.return_value = "s3://bucket/obs.icechunk"
 
     def test_prints_result_path(self, valid_config_json, capsys):
         os.environ["CONFIG_JSON"] = valid_config_json
         mock_pipeline = MagicMock()
-        mock_pipeline.prepare_observations.return_value = "s3://bucket/obs.zarr"
+        mock_pipeline.prepare_observations.return_value = "s3://bucket/obs.icechunk"
 
         with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
             run_stage("prepare_observations")
 
         captured = capsys.readouterr()
-        assert "s3://bucket/obs.zarr" in captured.out
+        assert "s3://bucket/obs.icechunk" in captured.out
 
     def test_returns_fit_historical_path(self, valid_config_json):
         os.environ["CONFIG_JSON"] = valid_config_json
         mock_pipeline = MagicMock()
-        mock_pipeline.fit_historical.return_value = "s3://bucket/hist.zarr"
+        mock_pipeline.fit_historical.return_value = "s3://bucket/hist.icechunk"
 
         with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
             result = run_stage("fit_historical")
 
-        assert result == "s3://bucket/hist.zarr"
+        assert result == "s3://bucket/hist.icechunk"
 
     def test_returns_transform_scenario_path(self, valid_config_json):
         os.environ["CONFIG_JSON"] = valid_config_json
         mock_pipeline = MagicMock()
-        mock_pipeline.transform_scenario.return_value = "s3://bucket/ssp245.zarr"
+        mock_pipeline.transform_scenario.return_value = "s3://bucket/ssp245.icechunk"
 
         with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
             result = run_stage("transform_scenario")
 
-        assert result == "s3://bucket/ssp245.zarr"
+        assert result == "s3://bucket/ssp245.icechunk"

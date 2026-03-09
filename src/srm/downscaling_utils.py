@@ -1,6 +1,5 @@
 import typing
 
-import dask.base
 import icechunk
 import icechunk.xarray
 import numpy as np
@@ -20,13 +19,43 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
     return da_subset
 
 
+_TARGET_CHUNK_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
 def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]) -> xr.DataArray:
     if pattern == "full_space":
-        da_rechunk = da.chunk(time=5, lat=-1, lon=-1)
+        already_chunked = (
+            "time" in da.chunksizes
+            and len(da.chunksizes["time"]) > 1
+            and "lat" in da.chunksizes
+            and len(da.chunksizes["lat"]) == 1
+            and "lon" in da.chunksizes
+            and len(da.chunksizes["lon"]) == 1
+        )
+        if not already_chunked:
+            n_lat = da.sizes["lat"]
+            n_lon = da.sizes["lon"]
+            time_chunk = max(1, int(_TARGET_CHUNK_BYTES / (n_lat * n_lon * da.dtype.itemsize)))
+            da = da.chunk(time=time_chunk, lat=-1, lon=-1)
     elif pattern == "full_time":
-        da_rechunk = da.chunk(time=-1, lat=7, lon=14)
-    da_rechunk = dask.base.optimize(da_rechunk)[0]
-    return da_rechunk
+        already_chunked = (
+            "time" in da.chunksizes
+            and len(da.chunksizes["time"]) == 1
+            and "lat" in da.chunksizes
+            and len(da.chunksizes["lat"]) > 1
+            and "lon" in da.chunksizes
+            and len(da.chunksizes["lon"]) > 1
+        )
+        if not already_chunked:
+            n_time = da.sizes["time"]
+            n_lat = da.sizes["lat"]
+            n_lon = da.sizes["lon"]
+            total_spatial = _TARGET_CHUNK_BYTES / (n_time * da.dtype.itemsize)
+            # split spatial pixels proportionally to preserve the lat/lon aspect ratio
+            lat_chunk = max(1, int(np.sqrt(total_spatial * n_lat / n_lon)))
+            lon_chunk = max(1, int(np.sqrt(total_spatial * n_lon / n_lat)))
+            da = da.chunk(time=-1, lat=lat_chunk, lon=lon_chunk)
+    return da
 
 
 def get_experiment(
@@ -34,9 +63,19 @@ def get_experiment(
     scenario: str = "SSP245",
     var: str = "tas",
     coord_bounds_list: list | None = None,
+    ensemble_member: str | None = None,
 ):
     cat_name = gcm + "-" + scenario + "-icechunk"
-    ds_scenario = catalog.get(cat_name).to_xarray()
+    dataset = catalog.get(cat_name)
+
+    if ensemble_member is not None and dataset.ensemble_members is not None:
+        if ensemble_member not in dataset.ensemble_members:
+            raise ValueError(
+                f"Invalid ensemble_member '{ensemble_member}' for '{cat_name}'. "
+                f"Valid options: {dataset.ensemble_members}"
+            )
+
+    ds_scenario = dataset.to_xarray()
 
     ds_scenario = ds_scenario.proj.assign_crs(spatial_ref="epsg:4326")
 
@@ -138,8 +177,12 @@ def interpolate_fine_to_coarse_grid(
     da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray
 ) -> xr.DataArray:
     # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    da_coarse = da_fine_to_coarsen.regrid.conservative(da_coarse_grid).as_numpy().persist()
+    # ensure da_coarse_grid consists of only lat/lon coordinates and a single time step (if time coordinate exists) to avoid issues with xarray_regrid
+    target_grid = da_coarse_grid.reset_coords(drop=True)
+    if "time" in target_grid.coords:
+        target_grid = target_grid.isel(time=[0])
 
+    da_coarse = da_fine_to_coarsen.regrid.conservative(target_grid, latitude_coord="lat")
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
 

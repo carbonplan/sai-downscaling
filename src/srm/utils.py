@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
 
 import pint_xarray
 import xarray as xr
-
-if TYPE_CHECKING:
-    import xarray as xr
 
 
 class Timer:
