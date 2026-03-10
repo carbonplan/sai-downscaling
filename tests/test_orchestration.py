@@ -638,3 +638,74 @@ class TestGetStatus:
         for stage_name, stage_info in status.items():
             with subtests.test(stage=stage_name):
                 assert stage_info["cached"] + len(stage_info["missing"]) == stage_info["total"]
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight validation against defective ensemble members
+# ---------------------------------------------------------------------------
+
+
+def _make_defective_config(tmp_path) -> BCSDConfig:
+    """Config that references a known-defective CESM tasmax member."""
+    return BCSDConfig(
+        gcm="CESM2-WACCM",
+        variable="tasmax",
+        ensemble_member="r1i1p1f1",  # defective for tasmax
+        scenario="ssp245",
+        predict_period_start=2015,
+        predict_period_end=2100,
+        cache_dir=str(tmp_path / "cache"),
+        output_dir=str(tmp_path / "outputs"),
+        verbose=False,
+    )
+
+
+class TestOrchestrationValidation:
+    """submit_stage and run_full_workflow must reject defective configs before any work starts."""
+
+    def test_submit_stage_raises_on_defective_config(self, orchestrator, tmp_path):
+        bad = _make_defective_config(tmp_path)
+        with pytest.raises(ValueError, match="defective"):
+            orchestrator.submit_stage("prepare_observations", [bad], use_coiled=False)
+
+    def test_run_full_workflow_raises_on_defective_config(self, orchestrator, tmp_path):
+        bad = _make_defective_config(tmp_path)
+        with pytest.raises(ValueError, match="defective"):
+            orchestrator.run_full_workflow([bad], use_coiled=False)
+
+    def test_error_references_issue_link(self, orchestrator, tmp_path):
+        bad = _make_defective_config(tmp_path)
+        with pytest.raises(ValueError, match="issues/156"):
+            orchestrator.submit_stage("prepare_observations", [bad], use_coiled=False)
+
+    def test_clean_configs_pass_validation(self, orchestrator, tmp_path):
+        good = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmax",
+            ensemble_member="r7i1p1f1",  # not defective
+            scenario="ssp245",
+            predict_period_start=2015,
+            predict_period_end=2100,
+            cache_dir=str(tmp_path / "cache"),
+            output_dir=str(tmp_path / "outputs"),
+            verbose=False,
+        )
+        # Should not raise; patch _run_local so no real work happens
+        with patch.object(orchestrator, "_run_local", return_value=["path"]):
+            orchestrator.submit_stage("prepare_observations", [good], use_coiled=False)
+
+    def test_mixed_list_raises_and_names_bad_configs(self, orchestrator, tmp_path):
+        good = _make_config(
+            tmp_path, gcm="CESM2-WACCM", variable="tasmax", ensemble_member="r7i1p1f1"
+        )
+        bad = _make_defective_config(tmp_path)
+        with pytest.raises(ValueError) as exc_info:
+            orchestrator.submit_stage("prepare_observations", [good, bad], use_coiled=False)
+        assert "r1i1p1f1" in str(exc_info.value)
+
+    def test_validation_fires_before_any_run_local_call(self, orchestrator, tmp_path):
+        bad = _make_defective_config(tmp_path)
+        with patch.object(orchestrator, "_run_local") as mock_run:
+            with pytest.raises(ValueError):
+                orchestrator.submit_stage("prepare_observations", [bad], use_coiled=False)
+        mock_run.assert_not_called()
