@@ -76,6 +76,29 @@ class VariableConfig(BaseModel):
             f"-dtm{self.detrend_method}"
         )
 
+    def to_hash(self, mapping_type: str) -> str:
+        """
+        8-character SHA-256 hash of VariableConfig fields + mapping_type.
+
+        Uses the same stable-string pattern as ``BCSDConfig.config_hash`` so the
+        hash is deterministic across Python versions and process restarts.
+        Scoped to only the parameters that affect bias-correction behaviour,
+        so runs sharing the same VariableConfig share the same cache sub-directory.
+
+        Parameters
+        ----------
+        mapping_type : str
+            Quantile mapping method ('parametric' or 'nonparametric').
+
+        Returns
+        -------
+        str
+            8-character hex string, e.g. ``a3f8b2c1``.
+        """
+        params = {**self.model_dump(), "mapping_type": mapping_type}
+        raw = str(sorted(params.items()))
+        return hashlib.sha256(raw.encode()).hexdigest()[:8]
+
 
 class BCSDConfig(pydantic_settings.BaseSettings):
     """

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from srm.bcsd_config import BCSDConfig, VariableConfig
@@ -187,12 +185,11 @@ class TestObsPath:
 
     def test_global_subset_id_in_filename(self, local_cache, base_config):
         path = local_cache.get_obs_path(base_config)
-        assert "CESM2-WACCM_tas_global_obs_regridded.icechunk" in path
+        assert "/CESM2-WACCM/tas/global/obs_regridded.icechunk" in path
 
     def test_regional_subset_id_in_filename(self, local_cache, regional_config):
         path = local_cache.get_obs_path(regional_config)
-        assert "lat-35.0to-22.0_lon16.0to33.0" in path
-        assert "global" not in path
+        assert "/lat-35.0to-22.0_lon16.0to33.0/obs_regridded.icechunk" in path
 
     def test_paths_differ_per_environment(self, subtests, tmp_path, base_config):
         for env in ("qa", "staging", "production"):
@@ -218,19 +215,17 @@ class TestHistoricalPath:
         assert local_cache_with_output.output_dir in path
         assert local_cache_with_output.base_path not in path
 
-    def test_ensemble_label_in_filename(self, subtests, local_cache, base_config):
+    def test_ensemble_label_in_path(self, subtests, local_cache, base_config):
         for label in ("r1i1p1f1", "r12i1p1f2", "01", "r10i1p1f2"):
             with subtests.test(label=label):
                 config = base_config.model_copy(update={"ensemble_member": label})
                 path = local_cache.get_historical_path(config)
-                assert f"_{label}_" in path
+                assert f"/{label}/" in path
 
-    def test_filename_format(self, local_cache, base_config):
+    def test_path_structure(self, local_cache, base_config):
         path = local_cache.get_historical_path(base_config)
-        assert (
-            "CESM2-WACCM_tas_r1i1p1f1_global_dt1-win1-dsadditive-dscfft-dtmadditive-parametric_historical.icechunk"
-            in path
-        )
+        assert "/CESM2-WACCM/tas/r1i1p1f1/global/" in path
+        assert path.endswith("historical.icechunk")
 
     def test_different_varconfig_produces_different_path(self, local_cache, base_config):
         vc_no_window = VariableConfig.for_variable("tas").model_copy(update={"do_windowing": False})
@@ -238,16 +233,12 @@ class TestHistoricalPath:
         path_default = local_cache.get_historical_path(base_config)
         path_custom = local_cache.get_historical_path(config_custom)
         assert path_default != path_custom
-        assert "win0" in path_custom
-        assert "win1" in path_default
 
     def test_different_mapping_type_produces_different_path(self, local_cache, base_config):
         config_nonparam = base_config.model_copy(update={"mapping_type": "nonparametric"})
         path_param = local_cache.get_historical_path(base_config)
         path_nonparam = local_cache.get_historical_path(config_nonparam)
         assert path_param != path_nonparam
-        assert "-parametric_" in path_param
-        assert "-nonparametric_" in path_nonparam
 
 
 class TestScenarioPath:
@@ -261,12 +252,10 @@ class TestScenarioPath:
         assert local_cache_with_output.output_dir in path
         assert "/scenarios/" not in path
 
-    def test_filename_format(self, local_cache, base_config):
+    def test_path_structure(self, local_cache, base_config):
         path = local_cache.get_scenario_path(base_config)
-        assert (
-            "CESM2-WACCM_tas_r1i1p1f1_global_dt1-win1-dsadditive-dscfft-dtmadditive-parametric_ssp245.icechunk"
-            in path
-        )
+        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
+        assert path.endswith("ssp245.icechunk")
 
     def test_sai_scenario_name_lowercased_in_filename(self, local_cache, sai_config):
         path = local_cache.get_scenario_path(sai_config)
@@ -278,6 +267,56 @@ class TestScenarioPath:
         path_default = local_cache.get_scenario_path(base_config)
         path_custom = local_cache.get_scenario_path(config_custom)
         assert path_default != path_custom
+
+
+# ---------------------------------------------------------------------------
+# _get_varconfig_id – hashing
+# ---------------------------------------------------------------------------
+
+
+class TestVarconfigId:
+    def test_hash_length_is_8(self):
+        vc = VariableConfig.for_variable("tas")
+        assert len(ArtifactCache._get_varconfig_id(vc, "parametric")) == 8
+
+    def test_hash_is_hex_string(self):
+        vc = VariableConfig.for_variable("tas")
+        h = ArtifactCache._get_varconfig_id(vc, "parametric")
+        assert all(c in "0123456789abcdef" for c in h)
+
+    def test_hash_is_stable(self):
+        vc = VariableConfig.for_variable("tas")
+        h1 = ArtifactCache._get_varconfig_id(vc, "parametric")
+        h2 = ArtifactCache._get_varconfig_id(vc, "parametric")
+        assert h1 == h2
+
+    def test_different_varconfig_produces_different_hash(self):
+        vc1 = VariableConfig.for_variable("tas")
+        vc2 = vc1.model_copy(update={"do_windowing": False})
+        assert ArtifactCache._get_varconfig_id(
+            vc1, "parametric"
+        ) != ArtifactCache._get_varconfig_id(vc2, "parametric")
+
+    def test_different_mapping_type_produces_different_hash(self):
+        vc = VariableConfig.for_variable("tas")
+        assert ArtifactCache._get_varconfig_id(vc, "parametric") != ArtifactCache._get_varconfig_id(
+            vc, "nonparametric"
+        )
+
+    def test_same_hash_across_variable_types(self, subtests):
+        """Each variable produces a stable, 8-char hash; variables with identical
+        VariableConfig (tas == tasmax) legitimately share a hash."""
+        for var in ("tas", "tasmax", "pr", "rsds"):
+            vc = VariableConfig.for_variable(var)
+            with subtests.test(variable=var):
+                h = ArtifactCache._get_varconfig_id(vc, "parametric")
+                assert len(h) == 8
+        # Variables with different VariableConfig produce different hashes
+        vc_tas = VariableConfig.for_variable("tas")
+        vc_pr = VariableConfig.for_variable("pr")
+        assert ArtifactCache._get_varconfig_id(
+            vc_tas, "parametric"
+        ) != ArtifactCache._get_varconfig_id(vc_pr, "parametric")
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +488,7 @@ class TestListAndClearArtifacts:
             len(artifacts) == 2
         )  # only base_config obs + historical (scenario not in stages search)
         for path in artifacts:
-            assert Path(path).name.split("_")[1] == "tas"
+            assert "/tas/" in path
 
     def test_list_filters_gcm_and_variable_combined(self, populated_cache):
         artifacts = populated_cache.list_artifacts(gcm="CESM2-WACCM", variable="pr")

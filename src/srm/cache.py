@@ -108,25 +108,8 @@ class ArtifactCache:
 
     @staticmethod
     def _get_varconfig_id(variable_config: VariableConfig, mapping_type: str) -> str:
-        """
-        Generate a human-readable path segment encoding VariableConfig and mapping type.
-
-        Included in historical and scenario cache paths so that runs with non-default
-        VariableConfig or mapping_type never collide with standard runs.
-
-        Parameters
-        ----------
-        variable_config : VariableConfig
-            Variable-specific BCSD parameters.
-        mapping_type : str
-            Quantile mapping method ('parametric' or 'nonparametric').
-
-        Returns
-        -------
-        str
-            Path segment, e.g. ``dt1-win1-dsadditive-dscfft-dtmadditive-parametric``.
-        """
-        return f"{variable_config.to_path_id()}-{mapping_type}"
+        """8-character hash of VariableConfig fields + mapping_type. See ``VariableConfig.to_hash``."""
+        return variable_config.to_hash(mapping_type)
 
     def _require_config(self) -> BCSDConfig:
         if self.config is None:
@@ -166,7 +149,7 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(config.subset_bounds)
-        return f"{self.base_path}/{self.environment}/{self.version}/obs/{config.gcm}_{config.variable}_{subset_id}_obs_regridded.icechunk"
+        return f"{self.base_path}/{self.environment}/{self.version}/obs/{config.gcm}/{config.variable}/{subset_id}/obs_regridded.icechunk"
 
     def get_historical_path(self, config: BCSDConfig) -> str:
         """
@@ -184,13 +167,11 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/historical/{config.gcm}_{config.variable}_{config.ensemble_member}_{subset_id}_{varconfig_id}_historical.icechunk"
-        else:
-            return (
-                f"{self.base_path}/{self.environment}/{self.version}/historical/"
-                f"{config.gcm}_{config.variable}_{config.ensemble_member}_{subset_id}_{varconfig_id}_historical.icechunk"
-            )
+        base = self.output_dir if self.output_dir else self.base_path
+        return (
+            f"{base}/{self.environment}/{self.version}/historical/"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/historical.icechunk"
+        )
 
     def get_scenario_path(self, config: BCSDConfig) -> str:
         """
@@ -213,14 +194,11 @@ class ArtifactCache:
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
         scenario_lower = config.scenario.lower()
 
-        # Use output_dir for final scenarios if specified, otherwise cache
-        if self.output_dir:
-            return f"{self.output_dir}/{self.environment}/{self.version}/{scenario_lower}/{config.gcm}_{config.variable}_{config.ensemble_member}_{subset_id}_{varconfig_id}_{scenario_lower}.icechunk"
-        else:
-            return (
-                f"{self.base_path}/{self.environment}/{self.version}/{scenario_lower}/"
-                f"{config.gcm}_{config.variable}_{config.ensemble_member}_{subset_id}_{varconfig_id}_{scenario_lower}.icechunk"
-            )
+        base = self.output_dir if self.output_dir else self.base_path
+        return (
+            f"{base}/{self.environment}/{self.version}/{scenario_lower}/"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/{scenario_lower}.icechunk"
+        )
 
     def exists(self, path: str) -> bool:
         """
@@ -392,13 +370,11 @@ class ArtifactCache:
                 all_paths = list(Path(search_base).rglob("*.icechunk"))
                 all_paths = [str(p) for p in all_paths]
 
-            # Filter by GCM and variable if specified
+            # Filter by GCM and variable using directory components
             for path in all_paths:
-                path_parts = Path(path).name.split("_")
-
-                if gcm and not path_parts[0] == gcm:
+                if gcm and f"/{gcm}/" not in path:
                     continue
-                if variable and len(path_parts) > 1 and not path_parts[1] == variable:
+                if variable and f"/{variable}/" not in path:
                     continue
 
                 # Delete the zarr store
@@ -464,44 +440,39 @@ class ArtifactCache:
                 if self.base_path.startswith("s3://"):
                     search_base_no_scheme = search_base.replace("s3://", "")
 
-                    # List all objects under the prefix (non-recursive, just first level)
-                    # This is much faster than recursive globbing
                     try:
-                        all_files = self.fs.ls(search_base_no_scheme, detail=False)
-                    except FileNotFoundError:
+                        all_files = self.fs.glob(f"{search_base_no_scheme}**/*.icechunk")
+                    except Exception:
                         continue
 
-                    # Look for icechunk stores (directories ending in .icechunk)
                     for path in all_files:
-                        if path.endswith(".icechunk"):
-                            full_path = f"s3://{path}"
+                        full_path = f"s3://{path}"
 
-                            # Apply filters
-                            path_parts = Path(path).name.split("_")
-                            if gcm and path_parts[0] != gcm:
-                                continue
-                            if variable and len(path_parts) > 1 and path_parts[1] != variable:
-                                continue
+                        # Filter by GCM and variable using directory components
+                        if gcm and f"/{gcm}/" not in full_path:
+                            continue
+                        if variable and f"/{variable}/" not in full_path:
+                            continue
 
-                            # Verify it's a valid zarr store
-                            if self.exists(full_path):
-                                artifacts.add(full_path)
+                        if self.exists(full_path):
+                            artifacts.add(full_path)
                 else:
                     # Local filesystem
                     search_path = Path(search_base)
                     if not search_path.exists():
                         continue
 
-                    for path in search_path.glob("*.icechunk"):
-                        # Apply filters
-                        path_parts = path.name.split("_")
-                        if gcm and path_parts[0] != gcm:
+                    for path in search_path.rglob("*.icechunk"):
+                        path_str = str(path)
+
+                        # Filter by GCM and variable using directory components
+                        if gcm and f"/{gcm}/" not in path_str:
                             continue
-                        if variable and len(path_parts) > 1 and path_parts[1] != variable:
+                        if variable and f"/{variable}/" not in path_str:
                             continue
 
-                        if self.exists(str(path)):
-                            artifacts.add(str(path))
+                        if self.exists(path_str):
+                            artifacts.add(path_str)
 
         except Exception as e:
             logger.error(f"Error listing artifacts: {e}")
