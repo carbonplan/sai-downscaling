@@ -18,6 +18,7 @@ from srm.input_data.etl_utils import (
     build_encoding_dict,
     determine_write_mode,
     get_var_specs,
+    load_dtr_from_store,
     trim_negative_precipitation,
     update_variable_attrs,
     virtualize_and_combine,
@@ -504,8 +505,11 @@ def process(variable, scenario, coiled, all_variables, subset):
         virt_ds = catalog.get(config.catalog_key).to_xarray()
 
         for var in variables:
-            ds = virt_ds[[var]]
-            ds = _preprocess_miroc(ds, config, subset=subset)
+            if var.lower() == "dtr":
+                ds = load_dtr_from_store(mat_cat.bucket, mat_cat.prefix, config.encoding["shards"])
+            else:
+                ds = virt_ds[[var]]
+                ds = _preprocess_miroc(ds, config, subset=subset)
             ds = _update_attrs(ds, var_specs, config)
 
             repo, session = init_repo(mat_cat.bucket, mat_cat.prefix, readonly=False)
