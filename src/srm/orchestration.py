@@ -13,6 +13,7 @@ from typing import Literal
 
 from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
+from srm.datasets import catalog, validate_configs_against_catalog
 from srm.pipeline import BCSDPipeline
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,8 @@ class BCSDOrchestrator:
         """
         if not configs:
             return []
+
+        validate_configs_against_catalog(configs, catalog)
 
         # Get cache instance from first config (all configs should use same cache_dir)
         cache = self._get_cache(configs[0])
@@ -319,6 +322,8 @@ class BCSDOrchestrator:
             Final scenario output paths for all configs
         """
         logger.info(f"╔═══ Starting BCSD workflow for {len(configs)} configurations")
+
+        validate_configs_against_catalog(configs, catalog)
 
         # Stage 1: Unique obs regridding tasks
         obs_configs = self._deduplicate_obs_configs(configs)

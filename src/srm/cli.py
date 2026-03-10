@@ -81,6 +81,7 @@ def configs_from_matrix(
     environment: str = "qa",
     version: str = "v1",
     subset_bounds: tuple[float, float, float, float] | None = None,
+    excluded_members_by_variable: dict[str, list[str]] | None = None,
 ) -> list[BCSDConfig]:
     """
     Generate BCSDConfig objects for every cartesian-product combination of GCMs,
@@ -114,14 +115,35 @@ def configs_from_matrix(
         Version identifier
     subset_bounds : tuple[float, float, float, float] | None
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
+    excluded_members_by_variable : dict[str, list[str]] | None
+        Optional mapping of variable name to a list of ensemble member labels to
+        exclude for that variable. Useful when different variables have different
+        valid ensemble members (e.g. CESM tasmax/tasmin with defective members).
+        Excluded (variable, member) combinations are skipped with a warning.
+        Example::
+
+            excluded_members_by_variable = {
+                "tasmax": ["r1i1p1f1", "r2i1p1f1"],
+                "tasmin": ["r1i1p1f1", "r2i1p1f1"],
+            }
 
     Returns
     -------
     list[BCSDConfig]
-        One config per cartesian-product combination.
+        One config per cartesian-product combination (after exclusions).
     """
+    excluded = excluded_members_by_variable or {}
     configs = []
     for gcm, variable, member, scenario in itertools.product(gcms, variables, members, scenarios):
+        if member in excluded.get(variable, []):
+            logging.getLogger(__name__).warning(
+                "Skipping %s/%s/%s: member is excluded for this variable "
+                "(see excluded_members_by_variable)",
+                gcm,
+                variable,
+                member,
+            )
+            continue
         configs.append(
             BCSDConfig(
                 gcm=gcm,

@@ -30,6 +30,9 @@ class BaseDataset(ABC):
     region: str = "us-west-2"
     expected_vars: list[VarSpec] | None = None
     ensemble_members: list[str] | None = None
+    # Mapping of variable name -> list of ensemble members with known-bad data.
+    # See https://github.com/carbonplan/srm-downscaling/issues/156
+    defective_members: dict[str, list[str]] | None = None
 
     @property
     @abstractmethod
@@ -218,6 +221,14 @@ class Catalog:
                 expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
                 expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
                 ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                # tasmax/tasmin are identical to tas for r1–r6 due to a configuration
+                # error in the original model runs. These members should not be
+                # processed for those variables.
+                # See https://github.com/carbonplan/srm-downscaling/issues/156
+                defective_members={
+                    "tasmax": ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                    "tasmin": ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                },
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.TAS,
@@ -263,6 +274,26 @@ class Catalog:
                     "r9i1p1f1",
                     "r10i1p1f1",
                 ],
+                # tasmax/tasmin are identical to tas for r1–r6 due to a configuration
+                # error in the original model runs. These members should not be
+                # processed for those variables.
+                # See https://github.com/carbonplan/srm-downscaling/issues/156
+                defective_members={
+                    "tasmax": [
+                        "r1i1p1f1",
+                        "r2i1p1f1",
+                        "r3i1p1f1",
+                        "r4i1p1f1",
+                        "r5i1p1f1",
+                    ],
+                    "tasmin": [
+                        "r1i1p1f1",
+                        "r2i1p1f1",
+                        "r3i1p1f1",
+                        "r4i1p1f1",
+                        "r5i1p1f1",
+                    ],
+                },
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.TAS,
@@ -611,6 +642,53 @@ class Catalog:
     def list(self) -> list[str]:
         return list(self.datasets.keys())
 
+    def get_defective_members(self, gcm: str, variable: str) -> set[str]:
+        """
+        Return the set of ensemble members known to have defective data for a
+        given GCM and variable, aggregated across all catalog entries.
+
+        Parameters
+        ----------
+        gcm : str
+            GCM name (compared case-insensitively against dataset names)
+        variable : str
+            Variable name (e.g. 'tasmax', 'tasmin')
+
+        Returns
+        -------
+        set[str]
+            Ensemble member labels with known-bad data. Empty set if none.
+        """
+        bad: set[str] = set()
+        gcm_lower = gcm.lower()
+        for ds in self.datasets.values():
+            if gcm_lower not in ds.name.lower():
+                continue
+            if ds.defective_members is None:
+                continue
+            bad.update(ds.defective_members.get(variable, []))
+        return bad
+
+    def is_defective(self, gcm: str, variable: str, member: str) -> bool:
+        """
+        Return True if the given (gcm, variable, member) combination is known
+        to have defective data.
+
+        Parameters
+        ----------
+        gcm : str
+            GCM name
+        variable : str
+            Variable name
+        member : str
+            Ensemble member label
+
+        Returns
+        -------
+        bool
+        """
+        return member in self.get_defective_members(gcm, variable)
+
     def variable_metadata(self):
         from tabulate import tabulate
 
@@ -659,6 +737,47 @@ class Catalog:
 
     def __repr__(self) -> str:
         return self.__str__()
+
+
+def validate_configs_against_catalog(
+    configs: list,
+    catalog: Catalog,
+) -> None:
+    """
+    Raise ValueError if any config references a known-defective (gcm, variable, member)
+    combination according to the catalog.
+
+    This is intended as a pre-flight check in the orchestrator so that defective
+    configs are rejected before any computation begins, regardless of whether they
+    originated from YAML files or from configs_from_matrix.
+
+    Parameters
+    ----------
+    configs : list[BCSDConfig]
+        Configurations to validate.
+    catalog : Catalog
+        Catalog instance to query for defective members.
+
+    Raises
+    ------
+    ValueError
+        If one or more configs reference defective data, listing every bad
+        (gcm, variable, member) combination found.
+    """
+    bad = []
+    for config in configs:
+        if catalog.is_defective(config.gcm, config.variable, config.ensemble_member):
+            bad.append((config.gcm, config.variable, config.ensemble_member))
+
+    if bad:
+        details = "\n".join(
+            f"  - gcm={gcm!r}, variable={variable!r}, member={member!r}"
+            for gcm, variable, member in bad
+        )
+        raise ValueError(
+            f"The following {len(bad)} config(s) reference ensemble members with known-defective "
+            f"data (see https://github.com/carbonplan/srm-downscaling/issues/156):\n{details}"
+        )
 
 
 catalog = Catalog()
