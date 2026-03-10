@@ -9,28 +9,6 @@ from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
 
 
-def cache_from_config(config: BCSDConfig) -> ArtifactCache:
-    """
-    Construct an ArtifactCache from a BCSDConfig.
-
-    Parameters
-    ----------
-    config : BCSDConfig
-        Configuration object for a BCSD run.
-
-    Returns
-    -------
-    ArtifactCache
-        Cache manager initialized with paths and settings from config.
-    """
-    return ArtifactCache(
-        base_path=config.cache_dir,
-        environment=config.environment,
-        version=config.version,
-        output_dir=config.output_dir,
-    )
-
-
 def load_cached_data(s3_uri: str) -> xr.Dataset:
     """
     Load an icechunk-backed xarray Dataset from an S3 URI.
@@ -73,19 +51,19 @@ class BCSDRun:
 
     @cached_property
     def _cache(self) -> ArtifactCache:
-        return cache_from_config(self.config)
+        return ArtifactCache.from_config(self.config)
 
     @cached_property
     def obs(self) -> xr.Dataset:
-        return load_cached_data(self._cache.get_output_path("prepare_observations"), self.config)
+        return load_cached_data(self._cache.obs_path)
 
     @cached_property
     def historical(self) -> xr.Dataset:
-        return load_cached_data(self._cache.get_output_path("fit_historical", self.config))
+        return load_cached_data(self._cache.historical_path)
 
     @cached_property
     def scenario(self) -> xr.Dataset:
-        return load_cached_data(self._cache.get_output_path("transform_scenario", self.config))
+        return load_cached_data(self._cache.scenario_path)
 
     def get_location_data(self, lat, lon):
         """
