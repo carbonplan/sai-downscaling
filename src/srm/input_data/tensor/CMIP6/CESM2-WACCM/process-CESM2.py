@@ -25,6 +25,7 @@ from srm.input_data.etl_utils import (
     build_encoding_dict,
     determine_write_mode,
     get_var_specs,
+    load_dtr_from_store,
     remap_ensemble_members,
     trim_negative_precipitation,
     update_variable_attrs,
@@ -411,28 +412,33 @@ def process(variable, scenario, coiled, all_variables, subset):
         raise click.UsageError("Must specify either --variable or --all-variables")
     try:
         for var in variables:
-            if scenario == "SSP245":
-                virt_ds_5 = catalog.get(config.catalog_key_5).to_xarray()
-                virt_ds_7_10 = catalog.get(config.catalog_key_7_10).to_xarray()
-
-                ds_5 = virt_ds_5[[var]]
-                print(f"ds_5: {ds_5}")
-                ds_7_10 = virt_ds_7_10[[var]]
-                print(f"ds_7_10: {ds_7_10}")
-
-                ds = xr.combine_by_coords(
-                    [ds_5, ds_7_10],
-                    coords="minimal",
-                    data_vars="minimal",
-                    compat="override",
-                    combine_attrs="override",
+            if var.lower() == "dtr":
+                ds = load_dtr_from_store(
+                    materialized_cat.bucket, materialized_cat.prefix, config.encoding["shards"]
                 )
-                print(f"ds_combined: {ds}")
-
             else:
-                virt_ds = catalog.get(config.catalog_key).to_xarray()
-                ds = virt_ds[[var]]
-            ds = _preprocess_cesm(ds, config, var, subset=subset)
+                if scenario == "SSP245":
+                    virt_ds_5 = catalog.get(config.catalog_key_5).to_xarray()
+                    virt_ds_7_10 = catalog.get(config.catalog_key_7_10).to_xarray()
+
+                    ds_5 = virt_ds_5[[var]]
+                    print(f"ds_5: {ds_5}")
+                    ds_7_10 = virt_ds_7_10[[var]]
+                    print(f"ds_7_10: {ds_7_10}")
+
+                    ds = xr.combine_by_coords(
+                        [ds_5, ds_7_10],
+                        coords="minimal",
+                        data_vars="minimal",
+                        compat="override",
+                        combine_attrs="override",
+                    )
+                    print(f"ds_combined: {ds}")
+                else:
+                    virt_ds = catalog.get(config.catalog_key).to_xarray()
+                    ds = virt_ds[[var]]
+                ds = _preprocess_cesm(ds, config, var, subset=subset)
+
             ds = _update_attrs(ds, var_specs, config)
 
             repo, session = init_repo(

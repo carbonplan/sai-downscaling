@@ -196,6 +196,7 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.TASMAX,
                     VarStandards.TASMIN,
+                    VarStandards.DTR,
                 ],
             ),
             "CESM2-WACCM-Historical-virtual": VirtualDataset(
@@ -239,6 +240,7 @@ class Catalog:
                     VarStandards.HUSS,
                     VarStandards.RLDS,
                     VarStandards.PS,
+                    VarStandards.DTR,
                 ],
             ),
             "CESM2-WACCM-G6-1.5K-virtual": VirtualDataset(
@@ -304,6 +306,7 @@ class Catalog:
                     VarStandards.HUSS,
                     VarStandards.RLDS,
                     VarStandards.PS,
+                    VarStandards.DTR,
                 ],
             ),
             "CESM2-WACCM-SSP245-001-005-virtual": VirtualDataset(
@@ -369,6 +372,7 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.TASMAX,
                     VarStandards.TASMIN,
+                    VarStandards.DTR,
                 ],
             ),
             "MIROC-ES2H-SSP245-virtual": VirtualDataset(
@@ -401,6 +405,7 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.TASMAX,
                     VarStandards.TASMIN,
+                    VarStandards.DTR,
                 ],
             ),
             "MIROC-ES2H-G6-1.5K-virtual": VirtualDataset(
@@ -431,6 +436,7 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.TASMAX,
                     VarStandards.TASMIN,
+                    VarStandards.DTR,
                 ],
             ),
             "MIROC-ES2H-baseline-virtual": VirtualDataset(
@@ -461,6 +467,7 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.TASMAX,
                     VarStandards.TASMIN,
+                    VarStandards.DTR,
                 ],
             ),
             "UKESM-historical-icechunk": Dataset(
@@ -491,6 +498,7 @@ class Catalog:
                     VarStandards.HUSS,
                     VarStandards.RLDS,
                     VarStandards.PSL,
+                    VarStandards.DTR,
                 ],
             ),
             "UKESM-historical-virtual": VirtualDataset(
@@ -526,6 +534,7 @@ class Catalog:
                     VarStandards.PS,
                     VarStandards.RSDS,
                     VarStandards.RLDS,
+                    VarStandards.DTR,
                 ],
             ),
             "UKESM-SSP245-virtual": VirtualDataset(
@@ -572,6 +581,7 @@ class Catalog:
                     VarStandards.PS,
                     VarStandards.RSDS,
                     VarStandards.RLDS,
+                    VarStandards.DTR,
                 ],
             ),
             "UKESM-G6-1.5K-virtual": VirtualDataset(
