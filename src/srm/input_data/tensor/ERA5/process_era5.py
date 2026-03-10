@@ -9,6 +9,7 @@ from icechunk.xarray import to_icechunk
 
 from srm import catalog
 from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
+from srm.input_data.etl_utils import load_dtr_from_store
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
@@ -173,18 +174,6 @@ def write_to_icechunk(
     session.commit(commit_message)
 
 
-def _load_dtr_from_store(config: ERA5Config) -> xr.Dataset:
-    storage = icechunk.s3_storage(bucket=config.bucket, prefix=config.prefix, region="us-west-2")
-    repo = icechunk.Repository.open(storage)
-    session = repo.readonly_session("main")
-    ds = xr.open_dataset(session.store, engine="zarr", chunks=config.encoding["shards"])
-    if "tasmax" not in ds or "tasmin" not in ds:
-        raise ValueError("tasmax and tasmin must be processed before dtr")
-    dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")
-    dtr.attrs["units"] = "K"
-    return dtr.to_dataset()
-
-
 def _determine_mode_based_on_ancestry(repo: icechunk.Repository, branch: str = "main") -> str:
     # check the icechunk ancestry to see if data already exists. Change mode to append if so.
     history = list(repo.ancestry(branch=branch))
@@ -218,7 +207,7 @@ def process_era5_pipeline(
                 print(f"processing {var}")
 
             if var == "dtr":
-                ds = _load_dtr_from_store(config=config)
+                ds = load_dtr_from_store(config.bucket, config.prefix, config.encoding["shards"])
             else:
                 ds = _load_era5(variable=var, config=config)
                 ds = _preprocess_era5(ds, config)
