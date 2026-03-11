@@ -11,6 +11,10 @@ from srm import catalog
 
 
 def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
+    '''
+    Subset dataset in space using a list of coordinates
+    [lat_min, lat_max, lon_min, lon_max]
+    '''
     [lat_min, lat_max, lon_min, lon_max] = coord_bounds_list
     da_subset = da.sel(
         lon=slice(lon_min, lon_max),

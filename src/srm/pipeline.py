@@ -135,7 +135,9 @@ class BCSDPipeline:
 
         # Check whether regridded dataset already exists, if so (and you don't 
         # have the force flag enabled which allows overwrite) use the existing dataset.
-        # Note: this does not check the 
+        # Note: this does not check anything about the data at the output_path -
+        # if it is corrupted in any way or doesn't match the attributes of the 
+        # config it won't fail.
         if self.cache.exists(output_path) and not force:
             if self.config.verbose:
                 logger.info(f"✓ Using cached observations: {output_path}")
