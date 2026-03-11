@@ -421,7 +421,8 @@ class BCSDPipeline:
             )
             model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
             model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
-
+            # if you're downscaling an SAI scenario then you load a separate timeseries
+            # that is SSP245 because .... TK
             if self.config.is_sai_scenario:
                 ssp_timeseries = get_experiment(
                     gcm=self.config.gcm, scenario="SSP245", var=self.config.variable

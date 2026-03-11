@@ -208,7 +208,7 @@ def interpolate_fine_to_coarse_grid(
     target_grid = da_coarse_grid.reset_coords(drop=True)
     if "time" in target_grid.coords:
         target_grid = target_grid.isel(time=[0])
-
+    # use conservative remapping. 
     da_coarse = da_fine_to_coarsen.regrid.conservative(target_grid, latitude_coord="lat")
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
