@@ -40,6 +40,11 @@ class BCSDPipeline:
     """
     Three-stage BCSD downscaling pipeline with automatic caching.
 
+    Stages:
+    1. Prepare (i.e. coarsen) training dataset to be at same model resolution as GCM
+    2. Fit model between coarsened training dataset and historical GCM simulation 
+    3. Apply model on GCM simulation (whether historical or future)
+
     This class orchestrates the BCSD workflow, automatically caching intermediate
     artifacts to enable efficient reuse across multiple runs. Each stage checks
     for cached outputs before computing, and validates dependencies exist.
@@ -128,7 +133,9 @@ class BCSDPipeline:
             self.config.gcm, self.config.variable, self.config.subset_bounds
         )
 
-        # Check cache
+        # Check whether regridded dataset already exists, if so (and you don't 
+        # have the force flag enabled which allows overwrite) use the existing dataset.
+        # Note: this does not check the 
         if self.cache.exists(output_path) and not force:
             if self.config.verbose:
                 logger.info(f"✓ Using cached observations: {output_path}")
