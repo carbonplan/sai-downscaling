@@ -165,7 +165,7 @@ class BCSDPipeline:
                 obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
                 model_grid = subset_space(model_grid, [lat_min, lat_max, lon_min, lon_max])
 
-        # Regrid to coarse grid
+        # Regrid observation training data to the coarser GCM grid
         with Timer("Regridded observations to coarse grid", verbose=self.config.verbose):
             # Suppress expected warnings from sparse array operations during regridding
             with warnings.catch_warnings():

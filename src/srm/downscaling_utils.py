@@ -63,15 +63,38 @@ def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]
 
 
 def get_experiment(
-    gcm: str = "CESM2-WACCM",
-    scenario: str = "SSP245",
-    var: str = "tas",
+    gcm: str,
+    scenario: str,
+    var: str,
     coord_bounds_list: list | None = None,
     ensemble_member: str | None = None,
 ):
+    '''
+    Load in a GCM simulation.
+
+    Parameters
+    ----------
+    gcm : str
+        Name of the GCM, e.g. "CESM2-WACCM"
+    scenario : str
+        Scenario of experiment, e.g. "SSP245"
+    var : str
+        Variable to load, e.g. "tas"
+
+    Returns
+    -------
+    xr.DataArray
+        Xarray data array for requested simulation
+
+    Raises
+    ------
+    ValueError
+        If invalid ensemble member requested
+
+    '''
     cat_name = gcm + "-" + scenario + "-icechunk"
     dataset = catalog.get(cat_name)
-
+    # confirm that the requested ensemble member is available
     if ensemble_member is not None and dataset.ensemble_members is not None:
         if ensemble_member not in dataset.ensemble_members:
             raise ValueError(
