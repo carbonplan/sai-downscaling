@@ -50,7 +50,7 @@ def load_cached_data(s3_uri: str) -> xr.Dataset:
     storage = icechunk.s3_storage(bucket=parts[2], prefix="/".join(parts[3:]), from_env=True)
     repo = icechunk.Repository.open(storage)
     session = repo.readonly_session(branch="main")
-    ds = xr.open_dataset(session.store, engine="zarr", chunks={})
+    ds = xr.open_dataset(session.store, engine="zarr", consolidated=False, chunks="auto")
     return ds
 
 

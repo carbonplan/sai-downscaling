@@ -139,7 +139,7 @@ class Dataset(BaseDataset):
         elif self.format == "zarr":
             import xarray as xr
 
-            return xr.open_zarr(self.path)
+            return xr.open_dataset(self.path, engine="zarr")
         else:
             raise ValueError(f"Unknown format: {self.format}")
 

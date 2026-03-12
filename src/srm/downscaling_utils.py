@@ -19,7 +19,9 @@ def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
     return da_subset
 
 
-_TARGET_CHUNK_BYTES = 100 * 1024 * 1024  # 100 MB
+_WRITE_CHUNK_BYTES = 8 * 1024 * 1024  # 8 MB target for on-disk chunks
+_WRITE_SHARD_BYTES = 150 * 1024 * 1024  # 150 MB target for on-disk shards
+_COMPUTE_CHUNK_BYTES = 100 * 1024 * 1024  # 100 MB target for in-memory compute chunks
 
 
 def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]) -> xr.DataArray:
@@ -35,7 +37,7 @@ def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]
         if not already_chunked:
             n_lat = da.sizes["lat"]
             n_lon = da.sizes["lon"]
-            time_chunk = max(1, int(_TARGET_CHUNK_BYTES / (n_lat * n_lon * da.dtype.itemsize)))
+            time_chunk = max(1, int(_WRITE_CHUNK_BYTES / (n_lat * n_lon * da.dtype.itemsize)))
             da = da.chunk(time=time_chunk, lat=-1, lon=-1)
     elif pattern == "full_time":
         already_chunked = (
@@ -50,12 +52,27 @@ def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]
             n_time = da.sizes["time"]
             n_lat = da.sizes["lat"]
             n_lon = da.sizes["lon"]
-            total_spatial = _TARGET_CHUNK_BYTES / (n_time * da.dtype.itemsize)
+            total_spatial = _COMPUTE_CHUNK_BYTES / (n_time * da.dtype.itemsize)
             # split spatial pixels proportionally to preserve the lat/lon aspect ratio
             lat_chunk = max(1, int(np.sqrt(total_spatial * n_lat / n_lon)))
             lon_chunk = max(1, int(np.sqrt(total_spatial * n_lon / n_lat)))
             da = da.chunk(time=-1, lat=lat_chunk, lon=lon_chunk)
     return da
+
+
+def build_write_encoding(da: xr.DataArray) -> dict:
+    """Build zarr encoding dict with chunk/shard sizes for a (time, lat, lon) DataArray."""
+    n_lat = da.sizes["lat"]
+    n_lon = da.sizes["lon"]
+    bytes_per_spatial_slice = n_lat * n_lon * da.dtype.itemsize
+    time_chunk = max(1, int(_WRITE_CHUNK_BYTES / bytes_per_spatial_slice))
+    shard_time = max(time_chunk, int(_WRITE_SHARD_BYTES / bytes_per_spatial_slice))
+    return {
+        da.name: {
+            "chunks": (time_chunk, n_lat, n_lon),
+            "shards": (shard_time, n_lat, n_lon),
+        }
+    }
 
 
 def get_experiment(

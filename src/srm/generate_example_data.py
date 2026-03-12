@@ -74,7 +74,7 @@ def get_data(varname: str = "tas"):
     )
     ssp245_repo = icechunk.Repository.open(ssp245_storage)
     ssp245_session = ssp245_repo.readonly_session("main")
-    ssp245 = xr.open_zarr(ssp245_session.store, consolidated=False)
+    ssp245 = xr.open_dataset(ssp245_session.store, engine="zarr", consolidated=False)
     ssp245 = fix_coords(ssp245)
     ssp245 = ssp245.proj.assign_crs(spatial_ref="epsg:4326")
     ssp245 = ssp245.isel(ensemble_member=0)
@@ -88,7 +88,9 @@ def get_data(varname: str = "tas"):
     )
     model_historical_repo = icechunk.Repository.open(model_historical_storage)
     model_historical_session = model_historical_repo.readonly_session("main")
-    model_historical = xr.open_zarr(model_historical_session.store, consolidated=False)
+    model_historical = xr.open_dataset(
+        model_historical_session.store, engine="zarr", consolidated=False
+    )
     model_historical = fix_coords(model_historical)
 
     g61pt5k_cat = catalog.get("CESM-WACCM-G6-1.5K-icechunk")
@@ -100,7 +102,7 @@ def get_data(varname: str = "tas"):
     )
     g61pt5k_repo = icechunk.Repository.open(g61pt5k_storage)
     g61pt5k_session = g61pt5k_repo.readonly_session("main")
-    g61pt5k = xr.open_zarr(g61pt5k_session.store, consolidated=False)
+    g61pt5k = xr.open_dataset(g61pt5k_session.store, engine="zarr", consolidated=False)
     g61pt5k = fix_coords(g61pt5k)
     g61pt5k = g61pt5k.isel(ensemble_member=0)
 
@@ -112,7 +114,9 @@ def get_data(varname: str = "tas"):
     )
     era5_repo = icechunk.Repository.open(era5_storage)
     era5_session = era5_repo.readonly_session("main")
-    era5 = xr.open_zarr(era5_session.store).pipe(rasterix.assign_index)
+    era5 = xr.open_dataset(era5_session.store, engine="zarr", consolidated=False).pipe(
+        rasterix.assign_index
+    )
     era5 = era5.proj.assign_crs(spatial_ref="epsg:4326")
 
     df = duckdb.sql(

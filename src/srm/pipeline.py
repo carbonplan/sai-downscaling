@@ -21,6 +21,7 @@ from icechunk.xarray import to_icechunk
 from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
 from srm.downscaling_utils import (
+    build_write_encoding,
     calculate_baseline_climatology,
     detrend,
     downscale_from_coarse,
@@ -96,7 +97,8 @@ class BCSDPipeline:
         storage = self._icechunk_storage(path)
         repo = icechunk.Repository.open_or_create(storage)
         session = repo.writable_session("main")
-        to_icechunk(da.to_dataset(), session, mode="w")
+        encoding = build_write_encoding(da)
+        to_icechunk(da.to_dataset(), session, encoding=encoding, mode="w")
         return session.commit(commit_message, rebase_with=icechunk.ConflictDetector())
 
     def _open_from_icechunk(self, path: str) -> xr.Dataset:
@@ -104,7 +106,7 @@ class BCSDPipeline:
         storage = self._icechunk_storage(path)
         repo = icechunk.Repository.open(storage)
         session = repo.readonly_session("main")
-        return xr.open_dataset(session.store, engine="zarr", consolidated=False)
+        return xr.open_dataset(session.store, engine="zarr", consolidated=False, chunks="auto")
 
     def prepare_observations(self, force: bool = False) -> str:
         """
