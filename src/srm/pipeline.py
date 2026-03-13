@@ -37,7 +37,55 @@ from srm.utils import Timer
 logger = logging.getLogger(__name__)
 
 
-class BCSDPipeline:
+def calculate_out_of_range_mask(
+    model_hist: xr.DataArray,
+    scenario_detrended: xr.DataArray,
+    center_window: int = 31,
+    pad: int = 15,
+):
+    """
+    Calculate mask of where scenario is out of range of modeled historical
+    on a day-of-year basis. The historical range for any day-of-year is the max and min
+    of modeled historical values that fall within a centered window around that day-of-year.
+    This should be the same window size used in the debiaser if using running_window_mode.
+    """
+    grouped_by_dayofyear = model_hist.groupby("time.dayofyear")
+    doy_max = grouped_by_dayofyear.max()
+    doy_min = grouped_by_dayofyear.min()
+
+    # Pad the dayofyear dimension to handle the rolling window at the edges, using values from the opposite end of the year
+    doy_max_padded = xr.concat(
+        [
+            doy_max.isel(dayofyear=slice(-pad, None)),
+            doy_max,
+            doy_max.isel(dayofyear=slice(None, pad)),
+        ],
+        dim="dayofyear",
+    )
+
+    rolling_doy_max = doy_max_padded.rolling(dayofyear=center_window, center=True).max()
+    rolling_doy_max = rolling_doy_max.isel(dayofyear=slice(pad, pad + len(doy_max.dayofyear)))
+
+    doy_min_padded = xr.concat(
+        [
+            doy_min.isel(dayofyear=slice(-pad, None)),
+            doy_min,
+            doy_min.isel(dayofyear=slice(None, pad)),
+        ],
+        dim="dayofyear",
+    )
+
+    rolling_doy_min = doy_min_padded.rolling(dayofyear=center_window, center=True).min()
+    rolling_doy_min = rolling_doy_min.isel(dayofyear=slice(pad, pad + len(doy_min.dayofyear)))
+
+    doy = scenario_detrended["time.dayofyear"]
+
+    out_of_range = (scenario_detrended > rolling_doy_max.sel(dayofyear=doy)) | (
+        scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
+    )
+
+    return out_of_range
+
     """
     Three-stage BCSD downscaling pipeline with automatic caching.
 
@@ -277,7 +325,7 @@ class BCSDPipeline:
 
             # For detrending the historical and doing a nonparametric/parametric hybrid quantile mapping
             # method, just use the nonparametric version because by definition the modeled historical period will
-            # always be within the range of the modeled historical, so it's never necessary to 
+            # always be within the range of the modeled historical, so it's never necessary to
             # use the parametric version for out of range modeled values.
             if self.config.mapping_type == "nonparametric_hybrid":
                 debiaser = _make_debiaser(
@@ -335,9 +383,7 @@ class BCSDPipeline:
                         ensemble=self.config.ensemble_member,
                     )
                     model_hist_debiased.name = self.config.variable
-                    model_hist_debiased.attrs = (
-                        model_hist.attrs
-                    )  # Preserve units and metadata
+                    model_hist_debiased.attrs = model_hist.attrs  # Preserve units and metadata
                     self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
                     if self.config.verbose:
                         logger.info(f"✓ Saved debiased historical: {debiased_path}")
@@ -676,66 +722,11 @@ class BCSDPipeline:
                 # Blend results
                 # Nonparametric mapping when in range of the modeled historical
                 # Parametric mapping when out of range of the modeled historical
-
-                def _calculate_out_of_range_mask(
-                    model_hist, scenario_detrended, center_window=31, pad=15
-                ):
-                    """
-                    Calculate mask of where scenario is out of range of modeled historical
-                    on a day-of-year basis. The historical range for any day-of-year is the max and min
-                    of modeled historical values that fall within a centered window around that day-of-year.
-                    This should be the same window size used in the debiaser if using running_window_mode.
-                    """
-                    grouped_by_dayofyear = model_hist.groupby("time.dayofyear")
-                    doy_max = grouped_by_dayofyear.max()
-                    doy_min = grouped_by_dayofyear.min()
-
-                    # Pad the dayofyear dimension to handle the rolling window at the edges, using values from the opposite end of the year
-                    doy_max_padded = xr.concat(
-                        [
-                            doy_max.isel(dayofyear=slice(-pad, None)),
-                            doy_max,
-                            doy_max.isel(dayofyear=slice(None, pad)),
-                        ],
-                        dim="dayofyear",
-                    )
-
-                    rolling_doy_max = doy_max_padded.rolling(
-                        dayofyear=center_window, center=True
-                    ).max()
-                    rolling_doy_max = rolling_doy_max.isel(
-                        dayofyear=slice(pad, pad + len(doy_max.dayofyear))
-                    )
-
-                    doy_min_padded = xr.concat(
-                        [
-                            doy_min.isel(dayofyear=slice(-pad, None)),
-                            doy_min,
-                            doy_min.isel(dayofyear=slice(None, pad)),
-                        ],
-                        dim="dayofyear",
-                    )
-
-                    rolling_doy_min = doy_min_padded.rolling(
-                        dayofyear=center_window, center=True
-                    ).min()
-                    rolling_doy_min = rolling_doy_min.isel(
-                        dayofyear=slice(pad, pad + len(doy_min.dayofyear))
-                    )
-
-                    doy = scenario_detrended["time.dayofyear"]
-
-                    out_of_range = (scenario_detrended > rolling_doy_max.sel(dayofyear=doy)) | (
-                        scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
-                    )
-
-                    return out_of_range
-
-                out_of_range = _calculate_out_of_range_mask(
+                out_of_range = calculate_out_of_range_mask(
                     model_hist=model_hist, scenario_detrended=scenario_detrended
                 )
 
-                # Use parametric quantile mapping when out_of_range is True 
+                # Use parametric quantile mapping when out_of_range is True
                 # and nonparametric where out_of_range is False
                 scenario_debiased_np = np.where(
                     out_of_range.values,
