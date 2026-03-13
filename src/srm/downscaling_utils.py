@@ -261,7 +261,7 @@ def fft_smooth_3harmonics(data):
 
 
 def calculate_doy_means(
-    da: xr.DataArray, clim_method: typing.Literal["simple", "fft"] = "simple"
+    da: xr.DataArray, clim_method: typing.Literal["simple", "fft"] = "fft"
 ) -> xr.DataArray:
     """
     Calculate the daily climatology of high-res observations.
@@ -296,7 +296,7 @@ def downscale_from_coarse(
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
     method: typing.Literal["additive", "multiplicative"] = "additive",
-    clim_method: typing.Literal["simple", "fft"] = "simple",
+    clim_method: typing.Literal["simple", "fft"] = "fft",
 ) -> xr.DataArray:
     valid_clim_methods = ["simple", "fft"]
     if clim_method not in valid_clim_methods:
