@@ -216,7 +216,7 @@ class BCSDPipeline:
         ValueError
             If obs_regridded dependency is missing
         """
-        # Validate dependencies
+        # Validate dependencies to make sure that this step of the pipeline is ready to run
         self.cache.validate_dependencies("fit_historical", self.config)
 
         output_path = self.cache.get_historical_path(
@@ -226,7 +226,8 @@ class BCSDPipeline:
             self.config.subset_bounds,
         )
 
-        # Check cache
+        # Check cache to see if this step has already run. If a dataset already exists at that 
+        # path, then skip this section and just return the output path.
         if self.cache.exists(output_path) and not force:
             if self.config.verbose:
                 logger.info(f"✓ Using cached historical: {output_path}")
@@ -296,7 +297,9 @@ class BCSDPipeline:
             obs_np = obs_coarse.as_numpy().values
             cm_hist_np = model_hist.as_numpy().values
 
-            # Apply quantile mapping
+            # Apply quantile mapping reading in the 
+            # historical GCM simulation as both historical 
+            # and 
             model_hist_debiased_np = debiaser.apply(
                 obs=obs_np,
                 cm_hist=cm_hist_np,
