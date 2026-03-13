@@ -587,7 +587,7 @@ class BCSDPipeline:
                             ensemble=self.config.ensemble_member,
                         )
                         scenario_trend.name = self.config.variable
-                        scenario_trend.attrs = scenario_trend.attrs  # Preserve units and metadata
+                        scenario_trend.attrs = model_scenario.attrs  # Preserve units and metadata
                         self._write_to_icechunk(scenario_trend, trend_path, "write complete")
                         if self.config.verbose:
                             logger.info(f"✓ Saved scenario trend: {trend_path}")
