@@ -109,6 +109,8 @@ def calculate_out_of_range_mask(
 
     return out_of_range
 
+
+class BCSDPipeline:
     """
     Three-stage BCSD downscaling pipeline with automatic caching.
 
