@@ -424,8 +424,8 @@ class BCSDPipeline:
             )
             model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
             model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
-            # if you're downscaling an SAI scenario then you load a separate timeseries
-            # that is SSP245 because .... TK
+            # if you're downscaling an SAI scenario then you also load a separate SSP245 timeseries
+            # to fill the gap between when historical ends and SAI scenario begins
             if self.config.is_sai_scenario:
                 ssp_timeseries = get_experiment(
                     gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
@@ -444,16 +444,19 @@ class BCSDPipeline:
                         ssp_timeseries, [lat_min, lat_max, lon_min, lon_max]
                     )
 
-            # Subset time periods
+            # Subset observations to the training period
             obs_coarse = obs_coarse.sel(
                 time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
             )
             obs_fine = obs_fine.sel(
                 time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
             )
+            # Subset model historical to the TK period
             model_hist = model_hist.sel(
                 time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
             )
+
+            # Subset model scenario to the predict period
             model_scenario = model_scenario.sel(
                 time=slice(
                     f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
@@ -515,14 +518,14 @@ class BCSDPipeline:
                         dim="time",
                     )
 
-                # Calculate baseline climatology
+                # Calculate baseline climatology (12 numbers total)
                 da_baseline_clim = calculate_baseline_climatology(
                     da_baseline=model_hist,
                     baseline_period_start=self.config.train_period_start,
                     baseline_period_end=self.config.train_period_end,
                 )
 
-                # Detrend
+                # Detrend the entire timeseries, using either multiplicative or additive approach
                 scenario_detrended, scenario_trend = detrend(
                     da=historical_scenario,
                     da_baseline_clim=da_baseline_clim,
@@ -552,10 +555,15 @@ class BCSDPipeline:
 
             debiaser = _make_debiaser(
                 mapping_type=self.config.mapping_type,
+                # we don't do detrending in the debiaser because we've implemented our own
+                # outside of it in the steps above
                 detrending="no_detrending",
+                # use a window for the bias-correction, calculating the quantiles
+                # for each day based upon the 31 days surrounding that day
                 running_window_mode=self.config.do_windowing,
                 running_window_length=31,
                 running_window_step_length=1,
+                # don't use any running 
                 running_window_mode_over_years_of_cm_future=False,
             )
 

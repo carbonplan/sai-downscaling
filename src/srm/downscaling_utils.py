@@ -131,6 +131,10 @@ def calculate_baseline_climatology(
     baseline_period_start: int = 1978,
     baseline_period_end: int = 2014,
 ) -> xr.DataArray:
+    '''
+    calculate a seasonal cycle of the variable of interest
+    (i.e. one number for each months, 12 numbers total)
+    '''
     da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
     da_baseline = da_baseline.sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
@@ -167,7 +171,12 @@ def detrend(
             lambda x: x / da_baseline_clim.sel(month=x["time.month"][0].item())
         )
 
-    # Project that monthly trend onto the daily timestep
+    # Translate the monthly trend timeseries into a daily timeseries
+    # where every day in that month is the same value. This will produce
+    # jumps from month to month (for example, if January was high but February
+    # was low, it would go from a positive adjustment for january 31 (and entire month before) to a negative
+    #  adjustment for february 1 (and the entire month after). thus, there could be noticeable 
+    # artificial discontinuities inserted into the timeseries between 1/31 and 2/1.
     trend_on_daily_timestep = (
         da_mon_trend.resample(time="1D").ffill().reindex(time=da.time).ffill(dim="time")
     ).compute()
@@ -186,6 +195,10 @@ def retrend(
     trend_on_daily_timestep: xr.DataArray,
     detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
 ) -> xr.DataArray:
+    '''
+    reincorporate the trend back into the previously de-trended
+    timeseries, whether additively or multiplicatively
+    '''
     valid_values = ["additive", "multiplicative"]
     if detrend_method not in valid_values:
         raise ValueError(
