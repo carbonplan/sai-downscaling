@@ -22,6 +22,7 @@ from srm.input_data.etl_utils import (
     build_encoding_dict,
     determine_write_mode,
     get_var_specs,
+    load_dtr_from_store,
     trim_negative_precipitation,
     update_variable_attrs,
     virtualize_and_combine,
@@ -424,13 +425,16 @@ def process(variable, scenario, coiled, all_variables, subset):
 
     try:
         for var in variables:
-            if var in T_PR_VARS and hasattr(config, "materialized_key"):
-                t_pr_key = f"UKESM-{config.scenario}-t-pr-virtual"
-                virt_ds = catalog.get(t_pr_key).to_xarray()
-                ds = virt_ds[[var]]
-                ds = _preprocess_ukesm(ds, config, subset=subset)
+            if var.lower() == "dtr":
+                ds = load_dtr_from_store(
+                    materialized_cat.bucket, materialized_cat.prefix, config.encoding["shards"]
+                )
             else:
-                virt_ds = catalog.get(config.catalog_key).to_xarray()
+                if var in T_PR_VARS and hasattr(config, "materialized_key"):
+                    t_pr_key = f"UKESM-{config.scenario}-t-pr-virtual"
+                    virt_ds = catalog.get(t_pr_key).to_xarray()
+                else:
+                    virt_ds = catalog.get(config.catalog_key).to_xarray()
                 ds = virt_ds[[var]]
                 ds = _preprocess_ukesm(ds, config, subset=subset)
 
