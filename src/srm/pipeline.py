@@ -336,7 +336,7 @@ class BCSDPipeline:
                     )
                     model_hist_debiased.name = self.config.variable
                     model_hist_debiased.attrs = (
-                        model_hist_debiased.attrs
+                        model_hist.attrs
                     )  # Preserve units and metadata
                     self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
                     if self.config.verbose:
