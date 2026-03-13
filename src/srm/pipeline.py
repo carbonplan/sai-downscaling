@@ -686,8 +686,9 @@ class BCSDPipeline:
                     of modeled historical values that fall within a centered window around that day-of-year.
                     This should be the same window size used in the debiaser if using running_window_mode.
                     """
-                    doy_max = model_hist.groupby("time.dayofyear").max()
-                    doy_min = model_hist.groupby("time.dayofyear").min()
+                    grouped_by_dayofyear = model_hist.groupby("time.dayofyear")
+                    doy_max = grouped_by_dayofyear.max()
+                    doy_min = grouped_by_dayofyear.min()
 
                     # Pad the dayofyear dimension to handle the rolling window at the edges, using values from the opposite end of the year
                     doy_max_padded = xr.concat(
