@@ -270,7 +270,7 @@ def calculate_doy_means(
     da_xr_doy_mean = da.groupby("time.dayofyear").mean("time")
 
     if clim_method == "simple":
-        doy_means = da_xr_doy_mean
+        return da_xr_doy_mean
     elif clim_method == "fft":
         # Apply FFT smoothing along the time dimension
         obs_fine_doy_means_smoothed = xr.apply_ufunc(
@@ -288,8 +288,7 @@ def calculate_doy_means(
             "dayofyear", "lat", "lon"
         )
 
-        doy_means = obs_fine_doy_means_smoothed
-    return doy_means
+    return obs_fine_doy_means_smoothed
 
 
 def downscale_from_coarse(
@@ -318,18 +317,26 @@ def downscale_from_coarse(
     if method not in valid_values:
         raise ValueError(f"{method} is currently not supported. valid values are: {valid_values}")
 
+    # for every day of the coarse bias-corrected GCM, subtract that day's average in obs
+    # this tells us, for example "how different is this particular february 10, as compared to
+    # the typical february 10 in our coarsened obs"
     if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
     elif method == "multiplicative":
         residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
 
     # Step 4: Bilinearly interpolate residuals to the high-res grid
+    # this creates a smooth layer of how different the particular simulated february 10 is 
+    # from the average february 10.
     residuals_fine = interpolate_coarse_to_fine_grid(
         da_coarse_to_regrid=residuals, da_fine_grid=obs_fine
     )
 
     # Step 5: Return high-res climatology
     # Add or multiply a constant value to the residuals based on DOY
+    # this step adds back in the day-of-year spatial texture saying, 
+    # "let's combine (a) how different February 10 is from the typical February 10 at the coarse scale
+    # with the typical spatial structure of February 10"
     if method == "additive":
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
     elif method == "multiplicative":

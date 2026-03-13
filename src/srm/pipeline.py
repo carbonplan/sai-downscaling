@@ -463,9 +463,8 @@ class BCSDPipeline:
                 )
             )
 
-        # Detrend if needed
+        # Detrend if specified in the bcsd_config
         scenario_detrended = model_scenario
-        scenario_trend = None
 
         if self.config.detrend_data:
             # Rechunk for temporal operations
@@ -572,10 +571,14 @@ class BCSDPipeline:
             cm_hist_np = model_hist.as_numpy().values
             cm_future_np = scenario_detrended.load().values
 
-            # Apply quantile mapping
+            # Apply quantile mapping, which operates on each pixel independently
+            # so you want the data to be chunked in `full_time`
             scenario_debiased_np = debiaser.apply(
+                # observations at coarse scale. we don't want those detrended
                 obs=obs_np,
+                # historical from GCM (raw, not detrended)  
                 cm_hist=cm_hist_np,
+                # future GCM (detrended)
                 cm_future=cm_future_np,
                 time_obs=obs_coarse["time"].values,
                 time_cm_hist=model_hist["time"].values,
@@ -596,8 +599,8 @@ class BCSDPipeline:
                 dims=["time", "lat", "lon"],
             )
 
-        # Re-trend if needed
-        if self.config.detrend_data and scenario_trend is not None:
+        # Re-trend if needed. 
+        if self.config.detrend_data:
             with Timer("Re-trended scenario", verbose=self.config.verbose):
                 scenario_debiased = retrend(
                     bias_corrected_detrended=scenario_debiased,
@@ -605,11 +608,13 @@ class BCSDPipeline:
                     detrend_method=self.config.detrend_method,
                 )
 
-        # Spatially disaggregate
+        # Spatially disaggregate - for performance we'd want these inputs in `full_space`
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
             scenario_downscaled = downscale_from_coarse(
                 da=scenario_debiased,
+                # coarse obs, ideally chunked in full space, for training period
                 obs_coarse=obs_coarse.as_numpy(),
+                # finescale obs, ideally chunked in full space, for training period
                 obs_fine=obs_fine.as_numpy(),
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
