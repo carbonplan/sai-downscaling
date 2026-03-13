@@ -733,9 +733,11 @@ class BCSDPipeline:
                 out_of_range = _calculate_out_of_range_mask(
                     model_hist=model_hist, scenario_detrended=scenario_detrended
                 )
-                out_of_range_np = out_of_range.values
+
+                # Use parametric quantile mapping when out_of_range is True 
+                # and nonparametric where out_of_range is False
                 scenario_debiased_np = np.where(
-                    out_of_range_np,
+                    out_of_range.values,
                     scenario_debiased_parametric_np,
                     scenario_debiased_nonparametric_np,
                 )
