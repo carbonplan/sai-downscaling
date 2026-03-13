@@ -42,12 +42,35 @@ def calculate_out_of_range_mask(
     scenario_detrended: xr.DataArray,
     center_window: int = 31,
     pad: int = 15,
-):
+) -> xr.DataArray:
     """
     Calculate mask of where scenario is out of range of modeled historical
     on a day-of-year basis. The historical range for any day-of-year is the max and min
     of modeled historical values that fall within a centered window around that day-of-year.
     This should be the same window size used in the debiaser if using running_window_mode.
+
+    Parameters
+    ----------
+    model_hist : xr.DataArray
+        Historical GCM data with a time dimension. This is used to compute the
+        day-of-year min/max range.
+    scenario_detrended : xr.DataArray
+        Detrended scenario data to test against the historical range.
+    center_window : int, optional
+        Size of the centered rolling window (in days) used to compute the
+        historical range per day-of-year. Should match the debiaser's
+        running_window_length. Default is 31.
+    pad : int, optional
+        Number of days to pad at each end of the day-of-year dimension to
+        handle edge effects in the rolling window. Default is 15.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean DataArray with the same shape as scenario_detrended. True where
+        the scenario value falls outside the historical range for that day-of-year,
+        False otherwise.
+
     """
     grouped_by_dayofyear = model_hist.groupby("time.dayofyear")
     doy_max = grouped_by_dayofyear.max()
