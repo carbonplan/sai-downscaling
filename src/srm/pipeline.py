@@ -788,7 +788,7 @@ class BCSDPipeline:
                     ensemble=self.config.ensemble_member,
                 )
                 scenario_debiased.name = self.config.variable
-                scenario_debiased.attrs = scenario_debiased.attrs  # Preserve units and metadata
+                scenario_debiased.attrs = model_scenario.attrs  # Preserve units and metadata
                 self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
                 if self.config.verbose:
                     logger.info(f"✓ Saved debiased retrended scenario: {debiased_path}")
