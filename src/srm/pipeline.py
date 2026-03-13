@@ -275,6 +275,10 @@ class BCSDPipeline:
                     return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
                 return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
 
+            # For detrending the historical and doing a nonparametric/parametric hybrid quantile mapping
+            # method, just use the nonparametric version because by definition the modeled historical period will
+            # always be within the range of the modeled historical, so it's never necessary to 
+            # use the parametric version for out of range modeled values.
             if self.config.mapping_type == "nonparametric_hybrid":
                 debiaser = _make_debiaser(
                     mapping_type="nonparametric",
