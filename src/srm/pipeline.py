@@ -758,6 +758,10 @@ class BCSDPipeline:
                     scenario_debiased_parametric_np,
                     scenario_debiased_nonparametric_np,
                 )
+            else:
+                raise ValueError(
+                    "mapping_type must be 'parametric', 'nonparametric', or 'nonparametric_hybrid'."
+                )
 
             # Convert back to xarray
             scenario_debiased = xr.DataArray(
