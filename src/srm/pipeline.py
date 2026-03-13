@@ -790,7 +790,7 @@ class BCSDPipeline:
                 scenario_debiased.attrs = scenario_debiased.attrs  # Preserve units and metadata
                 self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
                 if self.config.verbose:
-                    logger.info(f"✓ Saved debiased scenario: {debiased_path}")
+                    logger.info(f"✓ Saved debiased retrended scenario: {debiased_path}")
 
         # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
