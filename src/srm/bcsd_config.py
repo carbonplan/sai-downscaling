@@ -15,6 +15,7 @@ class VariableConfig(BaseModel):
     downscaling_method: Literal["additive", "multiplicative"]
     downscaling_clim_method: Literal["simple", "fft"]
     detrend_method: Literal["additive", "multiplicative"] = "additive"
+    running_window_length: int = 31
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
@@ -249,6 +250,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     def do_windowing(self) -> bool:
         """Convenience accessor for variable config"""
         return self.variable_config.do_windowing if self.variable_config else False
+
+    @computed_field
+    def running_window_length(self) -> int:
+        """Convenience accessor for variable config"""
+        return self.variable_config.running_window_length if self.variable_config else 31
 
     @computed_field
     def downscaling_method(self) -> str:

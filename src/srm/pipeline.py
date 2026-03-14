@@ -41,7 +41,6 @@ def calculate_out_of_range_mask(
     model_hist: xr.DataArray,
     scenario_detrended: xr.DataArray,
     center_window: int = 31,
-    pad: int = 15,
 ) -> xr.DataArray:
     """
     Calculate mask of where scenario is out of range of modeled historical
@@ -77,6 +76,7 @@ def calculate_out_of_range_mask(
     doy_min = grouped_by_dayofyear.min()
 
     # Pad the dayofyear dimension to handle the rolling window at the edges, using values from the opposite end of the year
+    pad = center_window // 2
     doy_max_padded = xr.concat(
         [
             doy_max.isel(dayofyear=slice(-pad, None)),
@@ -357,7 +357,7 @@ class BCSDPipeline:
                     mapping_type="nonparametric",
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
-                    running_window_length=31,
+                    running_window_length=self.config.running_window_length,
                     running_window_step_length=1,
                     running_window_mode_over_years_of_cm_future=False,
                 )
@@ -366,7 +366,7 @@ class BCSDPipeline:
                     mapping_type=self.config.mapping_type,
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
-                    running_window_length=31,
+                    running_window_length=self.config.running_window_length,
                     running_window_step_length=1,
                     running_window_mode_over_years_of_cm_future=False,
                 )
@@ -683,7 +683,7 @@ class BCSDPipeline:
                     mapping_type=self.config.mapping_type,
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
-                    running_window_length=31,
+                    running_window_length=self.config.running_window_length,
                     running_window_step_length=1,
                     running_window_mode_over_years_of_cm_future=False,
                 )
@@ -706,7 +706,7 @@ class BCSDPipeline:
                     mapping_type="parametric",
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
-                    running_window_length=31,
+                    running_window_length=self.config.running_window_length,
                     running_window_step_length=1,
                     running_window_mode_over_years_of_cm_future=False,
                 )
@@ -714,7 +714,7 @@ class BCSDPipeline:
                     mapping_type="nonparametric",
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
-                    running_window_length=31,
+                    running_window_length=self.config.running_window_length,
                     running_window_step_length=1,
                     running_window_mode_over_years_of_cm_future=False,
                 )
@@ -748,7 +748,9 @@ class BCSDPipeline:
                 # Nonparametric mapping when in range of the modeled historical
                 # Parametric mapping when out of range of the modeled historical
                 out_of_range = calculate_out_of_range_mask(
-                    model_hist=model_hist, scenario_detrended=scenario_detrended
+                    model_hist=model_hist,
+                    scenario_detrended=scenario_detrended,
+                    center_window=self.config.running_window_length,
                 )
 
                 # Use parametric quantile mapping when out_of_range is True
