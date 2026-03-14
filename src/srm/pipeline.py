@@ -77,6 +77,8 @@ def calculate_out_of_range_mask(
 
     # Pad the dayofyear dimension to handle the rolling window at the edges, using values from the opposite end of the year
     pad = center_window // 2
+    # slice(-pad, None) takes the last `pad` values, and slice(None, pad) takes the first `pad` values
+    # This wraps around the dayofyear dimension for the rolling window
     doy_max_padded = xr.concat(
         [
             doy_max.isel(dayofyear=slice(-pad, None)),
