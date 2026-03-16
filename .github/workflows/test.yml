@@ -18,6 +18,19 @@ permissions:
 
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      input_data: ${{ steps.filter.outputs.input_data }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            input_data:
+              - 'src/srm/input_data/**'
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -30,7 +43,7 @@ jobs:
           role-session-name: ocr-etl-role-session
           aws-region: us-west-2
 
-      - name: install uv 
+      - name: install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -39,4 +52,29 @@ jobs:
         run: uv sync --group dev
 
       - name: run tests
-        run: uv run pytest -n auto -v
+        run: uv run pytest -n auto -v --ignore=tests/test_input_data.py
+
+  test-input-data:
+    needs: changes
+    if: needs.changes.outputs.input_data == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: aws
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::631969445205:role/github-action-role
+          role-session-name: ocr-etl-role-session
+          aws-region: us-west-2
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: deps
+        run: uv sync --group dev
+
+      - name: run input_data tests
+        run: uv run pytest -n auto -v tests/test_input_data.py
