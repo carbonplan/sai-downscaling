@@ -7,7 +7,7 @@ on:
     paths:
       - 'src/srm/input_data/**'
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [labeled]
   workflow_dispatch:
 
 
@@ -21,30 +21,12 @@ permissions:
 
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      input_data: ${{ steps.filter.outputs.input_data }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            input_data:
-              - 'src/srm/input_data/**'
-
   test-input-data:
-    needs: changes
     if: |
-      needs.changes.outputs.input_data == 'true' ||
       contains(github.event.pull_request.labels.*.name, 'input-data') ||
-      github.event_name == 'workflow_dispatch'
+      github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
-      - run: uv run pytest -n auto -v tests/test_input_data.py
+      - run: uv run pytest -m input_data -n auto -v
