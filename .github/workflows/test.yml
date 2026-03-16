@@ -21,5 +21,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - run: uv run pytest -n auto -v --ignore=tests/test_input_data.py
