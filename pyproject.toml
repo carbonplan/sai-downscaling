@@ -26,7 +26,7 @@
         "xarray[accel]>=2025.12.0",
         "xclim>=0.59.1",
         "zarr>=3.1.5",
-    ]
+]
     description = "SRM"
     dynamic = ["version"]
     name = "srm"
@@ -52,9 +52,10 @@
     srm = { workspace = true, editable = true }
 
 [tool.pytest.ini_options]
-    addopts = "-m 'not slow' -ra"
+    addopts = "-m 'not slow and not input_data' -ra"
     markers = [
         "slow: marks tests as slow/expensive (run with 'pytest -m slow')",
+        "input_data: marks tests that validate external input datasets",
     ]
 
 [dependency-groups]
