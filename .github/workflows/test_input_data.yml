@@ -1,0 +1,49 @@
+name: pytest (input data)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/srm/input_data/**'
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      input_data: ${{ steps.filter.outputs.input_data }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            input_data:
+              - 'src/srm/input_data/**'
+
+  test-input-data:
+    needs: changes
+    if: |
+      needs.changes.outputs.input_data == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'input-data') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/setup
+      - run: uv run pytest -n auto -v tests/test_input_data.py
