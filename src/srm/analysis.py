@@ -79,7 +79,7 @@ class BCSDRun:
 
     @cached_property
     def obs(self) -> xr.Dataset:
-        return load_cached_data(self._cache.get_output_path("prepare_observations"), self.config)
+        return load_cached_data(self._cache.get_output_path("prepare_observations", self.config))
 
     @cached_property
     def historical(self) -> xr.Dataset:
