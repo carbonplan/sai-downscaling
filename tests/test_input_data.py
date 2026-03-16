@@ -11,6 +11,8 @@ from validators import DatasetValidator
 
 from srm.datasets import VirtualDataset
 
+pytestmark = pytest.mark.input_data
+
 
 class TestCatalogDatasets:
     """Validate input datasets in the catalog"""
