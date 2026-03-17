@@ -155,7 +155,7 @@ def load_nasa_nex(*, dataset: str):
         case "ssp245":
             ds = catalog.get("NASA-NEX-SSP245").to_xarray()
         case "historical":
-            ds = catalog.get("NASA-NEX-Historical").to_xarray()
+            ds = catalog.get("NASA-NEX-historical").to_xarray()
         case _:
             raise ValueError("dataset must take value `ssp245` or `historical`")
 
