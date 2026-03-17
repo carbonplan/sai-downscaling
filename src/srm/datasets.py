@@ -197,8 +197,8 @@ class VirtualDataset(BaseDataset):
 class Catalog:
     def __init__(self):
         self.datasets: dict[str, BaseDataset | VectorDataset] = {
-            "CESM2-WACCM-Historical-icechunk": Dataset(
-                name="CESM2-WACCM-Historical-icechunk",
+            "CESM2-WACCM-historical-icechunk": Dataset(
+                name="CESM2-WACCM-historical-icechunk",
                 path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2_WACCM_Historical.icechunk",
                 format="icechunk",
                 expected_chunks={"time": 30, "lat": 192, "lon": 288},
@@ -216,8 +216,8 @@ class Catalog:
                     VarStandards.DTR,
                 ],
             ),
-            "CESM2-WACCM-Historical-virtual": VirtualDataset(
-                name="CESM2-WACCM-Historical-virtual",
+            "CESM2-WACCM-historical-virtual": VirtualDataset(
+                name="CESM2-WACCM-historical-virtual",
                 virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical-virtual.icechunk",
                 format="icechunk",
                 expected_vars=[
@@ -622,8 +622,8 @@ class Catalog:
                 ),
                 expected_vars=[VarStandards.TAS],
             ),
-            "NASA-NEX-Historical": VirtualDataset(
-                name="NASA-NEX-Historical",
+            "NASA-NEX-historical": VirtualDataset(
+                name="NASA-NEX-historical",
                 virtual_path="s3://carbonplan-srm/input/tensor/nasa-nex/historical/virtual.icechunk",
                 virtual_chunk_container=VirtualChunkContainerConfig(
                     uri="s3://nex-gddp-cmip6/", anonymous=True
