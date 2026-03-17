@@ -127,6 +127,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         None, description="Variable-specific BCSD parameters. Auto-populated if None."
     )
 
+    # Ocean masking
+    apply_ocean_mask: bool = Field(
+        True, description="Mask ocean pixels in the output using GSHHS boundaries from the catalog."
+    )
+
     # Runtime options
     verbose: bool = Field(True, description="Enable verbose logging")
     rechunk_workflow: bool = Field(

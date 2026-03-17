@@ -3,6 +3,7 @@ import pytest
 import xarray as xr
 
 from srm import catalog
+from srm.datasets import BaseDataset
 
 
 @pytest.fixture(scope="session")
@@ -11,9 +12,12 @@ def dataset_catalog():
     return catalog
 
 
-@pytest.fixture(params=list(catalog.datasets.values()), ids=lambda ds: ds.name)
+@pytest.fixture(
+    params=[ds for ds in catalog.datasets.values() if isinstance(ds, BaseDataset)],
+    ids=lambda ds: ds.name,
+)
 def ds_info(request):
-    """Parametrize by dataset objects"""
+    """Parametrize by dataset objects (xarray-compatible datasets only)"""
     return request.param
 
 
