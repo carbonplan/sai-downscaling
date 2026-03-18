@@ -5,8 +5,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import xarray as xr
 
+from srm import catalog
 from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
+from srm.utils import lon_to_180
 
 
 def load_cached_data(s3_uri: str) -> xr.Dataset:
@@ -124,3 +126,19 @@ class BCSDRun:
 
         fig.suptitle(f"{self.config.variable} {self.config.scenario}")
         return fig, axes
+
+
+def load_nasa_nex(*, dataset: str):
+    match dataset:
+        case "ssp245":
+            ds = catalog.get("NASA-NEX-SSP245").to_xarray()
+        case "historical":
+            ds = catalog.get("NASA-NEX-historical").to_xarray()
+        case _:
+            raise ValueError("dataset must take value `ssp245` or `historical`")
+
+    ds = lon_to_180(ds)
+    ds = ds.convert_calendar("standard")  # to datatime[ns] from cftime.DatetimeNoLeap
+    era5_ds = catalog.get("ERA5").to_xarray()
+    ds = ds.reindex(lat=era5_ds.lat, lon=era5_ds.lon, method="nearest", tolerance=0.15)
+    return ds

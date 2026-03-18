@@ -1,0 +1,32 @@
+name: pytest (input data)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/srm/input_data/**'
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+
+jobs:
+  test-input-data:
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'input-data') ||
+      github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - run: uv run pytest -m input_data -n auto -v

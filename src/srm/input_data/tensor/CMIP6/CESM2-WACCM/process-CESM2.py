@@ -11,11 +11,7 @@ from obstore.store import from_url
 from virtualizarr.parsers import HDFParser
 
 from srm import catalog
-from srm.config import (
-    init_repo,
-    setup_cluster,
-    setup_local_client,
-)
+from srm.config import init_repo, setup_cluster, setup_local_client
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
     ENSEMBLE_MEMBER_MAPPING,
@@ -138,8 +134,8 @@ class BaseCESM_Config(BaseETLConfig):
 @dataclass
 class CESM_Historical_Config(BaseCESM_Config):
     scenario: str = "historical"
-    catalog_key: str = "CESM2-WACCM-Historical-virtual"
-    materialized_key: str = "CESM2-WACCM-Historical-icechunk"
+    catalog_key: str = "CESM2-WACCM-historical-virtual"
+    materialized_key: str = "CESM2-WACCM-historical-icechunk"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-Historical/netcdf"
     has_ensemble: bool = False
 
