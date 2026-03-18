@@ -30,7 +30,7 @@ class ArtifactCache:
 
     def __init__(
         self,
-        base_path: str = "s3://carbonplan-scratch/srm/cache/",
+        cache_dir: str = "s3://carbonplan-scratch/srm/cache/",
         environment: str = "qa",
         version: str = "v1",
         output_dir: str | None = None,
@@ -40,7 +40,7 @@ class ArtifactCache:
 
         Parameters
         ----------
-        base_path : str
+        cache_dir : str
             Base S3 or local path for cache storage (intermediate artifacts)
         environment : str
             Environment name (qa, staging, production) for cache namespace isolation
@@ -50,14 +50,14 @@ class ArtifactCache:
         output_dir : str, optional
             Directory for final scenario outputs. If None, scenarios go to cache.
         """
-        self.base_path = base_path.rstrip("/")
+        self.cache_dir = cache_dir.rstrip("/")
         self.environment = environment
         self.version = version
         self.output_dir = output_dir.rstrip("/") if output_dir else None
         self.config: BCSDConfig | None = None
 
         # Initialize filesystem (works for s3:// and local paths)
-        if base_path.startswith("s3://"):
+        if cache_dir.startswith("s3://"):
             self.fs = fsspec.filesystem("s3")
         else:
             self.fs = fsspec.filesystem("local")
@@ -78,7 +78,7 @@ class ArtifactCache:
             Initialized cache manager
         """
         cache = cls(
-            base_path=config.cache_dir,
+            cache_dir=config.cache_dir,
             environment=config.environment,
             version=config.version,
             output_dir=config.output_dir,
@@ -149,7 +149,7 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(config.subset_bounds)
-        return f"{self.base_path}/{self.environment}/{self.version}/obs/{config.gcm}/{config.variable}/{subset_id}/obs_regridded.icechunk"
+        return f"{self.cache_dir}/{self.environment}/{self.version}/obs/{config.gcm}/{config.variable}/{subset_id}/obs_regridded.icechunk"
 
     def get_historical_path(self, config: BCSDConfig) -> str:
         """
@@ -167,7 +167,7 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        base = self.output_dir if self.output_dir else self.base_path
+        base = self.output_dir if self.output_dir else self.cache_dir
         return (
             f"{base}/{self.environment}/{self.version}/historical/"
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/historical.icechunk"
@@ -194,7 +194,7 @@ class ArtifactCache:
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
         scenario_lower = config.scenario.lower()
 
-        base = self.output_dir if self.output_dir else self.base_path
+        base = self.output_dir if self.output_dir else self.cache_dir
         return (
             f"{base}/{self.environment}/{self.version}/{scenario_lower}/"
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/{scenario_lower}.icechunk"
@@ -356,13 +356,13 @@ class ArtifactCache:
 
         # Build search patterns
         if stage:
-            search_base = f"{self.base_path}/{self.environment}/{self.version}/{stage}/"
+            search_base = f"{self.cache_dir}/{self.environment}/{self.version}/{stage}/"
         else:
-            search_base = f"{self.base_path}/{self.environment}/{self.version}/"
+            search_base = f"{self.cache_dir}/{self.environment}/{self.version}/"
 
         try:
             # List all zarr stores
-            if self.base_path.startswith("s3://"):
+            if self.cache_dir.startswith("s3://"):
                 search_base_no_scheme = search_base.replace("s3://", "")
                 all_paths = self.fs.glob(f"{search_base_no_scheme}**/*.icechunk")
                 all_paths = [f"s3://{p}" for p in all_paths]
@@ -378,7 +378,7 @@ class ArtifactCache:
                     continue
 
                 # Delete the zarr store
-                if self.base_path.startswith("s3://"):
+                if self.cache_dir.startswith("s3://"):
                     path_no_scheme = path.replace("s3://", "")
                     self.fs.rm(path_no_scheme, recursive=True)
                 else:
@@ -434,10 +434,10 @@ class ArtifactCache:
                     search_base = f"{self.output_dir}/{self.environment}/{self.version}/"
                 else:
                     search_base = (
-                        f"{self.base_path}/{self.environment}/{self.version}/{stage_name}/"
+                        f"{self.cache_dir}/{self.environment}/{self.version}/{stage_name}/"
                     )
 
-                if self.base_path.startswith("s3://"):
+                if self.cache_dir.startswith("s3://"):
                     search_base_no_scheme = search_base.replace("s3://", "")
 
                     try:

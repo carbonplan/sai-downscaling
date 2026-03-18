@@ -109,7 +109,7 @@ class TestBCSDRunConstruction:
         assert run._cache.config is config
 
     def test_cache_uses_config_cache_dir(self, run, config):
-        assert run._cache.base_path == config.cache_dir.rstrip("/")
+        assert run._cache.cache_dir == config.cache_dir.rstrip("/")
 
     def test_cache_is_cached_property(self, run):
         """Accessing _cache twice returns the same object."""

@@ -95,7 +95,7 @@ class TestGetCache:
 
     def test_cache_uses_config_paths_and_env(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        assert config.cache_dir.rstrip("/") in cache.base_path
+        assert config.cache_dir.rstrip("/") in cache.cache_dir
         assert cache.environment == config.environment
         assert cache.version == config.version
 

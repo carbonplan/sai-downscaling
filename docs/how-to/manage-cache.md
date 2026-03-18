@@ -148,7 +148,7 @@ from srm.cache import ArtifactCache
 
 config = BCSDConfig(**yaml.safe_load(open("configs/example.yaml")))
 cache = ArtifactCache(
-    base_path=config.cache_dir,
+    cache_dir=config.cache_dir,
     environment=config.environment,
     version=config.version,
     output_dir=config.output_dir,

@@ -343,7 +343,7 @@ def status(
     if verbose and configs:
         cache = orchestrator._get_cache(configs[0])
         console.print("\n[cyan]Cache Configuration:[/cyan]")
-        console.print(f"  Cache Path: {cache.base_path}")
+        console.print(f"  Cache Path: {cache.cache_dir}")
         console.print(f"  Output Path: {cache.output_dir or '(same as cache)'}")
         console.print(f"  Environment: {cache.environment}")
         console.print(f"  Version: {cache.version}")
@@ -410,7 +410,7 @@ def cache_clear(
 
     # Use cache_dir from first config (all should have same cache_dir)
     cache = ArtifactCache(
-        base_path=configs[0].cache_dir,
+        cache_dir=configs[0].cache_dir,
         environment=configs[0].environment,
         version=configs[0].version,
     )
@@ -455,7 +455,7 @@ def cache_list(
 
     # Use cache_dir from first config (all should have same cache_dir)
     cache = ArtifactCache(
-        base_path=configs[0].cache_dir,
+        cache_dir=configs[0].cache_dir,
         environment=configs[0].environment,
         version=configs[0].version,
     )

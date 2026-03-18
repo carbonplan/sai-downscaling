@@ -16,7 +16,7 @@ from srm.cache import ArtifactCache
 def local_cache(tmp_path) -> ArtifactCache:
     """ArtifactCache backed by the local filesystem (avoids S3 in unit tests)."""
     return ArtifactCache(
-        base_path=str(tmp_path / "cache"),
+        cache_dir=str(tmp_path / "cache"),
         environment="qa",
         version="v1",
     )
@@ -26,7 +26,7 @@ def local_cache(tmp_path) -> ArtifactCache:
 def local_cache_with_output(tmp_path) -> ArtifactCache:
     """ArtifactCache with a separate output_dir for final scenario artifacts."""
     return ArtifactCache(
-        base_path=str(tmp_path / "cache"),
+        cache_dir=str(tmp_path / "cache"),
         environment="qa",
         version="v1",
         output_dir=str(tmp_path / "outputs"),
@@ -94,13 +94,13 @@ def make_icechunk_store(path: str) -> None:
 
 
 class TestArtifactCacheInit:
-    def test_trailing_slash_stripped_from_base_path(self, tmp_path):
-        cache = ArtifactCache(base_path=str(tmp_path) + "/")
-        assert not cache.base_path.endswith("/")
+    def test_trailing_slash_stripped_from_cache_dir(self, tmp_path):
+        cache = ArtifactCache(cache_dir=str(tmp_path) + "/")
+        assert not cache.cache_dir.endswith("/")
 
     def test_trailing_slash_stripped_from_output_dir(self, tmp_path):
         cache = ArtifactCache(
-            base_path=str(tmp_path / "cache"),
+            cache_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs") + "/",
         )
         assert not cache.output_dir.endswith("/")
@@ -111,7 +111,7 @@ class TestArtifactCacheInit:
     def test_environment_and_version_stored(self, subtests):
         for env, ver in [("qa", "v1"), ("staging", "v2"), ("production", "v3")]:
             with subtests.test(environment=env, version=ver):
-                cache = ArtifactCache(base_path="/tmp/cache", environment=env, version=ver)
+                cache = ArtifactCache(cache_dir="/tmp/cache", environment=env, version=ver)
                 assert cache.environment == env
                 assert cache.version == ver
 
@@ -194,26 +194,26 @@ class TestObsPath:
     def test_paths_differ_per_environment(self, subtests, tmp_path, base_config):
         for env in ("qa", "staging", "production"):
             with subtests.test(environment=env):
-                cache = ArtifactCache(base_path=str(tmp_path), environment=env, version="v1")
+                cache = ArtifactCache(cache_dir=str(tmp_path), environment=env, version="v1")
                 assert f"/{env}/" in cache.get_obs_path(base_config)
 
     def test_paths_differ_per_version(self, subtests, tmp_path, base_config):
         for version in ("v1", "v2", "v3"):
             with subtests.test(version=version):
-                cache = ArtifactCache(base_path=str(tmp_path), environment="qa", version=version)
+                cache = ArtifactCache(cache_dir=str(tmp_path), environment="qa", version=version)
                 assert f"/{version}/" in cache.get_obs_path(base_config)
 
 
 class TestHistoricalPath:
     def test_goes_to_cache_when_no_output_dir(self, local_cache, base_config):
         path = local_cache.get_historical_path(base_config)
-        assert local_cache.base_path in path
+        assert local_cache.cache_dir in path
         assert "/historical/" in path
 
     def test_goes_to_output_dir_when_specified(self, local_cache_with_output, base_config):
         path = local_cache_with_output.get_historical_path(base_config)
         assert local_cache_with_output.output_dir in path
-        assert local_cache_with_output.base_path not in path
+        assert local_cache_with_output.cache_dir not in path
 
     def test_ensemble_label_in_path(self, subtests, local_cache, base_config):
         for label in ("r1i1p1f1", "r12i1p1f2", "01", "r10i1p1f2"):
@@ -244,7 +244,7 @@ class TestHistoricalPath:
 class TestScenarioPath:
     def test_goes_to_cache_scenarios_when_no_output_dir(self, local_cache, base_config):
         path = local_cache.get_scenario_path(base_config)
-        assert local_cache.base_path in path
+        assert local_cache.cache_dir in path
         assert "/ssp245/" in path
 
     def test_goes_to_output_dir_when_specified(self, local_cache_with_output, base_config):

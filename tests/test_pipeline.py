@@ -163,7 +163,7 @@ def all_deps_present(pipeline) -> BCSDPipeline:
 
 class TestBCSDPipelineInit:
     def test_cache_uses_config_cache_dir(self, pipeline, config):
-        assert config.cache_dir.rstrip("/") in pipeline.cache.base_path
+        assert config.cache_dir.rstrip("/") in pipeline.cache.cache_dir
 
     def test_cache_uses_config_environment(self, pipeline, config):
         assert pipeline.cache.environment == config.environment

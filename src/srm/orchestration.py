@@ -63,7 +63,7 @@ class BCSDOrchestrator:
         cache_key = (config.cache_dir, config.output_dir, config.environment, config.version)
         if cache_key not in self._cache_instances:
             self._cache_instances[cache_key] = ArtifactCache(
-                base_path=config.cache_dir,
+                cache_dir=config.cache_dir,
                 environment=config.environment,
                 version=config.version,
                 output_dir=config.output_dir,
