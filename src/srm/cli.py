@@ -81,6 +81,7 @@ def configs_from_matrix(
     environment: str = "qa",
     version: str = "v1",
     subset_bounds: tuple[float, float, float, float] | None = None,
+    save_intermediate: bool = False,
 ) -> list[BCSDConfig]:
     """
     Generate BCSDConfig objects for every cartesian-product combination of GCMs,
@@ -114,6 +115,8 @@ def configs_from_matrix(
         Version identifier
     subset_bounds : tuple[float, float, float, float] | None
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
+    save_intermediate : bool
+        Save intermediate artifacts (detrended, debiased, etc.) to cache
 
     Returns
     -------
@@ -137,6 +140,7 @@ def configs_from_matrix(
                 environment=environment,
                 version=version,
                 subset_bounds=subset_bounds,
+                save_intermediate=save_intermediate,
             )
         )
     return configs
@@ -224,6 +228,11 @@ def run_matrix(
     force: bool = typer.Option(False, help="Force recompute even if cached"),
     coiled: bool = typer.Option(True, help="Use Coiled for distributed execution"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show configs without executing"),
+    save_intermediate: bool = typer.Option(
+        False,
+        "--save-intermediate",
+        help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
+    ),
 ):
     """Run BCSD pipeline over cartesian product of GCMs x variables x members x scenarios.
 
@@ -282,6 +291,7 @@ def run_matrix(
         environment=environment,
         version=version,
         subset_bounds=parsed_bounds,
+        save_intermediate=save_intermediate,
     )
 
     n = len(configs)
