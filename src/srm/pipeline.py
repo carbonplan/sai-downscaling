@@ -71,12 +71,7 @@ class BCSDPipeline:
             Configuration for the BCSD run
         """
         self.config = config
-        self.cache = ArtifactCache(
-            base_path=config.cache_dir,
-            environment=config.environment,
-            version=config.version,
-            output_dir=config.output_dir,
-        )
+        self.cache = ArtifactCache.from_config(config)
 
         # State dictionary for intermediate results (mostly for debugging)
         self._state = {}
@@ -124,9 +119,7 @@ class BCSDPipeline:
         str
             S3 path to cached artifact
         """
-        output_path = self.cache.get_obs_path(
-            self.config.gcm, self.config.variable, self.config.subset_bounds
-        )
+        output_path = self.cache.obs_path
 
         # Check cache
         if self.cache.exists(output_path) and not force:
@@ -210,12 +203,7 @@ class BCSDPipeline:
         # Validate dependencies
         self.cache.validate_dependencies("fit_historical", self.config)
 
-        output_path = self.cache.get_historical_path(
-            self.config.gcm,
-            self.config.variable,
-            self.config.ensemble_member,
-            self.config.subset_bounds,
-        )
+        output_path = self.cache.historical_path
 
         # Check cache
         if self.cache.exists(output_path) and not force:
@@ -367,13 +355,7 @@ class BCSDPipeline:
         # Validate dependencies
         self.cache.validate_dependencies("transform_scenario", self.config)
 
-        output_path = self.cache.get_scenario_path(
-            self.config.gcm,
-            self.config.variable,
-            self.config.ensemble_member,
-            self.config.scenario,
-            self.config.subset_bounds,
-        )
+        output_path = self.cache.scenario_path
 
         # Check cache
         if self.cache.exists(output_path) and not force:

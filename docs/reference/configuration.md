@@ -43,7 +43,7 @@ variable_config:
 # Runtime options
 verbose: true                          # Enable verbose logging (default: true)
 rechunk_workflow: true                 # Enable strategic rechunking (default: true)
-mapping_type: "parametric"             # QM method: "parametric" or "nonparametric"
+mapping_type: "parametric"             # QM method: see MappingType in bcsd_config.py
 ```
 
 ## Environment Variable Override

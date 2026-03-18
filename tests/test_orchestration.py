@@ -95,7 +95,7 @@ class TestGetCache:
 
     def test_cache_uses_config_paths_and_env(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        assert config.cache_dir.rstrip("/") in cache.base_path
+        assert config.cache_dir.rstrip("/") in cache.cache_dir
         assert cache.environment == config.environment
         assert cache.version == config.version
 
@@ -187,7 +187,7 @@ class TestSubmitStage:
 
     def test_skips_all_when_all_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        obs_path = cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+        obs_path = cache.get_obs_path(config)
         _make_icechunk_store(obs_path)
 
         with patch.object(orchestrator, "_run_local") as mock_local:
@@ -215,7 +215,7 @@ class TestSubmitStage:
 
     def test_force_runs_even_when_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        obs_path = cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+        obs_path = cache.get_obs_path(config)
         _make_icechunk_store(obs_path)
 
         with patch.object(orchestrator, "_run_local", return_value=[obs_path]) as mock_local:
@@ -233,9 +233,7 @@ class TestSubmitStage:
         cfg_uncached = multi_configs[2]  # pr
 
         cache = orchestrator._get_cache(cfg_cached)
-        obs_cached_path = cache.get_obs_path(
-            cfg_cached.gcm, cfg_cached.variable, cfg_cached.subset_bounds
-        )
+        obs_cached_path = cache.get_obs_path(cfg_cached)
         _make_icechunk_store(obs_cached_path)
 
         computed_path = "newly_computed"
@@ -569,7 +567,7 @@ class TestGetStatus:
 
     def test_obs_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        _make_icechunk_store(cache.get_obs_path(config.gcm, config.variable, config.subset_bounds))
+        _make_icechunk_store(cache.get_obs_path(config))
 
         status = orchestrator.get_status([config])
         assert status["prepare_observations"]["cached"] == 1
@@ -577,11 +575,7 @@ class TestGetStatus:
 
     def test_historical_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        _make_icechunk_store(
-            cache.get_historical_path(
-                config.gcm, config.variable, config.ensemble_member, config.subset_bounds
-            )
-        )
+        _make_icechunk_store(cache.get_historical_path(config))
 
         status = orchestrator.get_status([config])
         assert status["fit_historical"]["cached"] == 1
@@ -589,15 +583,7 @@ class TestGetStatus:
 
     def test_scenario_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        _make_icechunk_store(
-            cache.get_scenario_path(
-                config.gcm,
-                config.variable,
-                config.ensemble_member,
-                config.scenario,
-                config.subset_bounds,
-            )
-        )
+        _make_icechunk_store(cache.get_scenario_path(config))
 
         status = orchestrator.get_status([config])
         assert status["transform_scenario"]["cached"] == 1
@@ -626,13 +612,7 @@ class TestGetStatus:
     def test_cached_plus_missing_equals_total(self, orchestrator, multi_configs, subtests):
         # Cache one obs artifact and verify counts are consistent
         cache = orchestrator._get_cache(multi_configs[0])
-        _make_icechunk_store(
-            cache.get_obs_path(
-                multi_configs[0].gcm,
-                multi_configs[0].variable,
-                multi_configs[0].subset_bounds,
-            )
-        )
+        _make_icechunk_store(cache.get_obs_path(multi_configs[0]))
 
         status = orchestrator.get_status(multi_configs)
         for stage_name, stage_info in status.items():
