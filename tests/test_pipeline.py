@@ -234,7 +234,7 @@ class TestPrepareObservationsCompute:
     def test_get_experiment_called_for_historical_scenario(self, pipeline):
         with _mock_prepare_obs_compute() as (_, mock_get_exp, *_):
             pipeline.prepare_observations()
-        mock_get_exp.assert_called_once_with(gcm="CESM2-WACCM", scenario="Historical", var="tas")
+        mock_get_exp.assert_called_once_with(gcm="CESM2-WACCM", scenario="historical", var="tas")
 
     def test_interpolate_called_exactly_once(self, pipeline):
         with _mock_prepare_obs_compute() as (_, _, mock_interp, *_):

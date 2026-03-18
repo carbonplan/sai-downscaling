@@ -139,7 +139,7 @@ class BCSDPipeline:
 
             # Load GCM grid for target
             model_grid = get_experiment(
-                gcm=self.config.gcm, scenario="Historical", var=self.config.variable
+                gcm=self.config.gcm, scenario="historical", var=self.config.variable
             )
             model_grid = model_grid.drop_vars("spatial_ref", errors="ignore")
 
@@ -229,7 +229,7 @@ class BCSDPipeline:
 
             # Load historical GCM
             model_hist = get_experiment(
-                gcm=self.config.gcm, scenario="Historical", var=self.config.variable
+                gcm=self.config.gcm, scenario="historical", var=self.config.variable
             )
             # Historical data may not have ensemble_member dimension
             if "ensemble_member" in model_hist.dims:
@@ -381,7 +381,7 @@ class BCSDPipeline:
 
             # Load historical for training
             model_hist = get_experiment(
-                gcm=self.config.gcm, scenario="Historical", var=self.config.variable
+                gcm=self.config.gcm, scenario="historical", var=self.config.variable
             )
             # Historical data may not have ensemble_member dimension
             if "ensemble_member" in model_hist.dims:
