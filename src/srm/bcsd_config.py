@@ -6,15 +6,20 @@ from typing import Literal
 import pydantic_settings
 from pydantic import BaseModel, Field, computed_field, field_validator
 
+MappingType = Literal["parametric", "nonparametric", "nonparametric_hybrid"]
+DownscalingMethod = Literal["additive", "multiplicative"]
+DownscalingClimMethod = Literal["simple", "fft"]
+VariableName = Literal["tas", "tasmax", "pr", "rsds"]
+
 
 class VariableConfig(BaseModel):
     """Variable-specific BCSD configuration parameters"""
 
     detrend_data: bool
     do_windowing: bool
-    downscaling_method: Literal["additive", "multiplicative"]
-    downscaling_clim_method: Literal["simple", "fft"]
-    detrend_method: Literal["additive", "multiplicative"] = "additive"
+    downscaling_method: DownscalingMethod
+    downscaling_clim_method: DownscalingClimMethod
+    detrend_method: DownscalingMethod = "additive"
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
@@ -76,7 +81,7 @@ class VariableConfig(BaseModel):
             f"-dtm{self.detrend_method}"
         )
 
-    def to_hash(self, mapping_type: str) -> str:
+    def to_hash(self, mapping_type: MappingType) -> str:
         """
         8-character SHA-256 hash of VariableConfig fields + mapping_type.
 
@@ -87,8 +92,8 @@ class VariableConfig(BaseModel):
 
         Parameters
         ----------
-        mapping_type : str
-            Quantile mapping method ('parametric' or 'nonparametric').
+        mapping_type : MappingType
+            Quantile mapping method. See ``MappingType`` for valid values.
 
         Returns
         -------
@@ -111,9 +116,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
 
     # Model and data identifiers
     gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM', 'MIROC-ES2H', 'UKESM')")
-    variable: Literal["tas", "tasmax", "pr", "rsds"] = Field(
-        ..., description="Variable to downscale"
-    )
+    variable: VariableName = Field(..., description="Variable to downscale")
     ensemble_member: str = Field(..., description="Ensemble member label (e.g. 'r1i1p1f1', '01')")
     scenario: str | None = Field(
         None,
@@ -174,8 +177,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     rechunk_workflow: bool = Field(
         True, description="Enable strategic rechunking between pipeline stages"
     )
-    mapping_type: Literal["parametric", "nonparametric"] = Field(
-        "parametric", description="Quantile mapping method for bias correction"
+    mapping_type: MappingType = Field(
+        "parametric",
+        description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 
     def model_post_init(self, __context) -> None:

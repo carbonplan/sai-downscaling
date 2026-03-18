@@ -32,7 +32,8 @@ cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate art
 output_dir: "s3://carbonplan-scratch/srm/outputs/" # Final scenario outputs (published results)
 version: "v1" # Version identifier for all output paths (default: v1, can override with BCSD_VERSION env var or --version CLI flag)
 
+
 # === Additional Options (optional) ===
 # verbose: true                       # Enable verbose logging (default: true)
 # rechunk_workflow: true              # Enable strategic rechunking (default: true)
-# mapping_type: "parametric"          # Bias correction method: "parametric" or "nonparametric" (default: "parametric")
+# mapping_type: "parametric"          # Bias correction method: see MappingType in bcsd_config.py (default: "parametric")

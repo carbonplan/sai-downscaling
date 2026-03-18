@@ -15,7 +15,7 @@ from pathlib import Path
 
 import fsspec
 
-from srm.bcsd_config import BCSDConfig, VariableConfig
+from srm.bcsd_config import BCSDConfig, MappingType, VariableConfig
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class ArtifactCache:
         return f"lat{lat_min}to{lat_max}_lon{lon_min}to{lon_max}"
 
     @staticmethod
-    def _get_varconfig_id(variable_config: VariableConfig, mapping_type: str) -> str:
+    def _get_varconfig_id(variable_config: VariableConfig, mapping_type: MappingType) -> str:
         """8-character hash of VariableConfig fields + mapping_type. See ``VariableConfig.to_hash``."""
         return variable_config.to_hash(mapping_type)
 

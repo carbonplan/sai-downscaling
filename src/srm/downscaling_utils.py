@@ -8,6 +8,7 @@ import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 
 from srm import catalog
+from srm.bcsd_config import DownscalingClimMethod, DownscalingMethod
 
 
 def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
@@ -114,13 +115,8 @@ def calculate_baseline_climatology(
 def detrend(
     da: xr.DataArray,
     da_baseline_clim: xr.DataArray,
-    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
+    detrend_method: DownscalingMethod = "additive",
 ) -> tuple[xr.DataArray, xr.DataArray]:
-    valid_values = ["additive", "multiplicative"]
-    if detrend_method not in valid_values:
-        raise ValueError(
-            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
-        )
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
     da_mon = da_mon.chunk({"time": 120})
@@ -157,14 +153,8 @@ def detrend(
 def retrend(
     bias_corrected_detrended: xr.DataArray,
     trend_on_daily_timestep: xr.DataArray,
-    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
+    detrend_method: DownscalingMethod = "additive",
 ) -> xr.DataArray:
-    valid_values = ["additive", "multiplicative"]
-    if detrend_method not in valid_values:
-        raise ValueError(
-            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
-        )
-
     if detrend_method == "additive":
         retrended = bias_corrected_detrended + trend_on_daily_timestep
     elif detrend_method == "multiplicative":
@@ -221,7 +211,7 @@ def fft_smooth_3harmonics(data):
 
 
 def calculate_doy_means(
-    da: xr.DataArray, clim_method: typing.Literal["simple", "fft"] = "simple"
+    da: xr.DataArray, clim_method: DownscalingClimMethod = "simple"
 ) -> xr.DataArray:
     """
     Calculate the daily climatology of high-res observations.
@@ -256,15 +246,9 @@ def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    method: typing.Literal["additive", "multiplicative"] = "additive",
-    clim_method: typing.Literal["simple", "fft"] = "simple",
+    method: DownscalingMethod = "additive",
+    clim_method: DownscalingClimMethod = "simple",
 ) -> xr.DataArray:
-    valid_clim_methods = ["simple", "fft"]
-    if clim_method not in valid_clim_methods:
-        raise ValueError(
-            f"{method} is currently not supported. valid values are: {valid_clim_methods}"
-        )
-
     # Step 1: calculate the daily climatology of high-res observations
     obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
 
@@ -274,10 +258,6 @@ def downscale_from_coarse(
     )
 
     # Step 3: Remove coarsened daily climatology from the bias-corrected fields
-    valid_values = ["additive", "multiplicative"]
-    if method not in valid_values:
-        raise ValueError(f"{method} is currently not supported. valid values are: {valid_values}")
-
     if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
     elif method == "multiplicative":
