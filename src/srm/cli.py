@@ -14,7 +14,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
 
@@ -82,6 +82,15 @@ def configs_from_matrix(
     version: str = "v1",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
+    mapping_type: str = "parametric",
+    verbose: bool = False,
+    # VariableConfig overrides (None = use per-variable default)
+    detrend_data: bool | None = None,
+    do_windowing: bool | None = None,
+    running_window_length: int | None = None,
+    downscaling_method: str | None = None,
+    downscaling_clim_method: str | None = None,
+    detrend_method: str | None = None,
 ) -> list[BCSDConfig]:
     """
     Generate BCSDConfig objects for every cartesian-product combination of GCMs,
@@ -117,6 +126,22 @@ def configs_from_matrix(
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
+    mapping_type : str
+        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid)
+    verbose : bool
+        Enable verbose logging
+    detrend_data : bool | None
+        Override VariableConfig.detrend_data
+    do_windowing : bool | None
+        Override VariableConfig.do_windowing
+    running_window_length : int | None
+        Override VariableConfig.running_window_length
+    downscaling_method : str | None
+        Override VariableConfig.downscaling_method (additive, multiplicative)
+    downscaling_clim_method : str | None
+        Override VariableConfig.downscaling_clim_method (simple, fft)
+    detrend_method : str | None
+        Override VariableConfig.detrend_method (additive, multiplicative)
 
     Returns
     -------
@@ -125,6 +150,21 @@ def configs_from_matrix(
     """
     configs = []
     for gcm, variable, member, scenario in itertools.product(gcms, variables, members, scenarios):
+        vc = VariableConfig.for_variable(variable)
+        overrides = {
+            k: v
+            for k, v in {
+                "detrend_data": detrend_data,
+                "do_windowing": do_windowing,
+                "running_window_length": running_window_length,
+                "downscaling_method": downscaling_method,
+                "downscaling_clim_method": downscaling_clim_method,
+                "detrend_method": detrend_method,
+            }.items()
+            if v is not None
+        }
+        if overrides:
+            vc = vc.model_copy(update=overrides)
         configs.append(
             BCSDConfig(
                 gcm=gcm,
@@ -141,6 +181,9 @@ def configs_from_matrix(
                 version=version,
                 subset_bounds=subset_bounds,
                 save_intermediate=save_intermediate,
+                mapping_type=mapping_type,
+                verbose=verbose,
+                variable_config=vc,
             )
         )
     return configs
@@ -233,6 +276,33 @@ def run_matrix(
         "--save-intermediate",
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
+    mapping_type: str = typer.Option(
+        "parametric",
+        "--mapping-type",
+        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
+    # VariableConfig overrides
+    detrend_data: bool | None = typer.Option(
+        None, "--detrend-data/--no-detrend-data", help="Override detrend_data for all variables"
+    ),
+    do_windowing: bool | None = typer.Option(
+        None, "--do-windowing/--no-do-windowing", help="Override do_windowing for all variables"
+    ),
+    running_window_length: int | None = typer.Option(
+        None, "--running-window-length", help="Override running_window_length for all variables"
+    ),
+    downscaling_method: str | None = typer.Option(
+        None, "--downscaling-method", help="Override downscaling_method (additive, multiplicative)"
+    ),
+    downscaling_clim_method: str | None = typer.Option(
+        None,
+        "--downscaling-clim-method",
+        help="Override downscaling_clim_method (simple, fft)",
+    ),
+    detrend_method: str | None = typer.Option(
+        None, "--detrend-method", help="Override detrend_method (additive, multiplicative)"
+    ),
 ):
     """Run BCSD pipeline over cartesian product of GCMs x variables x members x scenarios.
 
@@ -292,6 +362,14 @@ def run_matrix(
         version=version,
         subset_bounds=parsed_bounds,
         save_intermediate=save_intermediate,
+        mapping_type=mapping_type,
+        verbose=verbose,
+        detrend_data=detrend_data,
+        do_windowing=do_windowing,
+        running_window_length=running_window_length,
+        downscaling_method=downscaling_method,
+        downscaling_clim_method=downscaling_clim_method,
+        detrend_method=detrend_method,
     )
 
     n = len(configs)
