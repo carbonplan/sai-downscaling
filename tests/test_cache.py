@@ -269,6 +269,103 @@ class TestScenarioPath:
         assert path_default != path_custom
 
 
+class TestIntermediatePaths:
+    """Tests for intermediate artifact paths (detrended, trend, debiased variants)."""
+
+    def test_detrended_scenario_in_cache_dir(self, local_cache, base_config):
+        path = local_cache.get_detrended_scenario_path(base_config)
+        assert local_cache.cache_dir in path
+
+    def test_detrended_scenario_path_structure(self, local_cache, base_config):
+        path = local_cache.get_detrended_scenario_path(base_config)
+        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
+        assert path.endswith("detrended.icechunk")
+
+    def test_trend_scenario_path_structure(self, local_cache, base_config):
+        path = local_cache.get_trend_scenario_path(base_config)
+        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
+        assert path.endswith("trend.icechunk")
+
+    def test_debiased_historical_path_structure(self, local_cache, base_config):
+        path = local_cache.get_debiased_historical_path(base_config)
+        assert "/historical/CESM2-WACCM/tas/r1i1p1f1/global/" in path
+        assert path.endswith("debiased_coarse.icechunk")
+
+    def test_debiased_scenario_path_structure(self, local_cache, base_config):
+        path = local_cache.get_debiased_scenario_path(base_config)
+        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
+        assert path.endswith("debiased_coarse.icechunk")
+
+    def test_debiased_retrended_scenario_path_structure(self, local_cache, base_config):
+        path = local_cache.get_debiased_retrended_scenario_path(base_config)
+        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
+        assert path.endswith("debiased_retrended_coarse.icechunk")
+
+    def test_intermediate_paths_all_contain_varconfig_id(self, local_cache, base_config):
+        """All intermediate paths include the varconfig hash for reproducibility."""
+        varconfig_id = local_cache._get_varconfig_id(
+            base_config.variable_config, base_config.mapping_type
+        )
+        for method in (
+            local_cache.get_detrended_scenario_path,
+            local_cache.get_trend_scenario_path,
+            local_cache.get_debiased_scenario_path,
+            local_cache.get_debiased_retrended_scenario_path,
+        ):
+            assert varconfig_id in method(base_config)
+        assert varconfig_id in local_cache.get_debiased_historical_path(base_config)
+
+    def test_different_varconfig_produces_different_intermediate_paths(
+        self, local_cache, base_config, subtests
+    ):
+        vc_no_window = VariableConfig.for_variable("tas").model_copy(update={"do_windowing": False})
+        config_custom = base_config.model_copy(update={"variable_config": vc_no_window})
+        methods = [
+            "get_detrended_scenario_path",
+            "get_trend_scenario_path",
+            "get_debiased_historical_path",
+            "get_debiased_scenario_path",
+            "get_debiased_retrended_scenario_path",
+        ]
+        for name in methods:
+            with subtests.test(method=name):
+                method = getattr(local_cache, name)
+                assert method(base_config) != method(config_custom)
+
+    def test_sai_scenario_lowercased_in_intermediate_paths(self, local_cache, sai_config, subtests):
+        for name in (
+            "get_detrended_scenario_path",
+            "get_trend_scenario_path",
+            "get_debiased_scenario_path",
+            "get_debiased_retrended_scenario_path",
+        ):
+            with subtests.test(method=name):
+                path = getattr(local_cache, name)(sai_config)
+                assert "/g6-1.5k/" in path
+
+    def test_detrended_and_trend_paths_differ(self, local_cache, base_config):
+        assert local_cache.get_detrended_scenario_path(
+            base_config
+        ) != local_cache.get_trend_scenario_path(base_config)
+
+    def test_debiased_scenario_and_retrended_paths_differ(self, local_cache, base_config):
+        assert local_cache.get_debiased_scenario_path(
+            base_config
+        ) != local_cache.get_debiased_retrended_scenario_path(base_config)
+
+    def test_regional_subset_id_in_intermediate_paths(self, local_cache, regional_config, subtests):
+        for name in (
+            "get_detrended_scenario_path",
+            "get_trend_scenario_path",
+            "get_debiased_historical_path",
+            "get_debiased_scenario_path",
+            "get_debiased_retrended_scenario_path",
+        ):
+            with subtests.test(method=name):
+                path = getattr(local_cache, name)(regional_config)
+                assert "/lat-35.0to-22.0_lon16.0to33.0/" in path
+
+
 # ---------------------------------------------------------------------------
 # _get_varconfig_id – hashing
 # ---------------------------------------------------------------------------

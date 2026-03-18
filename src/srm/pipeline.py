@@ -391,12 +391,7 @@ class BCSDPipeline:
 
             if self.config.save_intermediate:
                 with Timer("Saved coarse debiased to cache", verbose=self.config.verbose):
-                    debiased_path = self.cache.get_debiased_historical_path(
-                        gcm=self.config.gcm,
-                        variable=self.config.variable,
-                        subset_bounds=self.config.subset_bounds,
-                        ensemble=self.config.ensemble_member,
-                    )
+                    debiased_path = self.cache.get_debiased_historical_path(self.config)
                     model_hist_debiased.name = self.config.variable
                     model_hist_debiased.attrs = model_hist.attrs  # Preserve units and metadata
                     self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
@@ -616,13 +611,7 @@ class BCSDPipeline:
 
                 if self.config.save_intermediate:
                     with Timer("Saved detrended to cache", verbose=self.config.verbose):
-                        detrended_path = self.cache.get_detrended_scenario_path(
-                            gcm=self.config.gcm,
-                            variable=self.config.variable,
-                            subset_bounds=self.config.subset_bounds,
-                            scenario=self.config.scenario,
-                            ensemble=self.config.ensemble_member,
-                        )
+                        detrended_path = self.cache.get_detrended_scenario_path(self.config)
                         scenario_detrended.name = self.config.variable
                         scenario_detrended.attrs = (
                             scenario_detrended.attrs
@@ -634,13 +623,7 @@ class BCSDPipeline:
                             logger.info(f"✓ Saved detrended scenario: {detrended_path}")
 
                     with Timer("Saved trend to cache", verbose=self.config.verbose):
-                        trend_path = self.cache.get_trend_scenario_path(
-                            gcm=self.config.gcm,
-                            variable=self.config.variable,
-                            subset_bounds=self.config.subset_bounds,
-                            scenario=self.config.scenario,
-                            ensemble=self.config.ensemble_member,
-                        )
+                        trend_path = self.cache.get_trend_scenario_path(self.config)
                         scenario_trend.name = self.config.variable
                         scenario_trend.attrs = model_scenario.attrs  # Preserve units and metadata
                         self._write_to_icechunk(scenario_trend, trend_path, "write complete")
@@ -762,13 +745,7 @@ class BCSDPipeline:
 
         if self.config.save_intermediate:
             with Timer("Saved coarse debiased scenario to cache", verbose=self.config.verbose):
-                debiased_path = self.cache.get_debiased_scenario_path(
-                    gcm=self.config.gcm,
-                    variable=self.config.variable,
-                    subset_bounds=self.config.subset_bounds,
-                    scenario=self.config.scenario,
-                    ensemble=self.config.ensemble_member,
-                )
+                debiased_path = self.cache.get_debiased_scenario_path(self.config)
                 scenario_debiased.name = self.config.variable
                 scenario_debiased.attrs = scenario_debiased.attrs  # Preserve units and metadata
                 self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
@@ -786,13 +763,7 @@ class BCSDPipeline:
 
         if self.config.save_intermediate:
             with Timer("Saved coarse debiased, retrended to cache", verbose=self.config.verbose):
-                debiased_path = self.cache.get_debiased_retrended_scenario_path(
-                    gcm=self.config.gcm,
-                    variable=self.config.variable,
-                    subset_bounds=self.config.subset_bounds,
-                    scenario=self.config.scenario,
-                    ensemble=self.config.ensemble_member,
-                )
+                debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
                 scenario_debiased.name = self.config.variable
                 scenario_debiased.attrs = model_scenario.attrs  # Preserve units and metadata
                 self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
