@@ -8,7 +8,7 @@ import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 
 from srm import catalog
-from srm.bcsd_config import DownscalingClimMethod, DownscalingMethod
+from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
 
 
 def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
@@ -115,7 +115,7 @@ def calculate_baseline_climatology(
 def detrend(
     da: xr.DataArray,
     da_baseline_clim: xr.DataArray,
-    detrend_method: DownscalingMethod = "additive",
+    detrend_method: DetrendMethod = "additive",
 ) -> tuple[xr.DataArray, xr.DataArray]:
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
@@ -153,7 +153,7 @@ def detrend(
 def retrend(
     bias_corrected_detrended: xr.DataArray,
     trend_on_daily_timestep: xr.DataArray,
-    detrend_method: DownscalingMethod = "additive",
+    detrend_method: DetrendMethod = "additive",
 ) -> xr.DataArray:
     if detrend_method == "additive":
         retrended = bias_corrected_detrended + trend_on_daily_timestep

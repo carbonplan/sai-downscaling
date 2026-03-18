@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, computed_field, field_validator
 MappingType = Literal["parametric", "nonparametric", "nonparametric_hybrid"]
 DownscalingMethod = Literal["additive", "multiplicative"]
 DownscalingClimMethod = Literal["simple", "fft"]
+DetrendMethod = Literal["additive", "multiplicative"]
 VariableName = Literal["tas", "tasmax", "pr", "rsds"]
 
 
@@ -19,7 +20,7 @@ class VariableConfig(BaseModel):
     do_windowing: bool
     downscaling_method: DownscalingMethod
     downscaling_clim_method: DownscalingClimMethod
-    detrend_method: DownscalingMethod = "additive"
+    detrend_method: DetrendMethod = "additive"
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
@@ -282,7 +283,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         return self.variable_config.detrend_data if self.variable_config else False
 
     @computed_field
-    def detrend_method(self) -> str:
+    def detrend_method(self) -> DetrendMethod:
         """Convenience accessor for variable config"""
         return self.variable_config.detrend_method if self.variable_config else "additive"
 
@@ -292,12 +293,12 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         return self.variable_config.do_windowing if self.variable_config else False
 
     @computed_field
-    def downscaling_method(self) -> str:
+    def downscaling_method(self) -> DownscalingMethod:
         """Convenience accessor for variable config"""
         return self.variable_config.downscaling_method if self.variable_config else "additive"
 
     @computed_field
-    def downscaling_clim_method(self) -> str:
+    def downscaling_clim_method(self) -> DownscalingClimMethod:
         """Convenience accessor for variable config"""
         return self.variable_config.downscaling_clim_method if self.variable_config else "fft"
 
