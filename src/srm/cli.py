@@ -212,21 +212,64 @@ def run(
     orchestrator = BCSDOrchestrator()
 
     if stage == "obs" or stage == "prepare_observations":
-        orchestrator.submit_stage("prepare_observations", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage(
+            "prepare_observations", configs, force=force, use_coiled=coiled
+        )
+        _print_paths_summary(paths, configs, "prepare_observations")
 
     elif stage == "historical" or stage == "fit_historical":
-        orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        _print_paths_summary(paths, configs, "fit_historical")
 
     elif stage == "scenario" or stage == "transform_scenario":
-        orchestrator.submit_stage("transform_scenario", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage(
+            "transform_scenario", configs, force=force, use_coiled=coiled
+        )
+        _print_paths_summary(paths, configs, "transform_scenario")
 
     elif stage == "all" or stage is None:
-        orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        obs_configs = orchestrator._deduplicate_obs_configs(configs)
+        hist_configs = orchestrator._deduplicate_historical_configs(configs)
+        _print_paths_summary(all_paths["prepare_observations"], obs_configs, "prepare_observations")
+        _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical")
+        _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario")
 
     else:
         raise ValueError(f"Unknown stage: {stage}")
 
     console.print("[bold green]✓ Complete![/bold green]")
+
+
+def _print_paths_summary(paths: list[str], configs: list[BCSDConfig], stage: str) -> None:
+    """Print a Rich table summarising output paths produced by a stage."""
+    stage_label = {
+        "prepare_observations": "Obs Regridded",
+        "fit_historical": "Historical",
+        "transform_scenario": "Scenario",
+    }.get(stage, stage)
+
+    table = Table(
+        title=f"Output Paths — {stage_label} ({len(paths)} artifact(s))",
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("GCM", style="cyan", no_wrap=True)
+    table.add_column("Variable", style="magenta")
+    table.add_column("Member", style="green")
+    table.add_column("Scenario", style="yellow")
+    table.add_column("Path", overflow="fold")
+
+    for cfg, path in zip(configs, paths):
+        table.add_row(
+            cfg.gcm,
+            cfg.variable,
+            cfg.ensemble_member,
+            cfg.scenario or "(historical)",
+            path or "[red]FAILED[/red]",
+        )
+
+    console.print(table)
 
 
 @app.command()
@@ -397,13 +440,25 @@ def run_matrix(
     orchestrator = BCSDOrchestrator()
 
     if stage == "obs" or stage == "prepare_observations":
-        orchestrator.submit_stage("prepare_observations", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage(
+            "prepare_observations", configs, force=force, use_coiled=coiled
+        )
+        _print_paths_summary(paths, configs, "prepare_observations")
     elif stage == "historical" or stage == "fit_historical":
-        orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        _print_paths_summary(paths, configs, "fit_historical")
     elif stage == "scenario" or stage == "transform_scenario":
-        orchestrator.submit_stage("transform_scenario", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage(
+            "transform_scenario", configs, force=force, use_coiled=coiled
+        )
+        _print_paths_summary(paths, configs, "transform_scenario")
     elif stage == "all" or stage is None:
-        orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        obs_configs = orchestrator._deduplicate_obs_configs(configs)
+        hist_configs = orchestrator._deduplicate_historical_configs(configs)
+        _print_paths_summary(all_paths["prepare_observations"], obs_configs, "prepare_observations")
+        _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical")
+        _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario")
     else:
         console.print(f"[red]Error: Unknown stage: {stage}[/red]")
         raise typer.Exit(1)
