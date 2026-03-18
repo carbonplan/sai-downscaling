@@ -6,16 +6,22 @@ from typing import Literal
 import pydantic_settings
 from pydantic import BaseModel, Field, computed_field, field_validator
 
+MappingType = Literal["parametric", "nonparametric", "nonparametric_hybrid"]
+DownscalingMethod = Literal["additive", "multiplicative"]
+DownscalingClimMethod = Literal["simple", "fft"]
+DetrendMethod = Literal["additive", "multiplicative"]
+VariableName = Literal["tas", "tasmax", "pr", "rsds"]
+
 
 class VariableConfig(BaseModel):
     """Variable-specific BCSD configuration parameters"""
 
     detrend_data: bool
     do_windowing: bool
-    downscaling_method: Literal["additive", "multiplicative"]
-    downscaling_clim_method: Literal["simple", "fft"]
-    detrend_method: Literal["additive", "multiplicative"] = "additive"
     running_window_length: int = 31
+    downscaling_method: DownscalingMethod
+    downscaling_clim_method: DownscalingClimMethod
+    detrend_method: DetrendMethod = "additive"
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
@@ -58,6 +64,48 @@ class VariableConfig(BaseModel):
 
         return cls(**BCSD_CONFIG[variable])
 
+    def to_path_id(self) -> str:
+        """
+        Short human-readable path segment encoding all VariableConfig fields.
+
+        Used in cache paths to prevent collisions when VariableConfig is overridden.
+
+        Examples
+        --------
+        Default ``tas``:  ``dt1-win1-dsadditive-dscfft-dtmadditive``
+        ``tas`` with ``do_windowing=False``:  ``dt1-win0-dsadditive-dscfft-dtmadditive``
+        """
+        return (
+            f"dt{int(self.detrend_data)}"
+            f"-win{int(self.do_windowing)}"
+            f"-ds{self.downscaling_method}"
+            f"-dsc{self.downscaling_clim_method}"
+            f"-dtm{self.detrend_method}"
+        )
+
+    def to_hash(self, mapping_type: MappingType) -> str:
+        """
+        8-character SHA-256 hash of VariableConfig fields + mapping_type.
+
+        Uses the same stable-string pattern as ``BCSDConfig.config_hash`` so the
+        hash is deterministic across Python versions and process restarts.
+        Scoped to only the parameters that affect bias-correction behaviour,
+        so runs sharing the same VariableConfig share the same cache sub-directory.
+
+        Parameters
+        ----------
+        mapping_type : MappingType
+            Quantile mapping method. See ``MappingType`` for valid values.
+
+        Returns
+        -------
+        str
+            8-character hex string, e.g. ``a3f8b2c1``.
+        """
+        params = {**self.model_dump(), "mapping_type": mapping_type}
+        raw = str(sorted(params.items()))
+        return hashlib.sha256(raw.encode()).hexdigest()[:8]
+
 
 class BCSDConfig(pydantic_settings.BaseSettings):
     """
@@ -70,9 +118,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
 
     # Model and data identifiers
     gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM', 'MIROC-ES2H', 'UKESM')")
-    variable: Literal["tas", "tasmax", "pr", "rsds"] = Field(
-        ..., description="Variable to downscale"
-    )
+    variable: VariableName = Field(..., description="Variable to downscale")
     ensemble_member: str = Field(..., description="Ensemble member label (e.g. 'r1i1p1f1', '01')")
     scenario: str | None = Field(
         None,
@@ -133,8 +179,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     rechunk_workflow: bool = Field(
         True, description="Enable strategic rechunking between pipeline stages"
     )
-    mapping_type: Literal["parametric", "nonparametric", "nonparametric_hybrid"] = Field(
-        "parametric", description="Quantile mapping method for bias correction"
+    mapping_type: MappingType = Field(
+        "parametric",
+        description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 
     save_intermediate: bool = Field(
@@ -242,7 +289,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         return self.variable_config.detrend_data if self.variable_config else False
 
     @computed_field
-    def detrend_method(self) -> str:
+    def detrend_method(self) -> DetrendMethod:
         """Convenience accessor for variable config"""
         return self.variable_config.detrend_method if self.variable_config else "additive"
 
@@ -257,12 +304,12 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         return self.variable_config.running_window_length if self.variable_config else 31
 
     @computed_field
-    def downscaling_method(self) -> str:
+    def downscaling_method(self) -> DownscalingMethod:
         """Convenience accessor for variable config"""
         return self.variable_config.downscaling_method if self.variable_config else "additive"
 
     @computed_field
-    def downscaling_clim_method(self) -> str:
+    def downscaling_clim_method(self) -> DownscalingClimMethod:
         """Convenience accessor for variable config"""
         return self.variable_config.downscaling_clim_method if self.variable_config else "fft"
 
