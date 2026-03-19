@@ -39,7 +39,7 @@ predict_period_end: 2100
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/outputs"
 environment: "qa"
-version: "pr-186-92daa13-nonparametric_hybrid"
+version: "pr-186-39db5bb-nonparametric_hybrid"
 
 # === Bias Correction ===
 mapping_type: "nonparametric_hybrid"
