@@ -617,7 +617,9 @@ class BCSDPipeline:
                             scenario_detrended.attrs
                         )  # Preserve units and metadata
                         self._write_to_icechunk(
-                            scenario_detrended, detrended_path, "write complete"
+                            rechunk(scenario_detrended, pattern="full_space"),
+                            detrended_path,
+                            "write complete",
                         )
                         if self.config.verbose:
                             logger.info(f"✓ Saved detrended scenario: {detrended_path}")
@@ -626,7 +628,11 @@ class BCSDPipeline:
                         trend_path = self.cache.get_trend_scenario_path(self.config)
                         scenario_trend.name = self.config.variable
                         scenario_trend.attrs = model_scenario.attrs  # Preserve units and metadata
-                        self._write_to_icechunk(scenario_trend, trend_path, "write complete")
+                        self._write_to_icechunk(
+                            rechunk(scenario_trend, pattern="full_space"),
+                            trend_path,
+                            "write complete",
+                        )
                         if self.config.verbose:
                             logger.info(f"✓ Saved scenario trend: {trend_path}")
 
