@@ -33,7 +33,7 @@ predict_period_end: 2100
 
 # === Spatial Subsetting ===
 # South Africa region: [lat_min, lat_max, lon_min, lon_max]
-subset_bounds: [-35, -22, 16, 33]
+# subset_bounds: [-35, -22, 16, 33]
 
 # === Storage ===
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
