@@ -40,7 +40,7 @@ subset_bounds: [-35, -22, 16, 33]
 cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/outputs"
 environment: "qa"
-version: "v5.6_nonparametric_hybrid"
+version: "v1"
 
 # === Bias Correction ===
 mapping_type: "nonparametric_hybrid"
