@@ -20,6 +20,7 @@ from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
+from srm.compression import make_encoding
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
     detrend,
@@ -91,13 +92,41 @@ class BCSDPipeline:
         else:
             return icechunk.local_filesystem_storage(path=path)
 
-    def _write_to_icechunk(self, da: xr.DataArray, path: str, commit_message: str) -> str:
+    def _write_to_icechunk(
+        self,
+        da: xr.DataArray,
+        path: str,
+        commit_message: str,
+        encoding: dict | None = None,
+    ) -> str:
         """Write a DataArray to an icechunk store and commit atomically."""
         storage = self._icechunk_storage(path)
         repo = icechunk.Repository.open_or_create(storage)
         session = repo.writable_session("main")
-        to_icechunk(da.to_dataset(), session, mode="w")
+        to_icechunk(da.to_dataset(), session, mode="w", encoding=encoding or {})
         return session.commit(commit_message, rebase_with=icechunk.ConflictDetector())
+
+    @staticmethod
+    def _build_ocean_mask(da: xr.DataArray) -> xr.DataArray:
+        """Compute a land/ocean mask aligned to da's spatial grid.
+
+        Returns a boolean DataArray where True = land (keep) and False = ocean (mask).
+        Uses GSHHS high-resolution coastline boundaries from the catalog. Ocean pixels
+        in the output should be set to NaN via ``da.where(mask)``.
+        """
+        import xproj  # noqa
+        from rasterix.rasterize import geometry_mask
+
+        from srm.datasets import catalog
+
+        coast = catalog.get("ocean-mask").to_geodataframe()
+        # Sort lat descending — required by rusterize; .where() re-aligns by coordinate
+        template = (
+            da.isel(time=0).sortby("lat", ascending=False).proj.assign_crs(spatial_ref="epsg:4326")
+        )
+        return geometry_mask(
+            template, coast[["geom"]], all_touched=True, engine="rusterize", xdim="lon", ydim="lat"
+        )
 
     def _open_from_icechunk(self, path: str) -> xr.Dataset:
         """Open a dataset from an icechunk store."""
@@ -595,11 +624,22 @@ class BCSDPipeline:
             )
             scenario_downscaled = rechunk(scenario_downscaled, pattern="full_space")
 
+        # Apply ocean mask if configured
+        if self.config.apply_ocean_mask:
+            with Timer("Applied ocean mask", verbose=self.config.verbose):
+                land_mask = self._build_ocean_mask(scenario_downscaled)
+                scenario_downscaled = scenario_downscaled.where(land_mask)
+
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
             scenario_downscaled.name = self.config.variable
             scenario_downscaled.attrs = model_scenario.attrs  # Preserve units and metadata
-            self._write_to_icechunk(scenario_downscaled, output_path, "write complete")
+            encoding = {
+                self.config.variable: make_encoding(self.config.variable, scenario_downscaled)
+            }
+            self._write_to_icechunk(
+                scenario_downscaled, output_path, "write complete", encoding=encoding
+            )
 
         if self.config.verbose:
             logger.info(f"✓ Saved scenario output: {output_path}")

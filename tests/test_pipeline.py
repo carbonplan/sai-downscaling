@@ -93,6 +93,7 @@ def _mock_transform_scenario_compute():
         patch("ibicus.debias.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
+        patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         mock_qm.from_variable.return_value.apply.return_value = MagicMock()
@@ -509,6 +510,36 @@ class TestTransformScenarioBehavior:
                     pass
         # detrend is called because tas has detrend_data=True
         assert mock_detrend.call_count >= 1 or pipeline.config.detrend_data
+
+    def test_write_called_with_output_encoding(self, pipeline_pr):
+        """transform_scenario passes codec + chunk/shard encoding to the write call."""
+        from srm.compression import CHUNK_LAT, CHUNK_LON, CHUNK_TIME, SHARD_TIME
+
+        p = pipeline_pr
+        _make_icechunk_store(
+            p.cache.get_obs_path(p.config.gcm, p.config.variable, p.config.subset_bounds)
+        )
+        _make_icechunk_store(
+            p.cache.get_historical_path(
+                p.config.gcm, p.config.variable, p.config.ensemble_member, p.config.subset_bounds
+            )
+        )
+        # The outer context manager patches _write_to_icechunk; the inner one overrides it
+        # so we can inspect the call arguments.
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+            ) as mock_write:
+                p.transform_scenario()
+
+        encoding = mock_write.call_args.kwargs["encoding"]
+        assert "pr" in encoding
+        entry = encoding["pr"]
+        assert entry["chunks"] == (1, CHUNK_TIME, CHUNK_LAT, CHUNK_LON)
+        assert entry["shards"][0] == 1
+        assert entry["shards"][1] == SHARD_TIME
+        assert entry["dtype"] == "uint16"
+        assert entry["fill_value"] == 65535
 
 
 # ---------------------------------------------------------------------------
