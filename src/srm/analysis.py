@@ -5,30 +5,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import xarray as xr
 
+from srm import catalog
 from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
-
-
-def cache_from_config(config: BCSDConfig) -> ArtifactCache:
-    """
-    Construct an ArtifactCache from a BCSDConfig.
-
-    Parameters
-    ----------
-    config : BCSDConfig
-        Configuration object for a BCSD run.
-
-    Returns
-    -------
-    ArtifactCache
-        Cache manager initialized with paths and settings from config.
-    """
-    return ArtifactCache(
-        base_path=config.cache_dir,
-        environment=config.environment,
-        version=config.version,
-        output_dir=config.output_dir,
-    )
+from srm.utils import lon_to_180
 
 
 def load_cached_data(s3_uri: str) -> xr.Dataset:
@@ -73,19 +53,19 @@ class BCSDRun:
 
     @cached_property
     def _cache(self) -> ArtifactCache:
-        return cache_from_config(self.config)
+        return ArtifactCache.from_config(self.config)
 
     @cached_property
     def obs(self) -> xr.Dataset:
-        return load_cached_data(self._cache.get_output_path("prepare_observations"), self.config)
+        return load_cached_data(self._cache.obs_path)
 
     @cached_property
     def historical(self) -> xr.Dataset:
-        return load_cached_data(self._cache.get_output_path("fit_historical", self.config))
+        return load_cached_data(self._cache.historical_path)
 
     @cached_property
     def scenario(self) -> xr.Dataset:
-        return load_cached_data(self._cache.get_output_path("transform_scenario", self.config))
+        return load_cached_data(self._cache.scenario_path)
 
     def get_location_data(self, lat, lon):
         """
@@ -146,3 +126,19 @@ class BCSDRun:
 
         fig.suptitle(f"{self.config.variable} {self.config.scenario}")
         return fig, axes
+
+
+def load_nasa_nex(*, dataset: str):
+    match dataset:
+        case "ssp245":
+            ds = catalog.get("NASA-NEX-SSP245").to_xarray()
+        case "historical":
+            ds = catalog.get("NASA-NEX-historical").to_xarray()
+        case _:
+            raise ValueError("dataset must take value `ssp245` or `historical`")
+
+    ds = lon_to_180(ds)
+    ds = ds.convert_calendar("standard")  # to datatime[ns] from cftime.DatetimeNoLeap
+    era5_ds = catalog.get("ERA5").to_xarray()
+    ds = ds.reindex(lat=era5_ds.lat, lon=era5_ds.lon, method="nearest", tolerance=0.15)
+    return ds

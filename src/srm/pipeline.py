@@ -74,12 +74,7 @@ class BCSDPipeline:
             Configuration for the BCSD run
         """
         self.config = config
-        self.cache = ArtifactCache(
-            base_path=config.cache_dir,
-            environment=config.environment,
-            version=config.version,
-            output_dir=config.output_dir,
-        )
+        self.cache = ArtifactCache.from_config(config)
 
         # State dictionary for intermediate results (mostly for debugging)
         self._state = {}
@@ -162,9 +157,7 @@ class BCSDPipeline:
         str
             S3 path to cached artifact
         """
-        output_path = self.cache.get_obs_path(
-            self.config.gcm, self.config.variable, self.config.subset_bounds
-        )
+        output_path = self.cache.obs_path
 
         # Check cache
         if self.cache.exists(output_path) and not force:
@@ -184,7 +177,7 @@ class BCSDPipeline:
 
             # Load GCM grid for target
             model_grid = get_experiment(
-                gcm=self.config.gcm, scenario="Historical", var=self.config.variable
+                gcm=self.config.gcm, scenario="historical", var=self.config.variable
             )
             model_grid = model_grid.drop_vars("spatial_ref", errors="ignore")
 
@@ -251,12 +244,7 @@ class BCSDPipeline:
         # Validate dependencies
         self.cache.validate_dependencies("fit_historical", self.config)
 
-        output_path = self.cache.get_historical_path(
-            self.config.gcm,
-            self.config.variable,
-            self.config.ensemble_member,
-            self.config.subset_bounds,
-        )
+        output_path = self.cache.historical_path
 
         # Check cache
         if self.cache.exists(output_path) and not force:
@@ -282,7 +270,7 @@ class BCSDPipeline:
 
             # Load historical GCM
             model_hist = get_experiment(
-                gcm=self.config.gcm, scenario="Historical", var=self.config.variable
+                gcm=self.config.gcm, scenario="historical", var=self.config.variable
             )
             # Historical data may not have ensemble_member dimension
             if "ensemble_member" in model_hist.dims:
@@ -411,13 +399,7 @@ class BCSDPipeline:
         # Validate dependencies
         self.cache.validate_dependencies("transform_scenario", self.config)
 
-        output_path = self.cache.get_scenario_path(
-            self.config.gcm,
-            self.config.variable,
-            self.config.ensemble_member,
-            self.config.scenario,
-            self.config.subset_bounds,
-        )
+        output_path = self.cache.scenario_path
 
         # Check cache
         if self.cache.exists(output_path) and not force:
@@ -443,7 +425,7 @@ class BCSDPipeline:
 
             # Load historical for training
             model_hist = get_experiment(
-                gcm=self.config.gcm, scenario="Historical", var=self.config.variable
+                gcm=self.config.gcm, scenario="historical", var=self.config.variable
             )
             # Historical data may not have ensemble_member dimension
             if "ensemble_member" in model_hist.dims:
