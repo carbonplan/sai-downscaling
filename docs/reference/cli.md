@@ -180,9 +180,9 @@ uv run bcsd status --config-path configs/example.yaml --verbose
 #   Version: v1
 #
 # Example Paths:
-#   Obs: s3://.../bcsd-cache/qa/v1/obs/CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.icechunk
-#   Historical: s3://.../outputs/qa/v1/historical/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.icechunk
-#   Scenario: s3://.../outputs/qa/v1/ssp245/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_ssp245.icechunk
+#   Obs: s3://.../bcsd-cache/qa/v1/obs/CESM2-WACCM/tas/lat-35.0to-22.0_lon16.0to33.0/obs_regridded.icechunk
+#   Historical: s3://.../outputs/qa/v1/historical/CESM2-WACCM/tas/r1i1p1f1/lat-35.0to-22.0_lon16.0to33.0/{varconfig_hash}/historical.icechunk
+#   Scenario: s3://.../outputs/qa/v1/ssp245/CESM2-WACCM/tas/r1i1p1f1/lat-35.0to-22.0_lon16.0to33.0/{varconfig_hash}/ssp245.icechunk
 #
 # Stage Progress:
 # ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓

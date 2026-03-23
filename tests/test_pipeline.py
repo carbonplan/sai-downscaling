@@ -152,19 +152,8 @@ def pipeline_pr(pr_config) -> BCSDPipeline:
 @pytest.fixture
 def all_deps_present(pipeline) -> BCSDPipeline:
     """Pipeline whose obs and historical dependencies are pre-created locally."""
-    _make_icechunk_store(
-        pipeline.cache.get_obs_path(
-            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
-        )
-    )
-    _make_icechunk_store(
-        pipeline.cache.get_historical_path(
-            pipeline.config.gcm,
-            pipeline.config.variable,
-            pipeline.config.ensemble_member,
-            pipeline.config.subset_bounds,
-        )
-    )
+    _make_icechunk_store(pipeline.cache.obs_path)
+    _make_icechunk_store(pipeline.cache.historical_path)
     return pipeline
 
 
@@ -175,7 +164,7 @@ def all_deps_present(pipeline) -> BCSDPipeline:
 
 class TestBCSDPipelineInit:
     def test_cache_uses_config_cache_dir(self, pipeline, config):
-        assert config.cache_dir.rstrip("/") in pipeline.cache.base_path
+        assert config.cache_dir.rstrip("/") in pipeline.cache.cache_dir
 
     def test_cache_uses_config_environment(self, pipeline, config):
         assert pipeline.cache.environment == config.environment
@@ -198,9 +187,7 @@ class TestBCSDPipelineInit:
 
 class TestPrepareObservationsCache:
     def test_returns_obs_path_when_cached(self, pipeline):
-        obs_path = pipeline.cache.get_obs_path(
-            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
-        )
+        obs_path = pipeline.cache.obs_path
         _make_icechunk_store(obs_path)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
@@ -210,9 +197,7 @@ class TestPrepareObservationsCache:
         mock_get_obs.assert_not_called()
 
     def test_does_not_compute_when_cached(self, pipeline):
-        obs_path = pipeline.cache.get_obs_path(
-            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
-        )
+        obs_path = pipeline.cache.obs_path
         _make_icechunk_store(obs_path)
 
         with _mock_prepare_obs_compute() as (get_obs, get_exp, interp, *_):
@@ -222,9 +207,7 @@ class TestPrepareObservationsCache:
             interp.assert_not_called()
 
     def test_force_runs_compute_even_when_cached(self, pipeline):
-        obs_path = pipeline.cache.get_obs_path(
-            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
-        )
+        obs_path = pipeline.cache.obs_path
         _make_icechunk_store(obs_path)
 
         with _mock_prepare_obs_compute() as (mock_get_obs, *_):
@@ -232,9 +215,7 @@ class TestPrepareObservationsCache:
             mock_get_obs.assert_called_once()
 
     def test_returns_obs_path_even_after_compute(self, pipeline):
-        expected = pipeline.cache.get_obs_path(
-            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
-        )
+        expected = pipeline.cache.obs_path
         with _mock_prepare_obs_compute():
             result = pipeline.prepare_observations()
         assert result == expected
@@ -254,7 +235,7 @@ class TestPrepareObservationsCompute:
     def test_get_experiment_called_for_historical_scenario(self, pipeline):
         with _mock_prepare_obs_compute() as (_, mock_get_exp, *_):
             pipeline.prepare_observations()
-        mock_get_exp.assert_called_once_with(gcm="CESM2-WACCM", scenario="Historical", var="tas")
+        mock_get_exp.assert_called_once_with(gcm="CESM2-WACCM", scenario="historical", var="tas")
 
     def test_interpolate_called_exactly_once(self, pipeline):
         with _mock_prepare_obs_compute() as (_, _, mock_interp, *_):
@@ -330,12 +311,7 @@ class TestFitHistoricalBehavior:
 
     def test_returns_cached_historical_path(self, all_deps_present):
         pipeline = all_deps_present
-        hist_path = pipeline.cache.get_historical_path(
-            pipeline.config.gcm,
-            pipeline.config.variable,
-            pipeline.config.ensemble_member,
-            pipeline.config.subset_bounds,
-        )
+        hist_path = pipeline.cache.historical_path
         _make_icechunk_store(hist_path)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
@@ -346,12 +322,7 @@ class TestFitHistoricalBehavior:
 
     def test_force_bypasses_cached_historical(self, all_deps_present):
         pipeline = all_deps_present
-        hist_path = pipeline.cache.get_historical_path(
-            pipeline.config.gcm,
-            pipeline.config.variable,
-            pipeline.config.ensemble_member,
-            pipeline.config.subset_bounds,
-        )
+        hist_path = pipeline.cache.historical_path
         _make_icechunk_store(hist_path)
 
         with _mock_fit_historical_compute():
@@ -362,12 +333,7 @@ class TestFitHistoricalBehavior:
 
     def test_returns_historical_path_after_compute(self, all_deps_present):
         pipeline = all_deps_present
-        expected = pipeline.cache.get_historical_path(
-            pipeline.config.gcm,
-            pipeline.config.variable,
-            pipeline.config.ensemble_member,
-            pipeline.config.subset_bounds,
-        )
+        expected = pipeline.cache.historical_path
         with _mock_fit_historical_compute():
             result = pipeline.fit_historical()
         assert result == expected
@@ -396,9 +362,7 @@ class TestTransformScenarioBehavior:
             pipeline.transform_scenario()
 
     def test_raises_when_only_obs_present(self, pipeline):
-        obs_path = pipeline.cache.get_obs_path(
-            pipeline.config.gcm, pipeline.config.variable, pipeline.config.subset_bounds
-        )
+        obs_path = pipeline.cache.obs_path
         _make_icechunk_store(obs_path)
         with pytest.raises(ValueError, match="Missing dependencies"):
             pipeline.transform_scenario()
@@ -413,13 +377,7 @@ class TestTransformScenarioBehavior:
 
     def test_returns_cached_scenario_path(self, all_deps_present):
         pipeline = all_deps_present
-        scenario_path = pipeline.cache.get_scenario_path(
-            pipeline.config.gcm,
-            pipeline.config.variable,
-            pipeline.config.ensemble_member,
-            pipeline.config.scenario,
-            pipeline.config.subset_bounds,
-        )
+        scenario_path = pipeline.cache.scenario_path
         _make_icechunk_store(scenario_path)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
@@ -431,21 +389,9 @@ class TestTransformScenarioBehavior:
     def test_force_bypasses_cached_scenario(self, pipeline_pr, tmp_path):
         # Use pr config: detrend_data=False avoids the xr.concat detrend branch
         p = pipeline_pr
-        _make_icechunk_store(
-            p.cache.get_obs_path(p.config.gcm, p.config.variable, p.config.subset_bounds)
-        )
-        _make_icechunk_store(
-            p.cache.get_historical_path(
-                p.config.gcm, p.config.variable, p.config.ensemble_member, p.config.subset_bounds
-            )
-        )
-        scenario_path = p.cache.get_scenario_path(
-            p.config.gcm,
-            p.config.variable,
-            p.config.ensemble_member,
-            p.config.scenario,
-            p.config.subset_bounds,
-        )
+        _make_icechunk_store(p.cache.obs_path)
+        _make_icechunk_store(p.cache.historical_path)
+        scenario_path = p.cache.scenario_path
         _make_icechunk_store(scenario_path)
 
         with _mock_transform_scenario_compute():
@@ -457,21 +403,9 @@ class TestTransformScenarioBehavior:
     def test_returns_scenario_path_after_compute(self, pipeline_pr):
         # Use pr config: detrend_data=False avoids the xr.concat detrend branch
         p = pipeline_pr
-        _make_icechunk_store(
-            p.cache.get_obs_path(p.config.gcm, p.config.variable, p.config.subset_bounds)
-        )
-        _make_icechunk_store(
-            p.cache.get_historical_path(
-                p.config.gcm, p.config.variable, p.config.ensemble_member, p.config.subset_bounds
-            )
-        )
-        expected = p.cache.get_scenario_path(
-            p.config.gcm,
-            p.config.variable,
-            p.config.ensemble_member,
-            p.config.scenario,
-            p.config.subset_bounds,
-        )
+        _make_icechunk_store(p.cache.obs_path)
+        _make_icechunk_store(p.cache.historical_path)
+        expected = p.cache.scenario_path
         with _mock_transform_scenario_compute():
             result = p.transform_scenario()
         assert result == expected
@@ -479,21 +413,8 @@ class TestTransformScenarioBehavior:
     def test_detrend_not_called_for_pr(self, all_deps_present, pipeline_pr, tmp_path):
         # Recreate all_deps_present for the pr pipeline
         pr_pipeline = pipeline_pr
-        _make_icechunk_store(
-            pr_pipeline.cache.get_obs_path(
-                pr_pipeline.config.gcm,
-                pr_pipeline.config.variable,
-                pr_pipeline.config.subset_bounds,
-            )
-        )
-        _make_icechunk_store(
-            pr_pipeline.cache.get_historical_path(
-                pr_pipeline.config.gcm,
-                pr_pipeline.config.variable,
-                pr_pipeline.config.ensemble_member,
-                pr_pipeline.config.subset_bounds,
-            )
-        )
+        _make_icechunk_store(pr_pipeline.cache.obs_path)
+        _make_icechunk_store(pr_pipeline.cache.historical_path)
         with _mock_transform_scenario_compute():
             with patch("srm.pipeline.detrend") as mock_detrend:
                 pr_pipeline.transform_scenario()

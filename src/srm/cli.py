@@ -343,22 +343,16 @@ def status(
     if verbose and configs:
         cache = orchestrator._get_cache(configs[0])
         console.print("\n[cyan]Cache Configuration:[/cyan]")
-        console.print(f"  Cache Path: {cache.base_path}")
+        console.print(f"  Cache Path: {cache.cache_dir}")
         console.print(f"  Output Path: {cache.output_dir or '(same as cache)'}")
         console.print(f"  Environment: {cache.environment}")
         console.print(f"  Version: {cache.version}")
         console.print("\n[cyan]Example Paths:[/cyan]")
         config = configs[0]
-        console.print(
-            f"  Obs: {cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)}"
-        )
-        console.print(
-            f"  Historical: {cache.get_historical_path(config.gcm, config.variable, config.ensemble_member, config.subset_bounds)}"
-        )
+        console.print(f"  Obs: {cache.get_obs_path(config)}")
+        console.print(f"  Historical: {cache.get_historical_path(config)}")
         if config.scenario:
-            console.print(
-                f"  Scenario: {cache.get_scenario_path(config.gcm, config.variable, config.ensemble_member, config.scenario, config.subset_bounds)}\n"
-            )
+            console.print(f"  Scenario: {cache.get_scenario_path(config)}\n")
 
     status_info = orchestrator.get_status(configs)
 
@@ -416,7 +410,7 @@ def cache_clear(
 
     # Use cache_dir from first config (all should have same cache_dir)
     cache = ArtifactCache(
-        base_path=configs[0].cache_dir,
+        cache_dir=configs[0].cache_dir,
         environment=configs[0].environment,
         version=configs[0].version,
     )
@@ -461,7 +455,7 @@ def cache_list(
 
     # Use cache_dir from first config (all should have same cache_dir)
     cache = ArtifactCache(
-        base_path=configs[0].cache_dir,
+        cache_dir=configs[0].cache_dir,
         environment=configs[0].environment,
         version=configs[0].version,
     )
