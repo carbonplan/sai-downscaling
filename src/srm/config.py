@@ -10,17 +10,16 @@ class VarSpec:
     units: str
     long_name: str = ""
     cell_methods: str | None = None
-    output_dtype: str = "float32"
 
 
 @dataclass(frozen=True)
 class VarStandards:
-    PR: VarSpec = VarSpec(name="pr", units="kg m-2 s-1", output_dtype="uint16")
+    PR: VarSpec = VarSpec(name="pr", units="kg m-2 s-1")
     TAS: VarSpec = VarSpec(name="tas", units="K")
     TASMIN: VarSpec = VarSpec(name="tasmin", units="K")
     TASMAX: VarSpec = VarSpec(name="tasmax", units="K")
-    HURS: VarSpec = VarSpec(name="hurs", units="%", output_dtype="uint16")
-    RSDS: VarSpec = VarSpec(name="rsds", units="W m-2", output_dtype="uint16")
+    HURS: VarSpec = VarSpec(name="hurs", units="%")
+    RSDS: VarSpec = VarSpec(name="rsds", units="W m-2")
     HUSS: VarSpec = VarSpec(name="huss", units="1")
     RLDS: VarSpec = VarSpec(name="rlds", units="W m-2")
     PS: VarSpec = VarSpec(name="ps", units="Pa")

@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
+import xarray as xr
 
 from srm.bcsd_config import BCSDConfig
 from srm.pipeline import BCSDPipeline
@@ -52,6 +53,7 @@ def _mock_prepare_obs_compute():
         patch("srm.pipeline.interpolate_fine_to_coarse_grid") as mock_interp,
         patch("srm.pipeline.subset_space") as mock_subset,
         patch("srm.pipeline.rechunk") as mock_rechunk,
+        patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         yield mock_get_obs, mock_get_exp, mock_interp, mock_subset, mock_rechunk
@@ -69,6 +71,7 @@ def _mock_fit_historical_compute():
         patch("ibicus.debias.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
+        patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         # debiaser.apply returns something downstream code treats as an array
@@ -292,6 +295,53 @@ class TestPrepareObservationsCompute:
 
 
 # ---------------------------------------------------------------------------
+# _build_ocean_mask
+# ---------------------------------------------------------------------------
+
+
+class TestBuildOceanMask:
+    def _make_da(self):
+        import numpy as np
+
+        return xr.DataArray(
+            np.zeros((3, 4, 8)),
+            dims=["time", "lat", "lon"],
+            coords={"time": range(3), "lat": [60.0, 30.0, 0.0, -30.0], "lon": list(range(8))},
+        )
+
+    def test_fetches_ocean_mask_from_catalog(self):
+        mock_gdf = MagicMock()
+        with (
+            patch("srm.datasets.catalog") as mock_catalog,
+            patch.dict("sys.modules", {"xproj": MagicMock()}),
+            patch("rasterix.rasterize.geometry_mask", return_value=MagicMock()),
+        ):
+            mock_catalog.get.return_value.to_geodataframe.return_value = mock_gdf
+            BCSDPipeline._build_ocean_mask(self._make_da())
+        mock_catalog.get.assert_called_once_with("ocean-mask")
+
+    def test_passes_lat_sorted_descending_to_geometry_mask(self):
+        """rusterize requires lat in descending order."""
+        captured = {}
+        mock_gdf = MagicMock()
+
+        def capture_template(template, *args, **kwargs):
+            captured["lat"] = template.coords["lat"].values.tolist()
+            return MagicMock()
+
+        with (
+            patch("srm.datasets.catalog") as mock_catalog,
+            patch.dict("sys.modules", {"xproj": MagicMock()}),
+            patch("rasterix.rasterize.geometry_mask", side_effect=capture_template),
+        ):
+            mock_catalog.get.return_value.to_geodataframe.return_value = mock_gdf
+            da = self._make_da()  # lat already descending: [60, 30, 0, -30]
+            BCSDPipeline._build_ocean_mask(da)
+
+        assert captured["lat"] == sorted(captured["lat"], reverse=True)
+
+
+# ---------------------------------------------------------------------------
 # fit_historical – dependency validation & cache routing
 # ---------------------------------------------------------------------------
 
@@ -432,21 +482,32 @@ class TestTransformScenarioBehavior:
         # detrend is called because tas has detrend_data=True
         assert mock_detrend.call_count >= 1 or pipeline.config.detrend_data
 
-    def test_write_called_with_output_encoding(self, pipeline_pr):
-        """transform_scenario passes codec + chunk/shard encoding to the write call."""
-        from srm.compression import CHUNK_LAT, CHUNK_LON, CHUNK_TIME, SHARD_TIME
+    def test_ocean_mask_applied_to_obs_fine(self, pipeline_pr):
+        """Ocean mask is applied to obs_fine before downscaling in transform_scenario."""
+        p = pipeline_pr
+        _make_icechunk_store(p.cache.obs_path)
+        _make_icechunk_store(p.cache.historical_path)
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()
+            ) as mock_mask:
+                p.transform_scenario()
+        mock_mask.assert_called_once()
+
+    def test_write_called_with_chunk_shard_encoding(self, pipeline_pr):
+        """transform_scenario passes chunk/shard/compressor encoding to the write call."""
+        from srm.compression import (
+            CHUNK_LAT,
+            CHUNK_LON,
+            CHUNK_TIME,
+            SHARD_LAT,
+            SHARD_LON,
+            SHARD_TIME,
+        )
 
         p = pipeline_pr
-        _make_icechunk_store(
-            p.cache.get_obs_path(p.config.gcm, p.config.variable, p.config.subset_bounds)
-        )
-        _make_icechunk_store(
-            p.cache.get_historical_path(
-                p.config.gcm, p.config.variable, p.config.ensemble_member, p.config.subset_bounds
-            )
-        )
-        # The outer context manager patches _write_to_icechunk; the inner one overrides it
-        # so we can inspect the call arguments.
+        _make_icechunk_store(p.cache.obs_path)
+        _make_icechunk_store(p.cache.historical_path)
         with _mock_transform_scenario_compute():
             with patch.object(
                 BCSDPipeline, "_write_to_icechunk", return_value="snap"
@@ -456,11 +517,8 @@ class TestTransformScenarioBehavior:
         encoding = mock_write.call_args.kwargs["encoding"]
         assert "pr" in encoding
         entry = encoding["pr"]
-        assert entry["chunks"] == (1, CHUNK_TIME, CHUNK_LAT, CHUNK_LON)
-        assert entry["shards"][0] == 1
-        assert entry["shards"][1] == SHARD_TIME
-        assert entry["dtype"] == "uint16"
-        assert entry["fill_value"] == 65535
+        assert entry["chunks"] == (CHUNK_TIME, CHUNK_LAT, CHUNK_LON)
+        assert entry["shards"] == (SHARD_TIME, SHARD_LAT, SHARD_LON)
 
 
 # ---------------------------------------------------------------------------

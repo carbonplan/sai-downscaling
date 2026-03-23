@@ -128,7 +128,7 @@ class BCSDPipeline:
         storage = self._icechunk_storage(path)
         repo = icechunk.Repository.open(storage)
         session = repo.readonly_session("main")
-        return xr.open_dataset(session.store, engine="zarr", consolidated=False)
+        return xr.open_dataset(session.store, engine="zarr", consolidated=False, chunks="auto")
 
     def prepare_observations(self, force: bool = False) -> str:
         """
@@ -165,6 +165,7 @@ class BCSDPipeline:
             # Load fine-resolution observations
             obs_fine = get_obs(var=self.config.variable)
             obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+            obs_fine = obs_fine.where(self._build_ocean_mask(obs_fine))
 
             # Load GCM grid for target
             model_grid = get_experiment(
@@ -255,6 +256,7 @@ class BCSDPipeline:
             # Load fine observations
             obs_fine = get_obs(var=self.config.variable)
             obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+            obs_fine = obs_fine.where(self._build_ocean_mask(obs_fine))
 
             # Load historical GCM
             model_hist = get_experiment(
@@ -343,7 +345,12 @@ class BCSDPipeline:
         with Timer("Saved to cache", verbose=self.config.verbose):
             model_hist_downscaled.name = self.config.variable
             model_hist_downscaled.attrs = model_hist.attrs  # Preserve units and metadata
-            self._write_to_icechunk(model_hist_downscaled, output_path, "write complete")
+            self._write_to_icechunk(
+                model_hist_downscaled,
+                output_path,
+                "write complete",
+                encoding=make_encoding(self.config.variable),
+            )
 
         if self.config.verbose:
             logger.info(f"✓ Cached historical: {output_path}")
@@ -407,6 +414,7 @@ class BCSDPipeline:
             # Load fine observations
             obs_fine = get_obs(var=self.config.variable)
             obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+            obs_fine = obs_fine.where(self._build_ocean_mask(obs_fine))
 
             # Load historical for training
             model_hist = get_experiment(
@@ -606,21 +614,15 @@ class BCSDPipeline:
             )
             scenario_downscaled = rechunk(scenario_downscaled, pattern="full_space")
 
-        # Apply ocean mask if configured
-        if self.config.apply_ocean_mask:
-            with Timer("Applied ocean mask", verbose=self.config.verbose):
-                land_mask = self._build_ocean_mask(scenario_downscaled)
-                scenario_downscaled = scenario_downscaled.where(land_mask)
-
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
             scenario_downscaled.name = self.config.variable
             scenario_downscaled.attrs = model_scenario.attrs  # Preserve units and metadata
-            encoding = {
-                self.config.variable: make_encoding(self.config.variable, scenario_downscaled)
-            }
             self._write_to_icechunk(
-                scenario_downscaled, output_path, "write complete", encoding=encoding
+                scenario_downscaled,
+                output_path,
+                "write complete",
+                encoding=make_encoding(self.config.variable),
             )
 
         if self.config.verbose:
