@@ -12,7 +12,7 @@ SHARD_LON = 144  # 144 / CHUNK_LON = 9 chunks
 
 
 def make_encoding(var_name: str) -> dict:
-    """Return a zarr encoding dict for a varaible
+    """Return a zarr encoding dict for a variable
 
     Parameters
     ----------
