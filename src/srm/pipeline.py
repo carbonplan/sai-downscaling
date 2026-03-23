@@ -20,7 +20,6 @@ from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
-from srm.compression import make_encoding
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
     detrend,
@@ -32,6 +31,7 @@ from srm.downscaling_utils import (
     retrend,
     subset_space,
 )
+from srm.encoding import make_encoding
 from srm.utils import Timer
 
 logger = logging.getLogger(__name__)

@@ -496,7 +496,7 @@ class TestTransformScenarioBehavior:
 
     def test_write_called_with_chunk_shard_encoding(self, pipeline_pr):
         """transform_scenario passes chunk/shard/compressor encoding to the write call."""
-        from srm.compression import (
+        from srm.encoding import (
             CHUNK_LAT,
             CHUNK_LON,
             CHUNK_TIME,
