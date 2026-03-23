@@ -211,7 +211,7 @@ class BCSDPipeline:
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
             obs_coarse.name = self.config.variable
-            hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-Historical-icechunk")
+            hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
             dataset_attrs = self._build_output_attrs(hist_dataset)
             self._write_to_icechunk(
                 obs_coarse, output_path, "write complete", dataset_attrs=dataset_attrs
