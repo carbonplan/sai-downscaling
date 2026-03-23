@@ -13,13 +13,14 @@ zip_path = Path("gshhg-shp.zip")
 extract_dir = Path("gshhg-shp")
 out_path = Path("GSHHS.parquet")
 
-urllib.request.urlretrieve(URL, zip_path)
+if __name __ == "__main__":
+	urllib.request.urlretrieve(URL, zip_path)
 
-with zipfile.ZipFile(zip_path) as zf:
-    zf.extractall(extract_dir)
+	with zipfile.ZipFile(zip_path) as zf:
+    	zf.extractall(extract_dir)
 
-shp = next(extract_dir.rglob("GSHHS_f_L1.shp"))
-gdf = gpd.read_file(shp)[["geometry"]].rename_geometry("geom")
-gdf.to_parquet(out_path)
+	shp = next(extract_dir.rglob("GSHHS_f_L1.shp"))
+	gdf = gpd.read_file(shp)[["geometry"]].rename_geometry("geom")
+	gdf.to_parquet(out_path)
 
-subprocess.run(["aws", "s3", "cp", str(out_path), S3_DEST], check=True)
+	subprocess.run(["aws", "s3", "cp", str(out_path), S3_DEST], check=True)
