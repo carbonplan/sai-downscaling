@@ -121,7 +121,7 @@ class BCSDPipeline:
         )
         return ~geometry_mask(
             template, coast[["geom"]], all_touched=True, engine="rusterize", xdim="lon", ydim="lat"
-        )
+        ).drop_vars("spatial_ref", errors="ignore")
 
     def _open_from_icechunk(self, path: str) -> xr.Dataset:
         """Open a dataset from an icechunk store."""
@@ -337,9 +337,6 @@ class BCSDPipeline:
                 obs_fine=obs_fine.as_numpy(),
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
-            )
-            model_hist_downscaled = model_hist_downscaled.where(
-                self._build_ocean_mask(model_hist_downscaled)
             )
             model_hist_downscaled = model_hist_downscaled.chunk(
                 {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
@@ -616,15 +613,15 @@ class BCSDPipeline:
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
             )
-            scenario_downscaled = scenario_downscaled.where(
-                self._build_ocean_mask(scenario_downscaled)
-            )
             scenario_downscaled = scenario_downscaled.chunk(
                 {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
             )
 
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
+            scenario_downscaled = scenario_downscaled.where(
+                self._build_ocean_mask(scenario_downscaled)
+            )
             scenario_downscaled.name = self.config.variable
             scenario_downscaled.attrs = model_scenario.attrs  # Preserve units and metadata
             self._write_to_icechunk(
