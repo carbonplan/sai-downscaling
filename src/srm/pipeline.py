@@ -31,7 +31,7 @@ from srm.downscaling_utils import (
     retrend,
     subset_space,
 )
-from srm.encoding import make_encoding
+from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_encoding
 from srm.utils import Timer
 
 logger = logging.getLogger(__name__)
@@ -165,7 +165,6 @@ class BCSDPipeline:
             # Load fine-resolution observations
             obs_fine = get_obs(var=self.config.variable)
             obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
-            obs_fine = obs_fine.where(self._build_ocean_mask(obs_fine))
 
             # Load GCM grid for target
             model_grid = get_experiment(
@@ -256,7 +255,6 @@ class BCSDPipeline:
             # Load fine observations
             obs_fine = get_obs(var=self.config.variable)
             obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
-            obs_fine = obs_fine.where(self._build_ocean_mask(obs_fine))
 
             # Load historical GCM
             model_hist = get_experiment(
@@ -317,6 +315,7 @@ class BCSDPipeline:
                 parallel=True,
                 nr_processes=dask.system.CPU_COUNT,
                 progressbar=False,
+                failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
             )
 
             # Convert back to xarray
@@ -339,7 +338,12 @@ class BCSDPipeline:
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
             )
-            model_hist_downscaled = rechunk(model_hist_downscaled, pattern="full_space")
+            model_hist_downscaled = model_hist_downscaled.where(
+                self._build_ocean_mask(model_hist_downscaled)
+            )
+            model_hist_downscaled = model_hist_downscaled.chunk(
+                {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+            )
 
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
@@ -414,7 +418,6 @@ class BCSDPipeline:
             # Load fine observations
             obs_fine = get_obs(var=self.config.variable)
             obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
-            obs_fine = obs_fine.where(self._build_ocean_mask(obs_fine))
 
             # Load historical for training
             model_hist = get_experiment(
@@ -580,6 +583,7 @@ class BCSDPipeline:
                 time_cm_future=scenario_detrended["time"].values,
                 parallel=True,
                 nr_processes=dask.system.CPU_COUNT,
+                failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
                 progressbar=False,
             )
 
@@ -612,7 +616,12 @@ class BCSDPipeline:
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
             )
-            scenario_downscaled = rechunk(scenario_downscaled, pattern="full_space")
+            scenario_downscaled = scenario_downscaled.where(
+                self._build_ocean_mask(scenario_downscaled)
+            )
+            scenario_downscaled = scenario_downscaled.chunk(
+                {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+            )
 
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
