@@ -621,7 +621,7 @@ class BCSDPipeline:
         with Timer("Saved output", verbose=self.config.verbose):
             scenario_downscaled = scenario_downscaled.where(
                 self._build_ocean_mask(scenario_downscaled)
-            )
+            ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
             scenario_downscaled.name = self.config.variable
             scenario_downscaled.attrs = model_scenario.attrs  # Preserve units and metadata
             self._write_to_icechunk(
