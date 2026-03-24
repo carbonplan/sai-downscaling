@@ -17,7 +17,7 @@ def make_encoding(var_name: str) -> dict:
     Parameters
     ----------
     var_name :  str
-    		Name of the variable to encode (used as the dict key).
+                Name of the variable to encode (used as the dict key).
     """
     return {
         var_name: {

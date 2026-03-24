@@ -119,7 +119,7 @@ class BCSDPipeline:
         template = (
             da.isel(time=0).sortby("lat", ascending=False).proj.assign_crs(spatial_ref="epsg:4326")
         )
-        return geometry_mask(
+        return ~geometry_mask(
             template, coast[["geom"]], all_touched=True, engine="rusterize", xdim="lon", ydim="lat"
         )
 
