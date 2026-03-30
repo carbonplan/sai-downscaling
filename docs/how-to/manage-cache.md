@@ -20,12 +20,13 @@ The pipeline provides intelligent caching at multiple levels to enable efficient
 s3://carbonplan-scratch/srm/bcsd-cache/
 ├── qa/                                    # QA environment (testing)
 │   ├── v1/                                # Version 1 artifacts
-│   │   ├── obs/
-│   │   │   ├── CESM2-WACCM_tas_global_obs_regridded.icechunk
-│   │   │   └── CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.icechunk
-│   │   └── historical/
-│   │       ├── CESM2-WACCM_tas_000_global_historical.icechunk
-│   │       └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.icechunk
+│   │   └── obs/
+│   │       └── CESM2-WACCM/
+│   │           └── tas/
+│   │               ├── global/
+│   │               │   └── obs_regridded.icechunk
+│   │               └── lat-35.0to-22.0_lon16.0to33.0/
+│   │                   └── obs_regridded.icechunk
 │   └── v2/                                # Version 2 (after methodological changes)
 │       └── ...
 ├── staging/
@@ -37,12 +38,29 @@ s3://carbonplan-scratch/srm/outputs/
 ├── qa/
 │   ├── v1/
 │   │   ├── historical/
-│   │   │   └── CESM2-WACCM_tas_000_global_historical.icechunk
+│   │   │   └── CESM2-WACCM/
+│   │   │       └── tas/
+│   │   │           └── r1i1p1f1/
+│   │   │               └── global/
+│   │   │                   └── {varconfig_hash}/
+│   │   │                       └── historical.icechunk
 │   │   ├── ssp245/
-│   │   │   ├── CESM2-WACCM_tas_000_global_ssp245.icechunk
-│   │   │   └── CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_ssp245.icechunk
+│   │   │   └── CESM2-WACCM/
+│   │   │       └── tas/
+│   │   │           └── r1i1p1f1/
+│   │   │               ├── global/
+│   │   │               │   └── {varconfig_hash}/
+│   │   │               │       └── ssp245.icechunk
+│   │   │               └── lat-35.0to-22.0_lon16.0to33.0/
+│   │   │                   └── {varconfig_hash}/
+│   │   │                       └── ssp245.icechunk
 │   │   └── g6-1.5k/
-│   │       └── CESM2-WACCM_tas_000_global_g6-1.5k.icechunk
+│   │       └── CESM2-WACCM/
+│   │           └── tas/
+│   │               └── r1i1p1f1/
+│   │                   └── global/
+│   │                       └── {varconfig_hash}/
+│   │                           └── g6-1.5k.icechunk
 │   └── v2/
 │       └── ...
 ├── staging/
@@ -148,14 +166,14 @@ from srm.cache import ArtifactCache
 
 config = BCSDConfig(**yaml.safe_load(open("configs/example.yaml")))
 cache = ArtifactCache(
-    base_path=config.cache_dir,
+    cache_dir=config.cache_dir,
     environment=config.environment,
     version=config.version,
     output_dir=config.output_dir,
 )
 
 # Check if specific artifact exists
-obs_path = cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+obs_path = cache.get_obs_path(config)
 print(f"Observations cached: {cache.exists(obs_path)}")
 
 # List all artifacts

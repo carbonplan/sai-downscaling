@@ -58,7 +58,7 @@ def get_all_data(
         )  # TODO: update to .sel() with string label (e.g. 'r1i1p1f1')
         model_scenario = model_scenario.drop_vars("spatial_ref")
 
-        model_historical = get_experiment(gcm=gcm, scenario="Historical", var=var_name)
+        model_historical = get_experiment(gcm=gcm, scenario="historical", var=var_name)
         model_historical = model_historical.drop_vars("spatial_ref")
 
         obs = get_obs(var=var_name)

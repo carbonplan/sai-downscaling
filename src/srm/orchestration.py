@@ -63,7 +63,7 @@ class BCSDOrchestrator:
         cache_key = (config.cache_dir, config.output_dir, config.environment, config.version)
         if cache_key not in self._cache_instances:
             self._cache_instances[cache_key] = ArtifactCache(
-                base_path=config.cache_dir,
+                cache_dir=config.cache_dir,
                 environment=config.environment,
                 version=config.version,
                 output_dir=config.output_dir,
@@ -415,7 +415,7 @@ class BCSDOrchestrator:
         obs_configs = self._deduplicate_obs_configs(configs)
         status["prepare_observations"]["total"] = len(obs_configs)
         for config in obs_configs:
-            path = cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+            path = cache.get_obs_path(config)
             if cache.exists(path):
                 status["prepare_observations"]["cached"] += 1
             else:
@@ -425,9 +425,7 @@ class BCSDOrchestrator:
         hist_configs = self._deduplicate_historical_configs(configs)
         status["fit_historical"]["total"] = len(hist_configs)
         for config in hist_configs:
-            path = cache.get_historical_path(
-                config.gcm, config.variable, config.ensemble_member, config.subset_bounds
-            )
+            path = cache.get_historical_path(config)
             if cache.exists(path):
                 status["fit_historical"]["cached"] += 1
             else:
@@ -437,13 +435,7 @@ class BCSDOrchestrator:
         status["transform_scenario"]["total"] = len(configs)
         for config in configs:
             if config.scenario:
-                path = cache.get_scenario_path(
-                    config.gcm,
-                    config.variable,
-                    config.ensemble_member,
-                    config.scenario,
-                    config.subset_bounds,
-                )
+                path = cache.get_scenario_path(config)
                 if cache.exists(path):
                     status["transform_scenario"]["cached"] += 1
                 else:
