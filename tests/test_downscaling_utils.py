@@ -187,3 +187,79 @@ def test_detrend_multiplicative_returns_expected_values_and_alignment():
     assert detrended.dtype == da.dtype
     np.testing.assert_allclose(trend_on_daily_timestep.values, 5.0)
     np.testing.assert_allclose(detrended.values, 2.0)
+
+
+def _make_demo_daily_data() -> xr.DataArray:
+    """Synthetic daily signal with trend + seasonal cycle (same shape as demo script)."""
+    time = np.arange(np.datetime64("2001-01-01"), np.datetime64("2013-01-01"))
+    lat = np.array([0.0])
+    lon = np.array([10.0])
+
+    t = np.arange(time.size, dtype=np.float32)
+    annual_cycle = 2.0 * np.sin(2.0 * np.pi * t / 365.25)
+    signal = (10.0 + 0.002 * t + annual_cycle).astype(np.float32)
+
+    return xr.DataArray(
+        signal[:, None, None],
+        dims=["time", "lat", "lon"],
+        coords={"time": time, "lat": lat, "lon": lon},
+        name="synthetic_daily",
+    )
+
+
+def _make_zero_baseline(lat: np.ndarray, lon: np.ndarray) -> xr.DataArray:
+    """Monthly climatology with zeros so additive trend equals smoothed monthly signal."""
+    return xr.DataArray(
+        np.zeros((12, lat.size, lon.size), dtype=np.float32),
+        dims=["month", "lat", "lon"],
+        coords={"month": np.arange(1, 13), "lat": lat, "lon": lon},
+        name="baseline_clim",
+    )
+
+
+def test_grouped_rolling_window_counts_match_expected_edge_pattern():
+    years = np.arange(2001, 2013)  # 12 years
+    monthly_times = np.array([np.datetime64(f"{year}-01-01") for year in years])
+    jan_values = xr.DataArray(
+        np.arange(1, len(years) + 1, dtype=np.float32),
+        dims=["time"],
+        coords={"time": monthly_times},
+        name="jan_signal",
+    )
+
+    rolled_count = jan_values.rolling(time=9, center=True, min_periods=1).count()
+
+    expected = np.array([5, 6, 7, 8, 9, 9, 9, 9, 8, 7, 6, 5])
+    np.testing.assert_array_equal(rolled_count.values.astype(int), expected)
+
+
+def test_detrend_additive_matches_manual_grouped_rolling_for_january():
+    da = _make_demo_daily_data()
+    baseline = _make_zero_baseline(da["lat"].values, da["lon"].values)
+
+    _, trend_daily = detrend(
+        da=da,
+        da_baseline_clim=baseline,
+        detrend_method="additive",
+    )
+
+    # Extract one January value per year from detrend() output.
+    jan_from_detrend = (
+        trend_daily.sel(time=trend_daily.time.dt.month == 1)
+        .resample(time="YS")
+        .first()
+        .squeeze(drop=True)
+    )
+
+    # Build the same January trend manually from monthly means + 9-year centered rolling.
+    da_mon = da.resample(time="1MS").mean("time")
+    jan_mon = da_mon.sel(time=da_mon.time.dt.month == 1).squeeze(drop=True)
+    jan_manual = jan_mon.rolling(time=9, center=True, min_periods=1).mean()
+
+    # Show edge-window behavior explicitly.
+    jan_counts = jan_mon.rolling(time=9, center=True, min_periods=1).count()
+    expected_counts = np.array([5, 6, 7, 8, 9, 9, 9, 9, 8, 7, 6, 5])
+    np.testing.assert_array_equal(jan_counts.values.astype(int), expected_counts)
+
+    np.testing.assert_array_equal(jan_from_detrend["time"].values, jan_manual["time"].values)
+    np.testing.assert_allclose(jan_from_detrend.values, jan_manual.values, rtol=1e-6, atol=1e-6)
