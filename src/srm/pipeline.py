@@ -45,7 +45,7 @@ class BCSDPipeline:
 
     Stages:
     1. Prepare (i.e. coarsen) training dataset to be at same model resolution as GCM
-    2. Fit model between coarsened training dataset and historical GCM simulation 
+    2. Fit model between coarsened training dataset and historical GCM simulation
     3. Apply model on GCM simulation (whether historical or future)
 
     This class orchestrates the BCSD workflow, automatically caching intermediate
@@ -164,10 +164,10 @@ class BCSDPipeline:
         """
         output_path = self.cache.obs_path
 
-        # Check whether regridded dataset already exists, if so (and you don't 
+        # Check whether regridded dataset already exists, if so (and you don't
         # have the force flag enabled which allows overwrite) use the existing dataset.
         # Note: this does not check anything about the data at the output_path -
-        # if it is corrupted in any way or doesn't match the attributes of the 
+        # if it is corrupted in any way or doesn't match the attributes of the
         # config it won't fail.
         if self.cache.exists(output_path) and not force:
             if self.config.verbose:
@@ -193,8 +193,10 @@ class BCSDPipeline:
             # Subset spatially if requested
             if self.config.subset_bounds:
                 lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
-                obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
-                model_grid = subset_space(model_grid, [lat_min, lat_max, lon_min, lon_max])
+                lat_bounds = (lat_min, lat_max)
+                lon_bounds = (lon_min, lon_max)
+                obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+                model_grid = subset_space(model_grid, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
 
         # Regrid observation training data to the coarser GCM grid
         with Timer("Regridded observations to coarse grid", verbose=self.config.verbose):
@@ -255,7 +257,7 @@ class BCSDPipeline:
 
         output_path = self.cache.historical_path
 
-        # Check cache to see if this step has already run. If a dataset already exists at that 
+        # Check cache to see if this step has already run. If a dataset already exists at that
         # path, then skip this section and just return the output path.
         if self.cache.exists(output_path) and not force:
             if self.config.verbose:
@@ -290,8 +292,10 @@ class BCSDPipeline:
             # Subset spatially if requested
             if self.config.subset_bounds:
                 lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
-                obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
-                model_hist = subset_space(model_hist, [lat_min, lat_max, lon_min, lon_max])
+                lat_bounds = (lat_min, lat_max)
+                lon_bounds = (lon_min, lon_max)
+                obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+                model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
 
             # Subset time to training period
             obs_coarse = obs_coarse.sel(
@@ -326,9 +330,9 @@ class BCSDPipeline:
             obs_np = obs_coarse.as_numpy().values
             cm_hist_np = model_hist.as_numpy().values
 
-            # Apply quantile mapping reading in the 
-            # historical GCM simulation as both historical 
-            # and 
+            # Apply quantile mapping reading in the
+            # historical GCM simulation as both historical
+            # and
             model_hist_debiased_np = debiaser.apply(
                 obs=obs_np,
                 cm_hist=cm_hist_np,
@@ -462,12 +466,16 @@ class BCSDPipeline:
             # Subset spatially if requested
             if self.config.subset_bounds:
                 lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
-                obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
-                model_hist = subset_space(model_hist, [lat_min, lat_max, lon_min, lon_max])
-                model_scenario = subset_space(model_scenario, [lat_min, lat_max, lon_min, lon_max])
+                lat_bounds = (lat_min, lat_max)
+                lon_bounds = (lon_min, lon_max)
+                obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+                model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+                model_scenario = subset_space(
+                    model_scenario, lat_bounds=lat_bounds, lon_bounds=lon_bounds
+                )
                 if self.config.is_sai_scenario:
                     ssp_timeseries = subset_space(
-                        ssp_timeseries, [lat_min, lat_max, lon_min, lon_max]
+                        ssp_timeseries, lat_bounds=lat_bounds, lon_bounds=lon_bounds
                     )
 
             # Subset observations to the training period
@@ -588,7 +596,7 @@ class BCSDPipeline:
                 running_window_mode=self.config.do_windowing,
                 running_window_length=31,
                 running_window_step_length=1,
-                # don't use any running 
+                # don't use any running
                 running_window_mode_over_years_of_cm_future=False,
             )
 
@@ -602,7 +610,7 @@ class BCSDPipeline:
             scenario_debiased_np = debiaser.apply(
                 # observations at coarse scale. we don't want those detrended
                 obs=obs_np,
-                # historical from GCM (raw, not detrended)  
+                # historical from GCM (raw, not detrended)
                 cm_hist=cm_hist_np,
                 # future GCM (detrended)
                 cm_future=cm_future_np,
@@ -625,7 +633,7 @@ class BCSDPipeline:
                 dims=["time", "lat", "lon"],
             )
 
-        # Re-trend if needed. 
+        # Re-trend if needed.
         if self.config.detrend_data:
             with Timer("Re-trended scenario", verbose=self.config.verbose):
                 scenario_debiased = retrend(

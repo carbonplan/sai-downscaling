@@ -312,10 +312,13 @@ def run_bcsd(
 
     if subset_bounds is not None:
         [lat_min, lat_max, lon_min, lon_max] = subset_bounds
+        lat_bounds = (lat_min, lat_max)
+        lon_bounds = (lon_min, lon_max)
         for key in dict_all:
             dict_all[key] = subset_space(
                 dict_all[key],
-                coord_bounds_list=[lat_min, lat_max, lon_min, lon_max],
+                lat_bounds=lat_bounds,
+                lon_bounds=lon_bounds,
             )
 
     dict_all = preprocess_data(

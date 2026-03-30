@@ -11,17 +11,72 @@ from srm import catalog
 from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
 
 
-def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
-    '''
-    Subset dataset in space using a list of coordinates
-    [lat_min, lat_max, lon_min, lon_max]
-    '''
-    [lat_min, lat_max, lon_min, lon_max] = coord_bounds_list
-    da_subset = da.sel(
+def subset_space(
+    da: xr.DataArray,
+    coord_bounds_list: typing.Sequence[float] | None = None,
+    *,
+    lat_bounds: tuple[float, float] | None = None,
+    lon_bounds: tuple[float, float] | None = None,
+) -> xr.DataArray:
+    """
+    Subset a DataArray to a latitude/longitude bounding box.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Input array with ``lat`` and ``lon`` coordinates.
+    coord_bounds_list : sequence[float] | None, optional
+        Legacy positional bounds in the order
+        ``[lat_min, lat_max, lon_min, lon_max]``.
+    lat_bounds : tuple[float, float] | None, optional
+        Latitude bounds as ``(lat_min, lat_max)``.
+    lon_bounds : tuple[float, float] | None, optional
+        Longitude bounds as ``(lon_min, lon_max)``.
+
+    Returns
+    -------
+    xr.DataArray
+        Spatially subsetted array.
+
+    Raises
+    ------
+    ValueError
+        If both legacy and named bounds are provided, required bounds are missing,
+        the legacy bounds are not length 4, or min/max ordering is invalid.
+    """
+    using_legacy_bounds = coord_bounds_list is not None
+    using_named_bounds = lat_bounds is not None or lon_bounds is not None
+
+    if using_legacy_bounds and using_named_bounds:
+        raise ValueError("Provide either coord_bounds_list or lat_bounds/lon_bounds, not both.")
+
+    if using_legacy_bounds:
+        if len(coord_bounds_list) != 4:
+            raise ValueError(
+                "coord_bounds_list must contain four values in order: "
+                "[lat_min, lat_max, lon_min, lon_max]."
+            )
+        lat_min, lat_max, lon_min, lon_max = coord_bounds_list
+        lat_bounds = (lat_min, lat_max)
+        lon_bounds = (lon_min, lon_max)
+    else:
+        if lat_bounds is None or lon_bounds is None:
+            raise ValueError(
+                "Provide both lat_bounds and lon_bounds when coord_bounds_list is not used."
+            )
+
+    lat_min, lat_max = lat_bounds
+    lon_min, lon_max = lon_bounds
+
+    if lat_min >= lat_max:
+        raise ValueError(f"lat_bounds must be (min, max) with min < max, got {lat_bounds}.")
+    if lon_min >= lon_max:
+        raise ValueError(f"lon_bounds must be (min, max) with min < max, got {lon_bounds}.")
+
+    return da.sel(
         lon=slice(lon_min, lon_max),
         lat=slice(lat_min, lat_max),
     )
-    return da_subset
 
 
 _TARGET_CHUNK_BYTES = 100 * 1024 * 1024  # 100 MB
@@ -70,7 +125,7 @@ def get_experiment(
     coord_bounds_list: list | None = None,
     ensemble_member: str | None = None,
 ):
-    '''
+    """
     Load in a GCM simulation.
 
     Parameters
@@ -92,7 +147,7 @@ def get_experiment(
     ValueError
         If invalid ensemble member requested
 
-    '''
+    """
     cat_name = gcm + "-" + scenario + "-icechunk"
     dataset = catalog.get(cat_name)
     # confirm that the requested ensemble member is available
@@ -132,10 +187,10 @@ def calculate_baseline_climatology(
     baseline_period_start: int = 1978,
     baseline_period_end: int = 2014,
 ) -> xr.DataArray:
-    '''
+    """
     calculate a seasonal cycle of the variable of interest
     (i.e. one number for each months, 12 numbers total)
-    '''
+    """
     da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
     da_baseline = da_baseline.sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
@@ -171,7 +226,7 @@ def detrend(
     # where every day in that month is the same value. This will produce
     # jumps from month to month (for example, if January was high but February
     # was low, it would go from a positive adjustment for january 31 (and entire month before) to a negative
-    #  adjustment for february 1 (and the entire month after). thus, there could be noticeable 
+    #  adjustment for february 1 (and the entire month after). thus, there could be noticeable
     # artificial discontinuities inserted into the timeseries between 1/31 and 2/1.
     trend_on_daily_timestep = (
         da_mon_trend.resample(time="1D").ffill().reindex(time=da.time).ffill(dim="time")
@@ -191,10 +246,10 @@ def retrend(
     trend_on_daily_timestep: xr.DataArray,
     detrend_method: DetrendMethod = "additive",
 ) -> xr.DataArray:
-    '''
+    """
     reincorporate the trend back into the previously de-trended
     timeseries, whether additively or multiplicatively
-    '''
+    """
     valid_values = ["additive", "multiplicative"]
     if detrend_method not in valid_values:
         raise ValueError(
@@ -217,7 +272,7 @@ def interpolate_fine_to_coarse_grid(
     target_grid = da_coarse_grid.reset_coords(drop=True)
     if "time" in target_grid.coords:
         target_grid = target_grid.isel(time=[0])
-    # use conservative remapping. 
+    # use conservative remapping.
     da_coarse = da_fine_to_coarsen.regrid.conservative(target_grid, latitude_coord="lat")
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
@@ -309,7 +364,7 @@ def downscale_from_coarse(
         residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
 
     # Step 4: Bilinearly interpolate residuals to the high-res grid
-    # this creates a smooth layer of how different the particular simulated february 10 is 
+    # this creates a smooth layer of how different the particular simulated february 10 is
     # from the average february 10.
     residuals_fine = interpolate_coarse_to_fine_grid(
         da_coarse_to_regrid=residuals, da_fine_grid=obs_fine
@@ -317,7 +372,7 @@ def downscale_from_coarse(
 
     # Step 5: Return high-res climatology
     # Add or multiply a constant value to the residuals based on DOY
-    # this step adds back in the day-of-year spatial texture saying, 
+    # this step adds back in the day-of-year spatial texture saying,
     # "let's combine (a) how different February 10 is from the typical February 10 at the coarse scale
     # with the typical spatial structure of February 10"
     if method == "additive":
