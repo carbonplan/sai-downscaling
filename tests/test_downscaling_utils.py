@@ -189,6 +189,47 @@ def test_detrend_multiplicative_returns_expected_values_and_alignment():
     np.testing.assert_allclose(detrended.values, 2.0)
 
 
+def test_detrend_multiplicative_with_zero_climatology_produces_non_finite_trend():
+    da = _make_constant_daily_da(10.0, dtype=np.float32)
+    baseline = _make_baseline_clim(0.0, lat=da["lat"].values, lon=da["lon"].values)
+
+    detrended, trend_on_daily_timestep = detrend(
+        da=da,
+        da_baseline_clim=baseline,
+        detrend_method="multiplicative",
+    )
+
+    # Current behavior: divide-by-zero in trend calculation leads to inf trend values.
+    assert np.isinf(trend_on_daily_timestep.values).any()
+    # Then da / inf -> 0 for positive da values.
+    np.testing.assert_allclose(detrended.values, 0.0)
+
+
+def test_detrend_multiplicative_with_partial_zero_climatology_affects_zero_months_only():
+    da = _make_constant_daily_da(10.0, dtype=np.float32)
+    baseline = _make_baseline_clim(2.0, lat=da["lat"].values, lon=da["lon"].values)
+    baseline.loc[dict(month=1)] = 0.0
+
+    detrended, trend_on_daily_timestep = detrend(
+        da=da,
+        da_baseline_clim=baseline,
+        detrend_method="multiplicative",
+    )
+
+    jan_mask = trend_on_daily_timestep["time"].dt.month == 1
+    feb_mask = trend_on_daily_timestep["time"].dt.month == 2
+
+    jan_trend = trend_on_daily_timestep.sel(time=jan_mask)
+    feb_trend = trend_on_daily_timestep.sel(time=feb_mask)
+    jan_detrended = detrended.sel(time=jan_mask)
+    feb_detrended = detrended.sel(time=feb_mask)
+
+    assert np.isinf(jan_trend.values).any()
+    assert np.isfinite(feb_trend.values).all()
+    np.testing.assert_allclose(jan_detrended.values, 0.0)
+    np.testing.assert_allclose(feb_detrended.values, 2.0)
+
+
 def _make_demo_daily_data() -> xr.DataArray:
     """Synthetic daily signal with trend + seasonal cycle (same shape as demo script)."""
     time = np.arange(np.datetime64("2001-01-01"), np.datetime64("2013-01-01"))
