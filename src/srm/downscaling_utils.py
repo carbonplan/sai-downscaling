@@ -241,8 +241,36 @@ def detrend(
     da_baseline_clim: xr.DataArray,
     detrend_method: DetrendMethod = "additive",
 ) -> tuple[xr.DataArray, xr.DataArray]:
+    """
+    Remove a smoothed monthly trend from a daily time series.
+
+    The trend is estimated by:
+    1. computing monthly means,
+    2. applying a 9-year rolling mean within each calendar month, and
+    3. expressing that trend relative to baseline monthly climatology.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Daily (or higher-frequency) input time series with a ``time`` coordinate.
+    da_baseline_clim : xr.DataArray
+        Monthly climatology indexed by ``month`` (1-12), typically from
+        :func:`calculate_baseline_climatology`.
+    detrend_method : {"additive", "multiplicative"}, default: "additive"
+        Trend-removal method:
+        - ``"additive"`` subtracts the trend signal.
+        - ``"multiplicative"`` divides by the trend signal.
+
+    Returns
+    -------
+    tuple[xr.DataArray, xr.DataArray]
+        ``(detrended, trend_on_daily_timestep)`` where the trend has been
+        expanded back to daily resolution and aligned to ``da.time``.
+    """
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
+    # Keep chunks contiguous in time for rolling/groupby operations while
+    # avoiding very small chunks that create excessive Dask task overhead.
     da_mon = da_mon.chunk({"time": 120})
 
     # Group by month

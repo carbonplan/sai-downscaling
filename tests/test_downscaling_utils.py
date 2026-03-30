@@ -3,7 +3,7 @@ import pytest
 import xarray as xr
 
 from srm import downscaling_utils
-from srm.downscaling_utils import calculate_baseline_climatology, rechunk, subset_space
+from srm.downscaling_utils import calculate_baseline_climatology, detrend, rechunk, subset_space
 
 
 @pytest.fixture
@@ -125,3 +125,65 @@ def test_calculate_baseline_climatology_preserves_input_dtype():
 
     assert clim.dtype == da.dtype
     np.testing.assert_array_equal(np.sort(clim["month"].values), np.arange(1, 13))
+
+
+def _make_constant_daily_da(value: float, dtype: np.dtype = np.float32) -> xr.DataArray:
+    # Use a decade so each calendar month group has enough points for the
+    # 9-year rolling window used in detrend().
+    time = np.arange(np.datetime64("2001-01-01"), np.datetime64("2011-01-01"))
+    lat = np.array([0.0, 1.0])
+    lon = np.array([10.0, 11.0])
+    data = np.full((time.size, lat.size, lon.size), value, dtype=dtype)
+    return xr.DataArray(
+        data,
+        dims=["time", "lat", "lon"],
+        coords={"time": time, "lat": lat, "lon": lon},
+    )
+
+
+def _make_baseline_clim(value: float, lat: np.ndarray, lon: np.ndarray) -> xr.DataArray:
+    months = np.arange(1, 13)
+    data = np.full((months.size, lat.size, lon.size), value, dtype=np.float32)
+    return xr.DataArray(
+        data,
+        dims=["month", "lat", "lon"],
+        coords={"month": months, "lat": lat, "lon": lon},
+    )
+
+
+def test_detrend_additive_returns_expected_values_and_alignment():
+    da = _make_constant_daily_da(10.0, dtype=np.float32)
+    baseline = _make_baseline_clim(0.0, lat=da["lat"].values, lon=da["lon"].values)
+
+    detrended, trend_on_daily_timestep = detrend(
+        da=da,
+        da_baseline_clim=baseline,
+        detrend_method="additive",
+    )
+
+    np.testing.assert_array_equal(trend_on_daily_timestep["time"].values, da["time"].values)
+    assert trend_on_daily_timestep.shape == da.shape
+    assert detrended.shape == da.shape
+    assert trend_on_daily_timestep.dtype == da.dtype
+    assert detrended.dtype == da.dtype
+    np.testing.assert_allclose(trend_on_daily_timestep.values, 10.0)
+    np.testing.assert_allclose(detrended.values, 0.0)
+
+
+def test_detrend_multiplicative_returns_expected_values_and_alignment():
+    da = _make_constant_daily_da(10.0, dtype=np.float32)
+    baseline = _make_baseline_clim(2.0, lat=da["lat"].values, lon=da["lon"].values)
+
+    detrended, trend_on_daily_timestep = detrend(
+        da=da,
+        da_baseline_clim=baseline,
+        detrend_method="multiplicative",
+    )
+
+    np.testing.assert_array_equal(trend_on_daily_timestep["time"].values, da["time"].values)
+    assert trend_on_daily_timestep.shape == da.shape
+    assert detrended.shape == da.shape
+    assert trend_on_daily_timestep.dtype == da.dtype
+    assert detrended.dtype == da.dtype
+    np.testing.assert_allclose(trend_on_daily_timestep.values, 5.0)
+    np.testing.assert_allclose(detrended.values, 2.0)
