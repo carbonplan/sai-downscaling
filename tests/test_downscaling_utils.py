@@ -3,7 +3,7 @@ import pytest
 import xarray as xr
 
 from srm import downscaling_utils
-from srm.downscaling_utils import rechunk, subset_space
+from srm.downscaling_utils import calculate_baseline_climatology, rechunk, subset_space
 
 
 @pytest.fixture
@@ -102,3 +102,26 @@ def test_rechunk_full_time_noop_when_already_chunked(sample_3d_da):
     result = rechunk(already_chunked, pattern="full_time")
 
     assert result is already_chunked
+
+
+def test_calculate_baseline_climatology_preserves_input_dtype():
+    time = np.arange(np.datetime64("2000-01-01"), np.datetime64("2002-01-01"))
+    lat = np.array([0.0, 1.0])
+    lon = np.array([10.0, 11.0])
+    data = np.arange(time.size * lat.size * lon.size, dtype=np.float32).reshape(
+        time.size, lat.size, lon.size
+    )
+    da = xr.DataArray(
+        data,
+        dims=["time", "lat", "lon"],
+        coords={"time": time, "lat": lat, "lon": lon},
+    )
+
+    clim = calculate_baseline_climatology(
+        da,
+        baseline_period_start=2000,
+        baseline_period_end=2001,
+    )
+
+    assert clim.dtype == da.dtype
+    np.testing.assert_array_equal(np.sort(clim["month"].values), np.arange(1, 13))

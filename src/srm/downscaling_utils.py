@@ -206,13 +206,33 @@ def calculate_baseline_climatology(
     baseline_period_end: int = 2014,
 ) -> xr.DataArray:
     """
-    calculate a seasonal cycle of the variable of interest
-    (i.e. one number for each months, 12 numbers total)
+    Compute monthly baseline climatology over a selected time period.
+
+    Parameters
+    ----------
+    da_baseline : xr.DataArray
+        Input time series with a ``time`` coordinate.
+    baseline_period_start : int, default: 1978
+        Inclusive start year for the climatology window.
+    baseline_period_end : int, default: 2014
+        Inclusive end year for the climatology window.
+
+    Returns
+    -------
+    xr.DataArray
+        Monthly climatology with ``month`` coordinate (1-12).
+
+    Notes
+    -----
+    ``groupby(...).mean()`` can promote values (for example ``float32`` to
+    ``float64``). We cast back to the original dtype to keep memory usage and
+    downstream dtype expectations consistent across the workflow.
     """
     da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
     da_baseline = da_baseline.sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
 
+    # Keep output dtype stable (mean can upcast float32 -> float64).
     return da_baseline_clim.astype(da_baseline.dtype)
 
 
