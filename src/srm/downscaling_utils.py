@@ -83,6 +83,24 @@ _TARGET_CHUNK_BYTES = 100 * 1024 * 1024  # 100 MB
 
 
 def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]) -> xr.DataArray:
+    """
+    Rechunk a gridded DataArray for common BCSD workflow access patterns.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Input array with ``time``, ``lat``, and ``lon`` dimensions.
+    pattern : {"full_space", "full_time"}
+        Target chunk layout:
+        - ``"full_space"``: chunk across time while keeping full lat/lon in each chunk.
+        - ``"full_time"``: keep full time in each chunk while splitting lat/lon chunks.
+
+    Returns
+    -------
+    xr.DataArray
+        Rechunked array. If the current chunking already matches the requested
+        pattern, the input is returned unchanged.
+    """
     if pattern == "full_space":
         already_chunked = (
             "time" in da.chunksizes

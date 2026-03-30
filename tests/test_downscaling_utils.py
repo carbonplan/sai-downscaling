@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from srm.downscaling_utils import subset_space
+from srm import downscaling_utils
+from srm.downscaling_utils import rechunk, subset_space
 
 
 @pytest.fixture
@@ -11,6 +12,19 @@ def sample_da() -> xr.DataArray:
     lon = np.array([10.0, 11.0, 12.0, 13.0])
     data = np.arange(lat.size * lon.size).reshape(lat.size, lon.size)
     return xr.DataArray(data, dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
+
+
+@pytest.fixture
+def sample_3d_da() -> xr.DataArray:
+    time = np.arange(10)
+    lat = np.array([0.0, 1.0, 2.0, 3.0])
+    lon = np.array([10.0, 11.0, 12.0, 13.0])
+    data = np.arange(time.size * lat.size * lon.size).reshape(time.size, lat.size, lon.size)
+    return xr.DataArray(
+        data,
+        dims=["time", "lat", "lon"],
+        coords={"time": time, "lat": lat, "lon": lon},
+    )
 
 
 def test_subset_space_legacy_bounds_order_is_lat_then_lon(sample_da):
@@ -52,3 +66,39 @@ def test_subset_space_raises_when_mixing_legacy_and_named_bounds(sample_da):
             lat_bounds=(1.0, 2.0),
             lon_bounds=(11.0, 12.0),
         )
+
+
+def test_rechunk_full_space_chunks_over_time_only(sample_3d_da, monkeypatch):
+    monkeypatch.setattr(downscaling_utils, "_TARGET_CHUNK_BYTES", 128)
+
+    result = rechunk(sample_3d_da, pattern="full_space")
+
+    assert len(result.chunksizes["time"]) > 1
+    assert len(result.chunksizes["lat"]) == 1
+    assert len(result.chunksizes["lon"]) == 1
+
+
+def test_rechunk_full_time_chunks_over_space_only(sample_3d_da, monkeypatch):
+    monkeypatch.setattr(downscaling_utils, "_TARGET_CHUNK_BYTES", 128)
+
+    result = rechunk(sample_3d_da, pattern="full_time")
+
+    assert len(result.chunksizes["time"]) == 1
+    assert len(result.chunksizes["lat"]) > 1
+    assert len(result.chunksizes["lon"]) > 1
+
+
+def test_rechunk_full_space_noop_when_already_chunked(sample_3d_da):
+    already_chunked = sample_3d_da.chunk({"time": 1, "lat": -1, "lon": -1})
+
+    result = rechunk(already_chunked, pattern="full_space")
+
+    assert result is already_chunked
+
+
+def test_rechunk_full_time_noop_when_already_chunked(sample_3d_da):
+    already_chunked = sample_3d_da.chunk({"time": -1, "lat": 1, "lon": 1})
+
+    result = rechunk(already_chunked, pattern="full_time")
+
+    assert result is already_chunked
