@@ -313,8 +313,30 @@ def retrend(
     detrend_method: DetrendMethod = "additive",
 ) -> xr.DataArray:
     """
-    reincorporate the trend back into the previously de-trended
-    timeseries, whether additively or multiplicatively
+    Reincorporate a previously removed trend into a detrended time series.
+
+    Parameters
+    ----------
+    bias_corrected_detrended : xr.DataArray
+        Detrended (and typically bias-corrected) data.
+    trend_on_daily_timestep : xr.DataArray
+        Trend term aligned to the same daily time axis as
+        ``bias_corrected_detrended``.
+    detrend_method : {"additive", "multiplicative"}, default: "additive"
+        Method used during detrending:
+        - ``"additive"`` adds trend back.
+        - ``"multiplicative"`` multiplies trend back.
+
+    Returns
+    -------
+    xr.DataArray
+        Retrended time series on the original scale.
+
+    Raises
+    ------
+    ValueError
+        If ``detrend_method`` is not one of ``"additive"`` or
+        ``"multiplicative"``.
     """
     valid_values = ["additive", "multiplicative"]
     if detrend_method not in valid_values:
@@ -449,6 +471,7 @@ def downscale_from_coarse(
     return downscaled
 
 
+# TODO: this is currently unused. we should delete it
 def save_data(
     dict_data: dict,
     fname_key: str,
@@ -498,6 +521,7 @@ def save_data(
         raise ValueError("Invalid output format. Please choose 'zarr' or 'netcdf'.")
 
 
+# TODO: this is currently unused. we should delete it
 def get_output_data(
     fname_key: str,
     dtree_key: str = "data.zarr/",

@@ -3,7 +3,13 @@ import pytest
 import xarray as xr
 
 from srm import downscaling_utils
-from srm.downscaling_utils import calculate_baseline_climatology, detrend, rechunk, subset_space
+from srm.downscaling_utils import (
+    calculate_baseline_climatology,
+    detrend,
+    rechunk,
+    retrend,
+    subset_space,
+)
 
 
 @pytest.fixture
@@ -187,6 +193,61 @@ def test_detrend_multiplicative_returns_expected_values_and_alignment():
     assert detrended.dtype == da.dtype
     np.testing.assert_allclose(trend_on_daily_timestep.values, 5.0)
     np.testing.assert_allclose(detrended.values, 2.0)
+
+
+def _make_retrend_inputs() -> tuple[xr.DataArray, xr.DataArray]:
+    time = np.arange(np.datetime64("2001-01-01"), np.datetime64("2001-01-11"))
+    lat = np.array([0.0, 1.0])
+    lon = np.array([10.0, 11.0])
+
+    detrended = xr.DataArray(
+        np.full((time.size, lat.size, lon.size), 2.0, dtype=np.float32),
+        dims=["time", "lat", "lon"],
+        coords={"time": time, "lat": lat, "lon": lon},
+    )
+    trend = xr.DataArray(
+        np.full((time.size, lat.size, lon.size), 5.0, dtype=np.float32),
+        dims=["time", "lat", "lon"],
+        coords={"time": time, "lat": lat, "lon": lon},
+    )
+    return detrended, trend
+
+
+def test_retrend_additive_returns_expected_values():
+    detrended, trend = _make_retrend_inputs()
+
+    result = retrend(
+        bias_corrected_detrended=detrended,
+        trend_on_daily_timestep=trend,
+        detrend_method="additive",
+    )
+
+    np.testing.assert_allclose(result.values, 7.0)
+    np.testing.assert_array_equal(result["time"].values, detrended["time"].values)
+
+
+def test_retrend_multiplicative_returns_expected_values():
+    detrended, trend = _make_retrend_inputs()
+
+    result = retrend(
+        bias_corrected_detrended=detrended,
+        trend_on_daily_timestep=trend,
+        detrend_method="multiplicative",
+    )
+
+    np.testing.assert_allclose(result.values, 10.0)
+    np.testing.assert_array_equal(result["time"].values, detrended["time"].values)
+
+
+def test_retrend_raises_for_invalid_method():
+    detrended, trend = _make_retrend_inputs()
+
+    with pytest.raises(ValueError, match="currently not supported"):
+        retrend(
+            bias_corrected_detrended=detrended,
+            trend_on_daily_timestep=trend,
+            detrend_method="invalid",  # type: ignore[arg-type]
+        )
 
 
 def test_detrend_multiplicative_with_zero_climatology_produces_non_finite_trend():
