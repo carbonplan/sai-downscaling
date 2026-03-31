@@ -237,6 +237,7 @@ class BCSDPipeline:
 
         The result is cached and reused for all scenarios with this GCM/variable/ensemble.
 
+
         Parameters
         ----------
         force : bool, optional
@@ -251,6 +252,17 @@ class BCSDPipeline:
         ------
         ValueError
             If obs_regridded dependency is missing
+
+        Notes
+        -----
+
+        The output (fully downscaled historical data) is written to the cache as a
+        data artifact for the historical period. It is also used as a completion gate:
+        ``transform_scenario`` checks that this artifact exists before it will run, but
+        does *not* load it as an input (scenario runs re-load the raw GCM historical data
+        for their own bias-correction training). Setting ``force=True`` reruns all three
+        computation steps and overwrites the cached artifact; ``force=False`` skips all
+        three and returns the existing path immediately.
         """
         # Validate dependencies to make sure that this step of the pipeline is ready to run
         self.cache.validate_dependencies("fit_historical", self.config)
