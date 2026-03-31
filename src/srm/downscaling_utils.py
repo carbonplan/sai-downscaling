@@ -355,12 +355,32 @@ def retrend(
 def interpolate_fine_to_coarse_grid(
     da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray
 ) -> xr.DataArray:
-    # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    # ensure da_coarse_grid consists of only lat/lon coordinates and a single time step (if time coordinate exists) to avoid issues with xarray_regrid
+    """
+    Remap a fine-resolution field onto a coarser target grid.
+
+    Parameters
+    ----------
+    da_fine_to_coarsen : xr.DataArray
+        Fine-resolution data with ``lat``/``lon`` coordinates.
+    da_coarse_grid : xr.DataArray
+        DataArray defining the target coarse grid coordinates.
+
+    Returns
+    -------
+    xr.DataArray
+        Fine data conservatively remapped to the coarse grid, cast back to the
+        input dtype.
+
+    Notes
+    -----
+    Uses conservative remapping via ``xarray_regrid``. Any non-spatial coords
+    (for example ``time``) are dropped from the target grid to avoid ambiguity
+    in regrid operations.
+    """
+    # `.regrid` namespace is registered by xarray_regrid and assumes a rectilinear grid.
     target_grid = da_coarse_grid.reset_coords(drop=True)
     if "time" in target_grid.coords:
         target_grid = target_grid.isel(time=[0])
-    # use conservative remapping.
     da_coarse = da_fine_to_coarsen.regrid.conservative(target_grid, latitude_coord="lat")
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
@@ -368,7 +388,28 @@ def interpolate_fine_to_coarse_grid(
 def interpolate_coarse_to_fine_grid(
     da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray
 ) -> xr.DataArray:
-    # Using slinear instead of linear because linear can produce very small negative numbers even when input dataset is all positive
+    """
+    Interpolate a coarse field onto a finer target grid.
+
+    Parameters
+    ----------
+    da_coarse_to_regrid : xr.DataArray
+        Coarse-resolution input data.
+    da_fine_grid : xr.DataArray
+        DataArray providing target fine-grid ``lat``/``lon`` coordinates.
+
+    Returns
+    -------
+    xr.DataArray
+        Coarse data interpolated to the fine grid, cast back to the input
+        dtype.
+
+    Notes
+    -----
+    Uses ``slinear`` interpolation. This is preferred over ``linear`` here
+    because ``linear`` can introduce tiny negative artifacts for strictly
+    positive variables.
+    """
     coarse_on_fine_grid = da_coarse_to_regrid.interp(
         lon=da_fine_grid["lon"],
         lat=da_fine_grid["lat"],
