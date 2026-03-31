@@ -375,12 +375,17 @@ def interpolate_fine_to_coarse_grid(
     -----
     Uses conservative remapping via ``xarray_regrid``. Any non-spatial coords
     (for example ``time``) are dropped from the target grid to avoid ambiguity
-    in regrid operations.
+    in regrid operations. We pass ``latitude_coord="lat"`` explicitly so
+    xarray-regrid can apply latitude-aware weighting (accounting for spherical
+    area distortion toward the poles) when building conservative remapping
+    weights.
     """
     # `.regrid` namespace is registered by xarray_regrid and assumes a rectilinear grid.
     target_grid = da_coarse_grid.reset_coords(drop=True)
     if "time" in target_grid.coords:
         target_grid = target_grid.isel(time=[0])
+    # Explicitly identify the latitude coordinate so conservative weights include
+    # latitude-based area correction.
     da_coarse = da_fine_to_coarsen.regrid.conservative(target_grid, latitude_coord="lat")
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
