@@ -444,7 +444,22 @@ def calculate_doy_means(
     da: xr.DataArray, clim_method: DownscalingClimMethod = "simple"
 ) -> xr.DataArray:
     """
-    Calculate the daily climatology of high-res observations.
+    Compute day-of-year climatology on the fine-resolution observation grid.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Input observation time series with ``time``, ``lat``, and ``lon``.
+    clim_method : {"simple", "fft"}, default: "simple"
+        Climatology smoothing method:
+        - ``"simple"`` returns raw day-of-year means.
+        - ``"fft"`` smooths the day-of-year cycle with mean + first 3 harmonics.
+
+    Returns
+    -------
+    xr.DataArray
+        Day-of-year climatology with dimensions ordered as
+        ``("dayofyear", "lat", "lon")``.
     """
 
     da_xr_doy_mean = da.groupby("time.dayofyear").mean("time")
@@ -478,6 +493,38 @@ def downscale_from_coarse(
     method: DownscalingMethod = "additive",
     clim_method: DownscalingClimMethod = "simple",
 ) -> xr.DataArray:
+    """
+    Spatially disaggregate bias-corrected coarse data to the fine observation grid.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Bias-corrected coarse-resolution simulation to downscale.
+    obs_coarse : xr.DataArray
+        Observations remapped to the same coarse grid as ``da``.
+    obs_fine : xr.DataArray
+        Native fine-resolution observations used to define high-res climatology.
+    method : {"additive", "multiplicative"}, default: "additive"
+        Residual formulation:
+        - ``"additive"`` uses anomalies from coarse climatology.
+        - ``"multiplicative"`` uses ratios to coarse climatology.
+    clim_method : {"simple", "fft"}, default: "simple"
+        Method used to estimate fine-grid day-of-year climatology.
+
+    Returns
+    -------
+    xr.DataArray
+        Downscaled data on the fine ``obs_fine`` grid.
+
+    Notes
+    -----
+    Workflow:
+    1. Compute fine-grid day-of-year climatology.
+    2. Coarsen that climatology to the model grid.
+    3. Compute coarse residuals (difference or ratio).
+    4. Interpolate residuals to fine grid.
+    5. Reapply fine-grid climatology (add or multiply).
+    """
     # Step 1: calculate the daily climatology of high-res observations
     obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
 
