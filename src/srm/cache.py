@@ -200,6 +200,50 @@ class ArtifactCache:
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/{scenario_lower}.icechunk"
         )
 
+    def get_detrended_scenario_path(self, config: BCSDConfig) -> str:
+        subset_id = self._get_subset_id(config.subset_bounds)
+        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        scenario_lower = config.scenario.lower()
+        return (
+            f"{self.cache_dir}/{self.environment}/{self.version}/{scenario_lower}/"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/detrended.icechunk"
+        )
+
+    def get_trend_scenario_path(self, config: BCSDConfig) -> str:
+        subset_id = self._get_subset_id(config.subset_bounds)
+        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        scenario_lower = config.scenario.lower()
+        return (
+            f"{self.cache_dir}/{self.environment}/{self.version}/{scenario_lower}/"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/trend.icechunk"
+        )
+
+    def get_debiased_historical_path(self, config: BCSDConfig) -> str:
+        subset_id = self._get_subset_id(config.subset_bounds)
+        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        return (
+            f"{self.cache_dir}/{self.environment}/{self.version}/historical/"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/debiased_coarse.icechunk"
+        )
+
+    def get_debiased_scenario_path(self, config: BCSDConfig) -> str:
+        subset_id = self._get_subset_id(config.subset_bounds)
+        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        scenario_lower = config.scenario.lower()
+        return (
+            f"{self.cache_dir}/{self.environment}/{self.version}/{scenario_lower}/"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/debiased_coarse.icechunk"
+        )
+
+    def get_debiased_retrended_scenario_path(self, config: BCSDConfig) -> str:
+        subset_id = self._get_subset_id(config.subset_bounds)
+        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        scenario_lower = config.scenario.lower()
+        return (
+            f"{self.cache_dir}/{self.environment}/{self.version}/{scenario_lower}/"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/debiased_retrended_coarse.icechunk"
+        )
+
     def exists(self, path: str) -> bool:
         """
         Check if artifact exists in cache.

@@ -18,6 +18,7 @@ class VariableConfig(BaseModel):
 
     detrend_data: bool
     do_windowing: bool
+    running_window_length: int = 31
     downscaling_method: DownscalingMethod
     downscaling_clim_method: DownscalingClimMethod
     detrend_method: DetrendMethod = "additive"
@@ -183,6 +184,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 
+    save_intermediate: bool = Field(
+        False,
+        description="Save intermediate artifacts (e.g. detrended data, quantile mapping results) to cache for debugging and analysis)",
+    )
+
     def model_post_init(self, __context) -> None:
         """Post-initialization validation and auto-population"""
         # Auto-populate variable_config if not provided
@@ -291,6 +297,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     def do_windowing(self) -> bool:
         """Convenience accessor for variable config"""
         return self.variable_config.do_windowing if self.variable_config else False
+
+    @computed_field
+    def running_window_length(self) -> int:
+        """Convenience accessor for variable config"""
+        return self.variable_config.running_window_length if self.variable_config else 31
 
     @computed_field
     def downscaling_method(self) -> DownscalingMethod:

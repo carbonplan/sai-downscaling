@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 
 import dask.system
 import icechunk
+import numpy as np
 import scipy.stats
 import xarray as xr
 from icechunk.xarray import to_icechunk
@@ -37,6 +38,81 @@ from srm.downscaling_utils import (
 from srm.utils import Timer
 
 logger = logging.getLogger(__name__)
+
+
+def calculate_out_of_range_mask(
+    model_hist: xr.DataArray,
+    scenario_detrended: xr.DataArray,
+    center_window: int = 31,
+) -> xr.DataArray:
+    """
+    Calculate mask of where scenario is out of range of modeled historical
+    on a day-of-year basis. The historical range for any day-of-year is the max and min
+    of modeled historical values that fall within a centered window around that day-of-year.
+    This should be the same window size used in the debiaser if using running_window_mode.
+
+    Parameters
+    ----------
+    model_hist : xr.DataArray
+        Historical GCM data with a time dimension. This is used to compute the
+        day-of-year min/max range.
+    scenario_detrended : xr.DataArray
+        Detrended scenario data to test against the historical range.
+    center_window : int, optional
+        Size of the centered rolling window (in days) used to compute the
+        historical range per day-of-year. Should match the debiaser's
+        running_window_length. Default is 31.
+    pad : int, optional
+        Number of days to pad at each end of the day-of-year dimension to
+        handle edge effects in the rolling window. Default is 15.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean DataArray with the same shape as scenario_detrended. True where
+        the scenario value falls outside the historical range for that day-of-year,
+        False otherwise.
+
+    """
+    grouped_by_dayofyear = model_hist.groupby("time.dayofyear")
+    doy_max = grouped_by_dayofyear.max()
+    doy_min = grouped_by_dayofyear.min()
+
+    # Pad the dayofyear dimension to handle the rolling window at the edges, using values from the opposite end of the year
+    pad = center_window // 2
+    # slice(-pad, None) takes the last `pad` values, and slice(None, pad) takes the first `pad` values
+    # This wraps around the dayofyear dimension for the rolling window
+    doy_max_padded = xr.concat(
+        [
+            doy_max.isel(dayofyear=slice(-pad, None)),
+            doy_max,
+            doy_max.isel(dayofyear=slice(None, pad)),
+        ],
+        dim="dayofyear",
+    )
+
+    rolling_doy_max = doy_max_padded.rolling(dayofyear=center_window, center=True).max()
+    rolling_doy_max = rolling_doy_max.isel(dayofyear=slice(pad, pad + len(doy_max.dayofyear)))
+
+    doy_min_padded = xr.concat(
+        [
+            doy_min.isel(dayofyear=slice(-pad, None)),
+            doy_min,
+            doy_min.isel(dayofyear=slice(None, pad)),
+        ],
+        dim="dayofyear",
+    )
+
+    rolling_doy_min = doy_min_padded.rolling(dayofyear=center_window, center=True).min()
+    rolling_doy_min = rolling_doy_min.isel(dayofyear=slice(pad, pad + len(doy_min.dayofyear)))
+
+    doy = scenario_detrended["time.dayofyear"]
+
+    out_of_range = (scenario_detrended > rolling_doy_max.sel(dayofyear=doy)) | (
+        scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
+    )
+
+    return out_of_range
 
 
 class BCSDPipeline:
@@ -303,14 +379,28 @@ class BCSDPipeline:
                     return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
                 return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
 
-            debiaser = _make_debiaser(
-                mapping_type=self.config.mapping_type,
-                detrending="no_detrending",
-                running_window_mode=self.config.do_windowing,
-                running_window_length=31,
-                running_window_step_length=1,
-                running_window_mode_over_years_of_cm_future=False,
-            )
+            # For detrending the historical and doing a nonparametric/parametric hybrid quantile mapping
+            # method, just use the nonparametric version because by definition the modeled historical period will
+            # always be within the range of the modeled historical, so it's never necessary to
+            # use the parametric version for out of range modeled values.
+            if self.config.mapping_type == "nonparametric_hybrid":
+                debiaser = _make_debiaser(
+                    mapping_type="nonparametric",
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=self.config.running_window_length,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
+            else:
+                debiaser = _make_debiaser(
+                    mapping_type=self.config.mapping_type,
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=self.config.running_window_length,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
 
             # Convert to numpy for ibicus
             obs_np = obs_coarse.as_numpy().values
@@ -339,6 +429,15 @@ class BCSDPipeline:
                 },
                 dims=["time", "lat", "lon"],
             )
+
+            if self.config.save_intermediate:
+                with Timer("Saved coarse debiased to cache", verbose=self.config.verbose):
+                    debiased_path = self.cache.get_debiased_historical_path(self.config)
+                    model_hist_debiased.name = self.config.variable
+                    model_hist_debiased.attrs = model_hist.attrs  # Preserve units and metadata
+                    self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
+                    if self.config.verbose:
+                        logger.info(f"✓ Saved debiased historical: {debiased_path}")
 
         # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
@@ -554,41 +653,134 @@ class BCSDPipeline:
                     )
                 )
 
+                if self.config.save_intermediate:
+                    with Timer("Saved detrended to cache", verbose=self.config.verbose):
+                        detrended_path = self.cache.get_detrended_scenario_path(self.config)
+                        scenario_detrended.name = self.config.variable
+                        scenario_detrended.attrs = (
+                            scenario_detrended.attrs
+                        )  # Preserve units and metadata
+                        self._write_to_icechunk(
+                            rechunk(scenario_detrended, pattern="full_space"),
+                            detrended_path,
+                            "write complete",
+                        )
+                        if self.config.verbose:
+                            logger.info(f"✓ Saved detrended scenario: {detrended_path}")
+
+                    with Timer("Saved trend to cache", verbose=self.config.verbose):
+                        trend_path = self.cache.get_trend_scenario_path(self.config)
+                        scenario_trend.name = self.config.variable
+                        scenario_trend.attrs = model_scenario.attrs  # Preserve units and metadata
+                        self._write_to_icechunk(
+                            rechunk(scenario_trend, pattern="full_space"),
+                            trend_path,
+                            "write complete",
+                        )
+                        if self.config.verbose:
+                            logger.info(f"✓ Saved scenario trend: {trend_path}")
+
         # Bias correct
         with Timer("Bias corrected scenario", verbose=self.config.verbose):
             from ibicus.debias import QuantileMapping
-
-            def _make_debiaser(**kwargs):
-                if self.config.variable == "rsds":
-                    return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
-                return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
-
-            debiaser = _make_debiaser(
-                mapping_type=self.config.mapping_type,
-                detrending="no_detrending",
-                running_window_mode=self.config.do_windowing,
-                running_window_length=31,
-                running_window_step_length=1,
-                running_window_mode_over_years_of_cm_future=False,
-            )
 
             # Convert to numpy
             obs_np = obs_coarse.as_numpy().values
             cm_hist_np = model_hist.as_numpy().values
             cm_future_np = scenario_detrended.load().values
 
-            # Apply quantile mapping
-            scenario_debiased_np = debiaser.apply(
-                obs=obs_np,
-                cm_hist=cm_hist_np,
-                cm_future=cm_future_np,
-                time_obs=obs_coarse["time"].values,
-                time_cm_hist=model_hist["time"].values,
-                time_cm_future=scenario_detrended["time"].values,
-                parallel=True,
-                nr_processes=dask.system.CPU_COUNT,
-                progressbar=False,
-            )
+            def _make_debiaser(**kwargs):
+                if self.config.variable == "rsds":
+                    return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
+                return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
+
+            # If method is parametric or nonparametric, only debias one time. If hybrid, debias twice (one time parametric and one time nonparametric) and blend results.
+            if self.config.mapping_type in ["parametric", "nonparametric"]:
+                debiaser = _make_debiaser(
+                    mapping_type=self.config.mapping_type,
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=self.config.running_window_length,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
+
+                # Apply quantile mapping
+                scenario_debiased_np = debiaser.apply(
+                    obs=obs_np,
+                    cm_hist=cm_hist_np,
+                    cm_future=cm_future_np,
+                    time_obs=obs_coarse["time"].values,
+                    time_cm_hist=model_hist["time"].values,
+                    time_cm_future=scenario_detrended["time"].values,
+                    parallel=True,
+                    nr_processes=dask.system.CPU_COUNT,
+                    progressbar=False,
+                )
+
+            elif self.config.mapping_type == "nonparametric_hybrid":
+                debiaser_parametric = _make_debiaser(
+                    mapping_type="parametric",
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=self.config.running_window_length,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
+                debiaser_nonparametric = _make_debiaser(
+                    mapping_type="nonparametric",
+                    detrending="no_detrending",
+                    running_window_mode=self.config.do_windowing,
+                    running_window_length=self.config.running_window_length,
+                    running_window_step_length=1,
+                    running_window_mode_over_years_of_cm_future=False,
+                )
+
+                # Apply quantile mapping twice
+                scenario_debiased_parametric_np = debiaser_parametric.apply(
+                    obs=obs_np,
+                    cm_hist=cm_hist_np,
+                    cm_future=cm_future_np,
+                    time_obs=obs_coarse["time"].values,
+                    time_cm_hist=model_hist["time"].values,
+                    time_cm_future=scenario_detrended["time"].values,
+                    parallel=True,
+                    nr_processes=dask.system.CPU_COUNT,
+                    progressbar=False,
+                )
+
+                scenario_debiased_nonparametric_np = debiaser_nonparametric.apply(
+                    obs=obs_np,
+                    cm_hist=cm_hist_np,
+                    cm_future=cm_future_np,
+                    time_obs=obs_coarse["time"].values,
+                    time_cm_hist=model_hist["time"].values,
+                    time_cm_future=scenario_detrended["time"].values,
+                    parallel=True,
+                    nr_processes=dask.system.CPU_COUNT,
+                    progressbar=False,
+                )
+
+                # Blend results
+                # Nonparametric mapping when in range of the modeled historical
+                # Parametric mapping when out of range of the modeled historical
+                out_of_range = calculate_out_of_range_mask(
+                    model_hist=model_hist,
+                    scenario_detrended=scenario_detrended,
+                    center_window=self.config.running_window_length,
+                )
+
+                # Use parametric quantile mapping when out_of_range is True
+                # and nonparametric where out_of_range is False
+                scenario_debiased_np = np.where(
+                    out_of_range.values,
+                    scenario_debiased_parametric_np,
+                    scenario_debiased_nonparametric_np,
+                )
+            else:
+                raise ValueError(
+                    "mapping_type must be 'parametric', 'nonparametric', or 'nonparametric_hybrid'."
+                )
 
             # Convert back to xarray
             scenario_debiased = xr.DataArray(
@@ -601,6 +793,15 @@ class BCSDPipeline:
                 dims=["time", "lat", "lon"],
             )
 
+        if self.config.save_intermediate:
+            with Timer("Saved coarse debiased scenario to cache", verbose=self.config.verbose):
+                debiased_path = self.cache.get_debiased_scenario_path(self.config)
+                scenario_debiased.name = self.config.variable
+                scenario_debiased.attrs = scenario_debiased.attrs  # Preserve units and metadata
+                self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+                if self.config.verbose:
+                    logger.info(f"✓ Saved debiased scenario: {debiased_path}")
+
         # Re-trend if needed
         if self.config.detrend_data and scenario_trend is not None:
             with Timer("Re-trended scenario", verbose=self.config.verbose):
@@ -609,6 +810,15 @@ class BCSDPipeline:
                     trend_on_daily_timestep=scenario_trend,
                     detrend_method=self.config.detrend_method,
                 )
+
+        if self.config.save_intermediate:
+            with Timer("Saved coarse debiased, retrended to cache", verbose=self.config.verbose):
+                debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
+                scenario_debiased.name = self.config.variable
+                scenario_debiased.attrs = model_scenario.attrs  # Preserve units and metadata
+                self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+                if self.config.verbose:
+                    logger.info(f"✓ Saved debiased retrended scenario: {debiased_path}")
 
         # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
