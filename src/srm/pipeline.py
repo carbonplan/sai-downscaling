@@ -9,8 +9,10 @@ Stages:
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import warnings
+from datetime import UTC, datetime
 
 import dask.system
 import icechunk
@@ -21,6 +23,7 @@ from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig
 from srm.cache import ArtifactCache
+from srm.datasets import BaseDataset, catalog as _catalog
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
     detrend,
@@ -162,12 +165,47 @@ class BCSDPipeline:
         else:
             return icechunk.local_filesystem_storage(path=path)
 
-    def _write_to_icechunk(self, da: xr.DataArray, path: str, commit_message: str) -> str:
+    def _build_output_attrs(
+        self,
+        source_dataset: BaseDataset | None,
+    ) -> dict:
+        """Adds attrs to output datasets"""
+        dataset_attrs = {
+            "author": "CarbonPlan",
+            "processing": "BCSD (quantile mapping bias correction + spatial downscaling)",
+            "bias_correction_method": self.config.mapping_type,
+            "downscaling_method": self.config.downscaling_method,
+            "train_period": f"{self.config.train_period_start}-{self.config.train_period_end}",
+            "observation_dataset": "ERA5",
+            "creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+            "srm_version": importlib.metadata.version("srm"),
+            "model": self.config.gcm,
+            "scenario": self.config.scenario or "historical",
+            "variable": self.config.variable,
+            "ensemble_member": self.config.ensemble_member,
+        }
+
+        if source_dataset is not None:
+            dataset_attrs["license"] = source_dataset.license
+            dataset_attrs["citation"] = source_dataset.citation
+
+        return dataset_attrs
+
+    def _write_to_icechunk(
+        self,
+        da: xr.DataArray,
+        path: str,
+        commit_message: str,
+        dataset_attrs: dict | None = None,
+    ) -> str:
         """Write a DataArray to an icechunk store and commit atomically."""
         storage = self._icechunk_storage(path)
         repo = icechunk.Repository.open_or_create(storage)
         session = repo.writable_session("main")
-        to_icechunk(da.to_dataset(), session, mode="w")
+        ds = da.to_dataset()
+        if dataset_attrs is not None:
+            ds.attrs = dataset_attrs
+        to_icechunk(ds, session, mode="w")
         return session.commit(commit_message, rebase_with=icechunk.ConflictDetector())
 
     def _open_from_icechunk(self, path: str) -> xr.Dataset:
@@ -242,8 +280,11 @@ class BCSDPipeline:
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
             obs_coarse.name = self.config.variable
-            obs_coarse.attrs = obs_fine.attrs  # Preserve units and metadata
-            self._write_to_icechunk(obs_coarse, output_path, "write complete")
+            hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
+            dataset_attrs = self._build_output_attrs(hist_dataset)
+            self._write_to_icechunk(
+                obs_coarse, output_path, "write complete", dataset_attrs=dataset_attrs
+            )
 
         if self.config.verbose:
             logger.info(f"✓ Cached observations: {output_path}")
@@ -412,8 +453,11 @@ class BCSDPipeline:
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
             model_hist_downscaled.name = self.config.variable
-            model_hist_downscaled.attrs = model_hist.attrs  # Preserve units and metadata
-            self._write_to_icechunk(model_hist_downscaled, output_path, "write complete")
+            hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
+            dataset_attrs = self._build_output_attrs(hist_dataset)
+            self._write_to_icechunk(
+                model_hist_downscaled, output_path, "write complete", dataset_attrs=dataset_attrs
+            )
 
         if self.config.verbose:
             logger.info(f"✓ Cached historical: {output_path}")
@@ -790,8 +834,13 @@ class BCSDPipeline:
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
             scenario_downscaled.name = self.config.variable
-            scenario_downscaled.attrs = model_scenario.attrs  # Preserve units and metadata
-            self._write_to_icechunk(scenario_downscaled, output_path, "write complete")
+            scenario_dataset = _catalog.datasets.get(
+                f"{self.config.gcm}-{self.config.scenario}-icechunk"
+            )
+            dataset_attrs = self._build_output_attrs(scenario_dataset)
+            self._write_to_icechunk(
+                scenario_downscaled, output_path, "write complete", dataset_attrs=dataset_attrs
+            )
 
         if self.config.verbose:
             logger.info(f"✓ Saved scenario output: {output_path}")
