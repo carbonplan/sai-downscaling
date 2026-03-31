@@ -729,4 +729,7 @@ class BCSDPipeline:
         """
         self.prepare_observations(force=force)
         self.fit_historical(force=force)
+        # `transform_scenario` depends on fit_historical only as a completion
+        # gate (artifact existence); it does not read the cached historical
+        # output as data input.
         return self.transform_scenario(force=force)

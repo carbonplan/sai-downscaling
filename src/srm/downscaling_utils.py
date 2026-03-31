@@ -383,6 +383,8 @@ def interpolate_fine_to_coarse_grid(
     # `.regrid` namespace is registered by xarray_regrid and assumes a rectilinear grid.
     target_grid = da_coarse_grid.reset_coords(drop=True)
     if "time" in target_grid.coords:
+        # Intentionally use .isel(time=0)`)so
+        # `time` remains a length-1 dimension rather than being dropped to a scalar.
         target_grid = target_grid.isel(time=[0])
     # Explicitly identify the latitude coordinate so conservative weights include
     # latitude-based area correction.
