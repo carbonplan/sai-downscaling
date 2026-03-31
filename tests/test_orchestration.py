@@ -511,18 +511,16 @@ class TestRunFullWorkflow:
 
         assert len(submitted["transform_scenario"]) == len(multi_configs)
 
-    def test_returns_scenario_output_paths(self, orchestrator, config):
-        expected = ["final_output_path"]
-
+    def test_returns_all_stage_paths(self, orchestrator, config):
         def mock_submit(stage, configs, **kwargs):
-            if stage == "transform_scenario":
-                return expected
-            return ["intermediate"] * len(configs)
+            return [f"{stage}_path_{i}" for i in range(len(configs))]
 
         with patch.object(orchestrator, "submit_stage", side_effect=mock_submit):
             result = orchestrator.run_full_workflow([config], use_coiled=False)
 
-        assert result == expected
+        assert isinstance(result, dict)
+        assert set(result) == {"prepare_observations", "fit_historical", "transform_scenario"}
+        assert result["transform_scenario"] == ["transform_scenario_path_0"]
 
     def test_force_propagated_to_all_stages(self, orchestrator, config, subtests):
         recorded_forces = {}

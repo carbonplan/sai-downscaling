@@ -295,7 +295,7 @@ class BCSDOrchestrator:
         configs: list[BCSDConfig],
         force: bool = False,
         use_coiled: bool = True,
-    ) -> list[str]:
+    ) -> dict[str, list[str]]:
         """
         Run all three stages in sequence with automatic dependency management.
 
@@ -315,30 +315,39 @@ class BCSDOrchestrator:
 
         Returns
         -------
-        list[str]
-            Final scenario output paths for all configs
+        dict[str, list[str]]
+            Mapping of stage name to output paths:
+            ``{'prepare_observations': [...], 'fit_historical': [...], 'transform_scenario': [...]}``
         """
         logger.info(f"╔═══ Starting BCSD workflow for {len(configs)} configurations")
 
         # Stage 1: Unique obs regridding tasks
         obs_configs = self._deduplicate_obs_configs(configs)
         logger.info(f"║ Stage 1: prepare_observations ({len(obs_configs)} unique tasks)")
-        self.submit_stage("prepare_observations", obs_configs, force=force, use_coiled=use_coiled)
+        obs_paths = self.submit_stage(
+            "prepare_observations", obs_configs, force=force, use_coiled=use_coiled
+        )
 
         # Stage 2: Unique historical tasks
         hist_configs = self._deduplicate_historical_configs(configs)
         logger.info(f"║ Stage 2: fit_historical ({len(hist_configs)} unique tasks)")
-        self.submit_stage("fit_historical", hist_configs, force=force, use_coiled=use_coiled)
+        hist_paths = self.submit_stage(
+            "fit_historical", hist_configs, force=force, use_coiled=use_coiled
+        )
 
         # Stage 3: All scenario tasks
         logger.info(f"║ Stage 3: transform_scenario ({len(configs)} tasks)")
-        output_paths = self.submit_stage(
+        scenario_paths = self.submit_stage(
             "transform_scenario", configs, force=force, use_coiled=use_coiled
         )
 
         logger.info("╚═══ Workflow complete! ✓")
 
-        return output_paths
+        return {
+            "prepare_observations": obs_paths,
+            "fit_historical": hist_paths,
+            "transform_scenario": scenario_paths,
+        }
 
     def _deduplicate_obs_configs(self, configs: list[BCSDConfig]) -> list[BCSDConfig]:
         """

@@ -1,0 +1,59 @@
+# BCSD configuration: CESM2-WACCM / tas / SSP245 / South Africa
+#
+# Equivalent CLI command:
+#   uv run bcsd run-matrix \
+#     --gcm CESM2-WACCM \
+#     --variable tas \
+#     --member r1i1p1f1 \
+#     --scenario SSP245 \
+#     --train-period-start 1978 \
+#     --train-period-end 2014 \
+#     --predict-period-start 2015 \
+#     --predict-period-end 2100 \
+#     --subset-bounds '-35,-22,16,33' \
+#     --cache-dir s3://carbonplan-scratch/srm/bcsd-cache \
+#     --output-dir s3://carbonplan-scratch/srm/outputs \
+#     --environment qa \
+#     --version v5.6_nonparametric_hybrid \
+#     --mapping-type nonparametric_hybrid \
+#     --verbose \
+#     --save-intermediate \
+#     --stage all
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM"
+variable: "tas"
+ensemble_member: "r1i1p1f1"
+scenario: "SSP245"
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+
+# === Spatial Subsetting ===
+# South Africa region: [lat_min, lat_max, lon_min, lon_max]
+subset_bounds: [-35, -22, 16, 33]
+
+# === Storage ===
+cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+output_dir: "s3://carbonplan-scratch/srm/outputs"
+environment: "qa"
+version: "v1"
+
+# === Bias Correction ===
+mapping_type: "nonparametric_hybrid"
+
+# === Variable-specific parameters (tas defaults) ===
+variable_config:
+  detrend_data: true
+  detrend_method: "additive"
+  do_windowing: true
+  running_window_length: 31
+  downscaling_method: "additive"
+  downscaling_clim_method: "fft"
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true
