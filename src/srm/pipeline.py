@@ -3,7 +3,7 @@ BCSD pipeline with three-stage architecture and automatic caching.
 
 Stages:
 1. prepare_observations: Regrid observations to GCM grid (once per GCM/variable)
-2.fit_historical: Downscale historical period (once per GCM/variable/ensemble)
+2. fit_historical: Downscale historical period (once per GCM/variable/ensemble)
 3. transform_scenario: Downscale future scenario (many times, reuses cached artifacts)
 """
 
@@ -50,7 +50,17 @@ class BCSDPipeline:
 
     This class orchestrates the BCSD workflow, automatically caching intermediate
     artifacts to enable efficient reuse across multiple runs. Each stage checks
-    for cached outputs before computing, and validates dependencies exist.
+    for cached outputs before computing.
+
+    Cache/force behavior summary
+    ----------------------------
+    - ``force=False`` (default): a stage returns immediately when its output
+      artifact already exists.
+    - ``force=True``: a stage recomputes and overwrites its own output artifact.
+    - ``fit_historical`` and ``transform_scenario`` validate dependency
+      artifacts before any cache-hit early return.
+    - Cache checks are existence checks only; cached content is not validated
+      for integrity or schema compatibility at read time.
 
     Example
     -------
@@ -155,12 +165,18 @@ class BCSDPipeline:
         Parameters
         ----------
         force : bool, optional
-            Force recomputation even if cached artifact exists
+            If ``False``, return the cached stage output when present.
+            If ``True``, recompute this stage and overwrite cached output.
 
         Returns
         -------
         str
-            S3 path to cached artifact
+            Path to the stage output artifact.
+
+        Notes
+        -----
+        This stage does not depend on prior stage artifacts. Cache-hit behavior
+        is based on artifact existence at ``self.cache.obs_path``.
         """
         output_path = self.cache.obs_path
 
@@ -241,12 +257,13 @@ class BCSDPipeline:
         Parameters
         ----------
         force : bool, optional
-            Force recomputation even if cached artifact exists
+            If ``False``, return the cached stage output when present.
+            If ``True``, recompute this stage and overwrite cached output.
 
         Returns
         -------
         str
-            S3 path to cached artifact
+            Path to the stage output artifact.
 
         Raises
         ------
@@ -255,7 +272,6 @@ class BCSDPipeline:
 
         Notes
         -----
-
         The output (fully downscaled historical data) is written to the cache as a
         data artifact for the historical period. It is also used as a completion gate:
         ``transform_scenario`` checks that this artifact exists before it will run, but
@@ -263,6 +279,9 @@ class BCSDPipeline:
         for their own bias-correction training). Setting ``force=True`` reruns all three
         computation steps and overwrites the cached artifact; ``force=False`` skips all
         three and returns the existing path immediately.
+
+        Dependency validation is always performed before checking this stage's
+        cache-hit short-circuit.
         """
         # Validate dependencies to make sure that this step of the pipeline is ready to run
         self.cache.validate_dependencies("fit_historical", self.config)
@@ -408,18 +427,24 @@ class BCSDPipeline:
         Parameters
         ----------
         force : bool, optional
-            Force recomputation even if cached artifact exists
+            If ``False``, return the cached stage output when present.
+            If ``True``, recompute this stage and overwrite cached output.
 
         Returns
         -------
         str
-            S3 path to output zarr store
+            Path to the stage output artifact.
 
         Raises
         ------
         ValueError
             If obs_regridded or historical dependencies are missing,
             or if scenario is not specified in config
+
+        Notes
+        -----
+        Dependency validation is always performed before checking this stage's
+        cache-hit short-circuit.
         """
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
@@ -693,12 +718,14 @@ class BCSDPipeline:
         Parameters
         ----------
         force : bool, optional
-            Force recomputation of all stages
+            Passed through to each stage:
+            - ``False``: each stage may short-circuit on its own cache hit.
+            - ``True``: all stages recompute and overwrite their outputs.
 
         Returns
         -------
         str
-            S3 path to final scenario output
+            Path to final scenario stage output artifact.
         """
         self.prepare_observations(force=force)
         self.fit_historical(force=force)
