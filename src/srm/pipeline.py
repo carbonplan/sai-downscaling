@@ -3,7 +3,7 @@ BCSD pipeline with three-stage architecture and automatic caching.
 
 Stages:
 1. prepare_observations: Regrid observations to GCM grid (once per GCM/variable)
-2.fit_historical: Downscale historical period (once per GCM/variable/ensemble)
+2. fit_historical: Downscale historical period (once per GCM/variable/ensemble)
 3. transform_scenario: Downscale future scenario (many times, reuses cached artifacts)
 """
 
@@ -119,9 +119,24 @@ class BCSDPipeline:
     """
     Three-stage BCSD downscaling pipeline with automatic caching.
 
+    Stages:
+    1. Prepare (i.e. coarsen) training dataset to be at same model resolution as GCM
+    2. Fit model between coarsened training dataset and historical GCM simulation
+    3. Apply model on GCM simulation (whether historical or future)
+
     This class orchestrates the BCSD workflow, automatically caching intermediate
     artifacts to enable efficient reuse across multiple runs. Each stage checks
-    for cached outputs before computing, and validates dependencies exist.
+    for cached outputs before computing.
+
+    Cache/force behavior summary
+    ----------------------------
+    - ``force=False`` (default): a stage returns immediately when its output
+      artifact already exists.
+    - ``force=True``: a stage recomputes and overwrites its own output artifact.
+    - ``fit_historical`` and ``transform_scenario`` validate dependency
+      artifacts before any cache-hit early return.
+    - Cache checks are existence checks only; cached content is not validated
+      for integrity or schema compatibility at read time.
 
     Example
     -------
@@ -226,16 +241,26 @@ class BCSDPipeline:
         Parameters
         ----------
         force : bool, optional
-            Force recomputation even if cached artifact exists
+            If ``False``, return the cached stage output when present.
+            If ``True``, recompute this stage and overwrite cached output.
 
         Returns
         -------
         str
-            S3 path to cached artifact
+            Path to the stage output artifact.
+
+        Notes
+        -----
+        This stage does not depend on prior stage artifacts. Cache-hit behavior
+        is based on artifact existence at ``self.cache.obs_path``.
         """
         output_path = self.cache.obs_path
 
-        # Check cache
+        # Check whether regridded dataset already exists, if so (and you don't
+        # have the force flag enabled which allows overwrite) use the existing dataset.
+        # Note: this does not check anything about the data at the output_path -
+        # if it is corrupted in any way or doesn't match the attributes of the
+        # config it won't fail.
         if self.cache.exists(output_path) and not force:
             if self.config.verbose:
                 logger.info(f"✓ Using cached observations: {output_path}")
@@ -260,10 +285,12 @@ class BCSDPipeline:
             # Subset spatially if requested
             if self.config.subset_bounds:
                 lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
-                obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
-                model_grid = subset_space(model_grid, [lat_min, lat_max, lon_min, lon_max])
+                lat_bounds = (lat_min, lat_max)
+                lon_bounds = (lon_min, lon_max)
+                obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+                model_grid = subset_space(model_grid, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
 
-        # Regrid to coarse grid
+        # Regrid observation training data to the coarser GCM grid
         with Timer("Regridded observations to coarse grid", verbose=self.config.verbose):
             # Suppress expected warnings from sparse array operations during regridding
             with warnings.catch_warnings():
@@ -302,27 +329,43 @@ class BCSDPipeline:
 
         The result is cached and reused for all scenarios with this GCM/variable/ensemble.
 
+
         Parameters
         ----------
         force : bool, optional
-            Force recomputation even if cached artifact exists
+            If ``False``, return the cached stage output when present.
+            If ``True``, recompute this stage and overwrite cached output.
 
         Returns
         -------
         str
-            S3 path to cached artifact
+            Path to the stage output artifact.
 
         Raises
         ------
         ValueError
             If obs_regridded dependency is missing
+
+        Notes
+        -----
+        The output (fully downscaled historical data) is written to the cache as a
+        data artifact for the historical period. It is also used as a completion gate:
+        ``transform_scenario`` checks that this artifact exists before it will run, but
+        does *not* load it as an input (scenario runs re-load the raw GCM historical data
+        for their own bias-correction training). Setting ``force=True`` reruns all three
+        computation steps and overwrites the cached artifact; ``force=False`` skips all
+        three and returns the existing path immediately.
+
+        Dependency validation is always performed before checking this stage's
+        cache-hit short-circuit.
         """
-        # Validate dependencies
+        # Validate dependencies to make sure that this step of the pipeline is ready to run
         self.cache.validate_dependencies("fit_historical", self.config)
 
         output_path = self.cache.historical_path
 
-        # Check cache
+        # Check cache to see if this step has already run. If a dataset already exists at that
+        # path, then skip this section and just return the output path.
         if self.cache.exists(output_path) and not force:
             if self.config.verbose:
                 logger.info(f"✓ Using cached historical: {output_path}")
@@ -356,8 +399,10 @@ class BCSDPipeline:
             # Subset spatially if requested
             if self.config.subset_bounds:
                 lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
-                obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
-                model_hist = subset_space(model_hist, [lat_min, lat_max, lon_min, lon_max])
+                lat_bounds = (lat_min, lat_max)
+                lon_bounds = (lon_min, lon_max)
+                obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+                model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
 
             # Subset time to training period
             obs_coarse = obs_coarse.sel(
@@ -406,7 +451,9 @@ class BCSDPipeline:
             obs_np = obs_coarse.as_numpy().values
             cm_hist_np = model_hist.as_numpy().values
 
-            # Apply quantile mapping
+            # Apply quantile mapping reading in the
+            # historical GCM simulation as both historical
+            # and
             model_hist_debiased_np = debiaser.apply(
                 obs=obs_np,
                 cm_hist=cm_hist_np,
@@ -479,18 +526,24 @@ class BCSDPipeline:
         Parameters
         ----------
         force : bool, optional
-            Force recomputation even if cached artifact exists
+            If ``False``, return the cached stage output when present.
+            If ``True``, recompute this stage and overwrite cached output.
 
         Returns
         -------
         str
-            S3 path to output zarr store
+            Path to the stage output artifact.
 
         Raises
         ------
         ValueError
             If obs_regridded or historical dependencies are missing,
             or if scenario is not specified in config
+
+        Notes
+        -----
+        Dependency validation is always performed before checking this stage's
+        cache-hit short-circuit.
         """
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
@@ -537,7 +590,8 @@ class BCSDPipeline:
             )
             model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
             model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
-
+            # if you're downscaling an SAI scenario then you also load a separate SSP245 timeseries
+            # to fill the gap between when historical ends and SAI scenario begins
             if self.config.is_sai_scenario:
                 ssp_timeseries = get_experiment(
                     gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
@@ -548,33 +602,39 @@ class BCSDPipeline:
             # Subset spatially if requested
             if self.config.subset_bounds:
                 lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
-                obs_fine = subset_space(obs_fine, [lat_min, lat_max, lon_min, lon_max])
-                model_hist = subset_space(model_hist, [lat_min, lat_max, lon_min, lon_max])
-                model_scenario = subset_space(model_scenario, [lat_min, lat_max, lon_min, lon_max])
+                lat_bounds = (lat_min, lat_max)
+                lon_bounds = (lon_min, lon_max)
+                obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+                model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+                model_scenario = subset_space(
+                    model_scenario, lat_bounds=lat_bounds, lon_bounds=lon_bounds
+                )
                 if self.config.is_sai_scenario:
                     ssp_timeseries = subset_space(
-                        ssp_timeseries, [lat_min, lat_max, lon_min, lon_max]
+                        ssp_timeseries, lat_bounds=lat_bounds, lon_bounds=lon_bounds
                     )
 
-            # Subset time periods
+            # Subset observations to the training period
             obs_coarse = obs_coarse.sel(
                 time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
             )
             obs_fine = obs_fine.sel(
                 time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
             )
+            # Subset model historical to the TK period
             model_hist = model_hist.sel(
                 time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
             )
+
+            # Subset model scenario to the predict period
             model_scenario = model_scenario.sel(
                 time=slice(
                     f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
                 )
             )
 
-        # Detrend if needed
+        # Detrend if specified in the bcsd_config
         scenario_detrended = model_scenario
-        scenario_trend = None
 
         if self.config.detrend_data:
             # Rechunk for temporal operations
@@ -627,14 +687,14 @@ class BCSDPipeline:
                         dim="time",
                     )
 
-                # Calculate baseline climatology
+                # Calculate baseline climatology (12 numbers total)
                 da_baseline_clim = calculate_baseline_climatology(
                     da_baseline=model_hist,
                     baseline_period_start=self.config.train_period_start,
                     baseline_period_end=self.config.train_period_end,
                 )
 
-                # Detrend
+                # Detrend the entire timeseries, using either multiplicative or additive approach
                 scenario_detrended, scenario_trend = detrend(
                     da=historical_scenario,
                     da_baseline_clim=da_baseline_clim,
@@ -802,7 +862,7 @@ class BCSDPipeline:
                 if self.config.verbose:
                     logger.info(f"✓ Saved debiased scenario: {debiased_path}")
 
-        # Re-trend if needed
+        # Re-trend if needed.
         if self.config.detrend_data and scenario_trend is not None:
             with Timer("Re-trended scenario", verbose=self.config.verbose):
                 scenario_debiased = retrend(
@@ -820,11 +880,13 @@ class BCSDPipeline:
                 if self.config.verbose:
                     logger.info(f"✓ Saved debiased retrended scenario: {debiased_path}")
 
-        # Spatially disaggregate
+        # Spatially disaggregate - for performance we'd want these inputs in `full_space`
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
             scenario_downscaled = downscale_from_coarse(
                 da=scenario_debiased,
+                # coarse obs, ideally chunked in full space, for training period
                 obs_coarse=obs_coarse.as_numpy(),
+                # finescale obs, ideally chunked in full space, for training period
                 obs_fine=obs_fine.as_numpy(),
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
@@ -857,13 +919,18 @@ class BCSDPipeline:
         Parameters
         ----------
         force : bool, optional
-            Force recomputation of all stages
+            Passed through to each stage:
+            - ``False``: each stage may short-circuit on its own cache hit.
+            - ``True``: all stages recompute and overwrite their outputs.
 
         Returns
         -------
         str
-            S3 path to final scenario output
+            Path to final scenario stage output artifact.
         """
         self.prepare_observations(force=force)
         self.fit_historical(force=force)
+        # `transform_scenario` depends on fit_historical only as a completion
+        # gate (artifact existence); it does not read the cached historical
+        # output as data input.
         return self.transform_scenario(force=force)

@@ -125,7 +125,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         description="Scenario name (e.g., 'ssp245', 'G6-1.5K'). None for historical-only runs.",
     )
 
-    # Time periods
+    # Time periods.
+    # Ensure that the train period end and start fall between 1950 and 2014
+    # The predict period can be anywhere from 1950 to 2100 because the
+    # gcm simulations we're transforming can exist in that entire range
+
     train_period_start: int = Field(
         1978, ge=1950, le=2014, description="Start year of training period (historical)"
     )
