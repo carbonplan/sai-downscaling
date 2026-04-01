@@ -7,57 +7,56 @@ import seaborn as sns
 import xarray as xr
 from xclim.indices import dry_days, growing_degree_days, hot_days, tx_max
 
-
 def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_name=None, title=""):
     fig, axarr = plt.subplots(figsize=(20, 8), nrows=2, ncols=4)
 
     _ = str(obs.name) if obs.name is not None else ""
     fig.suptitle(title, fontsize=16, y=0.98)
 
-    cax = obs.plot(ax=axarr[0, 0])
-    axarr[0, 0].set_title("ERA5")
+    cax = raw.plot(ax=axarr[0, 0], robust=True)
+    axarr[0, 0].set_title("GCM raw output")
 
-    raw.plot(ax=axarr[0, 1], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-    axarr[0, 1].set_title("GCM raw output")
+    obs.plot(ax=axarr[1, 0], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
+    axarr[1, 0].set_title("ERA5")
 
-    ds1.plot(ax=axarr[0, 2], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-    axarr[0, 2].set_title(ds1_name)
+    ds1.plot(ax=axarr[0, 1], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
+    axarr[0, 1].set_title(ds1_name)
 
     if ds2 is not None:
-        ds2.plot(ax=axarr[0, 3], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-        axarr[0, 3].set_title(ds2_name)
+        ds2.plot(ax=axarr[0, 2], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
+        axarr[0, 2].set_title(ds2_name)
     else:
-        axarr[0, 3].axis("off")
+        axarr[0, 2].axis("off")
 
     if bias == "absolute":
-        (ds1 - obs).plot(ax=axarr[1, 0])
-        axarr[1, 0].set_title(f"{ds1_name} minus ERA5")
+        (ds1 - obs).plot(ax=axarr[1, 1], robust=True)
+        axarr[1, 1].set_title(f"{ds1_name} - ERA5")
 
         if ds2 is not None:
-            (ds2 - obs).plot(ax=axarr[1, 1])
-            axarr[1, 1].set_title(f"{ds2_name} minus ERA5")
+            (ds2 - obs).plot(ax=axarr[1, 2], robust=True)
+            axarr[1, 2].set_title(f"{ds2_name} - ERA5")
 
-            (ds2 - ds1).plot(ax=axarr[1, 2])
-            axarr[1, 2].set_title(f"{ds2_name} minus {ds1_name}")
+            (ds2 - ds1).plot(ax=axarr[1, 3], robust=True)
+            axarr[1, 3].set_title(f"{ds2_name} - {ds1_name}")
         else:
-            axarr[1, 1].axis("off")
             axarr[1, 2].axis("off")
+            axarr[1, 3].axis("off")
 
     elif bias == "percentage":
-        (((ds1 - obs) / obs) * 100).plot(ax=axarr[1, 0])
-        axarr[1, 0].set_title("Nonparametric − ERA5 (%)")
+        (((ds1 - obs) / obs) * 100).plot(ax=axarr[1, 1], robust=True)
+        axarr[1, 1].set_title("{ds2_name} − ERA5 (%)")
 
         if ds2 is not None:
-            (((ds2 - obs) / obs) * 100).plot(ax=axarr[1, 1])
-            axarr[1, 1].set_title("Parametric − ERA5 (%)")
+            (((ds2 - obs) / obs) * 100).plot(ax=axarr[1, 2])
+            axarr[1, 2].set_title("{ds2_name} − ERA5 (%)")
 
-            (((ds2 - ds1) / ds1) * 100).plot(ax=axarr[1, 2])
-            axarr[1, 2].set_title("Parametric − Nonparametric (%)")
+            (((ds2 - ds1) / ds1) * 100).plot(ax=axarr[1,3])
+            axarr[1, 3].set_title("{ds2_name} − {ds1_name} (%)")
         else:
-            axarr[1, 1].axis("off")
             axarr[1, 2].axis("off")
+            axarr[1, 3].axis("off")
 
-    axarr[1, 3].axis("off")
+    axarr[0, 3].axis("off")
 
     plt.tight_layout()
 
@@ -87,9 +86,11 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
         for ds in ds_list:
             tasmax = ds[variable]
             tasmax.attrs.setdefault("units", "K")
-            # tx_max doesn't fail
+            # this calculates annual maximum based upon calendar years, so it
+            # breaks the summertime for southern hemisphere which 
+            # can give a false view into summertime temps
             out.append(tx_max(tasmax, freq="YS").mean("time").compute())
-        out = [da.rename("hottest_day") for da in out]
+        # out = [da.rename("hottest_day") for da in out]
 
     elif stat == "gdd":
         out = []
@@ -183,7 +184,7 @@ def plot_4regions_comparisons(
     fig, axarr = plt.subplots(nrows=nrows, ncols=ncols, figsize=(22, 4.2 * nrows))
 
     # compute statistic and plot per region
-    for r, reg in enumerate(region_names):
+    for r, reg in enumecSrate(region_names):
         raw_r = raw_sub[reg]
         era5_r = era5_sub[reg]
         ds1_r = ds1_sub[reg]
