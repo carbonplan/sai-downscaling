@@ -10,6 +10,7 @@ from xclim.indices import dry_days, growing_degree_days, hot_days, tx_max
 
 StatName = typing.Literal["mean", "99p", "dry_days", "hottest_day", "gdd", "days_over_30C"]
 StatisticToPlot = tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None]
+BiasMode = typing.Literal["absolute", "percentage"]
 
 
 def _collect_datasets(
@@ -75,56 +76,113 @@ def _calculate_stat(ds: xr.Dataset, stat: StatName, variable: str) -> xr.DataArr
     return calculator(ds, variable)
 
 
-def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_name=None, title=""):
+def _plot_primary_comparison_panels(
+    axarr: np.ndarray,
+    obs: xr.DataArray,
+    raw: xr.DataArray,
+    ds1: xr.DataArray,
+    ds1_name: str,
+    ds2: xr.DataArray | None,
+    ds2_name: str | None,
+) -> tuple[float, float]:
+    cax = raw.plot(ax=axarr[0, 0], robust=True)
+    axarr[0, 0].set_title("GCM raw output")
+
+    vmin, vmax = cax.get_clim()
+    obs.plot(ax=axarr[1, 0], vmin=vmin, vmax=vmax)
+    axarr[1, 0].set_title("ERA5")
+
+    ds1.plot(ax=axarr[0, 1], vmin=vmin, vmax=vmax)
+    axarr[0, 1].set_title(ds1_name)
+
+    if ds2 is not None:
+        ds2.plot(ax=axarr[0, 2], vmin=vmin, vmax=vmax)
+        axarr[0, 2].set_title(ds2_name)
+    else:
+        axarr[0, 2].axis("off")
+
+    axarr[0, 3].axis("off")
+    return vmin, vmax
+
+
+def _plot_absolute_bias_panels(
+    axarr: np.ndarray,
+    obs: xr.DataArray,
+    ds1: xr.DataArray,
+    ds1_name: str,
+    ds2: xr.DataArray | None,
+    ds2_name: str | None,
+) -> None:
+    (ds1 - obs).plot(ax=axarr[1, 1], robust=True)
+    axarr[1, 1].set_title(f"{ds1_name} - ERA5")
+
+    if ds2 is not None:
+        (ds2 - obs).plot(ax=axarr[1, 2], robust=True)
+        axarr[1, 2].set_title(f"{ds2_name} - ERA5")
+
+        (ds2 - ds1).plot(ax=axarr[1, 3], robust=True)
+        axarr[1, 3].set_title(f"{ds2_name} - {ds1_name}")
+    else:
+        axarr[1, 2].axis("off")
+        axarr[1, 3].axis("off")
+
+
+def _plot_percentage_bias_panels(
+    axarr: np.ndarray,
+    obs: xr.DataArray,
+    ds1: xr.DataArray,
+    ds1_name: str,
+    ds2: xr.DataArray | None,
+    ds2_name: str | None,
+) -> None:
+    (((ds1 - obs) / obs) * 100).plot(ax=axarr[1, 1], robust=True)
+    axarr[1, 1].set_title(f"{ds1_name} - ERA5 (%)")
+
+    if ds2 is not None:
+        (((ds2 - obs) / obs) * 100).plot(ax=axarr[1, 2])
+        axarr[1, 2].set_title(f"{ds2_name} - ERA5 (%)")
+
+        (((ds2 - ds1) / ds1) * 100).plot(ax=axarr[1, 3])
+        axarr[1, 3].set_title(f"{ds2_name} - {ds1_name} (%)")
+    else:
+        axarr[1, 2].axis("off")
+        axarr[1, 3].axis("off")
+
+
+def _plot_bias_panels(
+    axarr: np.ndarray,
+    obs: xr.DataArray,
+    ds1: xr.DataArray,
+    ds1_name: str,
+    ds2: xr.DataArray | None,
+    ds2_name: str | None,
+    bias: BiasMode,
+) -> None:
+    if bias == "absolute":
+        _plot_absolute_bias_panels(axarr, obs, ds1, ds1_name, ds2, ds2_name)
+    elif bias == "percentage":
+        _plot_percentage_bias_panels(axarr, obs, ds1, ds1_name, ds2, ds2_name)
+    else:
+        raise ValueError(f"Unknown bias: {bias}. Expected one of: absolute, percentage")
+
+
+def plot_comparisons(
+    obs: xr.DataArray,
+    raw: xr.DataArray,
+    ds1: xr.DataArray,
+    ds1_name: str,
+    ds2: xr.DataArray | None = None,
+    bias: BiasMode = "absolute",
+    ds2_name: str | None = None,
+    title: str = "",
+) -> None:
     fig, axarr = plt.subplots(figsize=(20, 8), nrows=2, ncols=4)
 
     _ = str(obs.name) if obs.name is not None else ""
     fig.suptitle(title, fontsize=16, y=0.98)
 
-    cax = raw.plot(ax=axarr[0, 0], robust=True)
-    axarr[0, 0].set_title("GCM raw output")
-
-    obs.plot(ax=axarr[1, 0], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-    axarr[1, 0].set_title("ERA5")
-
-    ds1.plot(ax=axarr[0, 1], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-    axarr[0, 1].set_title(ds1_name)
-
-    if ds2 is not None:
-        ds2.plot(ax=axarr[0, 2], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
-        axarr[0, 2].set_title(ds2_name)
-    else:
-        axarr[0, 2].axis("off")
-
-    if bias == "absolute":
-        (ds1 - obs).plot(ax=axarr[1, 1], robust=True)
-        axarr[1, 1].set_title(f"{ds1_name} - ERA5")
-
-        if ds2 is not None:
-            (ds2 - obs).plot(ax=axarr[1, 2], robust=True)
-            axarr[1, 2].set_title(f"{ds2_name} - ERA5")
-
-            (ds2 - ds1).plot(ax=axarr[1, 3], robust=True)
-            axarr[1, 3].set_title(f"{ds2_name} - {ds1_name}")
-        else:
-            axarr[1, 2].axis("off")
-            axarr[1, 3].axis("off")
-
-    elif bias == "percentage":
-        (((ds1 - obs) / obs) * 100).plot(ax=axarr[1, 1], robust=True)
-        axarr[1, 1].set_title("{ds2_name} − ERA5 (%)")
-
-        if ds2 is not None:
-            (((ds2 - obs) / obs) * 100).plot(ax=axarr[1, 2])
-            axarr[1, 2].set_title("{ds2_name} − ERA5 (%)")
-
-            (((ds2 - ds1) / ds1) * 100).plot(ax=axarr[1, 3])
-            axarr[1, 3].set_title("{ds2_name} − {ds1_name} (%)")
-        else:
-            axarr[1, 2].axis("off")
-            axarr[1, 3].axis("off")
-
-    axarr[0, 3].axis("off")
+    _plot_primary_comparison_panels(axarr, obs, raw, ds1, ds1_name, ds2, ds2_name)
+    _plot_bias_panels(axarr, obs, ds1, ds1_name, ds2, ds2_name, bias)
 
     plt.tight_layout()
 
