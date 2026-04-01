@@ -18,10 +18,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import numpy as np
+import pandas as pd
 import pytest
+import xarray as xr
 
 from srm.bcsd_config import BCSDConfig
-from srm.pipeline import BCSDPipeline
+from srm.pipeline import BCSDPipeline, calculate_out_of_range_mask
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -504,3 +507,50 @@ class TestRunFullPipeline:
             mo.assert_called_once_with(force=False)
             mh.assert_called_once_with(force=False)
             ms.assert_called_once_with(force=False)
+
+
+# ---------------------------------------------------------------------------
+# calculate_out_of_range_mask
+# ---------------------------------------------------------------------------
+
+
+def _make_time_series(values: float, start_year=1980, end_year=1982):
+    """Create a small DataArray with a daily time index filled with a constant value."""
+    times = pd.date_range(f"{start_year}-01-01", f"{end_year}-12-31", freq="D")
+    data = np.full(len(times), values)
+    return xr.DataArray(data, coords={"time": times}, dims=["time"])
+
+
+class TestCalculateOutOfRangeMask:
+    def test_in_range_returns_false(self):
+        """Values within the historical range should not be flagged as out of range."""
+        model_hist = _make_time_series(10.0)
+        scenario = _make_time_series(10.0, start_year=2050, end_year=2052)
+
+        result = calculate_out_of_range_mask(
+            model_hist=model_hist, scenario_detrended=scenario, center_window=31
+        )
+
+        assert not result.any(), "Expected all False (in range), but got some True"
+
+    def test_above_range_returns_true(self):
+        """Values above the historical max should be flagged as out of range."""
+        model_hist = _make_time_series(10.0)
+        scenario = _make_time_series(20.0, start_year=2050, end_year=2052)
+
+        result = calculate_out_of_range_mask(
+            model_hist=model_hist, scenario_detrended=scenario, center_window=31
+        )
+
+        assert result.all(), "Expected all True (out of range), but got some False"
+
+    def test_below_range_returns_true(self):
+        """Values below the historical min should be flagged as out of range."""
+        model_hist = _make_time_series(10.0)
+        scenario = _make_time_series(0.0, start_year=2050, end_year=2052)
+
+        result = calculate_out_of_range_mask(
+            model_hist=model_hist, scenario_detrended=scenario, center_window=31
+        )
+
+        assert result.all(), "Expected all True (out of range), but got some False"

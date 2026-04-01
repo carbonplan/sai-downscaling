@@ -18,6 +18,7 @@ class VariableConfig(BaseModel):
 
     detrend_data: bool
     do_windowing: bool
+    running_window_length: int = 31
     downscaling_method: DownscalingMethod
     downscaling_clim_method: DownscalingClimMethod
     detrend_method: DetrendMethod = "additive"
@@ -124,7 +125,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         description="Scenario name (e.g., 'ssp245', 'G6-1.5K'). None for historical-only runs.",
     )
 
-    # Time periods
+    # Time periods.
+    # Ensure that the train period end and start fall between 1950 and 2014
+    # The predict period can be anywhere from 1950 to 2100 because the
+    # gcm simulations we're transforming can exist in that entire range
+
     train_period_start: int = Field(
         1978, ge=1950, le=2014, description="Start year of training period (historical)"
     )
@@ -181,6 +186,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     mapping_type: MappingType = Field(
         "parametric",
         description="Quantile mapping method for bias correction. See MappingType for valid values.",
+    )
+
+    save_intermediate: bool = Field(
+        False,
+        description="Save intermediate artifacts (e.g. detrended data, quantile mapping results) to cache for debugging and analysis)",
     )
 
     def model_post_init(self, __context) -> None:
@@ -291,6 +301,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     def do_windowing(self) -> bool:
         """Convenience accessor for variable config"""
         return self.variable_config.do_windowing if self.variable_config else False
+
+    @computed_field
+    def running_window_length(self) -> int:
+        """Convenience accessor for variable config"""
+        return self.variable_config.running_window_length if self.variable_config else 31
 
     @computed_field
     def downscaling_method(self) -> DownscalingMethod:

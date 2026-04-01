@@ -37,4 +37,5 @@ version: "v1" # Version identifier for all output paths (default: v1, can overri
 # === Additional Options (optional) ===
 # verbose: true                       # Enable verbose logging (default: true)
 # rechunk_workflow: true              # Enable strategic rechunking (default: true)
-# mapping_type: "parametric"          # Bias correction method: see MappingType in bcsd_config.py (default: "parametric")
+mapping_type: "nonparametric"          # Bias correction method: "parametric" or "nonparametric" (default: "parametric")
+save_intermediate: false                 # Save intermediate artifacts (default: false)
