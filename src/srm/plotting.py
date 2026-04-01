@@ -1,11 +1,79 @@
 import calendar
 import random
+import typing
 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import xarray as xr
 from xclim.indices import dry_days, growing_degree_days, hot_days, tx_max
+
+StatName = typing.Literal["mean", "99p", "dry_days", "hottest_day", "gdd", "days_over_30C"]
+StatisticToPlot = tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None]
+
+
+def _collect_datasets(
+    raw: xr.Dataset, era5: xr.Dataset, ds1: xr.Dataset, ds2: xr.Dataset | None = None
+) -> list[xr.Dataset]:
+    ds_list = [raw, era5, ds1]
+    if ds2 is not None:
+        ds_list.append(ds2)
+    return ds_list
+
+
+def _with_default_units(da: xr.DataArray, default_units: str) -> xr.DataArray:
+    if "units" in da.attrs:
+        return da
+    return da.assign_attrs(units=default_units)
+
+
+def _calc_mean(ds: xr.Dataset, variable: str) -> xr.DataArray:
+    return ds[variable].mean(dim="time")
+
+
+def _calc_99p(ds: xr.Dataset, variable: str) -> xr.DataArray:
+    return ds[variable].quantile(0.99, dim="time").rename("99p")
+
+
+def _calc_dry_days(ds: xr.Dataset, _variable: str) -> xr.DataArray:
+    pr = _with_default_units(ds["pr"], "mm/day")
+    return dry_days(pr, thresh="1 mm/day", freq="YS").sum("time").rename("dry_days")
+
+
+def _calc_hottest_day(ds: xr.Dataset, variable: str) -> xr.DataArray:
+    tasmax = _with_default_units(ds[variable], "K")
+    # This calculates annual maxima by calendar year and can split austral summers.
+    return tx_max(tasmax, freq="YS").mean("time").rename("hottest_day")
+
+
+def _calc_gdd(ds: xr.Dataset, variable: str) -> xr.DataArray:
+    tas = _with_default_units(ds[variable], "K")
+    return growing_degree_days(tas, thresh="10 degC", freq="YS").mean("time").rename("gdd")
+
+
+def _calc_days_over_30c(ds: xr.Dataset, variable: str) -> xr.DataArray:
+    tasmax = _with_default_units(ds[variable], "K")
+    return hot_days(tasmax, thresh="30 degC", freq="YS").mean("time").rename("days_over_30C")
+
+
+_STAT_CALCULATORS: dict[StatName, typing.Callable[[xr.Dataset, str], xr.DataArray]] = {
+    "mean": _calc_mean,
+    "99p": _calc_99p,
+    "dry_days": _calc_dry_days,
+    "hottest_day": _calc_hottest_day,
+    "gdd": _calc_gdd,
+    "days_over_30C": _calc_days_over_30c,
+}
+
+
+def _calculate_stat(ds: xr.Dataset, stat: StatName, variable: str) -> xr.DataArray:
+    try:
+        calculator = _STAT_CALCULATORS[stat]
+    except KeyError as exc:
+        valid = ", ".join(_STAT_CALCULATORS.keys())
+        raise ValueError(f"Unknown stat: {stat}. Expected one of: {valid}") from exc
+    return calculator(ds, variable)
+
 
 def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_name=None, title=""):
     fig, axarr = plt.subplots(figsize=(20, 8), nrows=2, ncols=4)
@@ -50,7 +118,7 @@ def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_nam
             (((ds2 - obs) / obs) * 100).plot(ax=axarr[1, 2])
             axarr[1, 2].set_title("{ds2_name} − ERA5 (%)")
 
-            (((ds2 - ds1) / ds1) * 100).plot(ax=axarr[1,3])
+            (((ds2 - ds1) / ds1) * 100).plot(ax=axarr[1, 3])
             axarr[1, 3].set_title("{ds2_name} − {ds1_name} (%)")
         else:
             axarr[1, 2].axis("off")
@@ -61,61 +129,19 @@ def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_nam
     plt.tight_layout()
 
 
-def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
-    ds_list = [raw, era5, ds1]
-    if ds2 is not None:
-        ds_list.append(ds2)
+def calculate_statistic_to_plot(
+    raw: xr.Dataset,
+    era5: xr.Dataset,
+    ds1: xr.Dataset,
+    stat: StatName,
+    variable: str,
+    ds2: xr.Dataset | None = None,
+) -> StatisticToPlot:
+    ds_list = _collect_datasets(raw, era5, ds1, ds2)
+    out = [_calculate_stat(ds, stat, variable).compute() for ds in ds_list]
 
-    if stat == "mean":
-        out = [ds[variable].mean(dim="time").compute() for ds in ds_list]
-
-    elif stat == "99p":
-        out = [ds[variable].quantile(0.99, dim="time").compute() for ds in ds_list]
-        out = [da.rename("99p") for da in out]
-
-    elif stat == "dry_days":
-        out = []
-        for ds in ds_list:
-            pr = ds["pr"]
-            pr.attrs.setdefault("units", "mm/day")
-            out.append(dry_days(pr, thresh="1 mm/day", freq="YS").sum("time").compute())
-        out = [da.rename("dry_days") for da in out]
-
-    elif stat == "hottest_day":
-        out = []
-        for ds in ds_list:
-            tasmax = ds[variable]
-            tasmax.attrs.setdefault("units", "K")
-            # this calculates annual maximum based upon calendar years, so it
-            # breaks the summertime for southern hemisphere which 
-            # can give a false view into summertime temps
-            out.append(tx_max(tasmax, freq="YS").mean("time").compute())
-        # out = [da.rename("hottest_day") for da in out]
-
-    elif stat == "gdd":
-        out = []
-        for ds in ds_list:
-            tas = ds[variable]
-            tas.attrs.setdefault("units", "K")
-            out.append(growing_degree_days(tas, thresh="10 degC", freq="YS").mean("time").compute())
-        out = [da.rename("gdd") for da in out]
-
-    elif stat == "days_over_30C":
-        out = []
-        for ds in ds_list:
-            tasmax = ds[variable]
-            tasmax.attrs.setdefault("units", "K")
-            out.append(hot_days(tasmax, thresh="30 degC", freq="YS").mean("time").compute())
-        out = [da.rename("days_over_30C") for da in out]
-
-    else:
-        raise ValueError(f"Unknown stat: {stat}")
-
-    if ds2 is None:
-        raw_toplot, era5_toplot, ds1_toplot = out
-        ds2_toplot = None
-    else:
-        raw_toplot, era5_toplot, ds1_toplot, ds2_toplot = out
+    raw_toplot, era5_toplot, ds1_toplot = out[:3]
+    ds2_toplot = out[3] if ds2 is not None else None
 
     return raw_toplot, era5_toplot, ds1_toplot, ds2_toplot
 
@@ -184,7 +210,7 @@ def plot_4regions_comparisons(
     fig, axarr = plt.subplots(nrows=nrows, ncols=ncols, figsize=(22, 4.2 * nrows))
 
     # compute statistic and plot per region
-    for r, reg in enumecSrate(region_names):
+    for r, reg in enumerate(region_names):
         raw_r = raw_sub[reg]
         era5_r = era5_sub[reg]
         ds1_r = ds1_sub[reg]
