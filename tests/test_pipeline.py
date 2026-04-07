@@ -55,7 +55,6 @@ def _mock_prepare_obs_compute():
         patch("srm.pipeline.interpolate_fine_to_coarse_grid") as mock_interp,
         patch("srm.pipeline.subset_space") as mock_subset,
         patch("srm.pipeline.rechunk") as mock_rechunk,
-        patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         yield mock_get_obs, mock_get_exp, mock_interp, mock_subset, mock_rechunk
@@ -73,7 +72,6 @@ def _mock_fit_historical_compute():
         patch("ibicus.debias.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
-        patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         # debiaser.apply returns something downstream code treats as an array
