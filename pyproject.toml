@@ -90,13 +90,14 @@
         "ibicus>=1.2.0",
         "intake-esm>=2025.12.12",
         "matplotlib>=3.10.8",
+        "nc-time-axis>=1.4.1",
         "pooch>=1.8.2",
         "pyarrow>=22.0.0",
         "rasterio>=1.5.0",
         "rasterix>=0.1a4",
         "seaborn>=0.13.2",
         "sparse>=0.17.0",
-    ]
+]
 
     dev = [
         "memory-profiler>=0.61.0",
