@@ -14,7 +14,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
 
@@ -81,6 +81,16 @@ def configs_from_matrix(
     environment: str = "qa",
     version: str = "v1",
     subset_bounds: tuple[float, float, float, float] | None = None,
+    save_intermediate: bool = False,
+    mapping_type: str = "parametric",
+    verbose: bool = False,
+    # VariableConfig overrides (None = use per-variable default)
+    detrend_data: bool | None = None,
+    do_windowing: bool | None = None,
+    running_window_length: int | None = None,
+    downscaling_method: str | None = None,
+    downscaling_clim_method: str | None = None,
+    detrend_method: str | None = None,
 ) -> list[BCSDConfig]:
     """
     Generate BCSDConfig objects for every cartesian-product combination of GCMs,
@@ -114,6 +124,24 @@ def configs_from_matrix(
         Version identifier
     subset_bounds : tuple[float, float, float, float] | None
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
+    save_intermediate : bool
+        Save intermediate artifacts (detrended, debiased, etc.) to cache
+    mapping_type : str
+        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid)
+    verbose : bool
+        Enable verbose logging
+    detrend_data : bool | None
+        Override VariableConfig.detrend_data
+    do_windowing : bool | None
+        Override VariableConfig.do_windowing
+    running_window_length : int | None
+        Override VariableConfig.running_window_length
+    downscaling_method : str | None
+        Override VariableConfig.downscaling_method (additive, multiplicative)
+    downscaling_clim_method : str | None
+        Override VariableConfig.downscaling_clim_method (simple, fft)
+    detrend_method : str | None
+        Override VariableConfig.detrend_method (additive, multiplicative)
 
     Returns
     -------
@@ -122,6 +150,21 @@ def configs_from_matrix(
     """
     configs = []
     for gcm, variable, member, scenario in itertools.product(gcms, variables, members, scenarios):
+        vc = VariableConfig.for_variable(variable)
+        overrides = {
+            k: v
+            for k, v in {
+                "detrend_data": detrend_data,
+                "do_windowing": do_windowing,
+                "running_window_length": running_window_length,
+                "downscaling_method": downscaling_method,
+                "downscaling_clim_method": downscaling_clim_method,
+                "detrend_method": detrend_method,
+            }.items()
+            if v is not None
+        }
+        if overrides:
+            vc = vc.model_copy(update=overrides)
         configs.append(
             BCSDConfig(
                 gcm=gcm,
@@ -137,6 +180,10 @@ def configs_from_matrix(
                 environment=environment,
                 version=version,
                 subset_bounds=subset_bounds,
+                save_intermediate=save_intermediate,
+                mapping_type=mapping_type,
+                verbose=verbose,
+                variable_config=vc,
             )
         )
     return configs
@@ -165,21 +212,64 @@ def run(
     orchestrator = BCSDOrchestrator()
 
     if stage == "obs" or stage == "prepare_observations":
-        orchestrator.submit_stage("prepare_observations", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage(
+            "prepare_observations", configs, force=force, use_coiled=coiled
+        )
+        _print_paths_summary(paths, configs, "prepare_observations")
 
     elif stage == "historical" or stage == "fit_historical":
-        orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        _print_paths_summary(paths, configs, "fit_historical")
 
     elif stage == "scenario" or stage == "transform_scenario":
-        orchestrator.submit_stage("transform_scenario", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage(
+            "transform_scenario", configs, force=force, use_coiled=coiled
+        )
+        _print_paths_summary(paths, configs, "transform_scenario")
 
     elif stage == "all" or stage is None:
-        orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        obs_configs = orchestrator._deduplicate_obs_configs(configs)
+        hist_configs = orchestrator._deduplicate_historical_configs(configs)
+        _print_paths_summary(all_paths["prepare_observations"], obs_configs, "prepare_observations")
+        _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical")
+        _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario")
 
     else:
         raise ValueError(f"Unknown stage: {stage}")
 
     console.print("[bold green]✓ Complete![/bold green]")
+
+
+def _print_paths_summary(paths: list[str], configs: list[BCSDConfig], stage: str) -> None:
+    """Print a Rich table summarising output paths produced by a stage."""
+    stage_label = {
+        "prepare_observations": "Obs Regridded",
+        "fit_historical": "Historical",
+        "transform_scenario": "Scenario",
+    }.get(stage, stage)
+
+    table = Table(
+        title=f"Output Paths — {stage_label} ({len(paths)} artifact(s))",
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("GCM", style="cyan", no_wrap=True)
+    table.add_column("Variable", style="magenta")
+    table.add_column("Member", style="green")
+    table.add_column("Scenario", style="yellow")
+    table.add_column("Path", overflow="fold")
+
+    for cfg, path in zip(configs, paths):
+        table.add_row(
+            cfg.gcm,
+            cfg.variable,
+            cfg.ensemble_member,
+            cfg.scenario or "(historical)",
+            path or "[red]FAILED[/red]",
+        )
+
+    console.print(table)
 
 
 @app.command()
@@ -224,6 +314,38 @@ def run_matrix(
     force: bool = typer.Option(False, help="Force recompute even if cached"),
     coiled: bool = typer.Option(True, help="Use Coiled for distributed execution"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show configs without executing"),
+    save_intermediate: bool = typer.Option(
+        False,
+        "--save-intermediate",
+        help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
+    ),
+    mapping_type: str = typer.Option(
+        "parametric",
+        "--mapping-type",
+        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
+    # VariableConfig overrides
+    detrend_data: bool | None = typer.Option(
+        None, "--detrend-data/--no-detrend-data", help="Override detrend_data for all variables"
+    ),
+    do_windowing: bool | None = typer.Option(
+        None, "--do-windowing/--no-do-windowing", help="Override do_windowing for all variables"
+    ),
+    running_window_length: int | None = typer.Option(
+        None, "--running-window-length", help="Override running_window_length for all variables"
+    ),
+    downscaling_method: str | None = typer.Option(
+        None, "--downscaling-method", help="Override downscaling_method (additive, multiplicative)"
+    ),
+    downscaling_clim_method: str | None = typer.Option(
+        None,
+        "--downscaling-clim-method",
+        help="Override downscaling_clim_method (simple, fft)",
+    ),
+    detrend_method: str | None = typer.Option(
+        None, "--detrend-method", help="Override detrend_method (additive, multiplicative)"
+    ),
 ):
     """Run BCSD pipeline over cartesian product of GCMs x variables x members x scenarios.
 
@@ -282,6 +404,15 @@ def run_matrix(
         environment=environment,
         version=version,
         subset_bounds=parsed_bounds,
+        save_intermediate=save_intermediate,
+        mapping_type=mapping_type,
+        verbose=verbose,
+        detrend_data=detrend_data,
+        do_windowing=do_windowing,
+        running_window_length=running_window_length,
+        downscaling_method=downscaling_method,
+        downscaling_clim_method=downscaling_clim_method,
+        detrend_method=detrend_method,
     )
 
     n = len(configs)
@@ -309,13 +440,25 @@ def run_matrix(
     orchestrator = BCSDOrchestrator()
 
     if stage == "obs" or stage == "prepare_observations":
-        orchestrator.submit_stage("prepare_observations", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage(
+            "prepare_observations", configs, force=force, use_coiled=coiled
+        )
+        _print_paths_summary(paths, configs, "prepare_observations")
     elif stage == "historical" or stage == "fit_historical":
-        orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        _print_paths_summary(paths, configs, "fit_historical")
     elif stage == "scenario" or stage == "transform_scenario":
-        orchestrator.submit_stage("transform_scenario", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage(
+            "transform_scenario", configs, force=force, use_coiled=coiled
+        )
+        _print_paths_summary(paths, configs, "transform_scenario")
     elif stage == "all" or stage is None:
-        orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        obs_configs = orchestrator._deduplicate_obs_configs(configs)
+        hist_configs = orchestrator._deduplicate_historical_configs(configs)
+        _print_paths_summary(all_paths["prepare_observations"], obs_configs, "prepare_observations")
+        _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical")
+        _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario")
     else:
         console.print(f"[red]Error: Unknown stage: {stage}[/red]")
         raise typer.Exit(1)
