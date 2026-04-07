@@ -178,6 +178,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     rechunk_workflow: bool = Field(
         True, description="Enable strategic rechunking between pipeline stages"
     )
+    apply_ocean_mask: bool = Field(
+        True, description="Mask ocean pixels to NaN in the final scenario output"
+    )
     mapping_type: MappingType = Field(
         "parametric",
         description="Quantile mapping method for bias correction. See MappingType for valid values.",

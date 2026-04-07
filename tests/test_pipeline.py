@@ -482,8 +482,8 @@ class TestTransformScenarioBehavior:
         # detrend is called because tas has detrend_data=True
         assert mock_detrend.call_count >= 1 or pipeline.config.detrend_data
 
-    def test_ocean_mask_applied_to_obs_fine(self, pipeline_pr):
-        """Ocean mask is applied to obs_fine before downscaling in transform_scenario."""
+    def test_ocean_mask_applied_when_enabled(self, pipeline_pr):
+        """Ocean mask is applied to scenario output when apply_ocean_mask=True (default)."""
         p = pipeline_pr
         _make_icechunk_store(p.cache.obs_path)
         _make_icechunk_store(p.cache.historical_path)
@@ -493,6 +493,31 @@ class TestTransformScenarioBehavior:
             ) as mock_mask:
                 p.transform_scenario()
         mock_mask.assert_called_once()
+
+    def test_ocean_mask_not_applied_when_disabled(self, tmp_path):
+        """_build_ocean_mask is not called when apply_ocean_mask=False."""
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="pr",
+            ensemble_member="r1i1p1f1",
+            scenario="ssp245",
+            predict_period_start=2015,
+            predict_period_end=2100,
+            cache_dir=str(tmp_path / "cache"),
+            output_dir=str(tmp_path / "outputs"),
+            verbose=False,
+            rechunk_workflow=False,
+            apply_ocean_mask=False,
+        )
+        p = BCSDPipeline(cfg)
+        _make_icechunk_store(p.cache.obs_path)
+        _make_icechunk_store(p.cache.historical_path)
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()
+            ) as mock_mask:
+                p.transform_scenario()
+        mock_mask.assert_not_called()
 
     def test_write_called_with_chunk_shard_encoding(self, pipeline_pr):
         """transform_scenario passes chunk/shard/compressor encoding to the write call."""
