@@ -473,6 +473,7 @@ def calculate_doy_means(
 
     if clim_method == "simple":
         return da_xr_doy_mean
+
     elif clim_method == "fft":
         # Apply FFT smoothing along the time dimension
         obs_fine_doy_means_smoothed = xr.apply_ufunc(
@@ -486,6 +487,10 @@ def calculate_doy_means(
         )
 
         # transpose from ["lat", "lon", "dayofyear"] to original order of ["dayofyear", "lat", "lon"]
+        # apply_ufunc moves input_core_dims to the last position, so the output has
+        # dims (lat, lon, dayofyear).  Transpose back to the canonical
+        # (dayofyear, lat, lon) order that matches the simple-path output and
+        # the xarray groupby() convention.
         obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.transpose(
             "dayofyear", "lat", "lon"
         )
