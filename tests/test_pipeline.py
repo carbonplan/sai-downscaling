@@ -510,6 +510,71 @@ class TestRunFullPipeline:
 
 
 # ---------------------------------------------------------------------------
+# SAI historical/SSP time boundary stitching
+# ---------------------------------------------------------------------------
+
+
+def _make_daily_da(start: str, end: str, value: float = 1.0) -> xr.DataArray:
+    times = pd.date_range(start, end, freq="D")
+    return xr.DataArray(np.full(len(times), value), coords={"time": times}, dims=["time"])
+
+
+class TestSAIHistoricalSSPStitch:
+    """Verify that the historical/SSP splice used for SAI detrending has no gap.
+
+    All supported GCMs share the same historical/SSP breakpoint:
+      - historical ends  2014-12-31  (train_period_end = 2014)
+      - SSP245 begins    2015-01-01  (predict_period_start = 2015)
+
+    The fix uses ``<= train_period_end`` for the historical side and
+    ``>= train_period_end + 1`` for the SSP side so that 2014 is retained
+    and no year is duplicated.
+    """
+
+    def _stitch(self, model_hist, ssp_timeseries, train_period_end: int = 2014):
+        """Replicate the pipeline's splice logic in isolation."""
+        return xr.concat(
+            [
+                model_hist.sel(time=model_hist["time.year"] <= train_period_end),
+                ssp_timeseries.sel(time=ssp_timeseries["time.year"] >= train_period_end + 1),
+            ],
+            dim="time",
+        )
+
+    def test_year_2014_is_present(self):
+        """Historical year 2014 must appear in the stitched series."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2100-12-31")
+
+        stitched = self._stitch(model_hist, ssp)
+
+        years = np.unique(stitched["time.year"].values)
+        assert 2014 in years, "Year 2014 is missing from the stitched timeseries"
+
+    def test_no_gap_between_historical_and_ssp(self):
+        """There must be no missing year between historical and SSP in the stitched series."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2100-12-31")
+
+        stitched = self._stitch(model_hist, ssp)
+
+        years = sorted(np.unique(stitched["time.year"].values).tolist())
+        gaps = [y2 - y1 for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+        assert not gaps, f"Gap(s) found in stitched timeseries: {gaps}"
+
+    def test_no_duplicate_years(self):
+        """Years must not appear on both the historical and SSP sides."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2100-12-31")
+
+        stitched = self._stitch(model_hist, ssp)
+
+        years, counts = np.unique(stitched["time.year"].values, return_counts=True)
+        # Each calendar year has at most 366 days
+        assert counts.max() <= 366, "Duplicate years detected in stitched timeseries"
+
+
+# ---------------------------------------------------------------------------
 # calculate_out_of_range_mask
 # ---------------------------------------------------------------------------
 

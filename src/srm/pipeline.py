@@ -653,13 +653,17 @@ class BCSDPipeline:
                     # SAI simulations run from 2035 to 2084.
                     # But historical ends in 2014/2015, so we stitch in SSP data for the gap when detrending
 
+                    # Historical ends 2014-12-31, SSP begins 2015-01-01 for all
+                    # supported GCMs (CESM2-WACCM, MIROC-ES2H, UKESM). Use <=
+                    # so that the final historical year (train_period_end=2014)
+                    # is included and no gap appears in the stitched timeseries.
                     historical_and_ssp = xr.concat(
                         [
                             model_hist.sel(
-                                time=model_hist["time.year"] < self.config.train_period_end
+                                time=model_hist["time.year"] <= self.config.train_period_end
                             ),
                             ssp_timeseries.sel(
-                                time=ssp_timeseries["time.year"] >= self.config.train_period_end
+                                time=ssp_timeseries["time.year"] >= self.config.train_period_end + 1
                             ),
                         ],
                         dim="time",
