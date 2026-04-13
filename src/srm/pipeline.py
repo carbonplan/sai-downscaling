@@ -19,6 +19,7 @@ import icechunk
 import numpy as np
 import scipy.stats
 import xarray as xr
+from ibicus.debias import QuantileMapping
 from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig
@@ -38,6 +39,12 @@ from srm.downscaling_utils import (
 from srm.utils import Timer
 
 logger = logging.getLogger(__name__)
+
+
+def _make_debiaser(variable: str, **kwargs):
+    if variable == "rsds":
+        return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
+    return QuantileMapping.from_variable(variable=variable, **kwargs)
 
 
 def calculate_out_of_range_mask(
@@ -417,19 +424,13 @@ class BCSDPipeline:
 
         # Bias correct (quantile mapping)
         with Timer("Bias corrected historical", verbose=self.config.verbose):
-            from ibicus.debias import QuantileMapping
-
-            def _make_debiaser(**kwargs):
-                if self.config.variable == "rsds":
-                    return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
-                return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
-
             # For detrending the historical and doing a nonparametric/parametric hybrid quantile mapping
             # method, just use the nonparametric version because by definition the modeled historical period will
             # always be within the range of the modeled historical, so it's never necessary to
             # use the parametric version for out of range modeled values.
             if self.config.mapping_type == "nonparametric_hybrid":
                 debiaser = _make_debiaser(
+                    variable=self.config.variable,
                     mapping_type="nonparametric",
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
@@ -439,6 +440,7 @@ class BCSDPipeline:
                 )
             else:
                 debiaser = _make_debiaser(
+                    variable=self.config.variable,
                     mapping_type=self.config.mapping_type,
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
@@ -742,21 +744,15 @@ class BCSDPipeline:
 
         # Bias correct
         with Timer("Bias corrected scenario", verbose=self.config.verbose):
-            from ibicus.debias import QuantileMapping
-
             # Convert to numpy
             obs_np = obs_coarse.as_numpy().values
             cm_hist_np = model_hist.as_numpy().values
             cm_future_np = scenario_detrended.load().values
 
-            def _make_debiaser(**kwargs):
-                if self.config.variable == "rsds":
-                    return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
-                return QuantileMapping.from_variable(variable=self.config.variable, **kwargs)
-
             # If method is parametric or nonparametric, only debias one time. If hybrid, debias twice (one time parametric and one time nonparametric) and blend results.
             if self.config.mapping_type in ["parametric", "nonparametric"]:
                 debiaser = _make_debiaser(
+                    variable=self.config.variable,
                     mapping_type=self.config.mapping_type,
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
@@ -780,6 +776,7 @@ class BCSDPipeline:
 
             elif self.config.mapping_type == "nonparametric_hybrid":
                 debiaser_parametric = _make_debiaser(
+                    variable=self.config.variable,
                     mapping_type="parametric",
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
@@ -788,6 +785,7 @@ class BCSDPipeline:
                     running_window_mode_over_years_of_cm_future=False,
                 )
                 debiaser_nonparametric = _make_debiaser(
+                    variable=self.config.variable,
                     mapping_type="nonparametric",
                     detrending="no_detrending",
                     running_window_mode=self.config.do_windowing,
