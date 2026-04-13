@@ -24,7 +24,12 @@ import pytest
 import xarray as xr
 
 from srm.bcsd_config import BCSDConfig
-from srm.pipeline import BCSDPipeline, calculate_out_of_range_mask, stitch_historical_scenario
+from srm.pipeline import (
+    BCSDPipeline,
+    _assert_stitched_continuity,
+    calculate_out_of_range_mask,
+    stitch_historical_scenario,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -613,6 +618,48 @@ class TestStitchHistoricalScenario:
 
         _, counts = np.unique(result["time.year"].values, return_counts=True)
         assert counts.max() <= 366, "Duplicate years detected in non-SAI stitched timeseries"
+
+
+# ---------------------------------------------------------------------------
+# _assert_stitched_continuity
+# ---------------------------------------------------------------------------
+
+
+class TestAssertStitchedContinuity:
+    def test_passes_for_clean_series(self):
+        """A clean daily series raises no error."""
+        da = _make_daily_da("2000-01-01", "2002-12-31")
+        _assert_stitched_continuity(da)  # should not raise
+
+    def test_raises_on_duplicate_timestamps(self):
+        """Duplicate timestamps must raise ValueError."""
+        da = xr.concat(
+            [
+                _make_daily_da("2000-01-01", "2001-12-31"),
+                _make_daily_da("2001-06-01", "2002-12-31"),
+            ],
+            dim="time",
+        )
+        with pytest.raises(ValueError, match="duplicate timestamp"):
+            _assert_stitched_continuity(da)
+
+    def test_raises_on_year_gap(self):
+        """A missing year must raise ValueError."""
+        da = xr.concat(
+            [
+                _make_daily_da("2000-01-01", "2001-12-31"),
+                _make_daily_da("2003-01-01", "2004-12-31"),
+            ],
+            dim="time",
+        )
+        with pytest.raises(ValueError, match="year-level gap"):
+            _assert_stitched_continuity(da)
+
+    def test_day_gap_within_year_is_tolerated(self):
+        """A single missing day within a year must NOT raise (known UKESM quirk)."""
+        times = pd.date_range("2014-01-01", "2014-12-31", freq="D").delete(364)  # drop Dec 31
+        da = xr.DataArray(np.ones(len(times)), coords={"time": times}, dims=["time"])
+        _assert_stitched_continuity(da)  # should not raise
 
 
 # ---------------------------------------------------------------------------

@@ -122,6 +122,31 @@ def calculate_out_of_range_mask(
     return out_of_range
 
 
+def _assert_stitched_continuity(result: xr.DataArray) -> None:
+    """Raise ValueError if the stitched timeseries has duplicate timestamps or year-level gaps.
+
+    Day-level gaps within a year are tolerated (some GCMs, e.g. UKESM, are
+    missing a single day at the historical boundary). The checks are:
+
+    1. No duplicate timestamps – the same calendar day must not appear twice.
+    2. No year-level gaps – every integer year between the first and last year
+       must be represented by at least one timestep.
+    """
+    times = result["time"].values
+    unique_times, counts = np.unique(times, return_counts=True)
+    duplicates = unique_times[counts > 1]
+    if len(duplicates):
+        raise ValueError(
+            f"Stitched timeseries contains {len(duplicates)} duplicate timestamp(s); "
+            f"first duplicate: {duplicates[0]}"
+        )
+
+    years = np.unique(result["time.year"].values)
+    gaps = [(int(y1), int(y2)) for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+    if gaps:
+        raise ValueError(f"Stitched timeseries has year-level gap(s): {gaps}")
+
+
 def stitch_historical_scenario(
     model_hist: xr.DataArray,
     model_scenario: xr.DataArray,
@@ -174,22 +199,25 @@ def stitch_historical_scenario(
             ],
             dim="time",
         )
-        return xr.concat(
+        result = xr.concat(
             [
                 historical_and_ssp.sel(time=historical_and_ssp["time.year"] < predict_period_start),
                 model_scenario.sel(time=model_scenario["time.year"] >= predict_period_start),
             ],
             dim="time",
         )
+    else:
+        # Non-SAI: historical up to predict_period_start, then scenario.
+        result = xr.concat(
+            [
+                model_hist.sel(time=model_hist["time.year"] < predict_period_start),
+                model_scenario.sel(time=model_scenario["time.year"] >= predict_period_start),
+            ],
+            dim="time",
+        )
 
-    # Non-SAI: historical up to predict_period_start, then scenario.
-    return xr.concat(
-        [
-            model_hist.sel(time=model_hist["time.year"] < predict_period_start),
-            model_scenario.sel(time=model_scenario["time.year"] >= predict_period_start),
-        ],
-        dim="time",
-    )
+    _assert_stitched_continuity(result)
+    return result
 
 
 class BCSDPipeline:
