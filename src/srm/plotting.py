@@ -28,6 +28,19 @@ def _with_default_units(da: xr.DataArray, default_units: str) -> xr.DataArray:
     return da.assign_attrs(units=default_units)
 
 
+def _ensure_inferable_freq(da: xr.DataArray) -> xr.DataArray:
+    """Convert to a noleap CFTimeIndex when xr.infer_freq returns None.
+
+    Model output on a 365-day calendar is often stored as datetime64[ns] with
+    Feb 29 absent. xclim calls xr.infer_freq() internally and raises if it
+    returns None. Converting to "noleap" fixes the gaps without altering data.
+    Gregorian data (Feb 29 present, infer_freq == "D") is left unchanged.
+    """
+    if xr.infer_freq(da.time) is None:
+        da = da.convert_calendar("noleap")
+    return da
+
+
 def _calc_mean(ds: xr.Dataset, variable: str) -> xr.DataArray:
     return ds[variable].mean(dim="time")
 
@@ -37,23 +50,23 @@ def _calc_99p(ds: xr.Dataset, variable: str) -> xr.DataArray:
 
 
 def _calc_dry_days(ds: xr.Dataset, _variable: str) -> xr.DataArray:
-    pr = _with_default_units(ds["pr"], "mm/day")
+    pr = _ensure_inferable_freq(_with_default_units(ds["pr"], "mm/day"))
     return dry_days(pr, thresh="1 mm/day", freq="YS").sum("time").rename("dry_days")
 
 
 def _calc_hottest_day(ds: xr.Dataset, variable: str) -> xr.DataArray:
-    tasmax = _with_default_units(ds[variable], "K")
+    tasmax = _ensure_inferable_freq(_with_default_units(ds[variable], "K"))
     # This calculates annual maxima by calendar year and can split austral summers.
     return tx_max(tasmax, freq="YS").mean("time").rename("hottest_day")
 
 
 def _calc_gdd(ds: xr.Dataset, variable: str) -> xr.DataArray:
-    tas = _with_default_units(ds[variable], "K")
+    tas = _ensure_inferable_freq(_with_default_units(ds[variable], "K"))
     return growing_degree_days(tas, thresh="10 degC", freq="YS").mean("time").rename("gdd")
 
 
 def _calc_days_over_30c(ds: xr.Dataset, variable: str) -> xr.DataArray:
-    tasmax = _with_default_units(ds[variable], "K")
+    tasmax = _ensure_inferable_freq(_with_default_units(ds[variable], "K"))
     return hot_days(tasmax, thresh="30 degC", freq="YS").mean("time").rename("days_over_30C")
 
 
