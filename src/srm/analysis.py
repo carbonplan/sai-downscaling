@@ -1,7 +1,9 @@
+import math
 from functools import cached_property
 
 import icechunk
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
 import xarray as xr
 
@@ -126,6 +128,64 @@ class BCSDRun:
 
         fig.suptitle(f"{self.config.variable} {self.config.scenario}")
         return fig, axes
+
+
+def plot_location_cdfs(
+    datasets: dict[str, xr.Dataset],
+    variable: str,
+    colors: dict[str, str] | None = None,
+) -> tuple[plt.Figure, np.ndarray]:
+    """
+    Plot empirical CDFs for multiple datasets at every location in
+    ``srm.plotting.locations``.
+
+    Parameters
+    ----------
+    datasets : dict[str, xr.Dataset]
+        Mapping of label → dataset. Each dataset must contain ``variable``.
+    variable : str
+        Variable to extract from each dataset.
+    colors : dict[str, str], optional
+        Mapping of label → matplotlib color. Falls back to seaborn defaults.
+
+    Returns
+    -------
+    fig : plt.Figure
+    axes : ndarray of Axes, shape (nrows, 2)
+    """
+    from srm.plotting import locations
+
+    n = len(locations)
+    ncols = 2
+    nrows = math.ceil(n / ncols)
+
+    fig, axarr = plt.subplots(nrows=nrows, ncols=ncols, figsize=(ncols * 7, nrows * 3))
+    axes_flat = axarr.flatten()
+
+    for i, (city, (lat, lon)) in enumerate(locations.items()):
+        ax = axes_flat[i]
+        for label, ds in datasets.items():
+            values = ds[variable].sel(lat=lat, lon=lon, method="nearest").to_numpy()
+            kw = {"color": colors[label]} if colors and label in colors else {}
+            sns.ecdfplot(data=values, ax=ax, label=label, **kw)
+        ax.set_title(city, fontsize=10)
+        ax.set_xlabel(variable)
+
+    for ax in axes_flat[n:]:
+        ax.set_visible(False)
+
+    handles, labels = axes_flat[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        ncol=len(datasets),
+        bbox_to_anchor=(0.5, 1.01),
+        frameon=False,
+    )
+    fig.suptitle(f"Empirical CDF: {variable}", y=1.03, fontsize=14)
+    plt.tight_layout()
+    return fig, axarr
 
 
 def load_nasa_nex(*, dataset: str):
