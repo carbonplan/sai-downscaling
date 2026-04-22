@@ -37,7 +37,6 @@ MIROC_VARIABLES = ["hurs", "huss", "pr", "rlds", "rsds", "tas", "tasmax", "tasmi
 CMIP6_ENSEMBLE_MEMBERS = ["r1i1p4f2", "r2i1p4f2", "r3i1p4f2"]
 
 GEOMIP_ENSEMBLE_MEMBERS = [f"r{i:02d}" for i in range(1, 11)]
-GEOMIP_ENSEMBLE_MEMBER_MAP = {f"r{i:02d}": f"r{i}i1p1f1" for i in range(1, 11)}
 
 
 CMIP6_ENSEMBLE_VERSIONS: dict[str, dict[str, str]] = {
@@ -335,17 +334,16 @@ def _preprocess_cmip6_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
     ensemble = url.split(".nc")[0].split("_gn")[0].split("_")[-1]
-    ds = ds.expand_dims({"ensemble_member": [ensemble]})
+    ds = ds.expand_dims({"ensemble_member_inferred": [ensemble]})
     return ds
 
 
 def _preprocess_geomip_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """Extract GeoMIP ensemble member from URL (r01 → r1i1p1f1) and add as dimension."""
+    """Extract GeoMIP ensemble member from URL (e.g. r01) and add as dimension."""
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
     raw = url.split(".nc")[0].split("_")[-1]  # e.g. "r01"
-    ensemble = GEOMIP_ENSEMBLE_MEMBER_MAP[raw]
-    ds = ds.expand_dims({"ensemble_member": [ensemble]})
+    ds = ds.expand_dims({"ensemble_member_inferred": [raw]})
     return ds
 
 
@@ -377,6 +375,21 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseMIROC_ES2H_Config
     }
     if hasattr(config, "time_range"):
         attrs["time_range"] = config.time_range
+    if isinstance(config, BaseMIROC_GeoMIP_Config):
+        attrs["ensemble_member_source"] = (
+            "Parsed from the JAMSTEC server filename by splitting on underscore and taking "
+            "the last segment before the file extension "
+            "(for example 'tas_G6-1.5K-SAI_r01.nc' → 'r01'). "
+            "Source files contain no variant_label, physics_index, or forcing_index attributes. "
+        )
+    else:
+        attrs["ensemble_member_source"] = (
+            "Parsed from the ESGF Data Reference Syntax filename by splitting on '_gn' "
+            "and taking the preceding segment "
+            "(for example 'tas_day_MIROC-ES2H_historical_r1i1p4f2_gn_19500101-19591231.nc' "
+            "→ 'r1i1p4f2'). "
+            "Values are confirmed to match the variant_label global attribute in the source files."
+        )
     ds.attrs.update(attrs)
     return ds
 

@@ -32,11 +32,6 @@ from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
 
-UKESM_ENSEMBLE_MEMBER_MAP = {
-    "001": "r12i1p1f2",
-    "002": "r2i1p1f2",
-    "003": "r3i1p1f2",
-}
 
 T_PR_VARS = ["pr", "tas", "tasmin", "tasmax"]
 
@@ -120,19 +115,23 @@ class UKESM_Historical_Config(BaseUKESM_Config):
     materialized_key: str = "UKESM-historical-icechunk"
     catalog_key: str = "UKESM-historical-virtual"
     s3_input_prefix: str = "input/tensor/UKESM/netcdf/historical"
+    source_base_url: str = (
+        "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/MOHC/UKESM1-0-LL/historical"
+    )
 
     ensemble_members: list = field(
         default_factory=lambda: [
-            "r1i1p1f2",
-            "r2i1p1f2",
-            "r3i1p1f2",
-            "r4i1p1f2",
-            "r5i1p1f3",
-            "r6i1p1f3",
-            "r7i1p1f3",
-            "r8i1p1f2",
-            "r9i1p1f2",
-            "r10i1p1f2",
+            # "r1i1p1f2",
+            # "r2i1p1f2",
+            # "r3i1p1f2",
+            # "r4i1p1f2",
+            # "r5i1p1f3",
+            # "r6i1p1f3",
+            # "r7i1p1f3",
+            # "r8i1p1f2",
+            # "r9i1p1f2",
+            # "r10i1p1f2",
+            "r12i1p1f2"
         ]
     )
 
@@ -156,16 +155,17 @@ def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Confi
     )
     time_slices = ["18500101-19491230", "19500101-20141230"]
     ensemble_dates = {
-        "r1i1p1f2": "d20190627",
-        "r2i1p1f2": "d20190708",
-        "r3i1p1f2": "d20190708",
-        "r4i1p1f2": "d20190708",
-        "r5i1p1f3": "d20191115",
-        "r6i1p1f3": "d20191113",
-        "r7i1p1f3": "d20191011",
-        "r8i1p1f2": "d20190708",
-        "r9i1p1f2": "d20191015",
-        "r10i1p1f2": "d20191213",
+        # "r1i1p1f2": "d20190627",
+        # "r2i1p1f2": "d20190708",
+        # "r3i1p1f2": "d20190708",
+        # "r4i1p1f2": "d20190708",
+        # "r5i1p1f3": "d20191115",
+        # "r6i1p1f3": "d20191113",
+        # "r7i1p1f3": "d20191011",
+        # "r8i1p1f2": "d20190708",
+        # "r9i1p1f2": "d20191015",
+        # "r10i1p1f2": "d20191213",
+        "r12i1p1f2": "d20191210"
     }
 
     urls = []
@@ -241,7 +241,7 @@ def _preprocess_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
     ensemble = url.split(".nc")[0].split("_gn")[0].split("_")[-1]
-    ds = ds.expand_dims({"ensemble_member": [ensemble]})
+    ds = ds.expand_dims({"ensemble_member_inferred": [ensemble]})
     return ds
 
 
@@ -252,8 +252,7 @@ def _preprocess_ensemble_t_pr(ds: xr.Dataset, url: str = None) -> xr.Dataset:
         raise ValueError("url parameter is required to determine ensemble member")
     filename = url.split("/")[-1]
     member_idx = filename.split("_")[1]
-    member = UKESM_ENSEMBLE_MEMBER_MAP[member_idx]
-    ds = ds.expand_dims({"ensemble_member": [member]})
+    ds = ds.expand_dims({"ensemble_member_inferred": [member_idx]})
     if "latitude" in ds.dims:
         ds = ds.rename({"latitude": "lat", "longitude": "lon"})
     return ds
@@ -288,11 +287,40 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> 
     ds = update_variable_attrs(ds, var_specs)
     # ds = add_cf_bounds(ds)
 
+    if type(config) in T_PR_SCENARIOS:
+        source = (
+            "Parsed from the rechunked filename numeric suffix by taking the second "
+            "underscore-separated segment "
+            "(for example 'T_001_tas_corrected_rechunked.nc' → '001'). "
+            "Source files are NetCDF3 produced by the CONVSH converter from UK Met Office "
+            "Unified Model output and contain no CMIP6 metadata. "
+            "Confirmed mapping from Matthew Henry: "
+            "001 = r2i1p1f2, 002 = r3i1p1f2, 003 = r12i1p1f2. "
+            "Note: the variant_label attribute in the original source files is incorrect "
+            "due to a postprocessing oversight; the filenames and this mapping are authoritative."
+        )
+    elif isinstance(config, UKESM_Historical_Config):
+        source = (
+            "Parsed from the CEDA Data Reference Syntax filename by splitting on '_gn' "
+            "and taking the preceding segment "
+            "(for example 'tas_day_UKESM1-0-LL_historical_r1i1p1f2_gn_18500101-19491230.nc' "
+            "→ 'r1i1p1f2'). "
+            "Values are confirmed to match the variant_label global attribute in the source files."
+        )
+    else:
+        source = (
+            "Parsed from the ARISE Data Reference Syntax filename by splitting on '_gn' "
+            "and taking the preceding segment "
+            "(for example 'tas_day_UKESM1-1-LL_G6-1p5K-SAI_r12i1p1f2_gn_20350101-20491230.nc' "
+            "→ 'r12i1p1f2'). "
+            "Values are confirmed to match the variant_label global attribute in the source files."
+        )
     ds.attrs.update(
         {
             "scenario": config.scenario,
             "model": "UKESM1-0-LL",
             "Conventions": "CF-1.8",
+            "ensemble_member_source": source,
         }
     )
 

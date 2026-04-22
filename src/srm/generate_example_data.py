@@ -77,7 +77,7 @@ def get_data(varname: str = "tas"):
     ssp245 = xr.open_zarr(ssp245_session.store, consolidated=False)
     ssp245 = fix_coords(ssp245)
     ssp245 = ssp245.proj.assign_crs(spatial_ref="epsg:4326")
-    ssp245 = ssp245.isel(ensemble_member=0)
+    ssp245 = ssp245.isel(ensemble_member_inferred=0)
 
     model_historical_cat = catalog.get("CESM-WACCM-Historical-icechunk")
 
@@ -102,7 +102,7 @@ def get_data(varname: str = "tas"):
     g61pt5k_session = g61pt5k_repo.readonly_session("main")
     g61pt5k = xr.open_zarr(g61pt5k_session.store, consolidated=False)
     g61pt5k = fix_coords(g61pt5k)
-    g61pt5k = g61pt5k.isel(ensemble_member=0)
+    g61pt5k = g61pt5k.isel(ensemble_member_inferred=0)
 
     era5_cat = catalog.get("ERA5")
     era5_storage = icechunk.s3_storage(

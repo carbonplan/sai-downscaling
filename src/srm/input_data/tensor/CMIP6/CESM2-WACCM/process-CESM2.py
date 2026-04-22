@@ -14,7 +14,6 @@ from srm import catalog
 from srm.config import init_repo, setup_cluster, setup_local_client
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
-    ENSEMBLE_MEMBER_MAPPING,
     CMORIZE_hurs,
     CMORIZE_pr,
     add_cf_bounds,
@@ -22,7 +21,6 @@ from srm.input_data.etl_utils import (
     determine_write_mode,
     get_var_specs,
     load_dtr_from_store,
-    remap_ensemble_members,
     trim_negative_precipitation,
     update_variable_attrs,
     virtualize_and_combine,
@@ -137,7 +135,6 @@ class CESM_Historical_Config(BaseCESM_Config):
     catalog_key: str = "CESM2-WACCM-historical-virtual"
     materialized_key: str = "CESM2-WACCM-historical-icechunk"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-Historical/netcdf"
-    has_ensemble: bool = False
 
 
 @dataclass
@@ -194,7 +191,7 @@ def _preprocess_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
     ensemble = ds.attrs["case"].rsplit(".")[-1]
-    ds = ds.expand_dims({"ensemble_member": [ensemble]})
+    ds = ds.expand_dims({"ensemble_member_inferred": [ensemble]})
     return ds
 
 
@@ -241,6 +238,14 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseCESM_Config) -> x
             "scenario": config.scenario,
             "model": "CESM2-WACCM",
             "Conventions": "CF-1.8",
+            "ensemble_member_source": (
+                "Parsed from the 'case' global attribute of each source NetCDF file by taking "
+                "the last dot-separated segment (for example "
+                "'b.e21.BWSSP245cmip6.f09_g17.CMIP6-SSP2-4.5-WACCM.003' → '003'). "
+                "Values are CESM-native run numbers, not CMIP6 "
+                "realization-initialization-physics-forcing identifiers. "
+                "Source files contain no variant_label or other CMIP6 standard attributes."
+            ),
         }
     )
 
@@ -455,19 +460,7 @@ def process(variable, scenario, coiled, all_variables, subset):
         client.shutdown()
 
 
-@click.command()
-@click.option("--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True)
-def remap_ensemble(scenario):
-    config = SCENARIO_CONFIG_MAP[scenario]()
-    if not config.has_ensemble:
-        click.echo(f"{scenario} has no ensemble members, skipping.")
-        return
-    mat_cat = catalog.get(config.materialized_key)
-    remap_ensemble_members(mat_cat.bucket, mat_cat.prefix, ENSEMBLE_MEMBER_MAPPING)
-
-
 cli.add_command(virtualize)
 cli.add_command(process)
-cli.add_command(remap_ensemble)
 if __name__ == "__main__":
     cli()

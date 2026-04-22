@@ -399,8 +399,8 @@ class BCSDPipeline:
                 gcm=self.config.gcm, scenario="historical", var=self.config.variable
             )
             # Historical data may not have ensemble_member dimension
-            if "ensemble_member" in model_hist.dims:
-                model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+            if "ensemble_member_inferred" in model_hist.dims:
+                model_hist = model_hist.sel(ensemble_member_inferred=self.config.ensemble_member)
             model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
             # Subset spatially if requested
@@ -582,15 +582,17 @@ class BCSDPipeline:
                 gcm=self.config.gcm, scenario="historical", var=self.config.variable
             )
             # Historical data may not have ensemble_member dimension
-            if "ensemble_member" in model_hist.dims:
-                model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+            if "ensemble_member_inferred" in model_hist.dims:
+                model_hist = model_hist.sel(ensemble_member_inferred=self.config.ensemble_member)
             model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
             # Load scenario
             model_scenario = get_experiment(
                 gcm=self.config.gcm, scenario=self.config.scenario, var=self.config.variable
             )
-            model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
+            model_scenario = model_scenario.sel(
+                ensemble_member_inferred=self.config.ensemble_member
+            )
             model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
             # if you're downscaling an SAI scenario then you also load a separate SSP245 timeseries
             # to fill the gap between when historical ends and SAI scenario begins
@@ -598,7 +600,9 @@ class BCSDPipeline:
                 ssp_timeseries = get_experiment(
                     gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
                 )
-                ssp_timeseries = ssp_timeseries.sel(ensemble_member=self.config.ensemble_member)
+                ssp_timeseries = ssp_timeseries.sel(
+                    ensemble_member_inferred=self.config.ensemble_member
+                )
                 ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
 
             # Subset spatially if requested

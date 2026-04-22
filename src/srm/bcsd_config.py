@@ -391,13 +391,13 @@ Usage Examples:
 config = BCSDConfig(
     gcm="CESM2-WACCM",
     variable="tas",
-    ensemble_member=0,
+    ensemble_member="001",  from ds.attrs["case"]
     scenario="ssp245",
     predict_period_start=2015,
     predict_period_end=2100
 )
 
-print(config.run_id)  # "CESM2-WACCM_tas_e00_ssp245"
+print(config.run_id)  # "CESM2-WACCM_tas_001_ssp245"
 print(config.detrend_data)  # True (auto-loaded from variable config)
 print(config.downscaling_method)  # "additive"
 
@@ -405,7 +405,7 @@ print(config.downscaling_method)  # "additive"
 sai_config = BCSDConfig(
     gcm="CESM2-WACCM",
     variable="pr",
-    ensemble_member=1,
+    ensemble_member="002",
     scenario="G6-1.5K",
     predict_period_start=2015,
     predict_period_end=2100,
@@ -418,7 +418,7 @@ print(sai_config.detrend_data)  # False (precipitation doesn't detrend)
 subset_config = BCSDConfig(
     gcm="MIROC-ES2H",
     variable="tasmax",
-    ensemble_member=0,
+    ensemble_member="r1i1p4f2",  # CMIP6 ripf label from ESGF filename
     scenario="ssp245",
     predict_period_start=2015,
     predict_period_end=2100,
@@ -429,7 +429,7 @@ subset_config = BCSDConfig(
 custom_config = BCSDConfig(
     gcm="UKESM",
     variable="tas",
-    ensemble_member=2,
+    ensemble_member="r12i1p1f2",  # ARISE ripf label from DRS filename
     scenario="ssp245",
     predict_period_start=2015,
     predict_period_end=2100,
@@ -446,7 +446,7 @@ custom_config = BCSDConfig(
 """
 gcm: CESM2-WACCM
 variable: tas
-ensemble_member: 0
+ensemble_member: "001"  # number from ds.attrs["case"]
 scenario: ssp245
 predict_period_start: 2015
 predict_period_end: 2100
