@@ -633,6 +633,8 @@ def validate(
 
     Exits with code 1 if any blocking check fails, otherwise exits with code 0.
     """
+    import json
+
     from srm.validation import (
         BLOCKING_CHECKS,
         GCM_OPTIONS,
@@ -691,12 +693,23 @@ def validate(
     blocking_failures = [
         r for r in all_results if r.status == CheckStatus.FAIL and r.check_id in BLOCKING_CHECKS
     ]
+    single_pair = len(pairs) == 1
     if blocking_failures:
         console.rule("[bold red]Blocking failures[/bold red]", style="red")
         for r in blocking_failures:
             console.print(
                 f"  [red]✗[/red] [bold]{r.check_id}[/bold] ({r.gcm}/{r.scenario}): {r.message}"
             )
+            if r.detail and not single_pair:
+                console.print_json(json.dumps(r.detail))
+
+    if single_pair:
+        for r in all_results:
+            if r.detail:
+                console.rule(
+                    f"[dim]{r.check_id} detail[/dim] for {r.gcm}/{r.scenario}", style="dim"
+                )
+                console.print_json(json.dumps(r.detail))
 
     if blocking_failures:
         raise typer.Exit(1)
