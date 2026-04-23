@@ -39,7 +39,7 @@ SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 _SCENARIO_TIME_BOUNDS: dict[str, tuple[str, str]] = {
     "historical": ("1850-01-01", "2014-12-31"),
     "SSP245": ("2015-01-01", "2100-12-31"),
-    "G6-1.5K": ("2015-01-01", "2100-12-31"),
+    "G6-1.5K": ("2035-01-01", "2085-12-31"),
 }
 
 
