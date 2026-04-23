@@ -635,12 +635,14 @@ def validate(
     """
     import json
 
+    import pydantic
+
     from srm.validation import (
         BLOCKING_CHECKS,
         GCM_OPTIONS,
         SCENARIO_OPTIONS,
         CheckStatus,
-        validate_dataset,
+        DatasetValidator,
     )
 
     _STATUS_SYMBOL = {
@@ -654,7 +656,10 @@ def validate(
 
     all_results = []
     for g, s in pairs:
-        all_results.extend(validate_dataset(g, s))
+        try:
+            all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
+        except pydantic.ValidationError as exc:
+            console.print(f"[red]Invalid input (gcm={g!r}, scenario={s!r}): {exc}[/red]")
 
     def _scenario_order(s: str) -> tuple[int, str]:
         if s == "historical":
