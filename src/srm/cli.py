@@ -11,6 +11,7 @@ from pathlib import Path
 
 import typer
 import yaml
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
@@ -99,7 +100,7 @@ def configs_from_matrix(
     Parameters
     ----------
     gcms : list[str]
-        GCM names (e.g., ["CESM2-WACCM", "MIROC"])
+        GCM names (e.g., ["CESM2-WACCM", "MIROC-ES2H"])
     variables : list[str]
         Variables to downscale (e.g., ["tas", "pr"])
     members : list[str]
@@ -274,7 +275,9 @@ def _print_paths_summary(paths: list[str], configs: list[BCSDConfig], stage: str
 
 @app.command()
 def run_matrix(
-    gcm: list[str] = typer.Option(..., help="GCM name (repeatable: --gcm CESM2-WACCM --gcm MIROC)"),
+    gcm: list[str] = typer.Option(
+        ..., help="GCM name (repeatable: --gcm CESM2-WACCM --gcm MIROC-ES2H)"
+    ),
     variable: list[str] = typer.Option(
         ..., help="Variable to downscale (repeatable: --variable tas --variable pr)"
     ),
@@ -284,7 +287,7 @@ def run_matrix(
     scenario: list[str] | None = typer.Option(
         None,
         help=(
-            "Scenario (repeatable: --scenario ssp245 --scenario G6-1pt5k). "
+            "Scenario (repeatable: --scenario SSP245 --scenario G6-1.5K). "
             "Omit for historical-only runs."
         ),
     ),
@@ -355,10 +358,10 @@ def run_matrix(
     Example (2 GCMs x 2 variables x 3 members x 2 scenarios = 24 runs):
 
         bcsd run-matrix \\
-          --gcm CESM2-WACCM --gcm MIROC \\
+          --gcm CESM2-WACCM --gcm MIROC-ES2H \\
           --variable tas --variable pr \\
           --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \\
-          --scenario ssp245 --scenario G6-1pt5k \\
+          --scenario SSP245 --scenario G6-1.5K \\
           --predict-period-start 2015 --predict-period-end 2100
 
     Omit --scenario for historical-only runs.
@@ -615,3 +618,133 @@ def cache_list(
         table.add_row(artifact)
 
     console.print(table)
+
+
+@app.command()
+def validate(
+    gcm: list[str] | None = typer.Option(
+        None, "--gcm", help="GCM(s) to validate (repeatable). Defaults to all."
+    ),
+    scenario: list[str] | None = typer.Option(
+        None, "--scenario", help="Scenario(s) to validate (repeatable). Defaults to all."
+    ),
+) -> None:
+    """Validate input datasets against the validation matrix.
+
+    Exits with code 1 if any blocking check fails, otherwise exits with code 0.
+    """
+    import json
+
+    import pydantic
+
+    from srm.validation import (
+        BLOCKING_CHECKS,
+        GCM_OPTIONS,
+        SCENARIO_OPTIONS,
+        CheckStatus,
+        DatasetValidator,
+    )
+
+    _STATUS_SYMBOL = {
+        CheckStatus.PASS: "[green]✓[/green]",
+        CheckStatus.FAIL: "[red]✗[/red]",
+        CheckStatus.UNKNOWN: "[yellow]?[/yellow]",
+        CheckStatus.SKIP: "-",
+    }
+
+    pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
+
+    all_results = []
+    for g, s in pairs:
+        try:
+            all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
+        except pydantic.ValidationError as exc:
+            console.print(f"[red]Invalid input (gcm={g!r}, scenario={s!r}): {exc}[/red]")
+
+    def _scenario_order(s: str) -> tuple[int, str]:
+        if s == "historical":
+            return (0, s)
+        if s == "baseline":
+            return (3, s)
+        if "G6" in s or "SAI" in s:
+            return (2, s)
+        return (1, s)
+
+    by_gcm: dict[str, list] = {}
+    for r in all_results:
+        by_gcm.setdefault(r.gcm, []).append(r)
+
+    for gcm_name, gcm_results in by_gcm.items():
+        console.rule(f"[bold]{gcm_name}[/bold]")
+
+        scenarios = sorted(dict.fromkeys(r.scenario for r in gcm_results), key=_scenario_order)
+        check_ids = list(dict.fromkeys(r.check_id for r in gcm_results))
+        index = {(r.check_id, r.scenario): r for r in gcm_results}
+        # Split: cross-all checks (no SKIP for any scenario) vs scenario-scoped (SKIP for some).
+        table_checks = []
+        scoped_checks = []
+        for cid in check_ids:
+            if any(
+                (r := index.get((cid, s))) is None or r.status == CheckStatus.SKIP
+                for s in scenarios
+            ):
+                scoped_checks.append(cid)
+            else:
+                table_checks.append(cid)
+
+        if table_checks:
+            tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+            tbl.add_column("check", style="dim", no_wrap=True)
+            for s in scenarios:
+                tbl.add_column(s, justify="center")
+            for cid in table_checks:
+                row = [cid]
+                for s in scenarios:
+                    r = index.get((cid, s))
+                    row.append(_STATUS_SYMBOL[r.status] if r else " ")
+                tbl.add_row(*row)
+            console.print(tbl)
+
+        if scoped_checks:
+            scoped_tbl = Table(
+                title="Scenario-specific checks",
+                show_header=True,
+                header_style="dim",
+                box=box.SIMPLE_HEAD,
+                padding=(0, 1),
+            )
+            scoped_tbl.add_column("check", style="dim", no_wrap=True)
+            scoped_tbl.add_column("scenario", style="dim")
+            scoped_tbl.add_column("result", justify="center")
+            for cid in scoped_checks:
+                for s in scenarios:
+                    r = index.get((cid, s))
+                    if r and r.status != CheckStatus.SKIP:
+                        scoped_tbl.add_row(cid, s, _STATUS_SYMBOL[r.status])
+            console.print(scoped_tbl)
+
+    blocking_failures = [
+        r for r in all_results if r.status == CheckStatus.FAIL and r.check_id in BLOCKING_CHECKS
+    ]
+    single_pair = len(pairs) == 1
+
+    if blocking_failures:
+        console.rule("[bold red]Blocking failures[/bold red]", style="red")
+        for r in blocking_failures:
+            console.print(
+                f"  [red]✗[/red] [bold]{r.check_id}[/bold] ({r.gcm}/{r.scenario}): {r.message}"
+            )
+            if r.detail:
+                console.print_json(json.dumps(r.detail))
+
+    if single_pair:
+        printed = {id(r) for r in blocking_failures}
+        for r in all_results:
+            if r.detail and id(r) not in printed:
+                console.rule(
+                    f"[dim]{r.check_id} detail[/dim] for {r.gcm}/{r.scenario}", style="dim"
+                )
+                console.print_json(json.dumps(r.detail))
+
+    if blocking_failures:
+        raise typer.Exit(1)
