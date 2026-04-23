@@ -675,37 +675,67 @@ def validate(
         scenarios = sorted(dict.fromkeys(r.scenario for r in gcm_results), key=_scenario_order)
         check_ids = list(dict.fromkeys(r.check_id for r in gcm_results))
         index = {(r.check_id, r.scenario): r for r in gcm_results}
-
-        tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
-        tbl.add_column("check", style="dim", no_wrap=True)
-        for s in scenarios:
-            tbl.add_column(s, justify="center")
-
+        # Split: cross-all checks (no SKIP for any scenario) vs scenario-scoped (SKIP for some).
+        table_checks = []
+        scoped_checks = []
         for cid in check_ids:
-            row = [cid]
-            for s in scenarios:
-                r = index.get((cid, s))
-                row.append(_STATUS_SYMBOL[r.status] if r else " ")
-            tbl.add_row(*row)
+            if any(
+                (r := index.get((cid, s))) is None or r.status == CheckStatus.SKIP
+                for s in scenarios
+            ):
+                scoped_checks.append(cid)
+            else:
+                table_checks.append(cid)
 
-        console.print(tbl)
+        if table_checks:
+            tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+            tbl.add_column("check", style="dim", no_wrap=True)
+            for s in scenarios:
+                tbl.add_column(s, justify="center")
+            for cid in table_checks:
+                row = [cid]
+                for s in scenarios:
+                    r = index.get((cid, s))
+                    row.append(_STATUS_SYMBOL[r.status] if r else " ")
+                tbl.add_row(*row)
+            console.print(tbl)
+
+        if scoped_checks:
+            scoped_tbl = Table(
+                title="Scenario-specific checks",
+                show_header=True,
+                header_style="dim",
+                box=box.SIMPLE_HEAD,
+                padding=(0, 1),
+            )
+            scoped_tbl.add_column("check", style="dim", no_wrap=True)
+            scoped_tbl.add_column("scenario", style="dim")
+            scoped_tbl.add_column("result", justify="center")
+            for cid in scoped_checks:
+                for s in scenarios:
+                    r = index.get((cid, s))
+                    if r and r.status != CheckStatus.SKIP:
+                        scoped_tbl.add_row(cid, s, _STATUS_SYMBOL[r.status])
+            console.print(scoped_tbl)
 
     blocking_failures = [
         r for r in all_results if r.status == CheckStatus.FAIL and r.check_id in BLOCKING_CHECKS
     ]
     single_pair = len(pairs) == 1
+
     if blocking_failures:
         console.rule("[bold red]Blocking failures[/bold red]", style="red")
         for r in blocking_failures:
             console.print(
                 f"  [red]✗[/red] [bold]{r.check_id}[/bold] ({r.gcm}/{r.scenario}): {r.message}"
             )
-            if r.detail and not single_pair:
+            if r.detail:
                 console.print_json(json.dumps(r.detail))
 
     if single_pair:
+        printed = {id(r) for r in blocking_failures}
         for r in all_results:
-            if r.detail:
+            if r.detail and id(r) not in printed:
                 console.rule(
                     f"[dim]{r.check_id} detail[/dim] for {r.gcm}/{r.scenario}", style="dim"
                 )

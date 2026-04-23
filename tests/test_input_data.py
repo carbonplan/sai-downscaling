@@ -12,9 +12,12 @@ from validators import DatasetValidator
 from srm.datasets import VirtualDataset
 from srm.validation import (
     GCM_OPTIONS,
+    SCENARIO_OPTIONS,
     CheckStatus,
+    check_g6_not_identical_to_ssp245,
     check_g6_ssp245_member_pairing,
     check_ssp245_hist_member_pairing,
+    check_temporal_coverage,
 )
 
 pytestmark = pytest.mark.input_data
@@ -101,6 +104,27 @@ class TestCrossScenarioConsistency:
     def test_g6_ssp245_member_pairing(self, gcm):
         """D2: every G6 member has a match in the SSP245 store."""
         result = check_g6_ssp245_member_pairing(gcm, "G6-1.5K")
+        if result.status == CheckStatus.SKIP:
+            pytest.skip(result.message)
+        assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
+
+
+class TestDataIntegrity:
+    """E: Data integrity checks."""
+
+    @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
+    def test_g6_not_identical_to_ssp245(self, gcm):
+        """E1: G6-1.5K data must differ from SSP245 for the same ensemble member."""
+        result = check_g6_not_identical_to_ssp245(gcm, "G6-1.5K")
+        if result.status == CheckStatus.SKIP:
+            pytest.skip(result.message)
+        assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
+
+    @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
+    @pytest.mark.parametrize("scenario", list(SCENARIO_OPTIONS))
+    def test_temporal_coverage(self, gcm, scenario):
+        """E2: time axis must be gapless with correct first and last dates."""
+        result = check_temporal_coverage(gcm, scenario)
         if result.status == CheckStatus.SKIP:
             pytest.skip(result.message)
         assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"

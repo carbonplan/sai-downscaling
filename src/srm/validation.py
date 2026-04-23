@@ -9,6 +9,7 @@ Each check is a standalone function returning a CheckResult.
 """
 
 import enum
+import hashlib
 import traceback
 from collections.abc import Callable
 
@@ -20,13 +21,26 @@ from srm.datasets import catalog
 # Blocking: crash or silent wrong output — abort the pipeline run.
 # Warning:  wrong data ingested — emit a warning but continue.
 # Info:     incomplete provenance — informational only.
-BLOCKING_CHECKS = {"ensemble_member_dim", "ssp245_hist_member_pairing", "g6_ssp245_member_pairing"}
-WARNING_CHECKS = {"temporal_coverage"}
+BLOCKING_CHECKS = {
+    "ensemble_member_dim",
+    "g6_not_identical_to_ssp245",
+    "temporal_coverage",
+    "ssp245_hist_member_pairing",
+    "g6_ssp245_member_pairing",
+}
+WARNING_CHECKS: set[str] = set()
 INFO_CHECKS = {"branch_time_attr"}
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
+
+# Expected inclusive daily time bounds per scenario (CMIP6 conventions).
+_SCENARIO_TIME_BOUNDS: dict[str, tuple[str, str]] = {
+    "historical": ("1850-01-01", "2014-12-31"),
+    "SSP245": ("2015-01-01", "2100-12-31"),
+    "G6-1.5K": ("2015-01-01", "2100-12-31"),
+}
 
 
 def _parse_catalog_value(label: str, value: str, options: tuple[str, ...]) -> str:
@@ -345,8 +359,272 @@ def check_g6_ssp245_member_pairing(gcm: str, scenario: str) -> CheckResult:
     )
 
 
+def check_g6_not_identical_to_ssp245(gcm: str, scenario: str) -> CheckResult:
+    """
+    E1: G6-1.5K data must not be identical to SSP245 for the same ensemble member.
+
+    Detects copy-paste errors where G6 data was accidentally duplicated from SSP245.
+    Samples a small corner slice (first 5 time steps, 10×10 spatial patch) of the
+    first common variable and compares SHA-256 checksums per shared member.
+    Skipped when scenario is not 'G6-1.5K'.
+    """
+    try:
+        parsed_gcm = parse_gcm(gcm)
+        parsed_scenario = parse_scenario(scenario)
+    except ValueError as exc:
+        return CheckResult(
+            gcm=str(gcm), scenario=str(scenario), status=CheckStatus.FAIL, message=str(exc)
+        )
+
+    if parsed_scenario != "G6-1.5K":
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message="Only applicable to G6-1.5K scenario.",
+        )
+
+    g6_key = f"{parsed_gcm}-G6-1.5K-icechunk"
+    ssp245_key = f"{parsed_gcm}-SSP245-icechunk"
+
+    g6_catalog_ds = catalog.datasets.get(g6_key)
+    ssp245_catalog_ds = catalog.datasets.get(ssp245_key)
+
+    if g6_catalog_ds is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message=f"G6-1.5K dataset not found in catalog: {g6_key}",
+        )
+    if ssp245_catalog_ds is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message=f"SSP245 dataset not found in catalog: {ssp245_key}",
+        )
+
+    try:
+        g6_ds = g6_catalog_ds.to_xarray()
+    except Exception as exc:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"Failed to load G6-1.5K dataset {g6_key}: {exc}",
+            detail={"traceback": traceback.format_exc()},
+        )
+
+    try:
+        ssp245_ds = ssp245_catalog_ds.to_xarray()
+    except Exception as exc:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"Failed to load SSP245 dataset {ssp245_key}: {exc}",
+            detail={"traceback": traceback.format_exc()},
+        )
+
+    common_vars = sorted(set(g6_ds.data_vars) & set(ssp245_ds.data_vars))
+    if not common_vars:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message="No common variables between G6-1.5K and SSP245; cannot compare.",
+            detail={
+                "g6_vars": sorted(g6_ds.data_vars),
+                "ssp245_vars": sorted(ssp245_ds.data_vars),
+            },
+        )
+
+    var = common_vars[0]
+    sample_kwargs = {"time": slice(0, 5), "lat": slice(0, 10), "lon": slice(0, 10)}
+
+    def _checksum(arr: xr.DataArray) -> str:
+        return hashlib.sha256(arr.isel(**sample_kwargs).values.tobytes()).hexdigest()
+
+    g6_members = _get_ensemble_members(g6_ds)
+    ssp245_members = _get_ensemble_members(ssp245_ds)
+
+    identical_members: list[str] = []
+    checked_members: list[str] = []
+
+    if g6_members is not None and ssp245_members is not None:
+        shared = sorted(set(g6_members) & set(ssp245_members))
+        if not shared:
+            return CheckResult(
+                gcm=parsed_gcm,
+                scenario=parsed_scenario,
+                status=CheckStatus.SKIP,
+                message="No shared ensemble members between G6-1.5K and SSP245.",
+            )
+        for member in shared:
+            g6_hash = _checksum(g6_ds[var].sel(ensemble_member=member))
+            ssp245_hash = _checksum(ssp245_ds[var].sel(ensemble_member=member))
+            checked_members.append(member)
+            if g6_hash == ssp245_hash:
+                identical_members.append(member)
+    else:
+        g6_hash = _checksum(g6_ds[var])
+        ssp245_hash = _checksum(ssp245_ds[var])
+        checked_members = ["(all)"]
+        if g6_hash == ssp245_hash:
+            identical_members = ["(all)"]
+
+    if identical_members:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=(
+                f"G6-1.5K data is identical to SSP245 for {len(identical_members)} member(s) "
+                f"(var={var!r}, first 5 time steps, 10×10 corner patch)."
+            ),
+            detail={
+                "identical_members": identical_members,
+                "checked_members": checked_members,
+                "variable_sampled": var,
+            },
+        )
+
+    return CheckResult(
+        gcm=parsed_gcm,
+        scenario=parsed_scenario,
+        status=CheckStatus.PASS,
+        message=(
+            f"G6-1.5K and SSP245 data differ for all {len(checked_members)} "
+            f"checked member(s) (var={var!r})."
+        ),
+        detail={"checked_members": checked_members, "variable_sampled": var},
+    )
+
+
+def check_temporal_coverage(gcm: str, scenario: str) -> CheckResult:
+    """
+    E2: Time axis must be gapless with correct first and last dates.
+
+    Calendar-aware: uses ``xr.cftime_range`` with the dataset's own calendar so
+    that 360-day (UKESM), noleap (CESM2), and Gregorian (MIROC) datasets are
+    handled correctly without unsafe coercion to numpy datetime64.
+    """
+    try:
+        parsed_gcm = parse_gcm(gcm)
+        parsed_scenario = parse_scenario(scenario)
+    except ValueError as exc:
+        return CheckResult(
+            gcm=str(gcm), scenario=str(scenario), status=CheckStatus.FAIL, message=str(exc)
+        )
+
+    key = f"{parsed_gcm}-{parsed_scenario}-icechunk"
+    catalog_ds = catalog.datasets.get(key)
+
+    if catalog_ds is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message=f"Dataset not found in catalog: {key}",
+        )
+
+    try:
+        ds = catalog_ds.to_xarray()
+    except Exception as exc:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"Failed to load dataset {key}: {exc}",
+            detail={"traceback": traceback.format_exc()},
+        )
+
+    if "time" not in ds.dims:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message="Dataset has no time dimension.",
+        )
+
+    time_index = ds.indexes["time"]
+    # ds.time.dt.calendar works for both CFTime and numpy datetime64 (returns
+    # "proleptic_gregorian" for the latter), so xr.cftime_range always gets the
+    # right calendar — no unsafe astype("datetime64") cast needed.
+    calendar = ds.time.dt.calendar
+    n_times = len(time_index)
+
+    expected_start, expected_end = _SCENARIO_TIME_BOUNDS[parsed_scenario]
+
+    # Build the expected daily range using the dataset's own calendar so that
+    # 360-day (UKESM), noleap (CESM2), and Gregorian (MIROC) datasets are all
+    # handled correctly.
+    expected_range = xr.date_range(
+        start=expected_start, end=expected_end, freq="D", calendar=calendar, use_cftime=True
+    )
+    n_expected = len(expected_range)
+
+    # strftime works on both cftime.datetime and pandas.Timestamp.
+    actual_start_str = time_index[0].strftime("%Y-%m-%d")
+    actual_end_str = time_index[-1].strftime("%Y-%m-%d")
+
+    detail: dict = {
+        "calendar": calendar,
+        "actual_start": actual_start_str,
+        "actual_end": actual_end_str,
+        "n_times": n_times,
+        "n_expected": n_expected,
+        "expected_start": expected_start,
+        "expected_end": expected_end,
+    }
+
+    issues: list[str] = []
+
+    if actual_start_str != expected_start:
+        issues.append(f"start date {actual_start_str} != expected {expected_start}")
+    if actual_end_str != expected_end:
+        issues.append(f"end date {actual_end_str} != expected {expected_end}")
+
+    if n_times != n_expected:
+        delta = n_expected - n_times
+        label = "missing" if delta > 0 else "extra"
+        detail["n_missing_or_extra"] = delta
+        issues.append(f"{abs(delta)} {label} time steps (expected {n_expected}, got {n_times})")
+    elif n_times > 1:
+        # Counts match; verify regularity (gaps / duplicates within the range).
+        inferred_freq = xr.infer_freq(ds.time)
+        if inferred_freq != "D":
+            detail["inferred_freq"] = inferred_freq
+            issues.append(
+                f"time axis is not uniformly daily (inferred freq: {inferred_freq!r}); "
+                "possible gaps or duplicates within range"
+            )
+
+    if issues:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message="; ".join(issues),
+            detail=detail,
+        )
+
+    return CheckResult(
+        gcm=parsed_gcm,
+        scenario=parsed_scenario,
+        status=CheckStatus.PASS,
+        message=f"Temporal coverage complete: {expected_start} to {expected_end} ({n_times} daily steps, no gaps).",
+        detail=detail,
+    )
+
+
 _GROUP_CHECKS: dict[str, list[Callable[[str, str], CheckResult]]] = {
-    "integrity": [check_ensemble_member_dim],
+    "integrity": [
+        check_ensemble_member_dim,
+        check_g6_not_identical_to_ssp245,
+        check_temporal_coverage,
+    ],
     "cross-scenario": [check_ssp245_hist_member_pairing, check_g6_ssp245_member_pairing],
 }
 
