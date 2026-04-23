@@ -36,6 +36,7 @@ from srm.downscaling_utils import (
     retrend,
     subset_space,
 )
+from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_encoding
 from srm.utils import Timer
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,7 @@ class BCSDPipeline:
         da: xr.DataArray,
         path: str,
         commit_message: str,
+        encoding: dict | None = None,
         dataset_attrs: dict | None = None,
     ) -> str:
         """Write a DataArray to an icechunk store and commit atomically."""
@@ -227,15 +229,37 @@ class BCSDPipeline:
         ds = da.to_dataset()
         if dataset_attrs is not None:
             ds.attrs = dataset_attrs
-        to_icechunk(ds, session, mode="w")
+        to_icechunk(ds, session, mode="w", encoding=encoding or {})
         return session.commit(commit_message, rebase_with=icechunk.ConflictDetector())
+
+    @staticmethod
+    def _build_ocean_mask(da: xr.DataArray) -> xr.DataArray:
+        """Compute a land/ocean mask aligned to da's spatial grid.
+
+        Returns a boolean DataArray where True = land (keep) and False = ocean (mask).
+        Uses GSHHS high-resolution coastline boundaries from the catalog. Ocean pixels
+        in the output should be set to NaN via ``da.where(mask)``.
+        """
+        import xproj  # noqa
+        from rasterix.rasterize import geometry_mask
+
+        from srm.datasets import catalog
+
+        coast = catalog.get("ocean-mask").to_geodataframe()
+        # Sort lat descending — required by rusterize; .where() re-aligns by coordinate
+        template = (
+            da.isel(time=0).sortby("lat", ascending=False).proj.assign_crs(spatial_ref="epsg:4326")
+        )
+        return ~geometry_mask(
+            template, coast[["geom"]], all_touched=True, engine="rusterize", xdim="lon", ydim="lat"
+        ).drop_vars("spatial_ref", errors="ignore")
 
     def _open_from_icechunk(self, path: str) -> xr.Dataset:
         """Open a dataset from an icechunk store."""
         storage = self._icechunk_storage(path)
         repo = icechunk.Repository.open(storage)
         session = repo.readonly_session("main")
-        return xr.open_dataset(session.store, engine="zarr", consolidated=False)
+        return xr.open_dataset(session.store, engine="zarr", consolidated=False, chunks="auto")
 
     def prepare_observations(self, force: bool = False) -> str:
         """
@@ -466,6 +490,7 @@ class BCSDPipeline:
                 parallel=True,
                 nr_processes=dask.system.CPU_COUNT,
                 progressbar=False,
+                failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
             )
 
             # Convert back to xarray
@@ -497,15 +522,22 @@ class BCSDPipeline:
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
             )
-            model_hist_downscaled = rechunk(model_hist_downscaled, pattern="full_space")
+            model_hist_downscaled = model_hist_downscaled.chunk(
+                {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+            )
 
         # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
             model_hist_downscaled.name = self.config.variable
+
             hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
             dataset_attrs = self._build_output_attrs(hist_dataset)
             self._write_to_icechunk(
-                model_hist_downscaled, output_path, "write complete", dataset_attrs=dataset_attrs
+                da=model_hist_downscaled,
+                path=output_path,
+                commit_message="write complete",
+                encoding=make_encoding(self.config.variable),
+                dataset_attrs=dataset_attrs,
             )
 
         if self.config.verbose:
@@ -770,6 +802,7 @@ class BCSDPipeline:
                     time_cm_hist=model_hist["time"].values,
                     time_cm_future=scenario_detrended["time"].values,
                     parallel=True,
+                    failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
                     nr_processes=dask.system.CPU_COUNT,
                     progressbar=False,
                 )
@@ -805,6 +838,7 @@ class BCSDPipeline:
                     parallel=True,
                     nr_processes=dask.system.CPU_COUNT,
                     progressbar=False,
+                    failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
                 )
 
                 scenario_debiased_nonparametric_np = debiaser_nonparametric.apply(
@@ -817,6 +851,7 @@ class BCSDPipeline:
                     parallel=True,
                     nr_processes=dask.system.CPU_COUNT,
                     progressbar=False,
+                    failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
                 )
 
                 # Blend results
@@ -889,17 +924,27 @@ class BCSDPipeline:
                 method=self.config.downscaling_method,
                 clim_method=self.config.downscaling_clim_method,
             )
-            scenario_downscaled = rechunk(scenario_downscaled, pattern="full_space")
+            scenario_downscaled = scenario_downscaled.chunk(
+                {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+            )
 
         # Save output
         with Timer("Saved output", verbose=self.config.verbose):
+            if self.config.apply_ocean_mask:
+                scenario_downscaled = scenario_downscaled.where(
+                    self._build_ocean_mask(scenario_downscaled)
+                ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
             scenario_downscaled.name = self.config.variable
             scenario_dataset = _catalog.datasets.get(
                 f"{self.config.gcm}-{self.config.scenario}-icechunk"
             )
             dataset_attrs = self._build_output_attrs(scenario_dataset)
             self._write_to_icechunk(
-                scenario_downscaled, output_path, "write complete", dataset_attrs=dataset_attrs
+                scenario_downscaled,
+                output_path,
+                "write complete",
+                dataset_attrs=dataset_attrs,
+                encoding=make_encoding(self.config.variable),
             )
 
         if self.config.verbose:
