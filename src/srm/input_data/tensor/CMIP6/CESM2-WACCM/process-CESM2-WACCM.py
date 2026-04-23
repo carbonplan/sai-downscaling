@@ -38,13 +38,8 @@ SHARED_ENSEMBLE_MEMBERS = ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
 class BaseCESM_Config(BaseETLConfig):
     CESM_WACCM_VARIABLE_MAPPING: dict = field(
         default_factory=lambda: {
-            "FLDS": "rlds",
             "FSDS": "rsds",
-            "PS": "ps",
             "TREFHT": "tas",
-            "TREFHTMX": "tasmax",
-            "TREFHTMN": "tasmin",
-            "QREFHT": "huss",
             "RHREFHT": "hurs",
             "PRECT": "pr",
         }
@@ -54,13 +49,8 @@ class BaseCESM_Config(BaseETLConfig):
         default_factory=lambda: {
             "pr": "kg m-2 s-1",
             "tas": "K",
-            "tasmin": "K",
-            "tasmax": "K",
             "hurs": "%",
             "rsds": "W m-2",
-            "huss": "1",
-            "rlds": "W m-2",
-            "ps": "Pa",
         }
     )
 

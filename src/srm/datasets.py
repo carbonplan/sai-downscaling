@@ -30,6 +30,7 @@ class BaseDataset(ABC):
     region: str = "us-west-2"
     expected_vars: list[VarSpec] | None = None
     ensemble_members: list[str] | None = None
+    ensemble_member_inferred: list[str] | None = None
     license: str | None = None
     citation: str | None = None
 
@@ -219,6 +220,7 @@ class Catalog:
                 license="CC-BY-4.0",
                 citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 CMIP historical. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10071",
                 ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                ensemble_member_inferred=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
                 expected_vars=[
                     VarStandards.HURS,
                     VarStandards.PR,
@@ -255,7 +257,8 @@ class Catalog:
                     "lat": 192,
                     "lon": 288,
                 },
-                ensemble_members=["001", "002", "003"],
+                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                ensemble_member_inferred=["001", "002", "003"],
                 citation="Lee, W. R., Visioni, D., Wagman, B. M., Wentland, C. R., Kravitz, B., Watanabe, S., Sekiya, T., Jones, A., Haywood, J., Henry, M., and Bednarz, E. M. (2025). G6-1.5K-SAI and G6sulfur: changes in impacts and uncertainty depending on stratospheric aerosol injection strategy in the Geoengineering Model Intercomparison Project. EGUsphere [preprint]. https://doi.org/10.5194/egusphere-2025-5742. Simulations run by Walker Lee using CESM2 (https://doi.org/10.5065/D67H1H0V). Walker Lee granted permission to share this data.",
                 expected_vars=[
                     VarStandards.PR,
@@ -333,6 +336,7 @@ class Catalog:
                 license="CC-BY-4.0",
                 citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 ScenarioMIP ssp245. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10101",
                 ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                ensemble_member_inferred=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
                 expected_vars=[
                     VarStandards.HURS,
                     VarStandards.PR,
