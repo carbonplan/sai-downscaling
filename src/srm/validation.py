@@ -13,6 +13,7 @@ import traceback
 from collections.abc import Callable
 
 import pydantic
+import xarray as xr
 
 from srm.datasets import catalog
 
@@ -120,9 +121,233 @@ def check_ensemble_member_dim(gcm: str, scenario: str) -> CheckResult:
     )
 
 
+def _get_ensemble_members(ds: xr.Dataset) -> list[str] | None:
+    """
+    Return ensemble_member coordinate values as strings from an already-opened dataset.
+
+    Returns None if the dataset has no ensemble_member dimension or coordinate.
+    """
+    if "ensemble_member" in ds.dims or "ensemble_member" in ds.coords:
+        return [str(m) for m in ds["ensemble_member"].values]
+    return None
+
+
+def check_ssp245_hist_member_pairing(gcm: str, scenario: str) -> CheckResult:
+    """
+    D1: Every SSP245 ensemble member must have a matching member in the historical store.
+
+    Skipped when scenario is not 'SSP245'. Passes automatically when the historical
+    dataset has no ensemble_member dimension (treated as a single shared run).
+    """
+    try:
+        parsed_gcm = parse_gcm(gcm)
+        parsed_scenario = parse_scenario(scenario)
+    except ValueError as exc:
+        return CheckResult(
+            gcm=str(gcm), scenario=str(scenario), status=CheckStatus.FAIL, message=str(exc)
+        )
+
+    if parsed_scenario != "SSP245":
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message="Only applicable to SSP245 scenario.",
+        )
+
+    ssp245_key = f"{parsed_gcm}-SSP245-icechunk"
+    hist_key = f"{parsed_gcm}-historical-icechunk"
+
+    ssp245_ds = catalog.datasets.get(ssp245_key)
+    hist_ds = catalog.datasets.get(hist_key)
+
+    if ssp245_ds is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message=f"SSP245 dataset not found in catalog: {ssp245_key}",
+        )
+    if hist_ds is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"Historical dataset not found in catalog: {hist_key}",
+            detail={"available_keys": sorted(catalog.datasets.keys())},
+        )
+
+    try:
+        ssp245_members = _get_ensemble_members(ssp245_ds.to_xarray())
+    except Exception as exc:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"Failed to load SSP245 dataset {ssp245_key}: {exc}",
+            detail={"traceback": traceback.format_exc()},
+        )
+
+    if ssp245_members is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message="SSP245 dataset has no ensemble_member dimension; nothing to check.",
+        )
+
+    try:
+        hist_members = _get_ensemble_members(hist_ds.to_xarray())
+    except Exception as exc:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"Failed to load historical dataset {hist_key}: {exc}",
+            detail={"traceback": traceback.format_exc()},
+        )
+
+    if hist_members is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.PASS,
+            message="Historical has no ensemble_member dim; treated as single shared run matching all SSP245 members.",
+            detail={"ssp245_members": sorted(ssp245_members)},
+        )
+
+    unmatched = sorted(set(ssp245_members) - set(hist_members))
+    if unmatched:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"{len(unmatched)} SSP245 member(s) not found in historical.",
+            detail={
+                "unmatched": unmatched,
+                "ssp245_members": sorted(ssp245_members),
+                "historical_members": sorted(hist_members),
+            },
+        )
+
+    return CheckResult(
+        gcm=parsed_gcm,
+        scenario=parsed_scenario,
+        status=CheckStatus.PASS,
+        message=f"All {len(ssp245_members)} SSP245 members present in historical.",
+        detail={"members": sorted(ssp245_members)},
+    )
+
+
+def check_g6_ssp245_member_pairing(gcm: str, scenario: str) -> CheckResult:
+    """
+    D2: Every G6-1.5K ensemble member must have a matching member in the SSP245 store.
+
+    The SSP245 bridge run is required for SAI scenario detrending. Skipped when
+    scenario is not 'G6-1.5K' or when the GCM has no G6-1.5K dataset in the catalog.
+    """
+    try:
+        parsed_gcm = parse_gcm(gcm)
+        parsed_scenario = parse_scenario(scenario)
+    except ValueError as exc:
+        return CheckResult(
+            gcm=str(gcm), scenario=str(scenario), status=CheckStatus.FAIL, message=str(exc)
+        )
+
+    if parsed_scenario != "G6-1.5K":
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message="Only applicable to G6-1.5K scenario.",
+        )
+
+    g6_key = f"{parsed_gcm}-G6-1.5K-icechunk"
+    ssp245_key = f"{parsed_gcm}-SSP245-icechunk"
+
+    g6_ds = catalog.datasets.get(g6_key)
+    ssp245_ds = catalog.datasets.get(ssp245_key)
+
+    if g6_ds is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message=f"G6-1.5K dataset not found in catalog: {g6_key}",
+        )
+    if ssp245_ds is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"SSP245 dataset not found in catalog: {ssp245_key} (required for G6 detrending bridge).",
+            detail={"available_keys": sorted(catalog.datasets.keys())},
+        )
+
+    try:
+        g6_members = _get_ensemble_members(g6_ds.to_xarray())
+    except Exception as exc:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"Failed to load G6-1.5K dataset {g6_key}: {exc}",
+            detail={"traceback": traceback.format_exc()},
+        )
+
+    if g6_members is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.SKIP,
+            message="G6-1.5K dataset has no ensemble_member dimension; nothing to check.",
+        )
+
+    try:
+        ssp245_members = _get_ensemble_members(ssp245_ds.to_xarray())
+    except Exception as exc:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"Failed to load SSP245 dataset {ssp245_key}: {exc}",
+            detail={"traceback": traceback.format_exc()},
+        )
+
+    if ssp245_members is None:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message="SSP245 dataset has no ensemble_member dimension; cannot verify G6 member pairing.",
+        )
+
+    unmatched = sorted(set(g6_members) - set(ssp245_members))
+    if unmatched:
+        return CheckResult(
+            gcm=parsed_gcm,
+            scenario=parsed_scenario,
+            status=CheckStatus.FAIL,
+            message=f"{len(unmatched)} G6 member(s) not found in SSP245 (required for SAI detrending bridge).",
+            detail={
+                "unmatched": unmatched,
+                "g6_members": sorted(g6_members),
+                "ssp245_members": sorted(ssp245_members),
+            },
+        )
+
+    return CheckResult(
+        gcm=parsed_gcm,
+        scenario=parsed_scenario,
+        status=CheckStatus.PASS,
+        message=f"All {len(g6_members)} G6 members present in SSP245.",
+        detail={"members": sorted(g6_members)},
+    )
+
+
 _GROUP_CHECKS: dict[str, list[Callable[[str, str], CheckResult]]] = {
     "integrity": [check_ensemble_member_dim],
-    "cross-scenario": [],
+    "cross-scenario": [check_ssp245_hist_member_pairing, check_g6_ssp245_member_pairing],
 }
 
 

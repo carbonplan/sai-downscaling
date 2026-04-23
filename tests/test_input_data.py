@@ -10,6 +10,12 @@ if TYPE_CHECKING:
 from validators import DatasetValidator
 
 from srm.datasets import VirtualDataset
+from srm.validation import (
+    GCM_OPTIONS,
+    CheckStatus,
+    check_g6_ssp245_member_pairing,
+    check_ssp245_hist_member_pairing,
+)
 
 pytestmark = pytest.mark.input_data
 
@@ -78,3 +84,23 @@ class TestCatalogDatasets:
             pytest.skip(f"Dataset {ds_info.name} does not contain precipitation.")
         result = validator.validate_negative_precip()
         assert result, f"{ds_info.name}: {result.issues}"
+
+
+class TestCrossScenarioConsistency:
+    """D: Cross-scenario ensemble member consistency checks."""
+
+    @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
+    def test_ssp245_hist_member_pairing(self, gcm):
+        """D1: every SSP245 member has a match in the historical store."""
+        result = check_ssp245_hist_member_pairing(gcm, "SSP245")
+        if result.status == CheckStatus.SKIP:
+            pytest.skip(result.message)
+        assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
+
+    @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
+    def test_g6_ssp245_member_pairing(self, gcm):
+        """D2: every G6 member has a match in the SSP245 store."""
+        result = check_g6_ssp245_member_pairing(gcm, "G6-1.5K")
+        if result.status == CheckStatus.SKIP:
+            pytest.skip(result.message)
+        assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
