@@ -210,6 +210,15 @@ class TestBCSDConfigConstruction:
                 cfg = BCSDConfig(gcm=gcm, variable="tas", ensemble_member="r1i1p1f1")
                 assert cfg.gcm == gcm
 
+    def test_apply_ocean_mask_defaults_true(self, minimal_config):
+        assert minimal_config.apply_ocean_mask is True
+
+    def test_apply_ocean_mask_can_be_disabled(self):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", apply_ocean_mask=False
+        )
+        assert cfg.apply_ocean_mask is False
+
     def test_model_copy_version_override(self, scenario_config):
         v2 = scenario_config.model_copy(update={"version": "v2"})
         assert v2.version == "v2"
