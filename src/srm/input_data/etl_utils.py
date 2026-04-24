@@ -2,13 +2,10 @@
 import dask
 import icechunk
 import xarray as xr
-import zarr
 from obspec_utils.registry import ObjectStoreRegistry
 from virtualizarr.parsers import HDFParser
 
-from srm.config import VarSpec, init_repo
-
-ENSEMBLE_MEMBER_MAPPING = {f"{i:03d}": f"r{i}i1p1f1" for i in [1, 2, 3, 4, 5, 7, 8, 9, 10]}
+from srm.config import VarSpec
 
 
 def compute_wind_speed(
@@ -198,11 +195,3 @@ def load_dtr_from_store(
     dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")
     dtr.attrs["units"] = "K"
     return dtr.to_dataset()
-
-
-def remap_ensemble_members(bucket: str, prefix: str, mapping: dict) -> None:
-    repo, session = init_repo(bucket, prefix, readonly=False)
-    root = zarr.open_group(session.store, mode="r+")
-    em_array = root["ensemble_member"]
-    em_array[:] = [mapping.get(v, v) for v in em_array[:]]
-    session.commit("remap ensemble_member coords to CMIP6 ripf labels")

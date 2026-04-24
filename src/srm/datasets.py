@@ -30,7 +30,7 @@ class BaseDataset(ABC):
     region: str = "us-west-2"
     expected_vars: list[VarSpec] | None = None
     ensemble_members: list[str] | None = None
-    ensemble_member_inferred: list[str] | None = None
+    ensemble_member: list[str] | None = None
     license: str | None = None
     citation: str | None = None
 
@@ -180,17 +180,12 @@ class VirtualDataset(BaseDataset):
 class Catalog:
     def __init__(self):
         self.datasets: dict[str, BaseDataset] = {
-            "CESM2-WACCM-historical-icechunk": Dataset(
-                name="CESM2-WACCM-historical-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2_WACCM_Historical.icechunk",
+            "CESM2-WACCM-historical-icechunk-old": Dataset(
+                name="CESM2-WACCM-historical-icechunk-old",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2_WACCM_Historical_old.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={
-                    "ensemble_member_inferred": 1,
-                    "time": 480,
-                    "lat": 192,
-                    "lon": 288,
-                },
+                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
+                expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
                 license="CC-BY-4.0",
                 citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 CMIP historical. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10071",
                 expected_vars=[
@@ -206,26 +201,38 @@ class Catalog:
                     VarStandards.DTR,
                 ],
             ),
-            "CESM2-WACCM-historical-icechunk-dev": Dataset(
-                name="CESM2-WACCM-historical-icechunk-dev",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/dev/CESM2_WACCM_Historical_pangeo.icechunk",
+            "CESM2-WACCM-historical-icechunk": Dataset(
+                name="CESM2-WACCM-historical-icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2_WACCM_Historical.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={
-                    "ensemble_member_inferred": 1,
-                    "time": 480,
-                    "lat": 192,
-                    "lon": 288,
-                },
+                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
+                expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
                 license="CC-BY-4.0",
                 citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 CMIP historical. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10071",
                 ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
-                ensemble_member_inferred=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
                 expected_vars=[
                     VarStandards.HURS,
                     VarStandards.PR,
                     VarStandards.RSDS,
                     VarStandards.TAS,
+                ],
+            ),
+            "CESM2-WACCM-historical-virtual-old": VirtualDataset(
+                name="CESM2-WACCM-historical-virtual-old",
+                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical-virtual_old.icechunk",
+                format="icechunk",
+                license="CC-BY-4.0",
+                citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 CMIP historical. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10071",
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.HUSS,
+                    VarStandards.PR,
+                    VarStandards.PS,
+                    VarStandards.RLDS,
+                    VarStandards.RSDS,
+                    VarStandards.TAS,
+                    VarStandards.TASMAX,
+                    VarStandards.TASMIN,
                 ],
             ),
             "CESM2-WACCM-historical-virtual": VirtualDataset(
@@ -246,39 +253,13 @@ class Catalog:
                     VarStandards.TASMIN,
                 ],
             ),
-            "CESM2-WACCM-G6-1.5K-icechunk-dev": Dataset(
-                name="CESM2-WACCM-G6-1.5K-icechunk-dev",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/dev/CESM2-WACCM-G6-1.5K-pangeo.icechunk",
+            "CESM2-WACCM-G6-1.5K-icechunk-old": Dataset(
+                name="CESM2-WACCM-G6-1.5K-icechunk-old",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k_pancakes_old.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={
-                    "ensemble_member_inferred": 1,
-                    "time": 480,
-                    "lat": 192,
-                    "lon": 288,
-                },
-                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
-                ensemble_member_inferred=["001", "002", "003"],
-                citation="Lee, W. R., Visioni, D., Wagman, B. M., Wentland, C. R., Kravitz, B., Watanabe, S., Sekiya, T., Jones, A., Haywood, J., Henry, M., and Bednarz, E. M. (2025). G6-1.5K-SAI and G6sulfur: changes in impacts and uncertainty depending on stratospheric aerosol injection strategy in the Geoengineering Model Intercomparison Project. EGUsphere [preprint]. https://doi.org/10.5194/egusphere-2025-5742. Simulations run by Walker Lee using CESM2 (https://doi.org/10.5065/D67H1H0V). Walker Lee granted permission to share this data.",
-                expected_vars=[
-                    VarStandards.PR,
-                    VarStandards.TAS,
-                    VarStandards.HURS,
-                    VarStandards.RSDS,
-                ],
-            ),
-            "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
-                name="CESM2-WACCM-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k_pancakes.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={
-                    "ensemble_member_inferred": 1,
-                    "time": 480,
-                    "lat": 192,
-                    "lon": 288,
-                },
-                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
+                expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
+                ensemble_members=["001", "002", "003"],
                 citation="Lee, W. R., Visioni, D., Wagman, B. M., Wentland, C. R., Kravitz, B., Watanabe, S., Sekiya, T., Jones, A., Haywood, J., Henry, M., and Bednarz, E. M. (2025). G6-1.5K-SAI and G6sulfur: changes in impacts and uncertainty depending on stratospheric aerosol injection strategy in the Geoengineering Model Intercomparison Project. EGUsphere [preprint]. https://doi.org/10.5194/egusphere-2025-5742. Simulations run by Walker Lee using CESM2 (https://doi.org/10.5065/D67H1H0V). Walker Lee granted permission to share this data.",
                 expected_vars=[
                     VarStandards.PR,
@@ -293,9 +274,29 @@ class Catalog:
                     VarStandards.DTR,
                 ],
             ),
-            "CESM2-WACCM-G6-1.5K-virtual-dev": VirtualDataset(
-                name="CESM2-WACCM-G6-1.5K-virtual-dev",
-                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/dev/CESM2-WACCM-G6-1.5K-virtual.icechunk",
+            "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
+                name="CESM2-WACCM-G6-1.5K-icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k_pancakes.icechunk",
+                format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 480,
+                    "lat": 192,
+                    "lon": 288,
+                },
+                ensemble_members=["001", "002", "003"],
+                citation="Lee, W. R., Visioni, D., Wagman, B. M., Wentland, C. R., Kravitz, B., Watanabe, S., Sekiya, T., Jones, A., Haywood, J., Henry, M., and Bednarz, E. M. (2025). G6-1.5K-SAI and G6sulfur: changes in impacts and uncertainty depending on stratospheric aerosol injection strategy in the Geoengineering Model Intercomparison Project. EGUsphere [preprint]. https://doi.org/10.5194/egusphere-2025-5742. Simulations run by Walker Lee using CESM2 (https://doi.org/10.5065/D67H1H0V). Walker Lee granted permission to share this data.",
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.PR,
+                    VarStandards.RSDS,
+                    VarStandards.TAS,
+                ],
+            ),
+            "CESM2-WACCM-G6-1.5K-virtual-old": VirtualDataset(
+                name="CESM2-WACCM-G6-1.5K-virtual-old",
+                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5K-virtual_old.icechunk",
                 format="icechunk",
                 citation="Lee, W. R., Visioni, D., Wagman, B. M., Wentland, C. R., Kravitz, B., Watanabe, S., Sekiya, T., Jones, A., Haywood, J., Henry, M., and Bednarz, E. M. (2025). G6-1.5K-SAI and G6sulfur: changes in impacts and uncertainty depending on stratospheric aerosol injection strategy in the Geoengineering Model Intercomparison Project. EGUsphere [preprint]. https://doi.org/10.5194/egusphere-2025-5742. Simulations run by Walker Lee using CESM2 (https://doi.org/10.5065/D67H1H0V). Walker Lee granted permission to share this data.",
                 expected_vars=[
@@ -322,39 +323,12 @@ class Catalog:
                     VarStandards.PS,
                 ],
             ),
-            "CESM2-WACCM-SSP245-icechunk-dev": Dataset(
-                name="CESM2-WACCM-SSP245-icechunk-dev",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/dev/CESM2_WACCM_SSP245_pangeo.icechunk",
+            "CESM2-WACCM-SSP245-icechunk-old": Dataset(
+                name="CESM2-WACCM-SSP245-icechunk-old",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2_WACCM_SSP245_old.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={
-                    "ensemble_member_inferred": 1,
-                    "time": 480,
-                    "lat": 192,
-                    "lon": 288,
-                },
-                license="CC-BY-4.0",
-                citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 ScenarioMIP ssp245. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10101",
-                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
-                ensemble_member_inferred=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
-                expected_vars=[
-                    VarStandards.HURS,
-                    VarStandards.PR,
-                    VarStandards.RSDS,
-                    VarStandards.TAS,
-                ],
-            ),
-            "CESM2-WACCM-SSP245-icechunk": Dataset(
-                name="CESM2-WACCM-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2_WACCM_SSP245.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={
-                    "ensemble_member_inferred": 1,
-                    "time": 480,
-                    "lat": 192,
-                    "lon": 288,
-                },
+                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
+                expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
                 license="CC-BY-4.0",
                 citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 ScenarioMIP ssp245. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10101",
                 ensemble_members=[
@@ -381,9 +355,66 @@ class Catalog:
                     VarStandards.DTR,
                 ],
             ),
+            "CESM2-WACCM-SSP245-icechunk": Dataset(
+                name="CESM2-WACCM-SSP245-icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2_WACCM_SSP245.icechunk",
+                format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 480,
+                    "lat": 192,
+                    "lon": 288,
+                },
+                license="CC-BY-4.0",
+                citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 ScenarioMIP ssp245. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10101",
+                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                expected_vars=[
+                    VarStandards.HURS,
+                    VarStandards.PR,
+                    VarStandards.RSDS,
+                    VarStandards.TAS,
+                ],
+            ),
+            "CESM2-WACCM-SSP245-001-005-virtual-old": VirtualDataset(
+                name="CESM2-WACCM-SSP245-001-005-virtual-old",
+                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245-001-005-virtual_old.icechunk",
+                format="icechunk",
+                license="CC-BY-4.0",
+                citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 ScenarioMIP ssp245. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10101",
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.HURS,
+                    VarStandards.RSDS,
+                    VarStandards.HUSS,
+                    VarStandards.RLDS,
+                    VarStandards.PS,
+                ],
+            ),
             "CESM2-WACCM-SSP245-001-005-virtual": VirtualDataset(
                 name="CESM2-WACCM-SSP245-001-005-virtual",
                 virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245-001-005-virtual.icechunk",
+                format="icechunk",
+                license="CC-BY-4.0",
+                citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 ScenarioMIP ssp245. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10101",
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.HURS,
+                    VarStandards.RSDS,
+                    VarStandards.HUSS,
+                    VarStandards.RLDS,
+                    VarStandards.PS,
+                ],
+            ),
+            "CESM2-WACCM-SSP245-007-010-virtual-old": VirtualDataset(
+                name="CESM2-WACCM-SSP245-007-010-virtual-old",
+                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245-007-010-virtual_old.icechunk",
                 format="icechunk",
                 license="CC-BY-4.0",
                 citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 ScenarioMIP ssp245. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10101",
@@ -439,9 +470,9 @@ class Catalog:
                 name="MIROC-ES2H-historical-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/historical/icechunk/MIROC-ES2H-historical.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 60, "lat": 128, "lon": 256},
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
                 expected_shards={
-                    "ensemble_member_inferred": 1,
+                    "ensemble_member": 1,
                     "time": 960,
                     "lat": 128,
                     "lon": 256,
@@ -481,9 +512,9 @@ class Catalog:
                 name="MIROC-ES2H-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/ssp245/icechunk/MIROC-ES2H-SSP245.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 60, "lat": 128, "lon": 256},
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
                 expected_shards={
-                    "ensemble_member_inferred": 1,
+                    "ensemble_member": 1,
                     "time": 960,
                     "lat": 128,
                     "lon": 256,
@@ -522,9 +553,9 @@ class Catalog:
                 name="MIROC-ES2H-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/G6-1.5K/icechunk/MIROC-ES2H-G6-1.5K.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 60, "lat": 128, "lon": 256},
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
                 expected_shards={
-                    "ensemble_member_inferred": 1,
+                    "ensemble_member": 1,
                     "time": 960,
                     "lat": 128,
                     "lon": 256,
@@ -562,9 +593,9 @@ class Catalog:
                 name="MIROC-ES2H-baseline-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/baseline/icechunk/MIROC-ES2H-baseline.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 60, "lat": 128, "lon": 256},
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
                 expected_shards={
-                    "ensemble_member_inferred": 1,
+                    "ensemble_member": 1,
                     "time": 960,
                     "lat": 128,
                     "lon": 256,
@@ -586,9 +617,9 @@ class Catalog:
                 name="UKESM-historical-icechunk",
                 path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-historical/UKESM-historical.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 60, "lat": 144, "lon": 192},
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={
-                    "ensemble_member_inferred": 1,
+                    "ensemble_member": 1,
                     "time": 960,
                     "lat": 144,
                     "lon": 192,
@@ -642,9 +673,9 @@ class Catalog:
                 name="UKESM-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245/UKESM_SSP245.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 60, "lat": 144, "lon": 192},
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={
-                    "ensemble_member_inferred": 1,
+                    "ensemble_member": 1,
                     "time": 960,
                     "lat": 144,
                     "lon": 192,
@@ -700,9 +731,9 @@ class Catalog:
                 name="UKESM-G6-1.5K-icechunk",
                 path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K/UKESM_G6_1.5K.icechunk",
                 format="icechunk",
-                expected_chunks={"ensemble_member_inferred": 1, "time": 60, "lat": 144, "lon": 192},
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={
-                    "ensemble_member_inferred": 1,
+                    "ensemble_member": 1,
                     "time": 960,
                     "lat": 144,
                     "lon": 192,
