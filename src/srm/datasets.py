@@ -24,8 +24,12 @@ class VirtualChunkContainerConfig:
 
 
 @dataclass(kw_only=True)
-class BaseDataset(ABC):
+class BaseCatalogEntry:
     name: str
+
+
+@dataclass(kw_only=True)
+class BaseDataset(BaseCatalogEntry, ABC):
     format: typing.Literal["zarr", "icechunk"]
     region: str = "us-west-2"
     expected_vars: list[VarSpec] | None = None
@@ -145,6 +149,22 @@ class Dataset(BaseDataset):
             return xr.open_zarr(self.path)
         else:
             raise ValueError(f"Unknown format: {self.format}")
+
+
+@dataclass(kw_only=True)
+class VectorDataset(BaseCatalogEntry):
+    """A vector dataset stored as a GeoParquet file (S3 or local)."""
+
+    path: str | CloudPath
+
+    def __post_init__(self):
+        if isinstance(self.path, str):
+            self.path = CloudPath(self.path)
+
+    def to_geodataframe(self):
+        import geopandas as gpd
+
+        return gpd.read_parquet(str(self.path))
 
 
 @dataclass(kw_only=True)
@@ -816,9 +836,13 @@ class Catalog:
                 format="icechunk",
                 expected_vars=[VarStandards.TAS],
             ),
+            "ocean-mask": VectorDataset(
+                name="ocean-mask",
+                path="s3://carbonplan-srm/input/vector/GSHHS/GSHHS.parquet",
+            ),
         }
 
-    def get(self, name: str) -> BaseDataset:
+    def get(self, name: str) -> BaseDataset | VectorDataset:
         if name not in self.datasets:
             raise KeyError(f"Dataset {name} not found.")
         return self.datasets[name]
