@@ -766,22 +766,6 @@ class Catalog:
                 format="icechunk",
                 expected_vars=[VarStandards.TAS],
             ),
-            "GDEX": Dataset(
-                name="GDEX",
-                path="s3://carbonplan-srm/input/tensor/NCAR/GDEX.icechunk",
-                format="icechunk",
-                expected_chunks={"time": 1, "lat": 720, "lon": 1440},
-                expected_shards={"time": 30, "lat": 720, "lon": 1440},
-                expected_vars=[
-                    VarStandards.RLDS,
-                    VarStandards.RSDS,
-                    VarStandards.PR,
-                    VarStandards.PS,
-                    VarStandards.HUSS,
-                    VarStandards.TASMAX,
-                    VarStandards.TASMIN,
-                ],
-            ),
             "ocean-mask": VectorDataset(
                 name="ocean-mask",
                 path="s3://carbonplan-srm/input/vector/GSHHS/GSHHS.parquet",
