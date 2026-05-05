@@ -373,16 +373,8 @@ def _derivation_logic(config: BaseMIROC_ES2H_Config) -> str:
         return (
             "Extracted from CMIP6 DRS filename: "
             "url.split('.nc')[0].split('_gn')[0].split('_')[-1]. "
-            "Corroborated by variant_label, realization_index, physics_index, "
-            "forcing_index, and tracking_id attrs in source files (all match; "
-            "verified via source NetCDF audit)."
         )
-    return (
-        "Raw filename suffix: url.split('.nc')[0].split('_')[-1] (e.g. 'r01'). "
-        "GeoMIP source files (CF-1.0) contain no ensemble metadata in attrs — "
-        "no variant_label, realization_index, or member_id. "
-        "ID is the literal filename suffix; no remapping applied."
-    )
+    return "Raw filename suffix: url.split('.nc')[0].split('_')[-1] (e.g. 'r01'). "
 
 
 def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseMIROC_ES2H_Config) -> xr.Dataset:

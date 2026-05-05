@@ -196,17 +196,14 @@ def _preprocess_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
 def _finalize_metadata(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
     """Records the logic and the lineage chain for the entire dataset."""
 
-    # 1. Technical Derivation Logic
     if config.scenario in PANGEO_SCENARIOS:
         derivation_logic = "Extracted from dataset attribute 'variant_label'"
     else:
         derivation_logic = "Extracted from suffix of dataset attribute 'case' via regex"
 
-    # 2. Build Lineage Chain (e.g., piControl -> historical -> ssp245)
     parent_exp = ds.attrs.get("parent_experiment_id", "unknown_parent")
     lineage = f"{parent_exp} -> {config.scenario}"
 
-    # 3. Consolidate Global Attributes
     etl_attrs = {
         "scenario": config.scenario,
         "model": "CESM2-WACCM",
@@ -218,22 +215,15 @@ def _finalize_metadata(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
         ),
     }
 
-    # Add CMORization to steps if relevant to the variables in the DS
     if any(v in config.cmorization_functions for v in ds.data_vars):
         etl_attrs["processing_steps"] += ", cmorization_unit_conversion"
 
     ds.attrs.update(etl_attrs)
 
-    # 4. Cleanup temporary global tags passed from preprocess
     if "_source_manifest" in ds.attrs:
         del ds.attrs["_source_manifest"]
 
-    # member_specific_provenance JSON already attached to ensemble_member coord in get_CESM_WACCM_ds;
-    # apply_ensemble_provenance merges long_name + derivation_method without clobbering it.
     return apply_ensemble_provenance(ds, derivation_logic)
-
-
-# --- DATA FETCHING ---
 
 
 def get_CESM_WACCM_ds(experiment_id: Literal["historical", "ssp245"]) -> xr.Dataset:

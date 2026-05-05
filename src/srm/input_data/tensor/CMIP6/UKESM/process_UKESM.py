@@ -101,7 +101,6 @@ class UKESM_G6_1p5K_Config(BaseUKESM_Config):
     scenario: str = "G6-1.5K"
     catalog_key: str = "UKESM-G6-1.5K-virtual"
     # t_pr_catalog_key intentionally absent: Cindy's G6-1.5K T/PR files were identical to
-    # SSP245 throughout the full period (not just pre-SAI baseline). Suspect transfer error.
     # Reinstate once source files are confirmed distinct. Only hurs/rsds from CEDA written.
     materialized_key: str = "UKESM-G6-1.5K-icechunk"
     s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K"
@@ -280,16 +279,9 @@ def _preprocess_ukesm(
     config: BaseUKESM_Config,
     subset: bool = False,
 ) -> xr.Dataset:
-    # OUR TEMP/PR data has values from 2015-2099. it should be 2035-2085
-    if isinstance(config, UKESM_G6_1p5K_Config):
-        ds = ds.sel(time=slice("2035-01-01", "2084-12-30"))
-
-    # subset before convert_calendar: avoids building large task graph over full time axis
     if subset:
         ds = ds.isel(time=slice(0, 365))
 
-    # skip drop_duplicates for historical: CEDA CMORized data is clean, and
-    # drop_duplicates generates a large task graph that overwhelms the dask scheduler
     if not isinstance(config, UKESM_Historical_Config):
         ds = ds.drop_duplicates(dim="time", keep="first")
     ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False, align_on="date")
@@ -317,10 +309,8 @@ def _derivation_logic(config: BaseUKESM_Config) -> str:
             "(001->r12i1p1f2, 002->r2i1p1f2, 003->r3i1p1f2)."
         )
     return (
-        "Extracted from CMIP6 DRS filename: "
-        "url.split('.nc')[0].split('_gn')[0].split('_')[-1]. "
-        "Source files are CMORized UKESM CMIP6 data; member ID matches the DRS path segment."
-    )
+        "Extracted from CMIP6 filename: "
+        "url.split('.nc')[0].split('_gn')[0].split('_')[-1]. "    )
 
 
 def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> xr.Dataset:
