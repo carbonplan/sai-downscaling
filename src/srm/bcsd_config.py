@@ -325,31 +325,6 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         """Check if this is an SAI intervention scenario"""
         return self.scenario and ("G6" in self.scenario.upper() or "SAI" in self.scenario.upper())
 
-    def to_legacy_kwargs(self) -> dict:
-        """
-        Convert to kwargs dict for legacy run_bcsd function.
-        Useful for backward compatibility during transition.
-        """
-        kwargs = {
-            "gcm": self.gcm,
-            "var_name": self.variable,
-            "train_period_start": self.train_period_start,
-            "train_period_end": self.train_period_end,
-            "verbose": self.verbose,
-            "rechunk_workflow": self.rechunk_workflow,
-            "subset_bounds": list(self.subset_bounds) if self.subset_bounds else None,
-        }
-
-        if self.scenario:
-            kwargs.update(
-                {
-                    "predict_period_start": self.predict_period_start,
-                    "predict_period_end": self.predict_period_end,
-                }
-            )
-
-        return kwargs
-
 
 class CacheConfig(BaseModel):
     """Configuration for artifact caching behavior"""
@@ -461,9 +436,4 @@ import yaml
 with open("configs/cesm_tas.yaml") as f:
     config_dict = yaml.safe_load(f)
 config = BCSDConfig(**config_dict)
-
-# 6. Convert to legacy format (backward compatibility)
-legacy_kwargs = config.to_legacy_kwargs()
-from srm.run_bcsd import run_bcsd
-result = run_bcsd(**legacy_kwargs)
 '''
