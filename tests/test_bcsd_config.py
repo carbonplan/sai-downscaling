@@ -394,40 +394,6 @@ class TestBCSDConfigValidation:
 # ---------------------------------------------------------------------------
 
 
-class TestToLegacyKwargs:
-    """Backward-compatibility helper converts fields to the legacy function signature."""
-
-    def test_historical_only_keys(self, minimal_config):
-        kwargs = minimal_config.to_legacy_kwargs()
-        assert kwargs["gcm"] == "CESM2-WACCM"
-        assert kwargs["var_name"] == "tas"
-        assert kwargs["train_period_start"] == 1978
-        assert kwargs["train_period_end"] == 2014
-
-    def test_historical_only_excludes_predict_period(self, minimal_config):
-        kwargs = minimal_config.to_legacy_kwargs()
-        assert "predict_period_start" not in kwargs
-        assert "predict_period_end" not in kwargs
-
-    def test_scenario_includes_predict_period(self, scenario_config):
-        kwargs = scenario_config.to_legacy_kwargs()
-        assert kwargs["predict_period_start"] == 2015
-        assert kwargs["predict_period_end"] == 2100
-
-    def test_global_run_subset_bounds_is_none(self, minimal_config):
-        assert minimal_config.to_legacy_kwargs()["subset_bounds"] is None
-
-    def test_regional_run_subset_bounds_is_list(self, regional_config):
-        kwargs = regional_config.to_legacy_kwargs()
-        assert isinstance(kwargs["subset_bounds"], list)
-        assert kwargs["subset_bounds"] == [-35.0, -22.0, 16.0, 33.0]
-
-    def test_verbose_and_rechunk_present(self, minimal_config):
-        kwargs = minimal_config.to_legacy_kwargs()
-        assert "verbose" in kwargs
-        assert "rechunk_workflow" in kwargs
-
-
 # ---------------------------------------------------------------------------
 # CacheConfig
 # ---------------------------------------------------------------------------
