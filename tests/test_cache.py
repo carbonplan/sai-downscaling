@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from srm.bcsd_config import BCSDConfig, VariableConfig
-from srm.cache import ArtifactCache
+from srm.cache import ArtifactCache, CacheCheckError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -442,6 +442,43 @@ class TestExists:
         storage = icechunk.local_filesystem_storage(path=str(store))
         icechunk.Repository.open_or_create(storage)
         assert local_cache.exists(str(store)) is False
+
+    def test_non_icechunk_exception_raises_cache_check_error(
+        self, local_cache, tmp_path, monkeypatch
+    ):
+        import icechunk
+
+        def raise_os_error(*a, **kw):
+            raise OSError("simulated network timeout")
+
+        monkeypatch.setattr(icechunk.Repository, "open", raise_os_error)
+        with pytest.raises(CacheCheckError):
+            local_cache.exists(str(tmp_path / "any.icechunk"))
+
+    def test_icechunk_error_without_not_found_message_raises_cache_check_error(
+        self, local_cache, tmp_path, monkeypatch
+    ):
+        import icechunk
+
+        def raise_other_icechunk_error(*a, **kw):
+            raise icechunk.IcechunkError("chunk read failure")
+
+        monkeypatch.setattr(icechunk.Repository, "open", raise_other_icechunk_error)
+        with pytest.raises(CacheCheckError):
+            local_cache.exists(str(tmp_path / "any.icechunk"))
+
+    def test_cache_check_error_chains_original_exception(self, local_cache, tmp_path, monkeypatch):
+        import icechunk
+
+        original = OSError("disk full")
+
+        def raise_original(*a, **kw):
+            raise original
+
+        monkeypatch.setattr(icechunk.Repository, "open", raise_original)
+        with pytest.raises(CacheCheckError) as exc_info:
+            local_cache.exists(str(tmp_path / "any.icechunk"))
+        assert exc_info.value.__cause__ is original
 
 
 # ---------------------------------------------------------------------------
