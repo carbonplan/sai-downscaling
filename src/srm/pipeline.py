@@ -349,6 +349,98 @@ class BCSDPipeline:
 
         return output_path
 
+    def _load_gcm_obs(self) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+        """Load obs_coarse (from cache), obs_fine, and model_hist, subsetted to training period."""
+        deps = self.cache.check_dependencies("fit_historical", self.config)
+        obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
+
+        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+
+        model_hist = get_experiment(
+            gcm=self.config.gcm, scenario="historical", var=self.config.variable
+        )
+        if "ensemble_member" in model_hist.dims:
+            model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+        model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
+
+        if self.config.subset_bounds:
+            lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
+            lat_bounds = (lat_min, lat_max)
+            lon_bounds = (lon_min, lon_max)
+            obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+            model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+
+        train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
+        obs_coarse = obs_coarse.sel(time=train_slice)
+        obs_fine = obs_fine.sel(time=train_slice)
+        model_hist = model_hist.sel(time=train_slice)
+
+        return obs_coarse, obs_fine, model_hist
+
+    def _apply_bias_correction(
+        self,
+        obs_coarse: xr.DataArray,
+        model_hist: xr.DataArray,
+    ) -> xr.DataArray:
+        """Apply quantile mapping to historical GCM data.
+
+        Uses nonparametric mapping for the nonparametric_hybrid case because modeled
+        historical is always within its own range, making the parametric tail unnecessary.
+        """
+        mapping_type = (
+            "nonparametric"
+            if self.config.mapping_type == "nonparametric_hybrid"
+            else self.config.mapping_type
+        )
+        debiaser = _make_debiaser(
+            variable=self.config.variable,
+            mapping_type=mapping_type,
+            detrending="no_detrending",
+            running_window_mode=self.config.do_windowing,
+            running_window_length=self.config.running_window_length,
+            running_window_step_length=1,
+            running_window_mode_over_years_of_cm_future=False,
+        )
+
+        obs_np = obs_coarse.as_numpy().values
+        cm_hist_np = model_hist.as_numpy().values
+
+        debiased_np = debiaser.apply(
+            obs=obs_np,
+            cm_hist=cm_hist_np,
+            cm_future=cm_hist_np,  # debias historical with itself
+            time_obs=obs_coarse["time"].values,
+            time_cm_hist=model_hist["time"].values,
+            time_cm_future=model_hist["time"].values,
+            parallel=True,
+            nr_processes=dask.system.CPU_COUNT,
+            progressbar=False,
+            failsafe=True,  # ocean pixels have NaN obs; fill with NaN rather than crash
+        )
+
+        return xr.DataArray(
+            data=debiased_np,
+            coords={"lat": model_hist["lat"], "lon": model_hist["lon"], "time": model_hist["time"]},
+            dims=["time", "lat", "lon"],
+        )
+
+    def _apply_spatial_downscaling(
+        self,
+        debiased: xr.DataArray,
+        obs_coarse: xr.DataArray,
+        obs_fine: xr.DataArray,
+    ) -> xr.DataArray:
+        """Spatially disaggregate coarse debiased data to fine resolution."""
+        downscaled = downscale_from_coarse(
+            da=debiased,
+            obs_coarse=obs_coarse.as_numpy(),
+            obs_fine=obs_fine.as_numpy(),
+            method=self.config.downscaling_method,
+            clim_method=self.config.downscaling_clim_method,
+        )
+        return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
+
     def fit_historical(self, force: bool = False) -> str:
         """
         Stage 2: Downscale historical period.
@@ -390,13 +482,10 @@ class BCSDPipeline:
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
         """
-        # Validate dependencies to make sure that this step of the pipeline is ready to run
         self.cache.validate_dependencies("fit_historical", self.config)
 
         output_path = self.cache.historical_path
 
-        # Check cache to see if this step has already run. If a dataset already exists at that
-        # path, then skip this section and just return the output path.
         if self.cache.exists(output_path) and not force:
             if self.config.verbose:
                 logger.info(f"✓ Using cached historical: {output_path}")
@@ -409,127 +498,27 @@ class BCSDPipeline:
             )
 
         with Timer("Loaded data", verbose=self.config.verbose):
-            # Load cached coarse observations
-            deps = self.cache.check_dependencies("fit_historical", self.config)
-            obs_coarse_path = deps["obs_regridded"][1]
-            obs_coarse = self._open_from_icechunk(obs_coarse_path)[self.config.variable]
+            obs_coarse, obs_fine, model_hist = self._load_gcm_obs()
 
-            # Load fine observations
-            obs_fine = get_obs(var=self.config.variable)
-            obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
-
-            # Load historical GCM
-            model_hist = get_experiment(
-                gcm=self.config.gcm, scenario="historical", var=self.config.variable
-            )
-            # Historical data may not have ensemble_member dimension
-            if "ensemble_member" in model_hist.dims:
-                model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
-            model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
-
-            # Subset spatially if requested
-            if self.config.subset_bounds:
-                lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
-                lat_bounds = (lat_min, lat_max)
-                lon_bounds = (lon_min, lon_max)
-                obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
-                model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
-
-            # Subset time to training period
-            obs_coarse = obs_coarse.sel(
-                time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
-            )
-            obs_fine = obs_fine.sel(
-                time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
-            )
-            model_hist = model_hist.sel(
-                time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
-            )
-
-        # Bias correct (quantile mapping)
         with Timer("Bias corrected historical", verbose=self.config.verbose):
-            # For detrending the historical and doing a nonparametric/parametric hybrid quantile mapping
-            # method, just use the nonparametric version because by definition the modeled historical period will
-            # always be within the range of the modeled historical, so it's never necessary to
-            # use the parametric version for out of range modeled values.
-            if self.config.mapping_type == "nonparametric_hybrid":
-                debiaser = _make_debiaser(
-                    variable=self.config.variable,
-                    mapping_type="nonparametric",
-                    detrending="no_detrending",
-                    running_window_mode=self.config.do_windowing,
-                    running_window_length=self.config.running_window_length,
-                    running_window_step_length=1,
-                    running_window_mode_over_years_of_cm_future=False,
-                )
-            else:
-                debiaser = _make_debiaser(
-                    variable=self.config.variable,
-                    mapping_type=self.config.mapping_type,
-                    detrending="no_detrending",
-                    running_window_mode=self.config.do_windowing,
-                    running_window_length=self.config.running_window_length,
-                    running_window_step_length=1,
-                    running_window_mode_over_years_of_cm_future=False,
-                )
-
-            # Convert to numpy for ibicus
-            obs_np = obs_coarse.as_numpy().values
-            cm_hist_np = model_hist.as_numpy().values
-
-            # Apply quantile mapping reading in the
-            # historical GCM simulation as both historical
-            # and
-            model_hist_debiased_np = debiaser.apply(
-                obs=obs_np,
-                cm_hist=cm_hist_np,
-                cm_future=cm_hist_np,  # Debias historical with itself
-                time_obs=obs_coarse["time"].values,
-                time_cm_hist=model_hist["time"].values,
-                time_cm_future=model_hist["time"].values,
-                parallel=True,
-                nr_processes=dask.system.CPU_COUNT,
-                progressbar=False,
-                failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
-            )
-
-            # Convert back to xarray
-            model_hist_debiased = xr.DataArray(
-                data=model_hist_debiased_np,
-                coords={
-                    "lat": model_hist["lat"],
-                    "lon": model_hist["lon"],
-                    "time": model_hist["time"],
-                },
-                dims=["time", "lat", "lon"],
-            )
+            model_hist_debiased = self._apply_bias_correction(obs_coarse, model_hist)
 
             if self.config.save_intermediate:
                 with Timer("Saved coarse debiased to cache", verbose=self.config.verbose):
                     debiased_path = self.cache.get_debiased_historical_path(self.config)
                     model_hist_debiased.name = self.config.variable
-                    model_hist_debiased.attrs = model_hist.attrs  # Preserve units and metadata
+                    model_hist_debiased.attrs = model_hist.attrs
                     self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
                     if self.config.verbose:
                         logger.info(f"✓ Saved debiased historical: {debiased_path}")
 
-        # Spatially disaggregate
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
-            model_hist_downscaled = downscale_from_coarse(
-                da=model_hist_debiased,
-                obs_coarse=obs_coarse.as_numpy(),
-                obs_fine=obs_fine.as_numpy(),
-                method=self.config.downscaling_method,
-                clim_method=self.config.downscaling_clim_method,
-            )
-            model_hist_downscaled = model_hist_downscaled.chunk(
-                {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+            model_hist_downscaled = self._apply_spatial_downscaling(
+                model_hist_debiased, obs_coarse, obs_fine
             )
 
-        # Save to cache
         with Timer("Saved to cache", verbose=self.config.verbose):
             model_hist_downscaled.name = self.config.variable
-
             hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
             dataset_attrs = self._build_output_attrs(hist_dataset)
             self._write_to_icechunk(
