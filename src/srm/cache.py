@@ -20,6 +20,14 @@ from srm.bcsd_config import BCSDConfig, MappingType, VariableConfig
 logger = logging.getLogger(__name__)
 
 
+class CacheCheckError(Exception):
+    """Raised when an infrastructure error prevents verifying cache existence.
+
+    Distinguishes real errors (S3 auth failure, permission denied, network error)
+    from a simple cache miss. Callers can catch this to decide fallback behavior.
+    """
+
+
 class ArtifactCache:
     """
     S3-based cache manager with dependency tracking.
@@ -261,9 +269,9 @@ class ArtifactCache:
         bool
             True if the store exists and has a 'write complete' commit in its ancestry
         """
-        try:
-            import icechunk
+        import icechunk
 
+        try:
             if path.startswith("s3://"):
                 path_no_scheme = path[len("s3://") :]
                 bucket, _, prefix = path_no_scheme.partition("/")
@@ -279,9 +287,13 @@ class ArtifactCache:
             else:
                 logger.debug(f"Cache miss (no write complete commit): {path}")
             return result
+        except icechunk.IcechunkError as e:
+            if "doesn't exist" in str(e) or "does not exist" in str(e):
+                logger.debug(f"Cache miss: {path}: {e}")
+                return False
+            raise CacheCheckError(f"Failed to check cache at {path}") from e
         except Exception as e:
-            logger.debug(f"Cache miss: {path}: {e}")
-            return False
+            raise CacheCheckError(f"Failed to check cache at {path}") from e
 
     def check_dependencies(self, stage: str, config: BCSDConfig) -> dict[str, tuple[bool, str]]:
         """
