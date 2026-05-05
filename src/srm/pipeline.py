@@ -534,6 +534,245 @@ class BCSDPipeline:
 
         return output_path
 
+    def _load_scenario_data(
+        self,
+    ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None]:
+        """Load obs_coarse, obs_fine, model_hist, model_scenario, and optionally ssp_timeseries.
+
+        Returns (obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries).
+        obs_coarse/obs_fine/model_hist are subsetted to the training period;
+        model_scenario to the predict period. ssp_timeseries is None for non-SAI scenarios.
+        """
+        deps = self.cache.check_dependencies("transform_scenario", self.config)
+        obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
+
+        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+
+        model_hist = get_experiment(
+            gcm=self.config.gcm, scenario="historical", var=self.config.variable
+        )
+        if "ensemble_member" in model_hist.dims:
+            model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+        model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
+
+        model_scenario = get_experiment(
+            gcm=self.config.gcm, scenario=self.config.scenario, var=self.config.variable
+        )
+        model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
+        model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
+
+        # SAI scenarios need an SSP245 bridge to fill the gap between historical and SAI start
+        ssp_timeseries: xr.DataArray | None = None
+        if self.config.is_sai_scenario:
+            ssp_timeseries = get_experiment(
+                gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
+            )
+            ssp_timeseries = ssp_timeseries.sel(ensemble_member=self.config.ensemble_member)
+            ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
+
+        if self.config.subset_bounds:
+            lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
+            lat_bounds = (lat_min, lat_max)
+            lon_bounds = (lon_min, lon_max)
+            obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+            model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+            model_scenario = subset_space(
+                model_scenario, lat_bounds=lat_bounds, lon_bounds=lon_bounds
+            )
+            if ssp_timeseries is not None:
+                ssp_timeseries = subset_space(
+                    ssp_timeseries, lat_bounds=lat_bounds, lon_bounds=lon_bounds
+                )
+
+        train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
+        obs_coarse = obs_coarse.sel(time=train_slice)
+        obs_fine = obs_fine.sel(time=train_slice)
+        model_hist = model_hist.sel(time=train_slice)
+        model_scenario = model_scenario.sel(
+            time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
+        )
+
+        return obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries
+
+    def _detrend_scenario(
+        self,
+        model_hist: xr.DataArray,
+        model_scenario: xr.DataArray,
+        ssp_timeseries: xr.DataArray | None,
+    ) -> tuple[xr.DataArray, xr.DataArray | None]:
+        """Optionally detrend the scenario timeseries.
+
+        Returns (scenario_detrended, scenario_trend). When detrending is disabled,
+        returns (model_scenario, None) and scenario_trend will be None.
+
+        For SAI scenarios, stitches in SSP245 data to bridge the gap between the end of
+        historical (2014/2015) and the SAI simulation start (~2035) before detrending,
+        ensuring a smooth baseline for trend removal.
+        """
+        if not self.config.detrend_data:
+            return model_scenario, None
+
+        if self.config.rechunk_workflow:
+            with Timer("Rechunked for detrending", verbose=self.config.verbose):
+                model_hist = rechunk(model_hist, pattern="full_time").persist()
+                model_scenario = rechunk(model_scenario, pattern="full_time").persist()
+                if ssp_timeseries is not None:
+                    ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time").persist()
+
+        with Timer("Detrended scenario", verbose=self.config.verbose):
+            if self.config.is_sai_scenario:
+                # SAI simulations run from 2035 to 2084.
+                # Historical ends in 2014/2015, so stitch in SSP data for the gap.
+                historical_and_ssp = xr.concat(
+                    [
+                        model_hist.sel(time=model_hist["time.year"] < self.config.train_period_end),
+                        ssp_timeseries.sel(
+                            time=ssp_timeseries["time.year"] >= self.config.train_period_end
+                        ),
+                    ],
+                    dim="time",
+                )
+                historical_scenario = xr.concat(
+                    [
+                        historical_and_ssp.sel(
+                            time=historical_and_ssp["time.year"] < self.config.predict_period_start
+                        ),
+                        model_scenario.sel(
+                            time=model_scenario["time.year"] >= self.config.predict_period_start
+                        ),
+                    ],
+                    dim="time",
+                )
+            else:
+                historical_scenario = xr.concat(
+                    [
+                        model_hist.sel(
+                            time=model_hist["time.year"] < self.config.predict_period_start
+                        ),
+                        model_scenario.sel(
+                            time=model_scenario["time.year"] >= self.config.predict_period_start
+                        ),
+                    ],
+                    dim="time",
+                )
+
+            da_baseline_clim = calculate_baseline_climatology(
+                da_baseline=model_hist,
+                baseline_period_start=self.config.train_period_start,
+                baseline_period_end=self.config.train_period_end,
+            )
+
+            scenario_detrended, scenario_trend = detrend(
+                da=historical_scenario,
+                da_baseline_clim=da_baseline_clim,
+                detrend_method=self.config.detrend_method,
+            )
+
+            predict_slice = slice(
+                f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
+            )
+            scenario_detrended = scenario_detrended.sel(time=predict_slice)
+            scenario_trend = scenario_trend.sel(time=predict_slice)
+
+            if self.config.save_intermediate:
+                with Timer("Saved detrended to cache", verbose=self.config.verbose):
+                    detrended_path = self.cache.get_detrended_scenario_path(self.config)
+                    scenario_detrended.name = self.config.variable
+                    self._write_to_icechunk(
+                        rechunk(scenario_detrended, pattern="full_space"),
+                        detrended_path,
+                        "write complete",
+                    )
+                    if self.config.verbose:
+                        logger.info(f"✓ Saved detrended scenario: {detrended_path}")
+
+                with Timer("Saved trend to cache", verbose=self.config.verbose):
+                    trend_path = self.cache.get_trend_scenario_path(self.config)
+                    scenario_trend.name = self.config.variable
+                    scenario_trend.attrs = model_scenario.attrs
+                    self._write_to_icechunk(
+                        rechunk(scenario_trend, pattern="full_space"),
+                        trend_path,
+                        "write complete",
+                    )
+                    if self.config.verbose:
+                        logger.info(f"✓ Saved scenario trend: {trend_path}")
+
+        return scenario_detrended, scenario_trend
+
+    def _apply_bias_correction_scenario(
+        self,
+        obs_coarse: xr.DataArray,
+        model_hist: xr.DataArray,
+        scenario_detrended: xr.DataArray,
+    ) -> xr.DataArray:
+        """Apply quantile mapping to the (optionally detrended) scenario.
+
+        For nonparametric_hybrid: runs both parametric and nonparametric debiasers and
+        blends them — parametric where the scenario falls outside the historical range,
+        nonparametric everywhere else.
+        """
+        obs_np = obs_coarse.as_numpy().values
+        cm_hist_np = model_hist.as_numpy().values
+        cm_future_np = scenario_detrended.load().values
+
+        common_kwargs = dict(
+            variable=self.config.variable,
+            detrending="no_detrending",
+            running_window_mode=self.config.do_windowing,
+            running_window_length=self.config.running_window_length,
+            running_window_step_length=1,
+            running_window_mode_over_years_of_cm_future=False,
+        )
+        apply_kwargs = dict(
+            obs=obs_np,
+            cm_hist=cm_hist_np,
+            cm_future=cm_future_np,
+            time_obs=obs_coarse["time"].values,
+            time_cm_hist=model_hist["time"].values,
+            time_cm_future=scenario_detrended["time"].values,
+            parallel=True,
+            nr_processes=dask.system.CPU_COUNT,
+            progressbar=False,
+            failsafe=True,  # ocean pixels have NaN obs; fill with NaN rather than crash
+        )
+
+        if self.config.mapping_type in ["parametric", "nonparametric"]:
+            debiased_np = _make_debiaser(
+                mapping_type=self.config.mapping_type, **common_kwargs
+            ).apply(**apply_kwargs)
+
+        elif self.config.mapping_type == "nonparametric_hybrid":
+            parametric_np = _make_debiaser(mapping_type="parametric", **common_kwargs).apply(
+                **apply_kwargs
+            )
+            nonparametric_np = _make_debiaser(mapping_type="nonparametric", **common_kwargs).apply(
+                **apply_kwargs
+            )
+
+            out_of_range = calculate_out_of_range_mask(
+                model_hist=model_hist,
+                scenario_detrended=scenario_detrended,
+                center_window=self.config.running_window_length,
+            )
+            debiased_np = np.where(out_of_range.values, parametric_np, nonparametric_np)
+
+        else:
+            raise ValueError(
+                "mapping_type must be 'parametric', 'nonparametric', or 'nonparametric_hybrid'."
+            )
+
+        return xr.DataArray(
+            data=debiased_np,
+            coords={
+                "lat": scenario_detrended["lat"],
+                "lon": scenario_detrended["lon"],
+                "time": scenario_detrended["time"],
+            },
+            dims=["time", "lat", "lon"],
+        )
+
     def transform_scenario(self, force: bool = False) -> str:
         """
         Stage 3: Downscale future scenario.
@@ -571,12 +810,10 @@ class BCSDPipeline:
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
 
-        # Validate dependencies
         self.cache.validate_dependencies("transform_scenario", self.config)
 
         output_path = self.cache.scenario_path
 
-        # Check cache
         if self.cache.exists(output_path) and not force:
             if self.config.verbose:
                 logger.info(f"✓ Using cached scenario: {output_path}")
@@ -588,304 +825,29 @@ class BCSDPipeline:
                 f"{self.config.gcm}/{self.config.variable}/{self.config.ensemble_member}/{self.config.scenario}"
             )
 
-        # Load data
         with Timer("Loaded data", verbose=self.config.verbose):
-            # Load cached artifacts
-            deps = self.cache.check_dependencies("transform_scenario", self.config)
-            obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
-
-            # Load fine observations
-            obs_fine = get_obs(var=self.config.variable)
-            obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
-
-            # Load historical for training
-            model_hist = get_experiment(
-                gcm=self.config.gcm, scenario="historical", var=self.config.variable
-            )
-            # Historical data may not have ensemble_member dimension
-            if "ensemble_member" in model_hist.dims:
-                model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
-            model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
-
-            # Load scenario
-            model_scenario = get_experiment(
-                gcm=self.config.gcm, scenario=self.config.scenario, var=self.config.variable
-            )
-            model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
-            model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
-            # if you're downscaling an SAI scenario then you also load a separate SSP245 timeseries
-            # to fill the gap between when historical ends and SAI scenario begins
-            if self.config.is_sai_scenario:
-                ssp_timeseries = get_experiment(
-                    gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
-                )
-                ssp_timeseries = ssp_timeseries.sel(ensemble_member=self.config.ensemble_member)
-                ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
-
-            # Subset spatially if requested
-            if self.config.subset_bounds:
-                lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
-                lat_bounds = (lat_min, lat_max)
-                lon_bounds = (lon_min, lon_max)
-                obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
-                model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
-                model_scenario = subset_space(
-                    model_scenario, lat_bounds=lat_bounds, lon_bounds=lon_bounds
-                )
-                if self.config.is_sai_scenario:
-                    ssp_timeseries = subset_space(
-                        ssp_timeseries, lat_bounds=lat_bounds, lon_bounds=lon_bounds
-                    )
-
-            # Subset observations to the training period
-            obs_coarse = obs_coarse.sel(
-                time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
-            )
-            obs_fine = obs_fine.sel(
-                time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
-            )
-            # Subset model historical to the TK period
-            model_hist = model_hist.sel(
-                time=slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
+            obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
+                self._load_scenario_data()
             )
 
-            # Subset model scenario to the predict period
-            model_scenario = model_scenario.sel(
-                time=slice(
-                    f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
-                )
-            )
+        scenario_detrended, scenario_trend = self._detrend_scenario(
+            model_hist, model_scenario, ssp_timeseries
+        )
 
-        # Detrend if specified in the bcsd_config
-        scenario_detrended = model_scenario
-
-        if self.config.detrend_data:
-            # Rechunk for temporal operations
-            if self.config.rechunk_workflow:
-                with Timer("Rechunked for detrending", verbose=self.config.verbose):
-                    model_hist = rechunk(model_hist, pattern="full_time").persist()
-                    model_scenario = rechunk(model_scenario, pattern="full_time").persist()
-                    if self.config.is_sai_scenario:
-                        ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time").persist()
-
-            with Timer("Detrended scenario", verbose=self.config.verbose):
-                # Splice historical + scenario for smooth detrending
-                if self.config.is_sai_scenario:
-                    # SAI simulations run from 2035 to 2084.
-                    # But historical ends in 2014/2015, so we stitch in SSP data for the gap when detrending
-
-                    historical_and_ssp = xr.concat(
-                        [
-                            model_hist.sel(
-                                time=model_hist["time.year"] < self.config.train_period_end
-                            ),
-                            ssp_timeseries.sel(
-                                time=ssp_timeseries["time.year"] >= self.config.train_period_end
-                            ),
-                        ],
-                        dim="time",
-                    )
-                    historical_scenario = xr.concat(
-                        [
-                            historical_and_ssp.sel(
-                                time=historical_and_ssp["time.year"]
-                                < self.config.predict_period_start
-                            ),
-                            model_scenario.sel(
-                                time=model_scenario["time.year"] >= self.config.predict_period_start
-                            ),
-                        ],
-                        dim="time",
-                    )
-                else:
-                    historical_scenario = xr.concat(
-                        [
-                            model_hist.sel(
-                                time=model_hist["time.year"] < self.config.predict_period_start
-                            ),
-                            model_scenario.sel(
-                                time=model_scenario["time.year"] >= self.config.predict_period_start
-                            ),
-                        ],
-                        dim="time",
-                    )
-
-                # Calculate baseline climatology (12 numbers total)
-                da_baseline_clim = calculate_baseline_climatology(
-                    da_baseline=model_hist,
-                    baseline_period_start=self.config.train_period_start,
-                    baseline_period_end=self.config.train_period_end,
-                )
-
-                # Detrend the entire timeseries, using either multiplicative or additive approach
-                scenario_detrended, scenario_trend = detrend(
-                    da=historical_scenario,
-                    da_baseline_clim=da_baseline_clim,
-                    detrend_method=self.config.detrend_method,
-                )
-
-                # Extract just scenario period
-                scenario_detrended = scenario_detrended.sel(
-                    time=slice(
-                        f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
-                    )
-                )
-                scenario_trend = scenario_trend.sel(
-                    time=slice(
-                        f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
-                    )
-                )
-
-                if self.config.save_intermediate:
-                    with Timer("Saved detrended to cache", verbose=self.config.verbose):
-                        detrended_path = self.cache.get_detrended_scenario_path(self.config)
-                        scenario_detrended.name = self.config.variable
-                        scenario_detrended.attrs = (
-                            scenario_detrended.attrs
-                        )  # Preserve units and metadata
-                        self._write_to_icechunk(
-                            rechunk(scenario_detrended, pattern="full_space"),
-                            detrended_path,
-                            "write complete",
-                        )
-                        if self.config.verbose:
-                            logger.info(f"✓ Saved detrended scenario: {detrended_path}")
-
-                    with Timer("Saved trend to cache", verbose=self.config.verbose):
-                        trend_path = self.cache.get_trend_scenario_path(self.config)
-                        scenario_trend.name = self.config.variable
-                        scenario_trend.attrs = model_scenario.attrs  # Preserve units and metadata
-                        self._write_to_icechunk(
-                            rechunk(scenario_trend, pattern="full_space"),
-                            trend_path,
-                            "write complete",
-                        )
-                        if self.config.verbose:
-                            logger.info(f"✓ Saved scenario trend: {trend_path}")
-
-        # Bias correct
         with Timer("Bias corrected scenario", verbose=self.config.verbose):
-            # Convert to numpy
-            obs_np = obs_coarse.as_numpy().values
-            cm_hist_np = model_hist.as_numpy().values
-            cm_future_np = scenario_detrended.load().values
-
-            # If method is parametric or nonparametric, only debias one time. If hybrid, debias twice (one time parametric and one time nonparametric) and blend results.
-            if self.config.mapping_type in ["parametric", "nonparametric"]:
-                debiaser = _make_debiaser(
-                    variable=self.config.variable,
-                    mapping_type=self.config.mapping_type,
-                    detrending="no_detrending",
-                    running_window_mode=self.config.do_windowing,
-                    running_window_length=self.config.running_window_length,
-                    running_window_step_length=1,
-                    running_window_mode_over_years_of_cm_future=False,
-                )
-
-                # Apply quantile mapping
-                scenario_debiased_np = debiaser.apply(
-                    obs=obs_np,
-                    cm_hist=cm_hist_np,
-                    cm_future=cm_future_np,
-                    time_obs=obs_coarse["time"].values,
-                    time_cm_hist=model_hist["time"].values,
-                    time_cm_future=scenario_detrended["time"].values,
-                    parallel=True,
-                    failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
-                    nr_processes=dask.system.CPU_COUNT,
-                    progressbar=False,
-                )
-
-            elif self.config.mapping_type == "nonparametric_hybrid":
-                debiaser_parametric = _make_debiaser(
-                    variable=self.config.variable,
-                    mapping_type="parametric",
-                    detrending="no_detrending",
-                    running_window_mode=self.config.do_windowing,
-                    running_window_length=self.config.running_window_length,
-                    running_window_step_length=1,
-                    running_window_mode_over_years_of_cm_future=False,
-                )
-                debiaser_nonparametric = _make_debiaser(
-                    variable=self.config.variable,
-                    mapping_type="nonparametric",
-                    detrending="no_detrending",
-                    running_window_mode=self.config.do_windowing,
-                    running_window_length=self.config.running_window_length,
-                    running_window_step_length=1,
-                    running_window_mode_over_years_of_cm_future=False,
-                )
-
-                # Apply quantile mapping twice
-                scenario_debiased_parametric_np = debiaser_parametric.apply(
-                    obs=obs_np,
-                    cm_hist=cm_hist_np,
-                    cm_future=cm_future_np,
-                    time_obs=obs_coarse["time"].values,
-                    time_cm_hist=model_hist["time"].values,
-                    time_cm_future=scenario_detrended["time"].values,
-                    parallel=True,
-                    nr_processes=dask.system.CPU_COUNT,
-                    progressbar=False,
-                    failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
-                )
-
-                scenario_debiased_nonparametric_np = debiaser_nonparametric.apply(
-                    obs=obs_np,
-                    cm_hist=cm_hist_np,
-                    cm_future=cm_future_np,
-                    time_obs=obs_coarse["time"].values,
-                    time_cm_hist=model_hist["time"].values,
-                    time_cm_future=scenario_detrended["time"].values,
-                    parallel=True,
-                    nr_processes=dask.system.CPU_COUNT,
-                    progressbar=False,
-                    failsafe=True,  # Ocean pixels have NaN obs; fill with NaN rather than crash
-                )
-
-                # Blend results
-                # Nonparametric mapping when in range of the modeled historical
-                # Parametric mapping when out of range of the modeled historical
-                out_of_range = calculate_out_of_range_mask(
-                    model_hist=model_hist,
-                    scenario_detrended=scenario_detrended,
-                    center_window=self.config.running_window_length,
-                )
-
-                # Use parametric quantile mapping when out_of_range is True
-                # and nonparametric where out_of_range is False
-                scenario_debiased_np = np.where(
-                    out_of_range.values,
-                    scenario_debiased_parametric_np,
-                    scenario_debiased_nonparametric_np,
-                )
-            else:
-                raise ValueError(
-                    "mapping_type must be 'parametric', 'nonparametric', or 'nonparametric_hybrid'."
-                )
-
-            # Convert back to xarray
-            scenario_debiased = xr.DataArray(
-                data=scenario_debiased_np,
-                coords={
-                    "lat": scenario_detrended["lat"],
-                    "lon": scenario_detrended["lon"],
-                    "time": scenario_detrended["time"],
-                },
-                dims=["time", "lat", "lon"],
+            scenario_debiased = self._apply_bias_correction_scenario(
+                obs_coarse, model_hist, scenario_detrended
             )
 
         if self.config.save_intermediate:
             with Timer("Saved coarse debiased scenario to cache", verbose=self.config.verbose):
                 debiased_path = self.cache.get_debiased_scenario_path(self.config)
                 scenario_debiased.name = self.config.variable
-                scenario_debiased.attrs = scenario_debiased.attrs  # Preserve units and metadata
                 self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
                 if self.config.verbose:
                     logger.info(f"✓ Saved debiased scenario: {debiased_path}")
 
-        # Re-trend if needed.
-        if self.config.detrend_data and scenario_trend is not None:
+        if scenario_trend is not None:
             with Timer("Re-trended scenario", verbose=self.config.verbose):
                 scenario_debiased = retrend(
                     bias_corrected_detrended=scenario_debiased,
@@ -897,27 +859,16 @@ class BCSDPipeline:
             with Timer("Saved coarse debiased, retrended to cache", verbose=self.config.verbose):
                 debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
                 scenario_debiased.name = self.config.variable
-                scenario_debiased.attrs = model_scenario.attrs  # Preserve units and metadata
+                scenario_debiased.attrs = model_scenario.attrs
                 self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
                 if self.config.verbose:
                     logger.info(f"✓ Saved debiased retrended scenario: {debiased_path}")
 
-        # Spatially disaggregate - for performance we'd want these inputs in `full_space`
         with Timer("Spatially disaggregated", verbose=self.config.verbose):
-            scenario_downscaled = downscale_from_coarse(
-                da=scenario_debiased,
-                # coarse obs, ideally chunked in full space, for training period
-                obs_coarse=obs_coarse.as_numpy(),
-                # finescale obs, ideally chunked in full space, for training period
-                obs_fine=obs_fine.as_numpy(),
-                method=self.config.downscaling_method,
-                clim_method=self.config.downscaling_clim_method,
-            )
-            scenario_downscaled = scenario_downscaled.chunk(
-                {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+            scenario_downscaled = self._apply_spatial_downscaling(
+                scenario_debiased, obs_coarse, obs_fine
             )
 
-        # Save output
         with Timer("Saved output", verbose=self.config.verbose):
             if self.config.apply_ocean_mask:
                 scenario_downscaled = scenario_downscaled.where(
