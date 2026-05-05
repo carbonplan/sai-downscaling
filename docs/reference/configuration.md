@@ -18,7 +18,7 @@ predict_period_start: 2015             # Prediction period start year (required 
 predict_period_end: 2100               # Prediction period end year (required if scenario set)
 
 # Storage
-cache_dir: "s3://bucket/path"         # Base directory for intermediate artifacts
+scratch_dir: "s3://bucket/path"         # Base directory for intermediate artifacts
 output_dir: "s3://bucket/path"        # Directory for final scenario outputs
 ```
 

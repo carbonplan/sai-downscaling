@@ -28,7 +28,7 @@ predict_period_end: 2100
 # For SAI scenarios (G6-*), you must specify the transition year when SAI starts
 
 # === Storage Configuration ===
-cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate artifacts (obs, historical)
+scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate artifacts (obs, historical)
 output_dir: "s3://carbonplan-scratch/srm/outputs/" # Final scenario outputs (published results)
 environment: "qa" # Environment: qa, staging, production (default: qa, can override with BCSD_ENVIRONMENT env var)
 version: "v1" # Version identifier for all output paths (default: v1, can override with BCSD_VERSION env var or --version CLI flag)

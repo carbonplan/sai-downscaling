@@ -15,7 +15,7 @@ uv run bcsd run-matrix \
   --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33' \
-  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --scratch-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/" \
   --environment qa --version main-baseline 
 ```
@@ -35,7 +35,7 @@ uv run bcsd run-matrix \
   --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33' \
-  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --scratch-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/" \
   --environment qa --version refactor-icechunk 
 ```

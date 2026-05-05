@@ -118,7 +118,7 @@ def config(tmp_path) -> BCSDConfig:
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
-        cache_dir=str(tmp_path / "cache"),
+        scratch_dir=str(tmp_path / "cache"),
         output_dir=str(tmp_path / "outputs"),
         verbose=False,
         rechunk_workflow=False,
@@ -135,7 +135,7 @@ def pr_config(tmp_path) -> BCSDConfig:
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
-        cache_dir=str(tmp_path / "cache"),
+        scratch_dir=str(tmp_path / "cache"),
         output_dir=str(tmp_path / "outputs"),
         verbose=False,
         rechunk_workflow=False,
@@ -166,8 +166,8 @@ def all_deps_present(pipeline) -> BCSDPipeline:
 
 
 class TestBCSDPipelineInit:
-    def test_cache_uses_config_cache_dir(self, pipeline, config):
-        assert config.cache_dir.rstrip("/") in pipeline.cache.cache_dir
+    def test_cache_uses_config_scratch_dir(self, pipeline, config):
+        assert config.scratch_dir.rstrip("/") in pipeline.cache.scratch_dir
 
     def test_cache_uses_config_environment(self, pipeline, config):
         assert pipeline.cache.environment == config.environment
@@ -256,7 +256,7 @@ class TestPrepareObservationsCompute:
             variable="tas",
             ensemble_member="r1i1p1f1",
             subset_bounds=(-35.0, -22.0, 16.0, 33.0),
-            cache_dir=str(tmp_path / "cache"),
+            scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=False,
@@ -278,7 +278,7 @@ class TestPrepareObservationsCompute:
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
-            cache_dir=str(tmp_path / "cache"),
+            scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=True,
@@ -400,7 +400,7 @@ class TestTransformScenarioBehavior:
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
-            cache_dir=str(tmp_path / "cache"),
+            scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
         )
@@ -503,7 +503,7 @@ class TestTransformScenarioBehavior:
             scenario="ssp245",
             predict_period_start=2015,
             predict_period_end=2100,
-            cache_dir=str(tmp_path / "cache"),
+            scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=False,

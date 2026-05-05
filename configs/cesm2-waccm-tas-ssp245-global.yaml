@@ -10,7 +10,7 @@
 #     --train-period-end 2014 \
 #     --predict-period-start 2015 \
 #     --predict-period-end 2100 \
-#     --cache-dir s3://carbonplan-scratch/srm/bcsd-cache \
+#     --scratch-dir s3://carbonplan-scratch/srm/bcsd-cache \
 #     --output-dir s3://carbonplan-scratch/srm/outputs \
 #     --environment qa \
 #     --version pr-186-92daa13-nonparametric_hybrid \
@@ -36,7 +36,7 @@ predict_period_end: 2100
 # subset_bounds: [-35, -22, 16, 33]
 
 # === Storage ===
-cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/outputs"
 environment: "qa"
 version: "pr-186-39db5bb-nonparametric_hybrid"

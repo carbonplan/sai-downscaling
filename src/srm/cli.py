@@ -81,7 +81,7 @@ def configs_from_matrix(
     train_period_end: int = 2014,
     predict_period_start: int | None = None,
     predict_period_end: int | None = None,
-    cache_dir: str = "s3://carbonplan-scratch/srm/cache/",
+    scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
     output_dir: str = "s3://carbonplan-scratch/srm/outputs/",
     environment: str = "qa",
     version: str = "v1",
@@ -119,7 +119,7 @@ def configs_from_matrix(
         Start year of prediction period. Required when scenarios contains non-None values.
     predict_period_end : int | None
         End year of prediction period. Required when scenarios contains non-None values.
-    cache_dir : str
+    scratch_dir : str
         Base directory for cached intermediate artifacts
     output_dir : str
         Directory for final downscaled outputs
@@ -180,7 +180,7 @@ def configs_from_matrix(
                 train_period_end=train_period_end,
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
-                cache_dir=cache_dir,
+                scratch_dir=scratch_dir,
                 output_dir=output_dir,
                 environment=environment,
                 version=version,
@@ -303,7 +303,7 @@ def run_matrix(
     predict_period_end: int | None = typer.Option(
         None, help="End year of prediction period. Required when --scenario is provided."
     ),
-    cache_dir: str = typer.Option(
+    scratch_dir: str = typer.Option(
         "s3://carbonplan-scratch/srm/cache/", help="Base directory for cached artifacts"
     ),
     output_dir: str = typer.Option(
@@ -405,7 +405,7 @@ def run_matrix(
         train_period_end=train_period_end,
         predict_period_start=predict_period_start,
         predict_period_end=predict_period_end,
-        cache_dir=cache_dir,
+        scratch_dir=scratch_dir,
         output_dir=output_dir,
         environment=environment,
         version=version,
@@ -497,7 +497,7 @@ def status(
         config = configs[0]
         lines = [
             "Cache Configuration:",
-            f"  Cache Path: {cache.cache_dir}",
+            f"  Cache Path: {cache.scratch_dir}",
             f"  Output Path: {cache.output_dir or '(same as cache)'}",
             f"  Environment: {cache.environment}",
             f"  Version: {cache.version}",
@@ -557,15 +557,15 @@ def cache_clear(
 ):
     """Clear cached artifacts"""
 
-    # Load config to get cache_dir
+    # Load config to get scratch_dir
     configs = load_configs(config_path)
     if not configs:
         logger.error("No valid configurations found")
         raise typer.Exit(1)
 
-    # Use cache_dir from first config (all should have same cache_dir)
+    # Use scratch_dir from first config (all should have same scratch_dir)
     cache = ArtifactCache(
-        cache_dir=configs[0].cache_dir,
+        scratch_dir=configs[0].scratch_dir,
         environment=configs[0].environment,
         version=configs[0].version,
     )
@@ -602,15 +602,15 @@ def cache_list(
 ):
     """List cached artifacts"""
 
-    # Load config to get cache_dir
+    # Load config to get scratch_dir
     configs = load_configs(config_path)
     if not configs:
         logger.error("No valid configurations found")
         raise typer.Exit(1)
 
-    # Use cache_dir from first config (all should have same cache_dir)
+    # Use scratch_dir from first config (all should have same scratch_dir)
     cache = ArtifactCache(
-        cache_dir=configs[0].cache_dir,
+        scratch_dir=configs[0].scratch_dir,
         environment=configs[0].environment,
         version=configs[0].version,
     )
