@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+import time
 import warnings
 from datetime import UTC, datetime
 
@@ -37,7 +38,6 @@ from srm.downscaling_utils import (
     subset_space,
 )
 from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_encoding
-from srm.utils import Timer
 
 logger = logging.getLogger(__name__)
 
@@ -293,59 +293,48 @@ class BCSDPipeline:
         # if it is corrupted in any way or doesn't match the attributes of the
         # config it won't fail.
         if self.cache.exists(output_path) and not force:
-            if self.config.verbose:
-                logger.info(f"✓ Using cached observations: {output_path}")
+            logger.info("✓ Using cached observations: %s", output_path)
             return output_path
 
-        if self.config.verbose:
-            logger.info(
-                f"Computing observation regridding for {self.config.gcm}/{self.config.variable}"
+        logger.info(
+            "Computing observation regridding for %s/%s", self.config.gcm, self.config.variable
+        )
+
+        t0 = time.perf_counter()
+        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+        model_grid = get_experiment(
+            gcm=self.config.gcm, scenario="historical", var=self.config.variable
+        )
+        model_grid = model_grid.drop_vars("spatial_ref", errors="ignore")
+        if self.config.subset_bounds:
+            lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
+            lat_bounds = (lat_min, lat_max)
+            lon_bounds = (lon_min, lon_max)
+            obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+            model_grid = subset_space(model_grid, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+        logger.info("Loaded observations (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="invalid value encountered in divide")
+            warnings.filterwarnings("ignore", message="divide by zero encountered in divide")
+            obs_coarse = interpolate_fine_to_coarse_grid(
+                da_fine_to_coarsen=obs_fine, da_coarse_grid=model_grid
             )
+        logger.info("Regridded observations to coarse grid (%.2fs)", time.perf_counter() - t0)
 
-        with Timer("Loaded observations", verbose=self.config.verbose):
-            # Load fine-resolution observations
-            obs_fine = get_obs(var=self.config.variable)
-            obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
-
-            # Load GCM grid for target
-            model_grid = get_experiment(
-                gcm=self.config.gcm, scenario="historical", var=self.config.variable
-            )
-            model_grid = model_grid.drop_vars("spatial_ref", errors="ignore")
-
-            # Subset spatially if requested
-            if self.config.subset_bounds:
-                lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
-                lat_bounds = (lat_min, lat_max)
-                lon_bounds = (lon_min, lon_max)
-                obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
-                model_grid = subset_space(model_grid, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
-
-        # Regrid observation training data to the coarser GCM grid
-        with Timer("Regridded observations to coarse grid", verbose=self.config.verbose):
-            # Suppress expected warnings from sparse array operations during regridding
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message="invalid value encountered in divide")
-                warnings.filterwarnings("ignore", message="divide by zero encountered in divide")
-                obs_coarse = interpolate_fine_to_coarse_grid(
-                    da_fine_to_coarsen=obs_fine, da_coarse_grid=model_grid
-                )
-
-        # Rechunk for efficient cache writes and downstream spatial operations
         if self.config.rechunk_workflow:
             obs_coarse = rechunk(obs_coarse, pattern="full_space")
 
-        # Save to cache
-        with Timer("Saved to cache", verbose=self.config.verbose):
-            obs_coarse.name = self.config.variable
-            hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
-            dataset_attrs = self._build_output_attrs(hist_dataset)
-            self._write_to_icechunk(
-                obs_coarse, output_path, "write complete", dataset_attrs=dataset_attrs
-            )
-
-        if self.config.verbose:
-            logger.info(f"✓ Cached observations: {output_path}")
+        t0 = time.perf_counter()
+        obs_coarse.name = self.config.variable
+        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
+        dataset_attrs = self._build_output_attrs(hist_dataset)
+        self._write_to_icechunk(
+            obs_coarse, output_path, "write complete", dataset_attrs=dataset_attrs
+        )
+        logger.info("✓ Cached observations: %s (%.2fs)", output_path, time.perf_counter() - t0)
 
         return output_path
 
@@ -487,50 +476,52 @@ class BCSDPipeline:
         output_path = self.cache.historical_path
 
         if self.cache.exists(output_path) and not force:
-            if self.config.verbose:
-                logger.info(f"✓ Using cached historical: {output_path}")
+            logger.info("✓ Using cached historical: %s", output_path)
             return output_path
 
-        if self.config.verbose:
+        logger.info(
+            "Computing historical downscaling for %s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+        )
+
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist = self._load_gcm_obs()
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        model_hist_debiased = self._apply_bias_correction(obs_coarse, model_hist)
+        logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
+
+        if self.config.save_intermediate:
+            t0 = time.perf_counter()
+            debiased_path = self.cache.get_debiased_historical_path(self.config)
+            model_hist_debiased.name = self.config.variable
+            model_hist_debiased.attrs = model_hist.attrs
+            self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
             logger.info(
-                f"Computing historical downscaling for "
-                f"{self.config.gcm}/{self.config.variable}/{self.config.ensemble_member}"
+                "✓ Saved debiased historical: %s (%.2fs)", debiased_path, time.perf_counter() - t0
             )
 
-        with Timer("Loaded data", verbose=self.config.verbose):
-            obs_coarse, obs_fine, model_hist = self._load_gcm_obs()
+        t0 = time.perf_counter()
+        model_hist_downscaled = self._apply_spatial_downscaling(
+            model_hist_debiased, obs_coarse, obs_fine
+        )
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
 
-        with Timer("Bias corrected historical", verbose=self.config.verbose):
-            model_hist_debiased = self._apply_bias_correction(obs_coarse, model_hist)
-
-            if self.config.save_intermediate:
-                with Timer("Saved coarse debiased to cache", verbose=self.config.verbose):
-                    debiased_path = self.cache.get_debiased_historical_path(self.config)
-                    model_hist_debiased.name = self.config.variable
-                    model_hist_debiased.attrs = model_hist.attrs
-                    self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
-                    if self.config.verbose:
-                        logger.info(f"✓ Saved debiased historical: {debiased_path}")
-
-        with Timer("Spatially disaggregated", verbose=self.config.verbose):
-            model_hist_downscaled = self._apply_spatial_downscaling(
-                model_hist_debiased, obs_coarse, obs_fine
-            )
-
-        with Timer("Saved to cache", verbose=self.config.verbose):
-            model_hist_downscaled.name = self.config.variable
-            hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
-            dataset_attrs = self._build_output_attrs(hist_dataset)
-            self._write_to_icechunk(
-                da=model_hist_downscaled,
-                path=output_path,
-                commit_message="write complete",
-                encoding=make_encoding(self.config.variable),
-                dataset_attrs=dataset_attrs,
-            )
-
-        if self.config.verbose:
-            logger.info(f"✓ Cached historical: {output_path}")
+        t0 = time.perf_counter()
+        model_hist_downscaled.name = self.config.variable
+        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
+        dataset_attrs = self._build_output_attrs(hist_dataset)
+        self._write_to_icechunk(
+            da=model_hist_downscaled,
+            path=output_path,
+            commit_message="write complete",
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=dataset_attrs,
+        )
+        logger.info("✓ Cached historical: %s (%.2fs)", output_path, time.perf_counter() - t0)
 
         return output_path
 
@@ -614,90 +605,90 @@ class BCSDPipeline:
             return model_scenario, None
 
         if self.config.rechunk_workflow:
-            with Timer("Rechunked for detrending", verbose=self.config.verbose):
-                model_hist = rechunk(model_hist, pattern="full_time").persist()
-                model_scenario = rechunk(model_scenario, pattern="full_time").persist()
-                if ssp_timeseries is not None:
-                    ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time").persist()
+            t0 = time.perf_counter()
+            model_hist = rechunk(model_hist, pattern="full_time").persist()
+            model_scenario = rechunk(model_scenario, pattern="full_time").persist()
+            if ssp_timeseries is not None:
+                ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time").persist()
+            logger.info("Rechunked for detrending (%.2fs)", time.perf_counter() - t0)
 
-        with Timer("Detrended scenario", verbose=self.config.verbose):
-            if self.config.is_sai_scenario:
-                # SAI simulations run from 2035 to 2084.
-                # Historical ends in 2014/2015, so stitch in SSP data for the gap.
-                historical_and_ssp = xr.concat(
-                    [
-                        model_hist.sel(time=model_hist["time.year"] < self.config.train_period_end),
-                        ssp_timeseries.sel(
-                            time=ssp_timeseries["time.year"] >= self.config.train_period_end
-                        ),
-                    ],
-                    dim="time",
-                )
-                historical_scenario = xr.concat(
-                    [
-                        historical_and_ssp.sel(
-                            time=historical_and_ssp["time.year"] < self.config.predict_period_start
-                        ),
-                        model_scenario.sel(
-                            time=model_scenario["time.year"] >= self.config.predict_period_start
-                        ),
-                    ],
-                    dim="time",
-                )
-            else:
-                historical_scenario = xr.concat(
-                    [
-                        model_hist.sel(
-                            time=model_hist["time.year"] < self.config.predict_period_start
-                        ),
-                        model_scenario.sel(
-                            time=model_scenario["time.year"] >= self.config.predict_period_start
-                        ),
-                    ],
-                    dim="time",
-                )
-
-            da_baseline_clim = calculate_baseline_climatology(
-                da_baseline=model_hist,
-                baseline_period_start=self.config.train_period_start,
-                baseline_period_end=self.config.train_period_end,
+        t0 = time.perf_counter()
+        if self.config.is_sai_scenario:
+            # SAI simulations run from 2035 to 2084.
+            # Historical ends in 2014/2015, so stitch in SSP data for the gap.
+            historical_and_ssp = xr.concat(
+                [
+                    model_hist.sel(time=model_hist["time.year"] < self.config.train_period_end),
+                    ssp_timeseries.sel(
+                        time=ssp_timeseries["time.year"] >= self.config.train_period_end
+                    ),
+                ],
+                dim="time",
+            )
+            historical_scenario = xr.concat(
+                [
+                    historical_and_ssp.sel(
+                        time=historical_and_ssp["time.year"] < self.config.predict_period_start
+                    ),
+                    model_scenario.sel(
+                        time=model_scenario["time.year"] >= self.config.predict_period_start
+                    ),
+                ],
+                dim="time",
+            )
+        else:
+            historical_scenario = xr.concat(
+                [
+                    model_hist.sel(time=model_hist["time.year"] < self.config.predict_period_start),
+                    model_scenario.sel(
+                        time=model_scenario["time.year"] >= self.config.predict_period_start
+                    ),
+                ],
+                dim="time",
             )
 
-            scenario_detrended, scenario_trend = detrend(
-                da=historical_scenario,
-                da_baseline_clim=da_baseline_clim,
-                detrend_method=self.config.detrend_method,
+        da_baseline_clim = calculate_baseline_climatology(
+            da_baseline=model_hist,
+            baseline_period_start=self.config.train_period_start,
+            baseline_period_end=self.config.train_period_end,
+        )
+
+        scenario_detrended, scenario_trend = detrend(
+            da=historical_scenario,
+            da_baseline_clim=da_baseline_clim,
+            detrend_method=self.config.detrend_method,
+        )
+
+        predict_slice = slice(
+            f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
+        )
+        scenario_detrended = scenario_detrended.sel(time=predict_slice)
+        scenario_trend = scenario_trend.sel(time=predict_slice)
+        logger.info("Detrended scenario (%.2fs)", time.perf_counter() - t0)
+
+        if self.config.save_intermediate:
+            t0 = time.perf_counter()
+            detrended_path = self.cache.get_detrended_scenario_path(self.config)
+            scenario_detrended.name = self.config.variable
+            self._write_to_icechunk(
+                rechunk(scenario_detrended, pattern="full_space"),
+                detrended_path,
+                "write complete",
+            )
+            logger.info(
+                "✓ Saved detrended scenario: %s (%.2fs)", detrended_path, time.perf_counter() - t0
             )
 
-            predict_slice = slice(
-                f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
+            t0 = time.perf_counter()
+            trend_path = self.cache.get_trend_scenario_path(self.config)
+            scenario_trend.name = self.config.variable
+            scenario_trend.attrs = model_scenario.attrs
+            self._write_to_icechunk(
+                rechunk(scenario_trend, pattern="full_space"),
+                trend_path,
+                "write complete",
             )
-            scenario_detrended = scenario_detrended.sel(time=predict_slice)
-            scenario_trend = scenario_trend.sel(time=predict_slice)
-
-            if self.config.save_intermediate:
-                with Timer("Saved detrended to cache", verbose=self.config.verbose):
-                    detrended_path = self.cache.get_detrended_scenario_path(self.config)
-                    scenario_detrended.name = self.config.variable
-                    self._write_to_icechunk(
-                        rechunk(scenario_detrended, pattern="full_space"),
-                        detrended_path,
-                        "write complete",
-                    )
-                    if self.config.verbose:
-                        logger.info(f"✓ Saved detrended scenario: {detrended_path}")
-
-                with Timer("Saved trend to cache", verbose=self.config.verbose):
-                    trend_path = self.cache.get_trend_scenario_path(self.config)
-                    scenario_trend.name = self.config.variable
-                    scenario_trend.attrs = model_scenario.attrs
-                    self._write_to_icechunk(
-                        rechunk(scenario_trend, pattern="full_space"),
-                        trend_path,
-                        "write complete",
-                    )
-                    if self.config.verbose:
-                        logger.info(f"✓ Saved scenario trend: {trend_path}")
+            logger.info("✓ Saved scenario trend: %s (%.2fs)", trend_path, time.perf_counter() - t0)
 
         return scenario_detrended, scenario_trend
 
@@ -815,80 +806,87 @@ class BCSDPipeline:
         output_path = self.cache.scenario_path
 
         if self.cache.exists(output_path) and not force:
-            if self.config.verbose:
-                logger.info(f"✓ Using cached scenario: {output_path}")
+            logger.info("✓ Using cached scenario: %s", output_path)
             return output_path
 
-        if self.config.verbose:
-            logger.info(
-                f"Computing scenario downscaling for "
-                f"{self.config.gcm}/{self.config.variable}/{self.config.ensemble_member}/{self.config.scenario}"
-            )
+        logger.info(
+            "Computing scenario downscaling for %s/%s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+            self.config.scenario,
+        )
 
-        with Timer("Loaded data", verbose=self.config.verbose):
-            obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
-                self._load_scenario_data()
-            )
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
+            self._load_scenario_data()
+        )
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         scenario_detrended, scenario_trend = self._detrend_scenario(
             model_hist, model_scenario, ssp_timeseries
         )
 
-        with Timer("Bias corrected scenario", verbose=self.config.verbose):
-            scenario_debiased = self._apply_bias_correction_scenario(
-                obs_coarse, model_hist, scenario_detrended
-            )
+        t0 = time.perf_counter()
+        scenario_debiased = self._apply_bias_correction_scenario(
+            obs_coarse, model_hist, scenario_detrended
+        )
+        logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 
         if self.config.save_intermediate:
-            with Timer("Saved coarse debiased scenario to cache", verbose=self.config.verbose):
-                debiased_path = self.cache.get_debiased_scenario_path(self.config)
-                scenario_debiased.name = self.config.variable
-                self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
-                if self.config.verbose:
-                    logger.info(f"✓ Saved debiased scenario: {debiased_path}")
+            t0 = time.perf_counter()
+            debiased_path = self.cache.get_debiased_scenario_path(self.config)
+            scenario_debiased.name = self.config.variable
+            self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+            logger.info(
+                "✓ Saved debiased scenario: %s (%.2fs)", debiased_path, time.perf_counter() - t0
+            )
 
         if scenario_trend is not None:
-            with Timer("Re-trended scenario", verbose=self.config.verbose):
-                scenario_debiased = retrend(
-                    bias_corrected_detrended=scenario_debiased,
-                    trend_on_daily_timestep=scenario_trend,
-                    detrend_method=self.config.detrend_method,
-                )
+            t0 = time.perf_counter()
+            scenario_debiased = retrend(
+                bias_corrected_detrended=scenario_debiased,
+                trend_on_daily_timestep=scenario_trend,
+                detrend_method=self.config.detrend_method,
+            )
+            logger.info("Re-trended scenario (%.2fs)", time.perf_counter() - t0)
 
         if self.config.save_intermediate:
-            with Timer("Saved coarse debiased, retrended to cache", verbose=self.config.verbose):
-                debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
-                scenario_debiased.name = self.config.variable
-                scenario_debiased.attrs = model_scenario.attrs
-                self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
-                if self.config.verbose:
-                    logger.info(f"✓ Saved debiased retrended scenario: {debiased_path}")
-
-        with Timer("Spatially disaggregated", verbose=self.config.verbose):
-            scenario_downscaled = self._apply_spatial_downscaling(
-                scenario_debiased, obs_coarse, obs_fine
+            t0 = time.perf_counter()
+            debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
+            scenario_debiased.name = self.config.variable
+            scenario_debiased.attrs = model_scenario.attrs
+            self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+            logger.info(
+                "✓ Saved debiased retrended scenario: %s (%.2fs)",
+                debiased_path,
+                time.perf_counter() - t0,
             )
 
-        with Timer("Saved output", verbose=self.config.verbose):
-            if self.config.apply_ocean_mask:
-                scenario_downscaled = scenario_downscaled.where(
-                    self._build_ocean_mask(scenario_downscaled)
-                ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
-            scenario_downscaled.name = self.config.variable
-            scenario_dataset = _catalog.datasets.get(
-                f"{self.config.gcm}-{self.config.scenario}-icechunk"
-            )
-            dataset_attrs = self._build_output_attrs(scenario_dataset)
-            self._write_to_icechunk(
-                scenario_downscaled,
-                output_path,
-                "write complete",
-                dataset_attrs=dataset_attrs,
-                encoding=make_encoding(self.config.variable),
-            )
+        t0 = time.perf_counter()
+        scenario_downscaled = self._apply_spatial_downscaling(
+            scenario_debiased, obs_coarse, obs_fine
+        )
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
 
-        if self.config.verbose:
-            logger.info(f"✓ Saved scenario output: {output_path}")
+        t0 = time.perf_counter()
+        if self.config.apply_ocean_mask:
+            scenario_downscaled = scenario_downscaled.where(
+                self._build_ocean_mask(scenario_downscaled)
+            ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
+        scenario_downscaled.name = self.config.variable
+        scenario_dataset = _catalog.datasets.get(
+            f"{self.config.gcm}-{self.config.scenario}-icechunk"
+        )
+        dataset_attrs = self._build_output_attrs(scenario_dataset)
+        self._write_to_icechunk(
+            scenario_downscaled,
+            output_path,
+            "write complete",
+            dataset_attrs=dataset_attrs,
+            encoding=make_encoding(self.config.variable),
+        )
+        logger.info("✓ Saved scenario output: %s (%.2fs)", output_path, time.perf_counter() - t0)
 
         return output_path
 
