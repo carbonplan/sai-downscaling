@@ -15,6 +15,7 @@ from srm import catalog
 from srm.config import init_repo, setup_cluster, setup_local_client
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
+    apply_ensemble_provenance,
     build_encoding_dict,
     determine_write_mode,
     get_var_specs,
@@ -32,12 +33,11 @@ zarr.config.set({"async.concurrency": 128})
 CMIP6_SOURCE_BASE_URL = "https://www.jamstec.go.jp/swpub/public/CMIP6/MIROC-ES2H"
 GEOMIP_SOURCE_BASE_URL = "https://www.jamstec.go.jp/swpub/public/GeoMIP"
 
-MIROC_VARIABLES = ["hurs", "huss", "pr", "rlds", "rsds", "tas", "tasmax", "tasmin"]
+MIROC_VARIABLES = ["hurs", "pr", "rsds", "tas", "tasmax", "tasmin"]
 
 CMIP6_ENSEMBLE_MEMBERS = ["r1i1p4f2", "r2i1p4f2", "r3i1p4f2"]
 
 GEOMIP_ENSEMBLE_MEMBERS = [f"r{i:02d}" for i in range(1, 11)]
-GEOMIP_ENSEMBLE_MEMBER_MAP = {f"r{i:02d}": f"r{i}i1p1f1" for i in range(1, 11)}
 
 
 CMIP6_ENSEMBLE_VERSIONS: dict[str, dict[str, str]] = {
@@ -331,7 +331,12 @@ def _get_geomip_netcdf_urls(variables: list[str], config: BaseMIROC_GeoMIP_Confi
 
 
 def _preprocess_cmip6_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """Extract CMIP6 ensemble member (e.g. r1i1p4f2) from URL and add as dimension."""
+    """Extract CMIP6 ensemble member (e.g. r1i1p4f2) from URL and add as dimension.
+
+    Source files are CMORized (CF-1.7) and contain variant_label, realization_index,
+    physics_index, forcing_index, and tracking_id attrs that all match the filename token.
+    Extraction is fully corroborated (verified via source NetCDF audit).
+    """
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
     ensemble = url.split(".nc")[0].split("_gn")[0].split("_")[-1]
@@ -340,11 +345,16 @@ def _preprocess_cmip6_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
 
 
 def _preprocess_geomip_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """Extract GeoMIP ensemble member from URL (r01 → r1i1p1f1) and add as dimension."""
+    """Extract GeoMIP ensemble member suffix from URL filename and add as dimension.
+
+    GeoMIP source files are CF-1.0 with no CMOR attrs — no variant_label,
+    realization_index, or any other ensemble metadata. The raw filename suffix
+    (e.g. 'r01') is used as-is. No remapping to CMIP6 ripf form is applied
+    because there is no file-level evidence to support such a correspondence.
+    """
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
-    raw = url.split(".nc")[0].split("_")[-1]  # e.g. "r01"
-    ensemble = GEOMIP_ENSEMBLE_MEMBER_MAP[raw]
+    ensemble = url.split(".nc")[0].split("_")[-1]  # e.g. "r01"
     ds = ds.expand_dims({"ensemble_member": [ensemble]})
     return ds
 
@@ -368,17 +378,36 @@ def _preprocess_miroc(
     return ds
 
 
+def _derivation_logic(config: BaseMIROC_ES2H_Config) -> str:
+    if isinstance(config, BaseMIROC_CMIP6_Config):
+        return (
+            "Extracted from CMIP6 DRS filename: "
+            "url.split('.nc')[0].split('_gn')[0].split('_')[-1]. "
+            "Corroborated by variant_label, realization_index, physics_index, "
+            "forcing_index, and tracking_id attrs in source files (all match; "
+            "verified via source NetCDF audit)."
+        )
+    return (
+        "Raw filename suffix: url.split('.nc')[0].split('_')[-1] (e.g. 'r01'). "
+        "GeoMIP source files (CF-1.0) contain no ensemble metadata in attrs — "
+        "no variant_label, realization_index, or member_id. "
+        "ID is the literal filename suffix; no remapping applied."
+    )
+
+
 def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseMIROC_ES2H_Config) -> xr.Dataset:
     ds = update_variable_attrs(ds, var_specs)
-    attrs = {
+
+    global_attrs: dict = {
         "scenario": config.scenario,
         "model": "MIROC-ES2H",
         "Conventions": "CF-1.8",
     }
     if hasattr(config, "time_range"):
-        attrs["time_range"] = config.time_range
-    ds.attrs.update(attrs)
-    return ds
+        global_attrs["time_range"] = config.time_range
+    ds.attrs.update(global_attrs)
+
+    return apply_ensemble_provenance(ds, _derivation_logic(config))
 
 
 # ---------------------------------------------------------------------------
@@ -502,13 +531,11 @@ def process(variable, scenario, coiled, all_variables, subset):
         raise click.UsageError("Must specify either --variable or --all-variables")
 
     try:
-        virt_ds = catalog.get(config.catalog_key).to_xarray()
-
         for var in variables:
             if var.lower() == "dtr":
                 ds = load_dtr_from_store(mat_cat.bucket, mat_cat.prefix, config.encoding["shards"])
             else:
-                ds = virt_ds[[var]]
+                ds = catalog.get(config.catalog_key).to_xarray()[[var]]
                 ds = _preprocess_miroc(ds, config, subset=subset)
             ds = _update_attrs(ds, var_specs, config)
 

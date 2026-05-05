@@ -20,6 +20,7 @@ from srm.input_data.etl_utils import (
     CMORIZE_hurs,
     CMORIZE_pr,
     add_cf_bounds,
+    apply_ensemble_provenance,
     build_encoding_dict,
     determine_write_mode,
     get_var_specs,
@@ -227,20 +228,9 @@ def _finalize_metadata(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
     if "_source_manifest" in ds.attrs:
         del ds.attrs["_source_manifest"]
 
-    # 5. Document the Coordinate with the full audit trail
-    # Note: member_specific_provenance is already attached in get_CESM_WACCM_ds
-    ds.ensemble_member.attrs.update(
-        {
-            "long_name": "Ensemble Member Identifier",
-            "derivation_method": derivation_logic,
-            "description": (
-                "Unique identifier for model runs. The 'member_specific_provenance' attribute "
-                "contains a JSON map of tracking_ids and source_urls for every member in this dimension."
-            ),
-        }
-    )
-
-    return ds
+    # member_specific_provenance JSON already attached to ensemble_member coord in get_CESM_WACCM_ds;
+    # apply_ensemble_provenance merges long_name + derivation_method without clobbering it.
+    return apply_ensemble_provenance(ds, derivation_logic)
 
 
 # --- DATA FETCHING ---
@@ -451,10 +441,9 @@ def process(variable, scenario, coiled, all_variables, subset):
             )
         else:
             # --- ITERATIVE PROCESSING PATH (Virtual to Icechunk) ---
-            virt_ds = catalog.get(config.catalog_key).to_xarray()
             for var in variables:
                 cesm_var = _get_cesm_var_from_cmip6(var, config)
-                ds = virt_ds[[cesm_var]]
+                ds = catalog.get(config.catalog_key).to_xarray()[[cesm_var]]
                 ds = _preprocess_cesm(ds, config, cesm_var, subset=subset)
                 ds = _update_attrs(ds, var_specs, config)
 

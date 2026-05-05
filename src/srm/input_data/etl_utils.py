@@ -1,4 +1,3 @@
-# etl_utils.py
 import dask
 import icechunk
 import xarray as xr
@@ -85,6 +84,27 @@ def add_cf_bounds(ds: xr.Dataset, coord_names: list[str] = None) -> xr.Dataset:
     if bounds_vars:
         ds = ds.set_coords(bounds_vars)
 
+    return ds
+
+
+def apply_ensemble_provenance(
+    ds: xr.Dataset,
+    derivation_logic: str,
+    member_provenance: dict | None = None,
+    ensemble_coord: str = "ensemble_member",
+) -> xr.Dataset:
+    """Set ensemble_member provenance on dataset global attrs and ensemble coord attrs."""
+    import json
+
+    ds.attrs["ensemble_derivation_logic"] = derivation_logic
+    if ensemble_coord in ds.coords:
+        coord_attrs: dict = {
+            "long_name": "Ensemble Member Identifier",
+            "derivation_method": derivation_logic,
+        }
+        if member_provenance is not None:
+            coord_attrs["member_specific_provenance"] = json.dumps(member_provenance)
+        ds[ensemble_coord].attrs.update(coord_attrs)
     return ds
 
 

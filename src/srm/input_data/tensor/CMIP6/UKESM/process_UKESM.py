@@ -19,6 +19,7 @@ from srm.config import (
 )
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
+    apply_ensemble_provenance,
     build_encoding_dict,
     determine_write_mode,
     get_var_specs,
@@ -86,7 +87,9 @@ class BaseUKESM_Config(BaseETLConfig):
 class UKESM_SSP245_Config(BaseUKESM_Config):
     scenario: str = "SSP245"
     catalog_key: str = "UKESM-SSP245-virtual"
+    t_pr_catalog_key: str = "UKESM-SSP245-t-pr-virtual"
     materialized_key: str = "UKESM-SSP245-icechunk"
+    t_pr_materialized_key: str = "UKESM-SSP245-t-pr-icechunk"
     s3_input_prefix: str = "input/tensor/UKESM/transfer/SSP2-4.5/"
 
 
@@ -102,16 +105,20 @@ class UKESM_SSP245_T_PR_Config(BaseUKESM_Config):
 class UKESM_G6_1p5K_Config(BaseUKESM_Config):
     scenario: str = "G6-1.5K"
     catalog_key: str = "UKESM-G6-1.5K-virtual"
+    # t_pr_catalog_key intentionally absent: Cindy's G6-1.5K T/PR files were identical to
+    # SSP245 throughout the full period (not just pre-SAI baseline). Suspect transfer error.
+    # Reinstate once source files are confirmed distinct. Only hurs/rsds from CEDA written.
     materialized_key: str = "UKESM-G6-1.5K-icechunk"
     s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K"
 
 
-@dataclass
-class UKESM_G6_1p5K_T_PR_Config(BaseUKESM_Config):
-    scenario: str = "G6-1.5K"
-    catalog_key: str = "UKESM-G6-1.5K-t-pr-virtual"
-    materialized_key: str = "UKESM-G6-1.5K-icechunk"
-    s3_input_prefix: str = "input/tensor/UKESM/G6-1.5K/netcdf"
+# UKESM_G6_1p5K_T_PR_Config disabled: see note in UKESM_G6_1p5K_Config above.
+# @dataclass
+# class UKESM_G6_1p5K_T_PR_Config(BaseUKESM_Config):
+#     scenario: str = "G6-1.5K"
+#     catalog_key: str = "UKESM-G6-1.5K-t-pr-virtual"
+#     materialized_key: str = "UKESM-G6-1.5K-icechunk"
+#     s3_input_prefix: str = "input/tensor/UKESM/G6-1.5K/netcdf"
 
 
 @dataclass
@@ -120,20 +127,43 @@ class UKESM_Historical_Config(BaseUKESM_Config):
     materialized_key: str = "UKESM-historical-icechunk"
     catalog_key: str = "UKESM-historical-virtual"
     s3_input_prefix: str = "input/tensor/UKESM/netcdf/historical"
+    source_base_url: str = (
+        "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/MOHC/UKESM1-0-LL/historical"
+    )
+    drop_variables: list = field(
+        default_factory=lambda: [
+            "time_bnds",
+            "lat_bnds",
+            "lon_bnds",
+            "height",
+            "lat_bounds",
+            "lon_bounds",
+            "time_bounds",
+        ]
+    )
 
     ensemble_members: list = field(
         default_factory=lambda: [
-            "r1i1p1f2",
+            # "r1i1p1f2",
             "r2i1p1f2",
             "r3i1p1f2",
-            "r4i1p1f2",
-            "r5i1p1f3",
-            "r6i1p1f3",
-            "r7i1p1f3",
-            "r8i1p1f2",
-            "r9i1p1f2",
-            "r10i1p1f2",
+            # "r4i1p1f2",
+            # "r5i1p1f3",
+            # "r6i1p1f3",
+            # "r7i1p1f3",
+            # "r8i1p1f2",
+            # "r9i1p1f2",
+            # "r10i1p1f2",
+            "r12i1p1f2",
         ]
+    )
+
+    process_cluster: dict = field(
+        default_factory=lambda: {
+            "n_workers": [4, 16],
+            "worker_vm_types": ["r8g.4xlarge"],
+            "scheduler_vm_types": "c8g.8xlarge",
+        }
     )
 
 
@@ -141,11 +171,11 @@ SCENARIO_CONFIG_MAP = {
     "SSP245": UKESM_SSP245_Config,
     "SSP245-t-pr": UKESM_SSP245_T_PR_Config,
     "G6-1.5K": UKESM_G6_1p5K_Config,
-    "G6-1.5K-t-pr": UKESM_G6_1p5K_T_PR_Config,
+    # "G6-1.5K-t-pr": UKESM_G6_1p5K_T_PR_Config,  # disabled; see UKESM_G6_1p5K_Config
     "historical": UKESM_Historical_Config,
 }
 
-T_PR_SCENARIOS = {UKESM_SSP245_T_PR_Config, UKESM_G6_1p5K_T_PR_Config}
+T_PR_SCENARIOS = {UKESM_SSP245_T_PR_Config}  # UKESM_G6_1p5K_T_PR_Config disabled
 
 
 def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Config) -> None:
@@ -156,16 +186,17 @@ def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Confi
     )
     time_slices = ["18500101-19491230", "19500101-20141230"]
     ensemble_dates = {
-        "r1i1p1f2": "d20190627",
+        # "r1i1p1f2": "d20190627",
         "r2i1p1f2": "d20190708",
         "r3i1p1f2": "d20190708",
-        "r4i1p1f2": "d20190708",
-        "r5i1p1f3": "d20191115",
-        "r6i1p1f3": "d20191113",
-        "r7i1p1f3": "d20191011",
-        "r8i1p1f2": "d20190708",
-        "r9i1p1f2": "d20191015",
-        "r10i1p1f2": "d20191213",
+        # "r4i1p1f2": "d20190708",
+        # "r5i1p1f3": "d20191115",
+        # "r6i1p1f3": "d20191113",
+        # "r7i1p1f3": "d20191011",
+        # "r8i1p1f2": "d20190708",
+        # "r9i1p1f2": "d20191015",
+        # "r10i1p1f2": "d20191213",
+        "r12i1p1f2": "d20191210",
     }
 
     urls = []
@@ -215,7 +246,9 @@ def _get_netcdf_urls(config: BaseUKESM_Config, variables: list[str]) -> list[str
     filtered_urls = [
         f"s3://{config.s3_bucket}/{path}"
         for path in netcdf_list
-        if path.endswith(".nc") and any(f"{var}_".lower() in path.lower() for var in variables)
+        if path.endswith(".nc")
+        and any(f"{var}_".lower() in path.lower() for var in variables)
+        and (not config.ensemble_members or any(f"_{m}_" in path for m in config.ensemble_members))
     ]
     return filtered_urls
 
@@ -247,13 +280,17 @@ def _preprocess_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
 
 def _preprocess_ensemble_t_pr(ds: xr.Dataset, url: str = None) -> xr.Dataset:
     """Extract ensemble member from filename pattern: PREFIX_001_var_corrected.nc
-    and normalize latitude/longitude dim names to lat/lon."""
+    and normalize latitude/longitude dim names to lat/lon.
+
+    Raw positional ID (e.g. '001') stored under 'ensemble_member' dim in its own
+    separate icechunk store. CMIP6 ripf mapping unconfirmed; update coord values
+    once confirmed (001/002/003 -> r12i1p1f2/r2i1p1f2/r3i1p1f2).
+    """
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
     filename = url.split("/")[-1]
     member_idx = filename.split("_")[1]
-    member = UKESM_ENSEMBLE_MEMBER_MAP[member_idx]
-    ds = ds.expand_dims({"ensemble_member": [member]})
+    ds = ds.expand_dims({"ensemble_member": [member_idx]})
     if "latitude" in ds.dims:
         ds = ds.rename({"latitude": "lat", "longitude": "lon"})
     return ds
@@ -265,10 +302,17 @@ def _preprocess_ukesm(
     subset: bool = False,
 ) -> xr.Dataset:
     # OUR TEMP/PR data has values from 2015-2099. it should be 2035-2085
-    if isinstance(config, (UKESM_G6_1p5K_Config, UKESM_G6_1p5K_T_PR_Config)):
+    if isinstance(config, UKESM_G6_1p5K_Config):
         ds = ds.sel(time=slice("2035-01-01", "2084-12-30"))
 
-    ds = ds.drop_duplicates(dim="time", keep="first")
+    # subset before convert_calendar: avoids building large task graph over full time axis
+    if subset:
+        ds = ds.isel(time=slice(0, 365))
+
+    # skip drop_duplicates for historical: CEDA CMORized data is clean, and
+    # drop_duplicates generates a large task graph that overwhelms the dask scheduler
+    if not isinstance(config, UKESM_Historical_Config):
+        ds = ds.drop_duplicates(dim="time", keep="first")
     ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False, align_on="date")
     ds = ds.drop_encoding()
     ds = lon_to_180(ds, lon_name="lon")
@@ -279,15 +323,27 @@ def _preprocess_ukesm(
         ds = ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
 
     ds = trim_negative_precipitation(ds)
-    if subset:
-        ds = ds.isel(time=slice(0, 365))
     return ds
+
+
+def _derivation_logic(config: BaseUKESM_Config) -> str:
+    if type(config) in T_PR_SCENARIOS:
+        return (
+            "Extracted from filename position index: filename.split('_')[1] "
+            "(e.g. '001'). Positional ID stored under 'ensemble_member' dim in separate "
+            "T/PR icechunk store. Source files are private T/PR NetCDFs; CMIP6 ripf "
+            "mapping unconfirmed. Update coord values once mapping confirmed "
+            "(001->r12i1p1f2, 002->r2i1p1f2, 003->r3i1p1f2)."
+        )
+    return (
+        "Extracted from CMIP6 DRS filename: "
+        "url.split('.nc')[0].split('_gn')[0].split('_')[-1]. "
+        "Source files are CMORized UKESM CMIP6 data; member ID matches the DRS path segment."
+    )
 
 
 def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> xr.Dataset:
     ds = update_variable_attrs(ds, var_specs)
-    # ds = add_cf_bounds(ds)
-
     ds.attrs.update(
         {
             "scenario": config.scenario,
@@ -295,8 +351,7 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> 
             "Conventions": "CF-1.8",
         }
     )
-
-    return ds
+    return apply_ensemble_provenance(ds, _derivation_logic(config))
 
 
 @click.group()
@@ -401,48 +456,61 @@ def virtualize(scenario, coiled):
 @click.option("--all-variables", is_flag=True, help="process all expected variables from catalog")
 @click.option("--subset/--no-subset", default=False)
 def process(variable, scenario, coiled, all_variables, subset):
-    """Read virtual icechunk stores, postprocess, rechunk, shard and write to icechunk"""
+    """Read virtual icechunk stores, postprocess, rechunk, shard and write to icechunk."""
     config = SCENARIO_CONFIG_MAP[scenario]()
 
     if coiled:
         from srm.config import ClusterConfig
 
         client = setup_cluster(ClusterConfig(**config.process_cluster))
-    else:
-        client = setup_local_client()
 
-    mat_key = getattr(config, "materialized_key", f"UKESM-{scenario}-icechunk")
-    materialized_cat = catalog.get(mat_key)
-    var_specs = get_var_specs(materialized_cat)
+    mat_cat = catalog.get(config.materialized_key)
+    t_pr_mat_key = getattr(config, "t_pr_materialized_key", None)
+    t_pr_mat_cat = catalog.get(t_pr_mat_key) if t_pr_mat_key else None
+
+    var_specs = get_var_specs(mat_cat)
+    if t_pr_mat_cat:
+        var_specs.update(get_var_specs(t_pr_mat_cat))
 
     if all_variables:
-        variables = [var.name for var in materialized_cat.expected_vars]
-
+        variables = [var.name for var in mat_cat.expected_vars]
+        if t_pr_mat_cat:
+            t_pr_expected = [var.name for var in t_pr_mat_cat.expected_vars]
+            variables = variables + [v for v in t_pr_expected if v not in variables]
     elif variable:
         variables = list(variable)
     else:
         raise click.UsageError("Must specify either --variable or --all-variables")
 
     try:
+        t_pr_key = getattr(config, "t_pr_catalog_key", None)
+
         for var in variables:
+            use_t_pr_store = t_pr_mat_cat and (var in T_PR_VARS or var.lower() == "dtr")
+            target_cat = t_pr_mat_cat if use_t_pr_store else mat_cat
+
             if var.lower() == "dtr":
                 ds = load_dtr_from_store(
-                    materialized_cat.bucket, materialized_cat.prefix, config.encoding["shards"]
+                    target_cat.bucket, target_cat.prefix, config.encoding["shards"]
                 )
             else:
-                if var in T_PR_VARS and hasattr(config, "materialized_key"):
-                    t_pr_key = f"UKESM-{config.scenario}-t-pr-virtual"
-                    virt_ds = catalog.get(t_pr_key).to_xarray()
-                else:
-                    virt_ds = catalog.get(config.catalog_key).to_xarray()
-                ds = virt_ds[[var]]
+                source_key = t_pr_key if (var in T_PR_VARS and t_pr_key) else config.catalog_key
+                ds = catalog.get(source_key).to_xarray()[[var]]
+                if config.ensemble_members and "ensemble_member" in ds.dims:
+                    available = [
+                        m
+                        for m in config.ensemble_members
+                        if m in ds.coords["ensemble_member"].values
+                    ]
+                    missing = set(config.ensemble_members) - set(available)
+                    if missing:
+                        print(f"WARNING: ensemble members not in virtual store: {sorted(missing)}")
+                    ds = ds.sel(ensemble_member=available)
                 ds = _preprocess_ukesm(ds, config, subset=subset)
 
             ds = _update_attrs(ds, var_specs, config)
 
-            repo, session = init_repo(
-                materialized_cat.bucket, materialized_cat.prefix, readonly=False
-            )
+            repo, session = init_repo(target_cat.bucket, target_cat.prefix, readonly=False)
             write_mode = determine_write_mode(repo)
             encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
             write_dataset_to_icechunk(
@@ -454,7 +522,8 @@ def process(variable, scenario, coiled, all_variables, subset):
                 write_mode=write_mode,
             )
     finally:
-        client.shutdown()
+        if coiled:
+            client.shutdown()
 
 
 cli.add_command(fetch)
