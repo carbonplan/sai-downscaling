@@ -155,7 +155,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     )
 
     # Cache and output paths
-    cache_dir: str = Field(
+    scratch_dir: str = Field(
         "s3://carbonplan-scratch/srm/cache/",
         description="Base directory for cached intermediate artifacts",
     )
