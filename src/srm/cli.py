@@ -13,19 +13,23 @@ import typer
 import yaml
 from rich import box
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.table import Table
 
 from srm.bcsd_config import BCSDConfig, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
 
-# Configure logging
+console = Console()
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(console=console, show_path=False, rich_tracebacks=True)],
 )
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
-console = Console()
 
 
 def load_configs(config_path: str) -> list[BCSDConfig]:
@@ -208,7 +212,7 @@ def run(
     configs = [cfg for path in config_path for cfg in load_configs(path)]
     if version is not None:
         configs = [config.model_copy(update={"version": version}) for config in configs]
-    console.print(f"[bold green]Loaded {len(configs)} configuration(s)[/bold green]")
+    logger.info("Loaded %d configuration(s)", len(configs))
 
     orchestrator = BCSDOrchestrator()
 
@@ -239,7 +243,7 @@ def run(
     else:
         raise ValueError(f"Unknown stage: {stage}")
 
-    console.print("[bold green]✓ Complete![/bold green]")
+    logger.info("✓ Complete!")
 
 
 def _print_paths_summary(paths: list[str], configs: list[BCSDConfig], stage: str) -> None:
@@ -372,9 +376,9 @@ def run_matrix(
     # Validate predict periods are provided when scenarios are given
     has_scenarios = any(s is not None for s in scenario_values)
     if has_scenarios and (predict_period_start is None or predict_period_end is None):
-        console.print(
-            "[red]Error: --predict-period-start and --predict-period-end are required "
-            "when --scenario is specified.[/red]"
+        logger.error(
+            "--predict-period-start and --predict-period-end are required "
+            "when --scenario is specified."
         )
         raise typer.Exit(1)
 
@@ -387,9 +391,8 @@ def run_matrix(
                 raise ValueError
             parsed_bounds = (parts[0], parts[1], parts[2], parts[3])
         except ValueError:
-            console.print(
-                "[red]Error: --subset-bounds must be 'lat_min,lat_max,lon_min,lon_max' "
-                "(e.g. '-35,-22,16,33')[/red]"
+            logger.error(
+                "--subset-bounds must be 'lat_min,lat_max,lon_min,lon_max' (e.g. '-35,-22,16,33')"
             )
             raise typer.Exit(1)
 
@@ -419,10 +422,13 @@ def run_matrix(
     )
 
     n = len(configs)
-    console.print(
-        f"[bold green]Generated {n} configuration(s): "
-        f"{len(gcm)} GCM(s) x {len(variable)} variable(s) x "
-        f"{len(member)} member(s) x {len(scenario_values)} scenario(s)[/bold green]"
+    logger.info(
+        "Generated %d configuration(s): %d GCM(s) x %d variable(s) x %d member(s) x %d scenario(s)",
+        n,
+        len(gcm),
+        len(variable),
+        len(member),
+        len(scenario_values),
     )
 
     if dry_run:
@@ -463,10 +469,10 @@ def run_matrix(
         _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical")
         _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario")
     else:
-        console.print(f"[red]Error: Unknown stage: {stage}[/red]")
+        logger.error("Unknown stage: %s", stage)
         raise typer.Exit(1)
 
-    console.print("[bold green]✓ Complete![/bold green]")
+    logger.info("✓ Complete!")
 
 
 @app.command()
@@ -488,17 +494,20 @@ def status(
     # Show cache configuration if verbose
     if verbose and configs:
         cache = orchestrator._get_cache(configs[0])
-        console.print("\n[cyan]Cache Configuration:[/cyan]")
-        console.print(f"  Cache Path: {cache.cache_dir}")
-        console.print(f"  Output Path: {cache.output_dir or '(same as cache)'}")
-        console.print(f"  Environment: {cache.environment}")
-        console.print(f"  Version: {cache.version}")
-        console.print("\n[cyan]Example Paths:[/cyan]")
         config = configs[0]
-        console.print(f"  Obs: {cache.get_obs_path(config)}")
-        console.print(f"  Historical: {cache.get_historical_path(config)}")
+        lines = [
+            "Cache Configuration:",
+            f"  Cache Path: {cache.cache_dir}",
+            f"  Output Path: {cache.output_dir or '(same as cache)'}",
+            f"  Environment: {cache.environment}",
+            f"  Version: {cache.version}",
+            "Example Paths:",
+            f"  Obs: {cache.get_obs_path(config)}",
+            f"  Historical: {cache.get_historical_path(config)}",
+        ]
         if config.scenario:
-            console.print(f"  Scenario: {cache.get_scenario_path(config)}\n")
+            lines.append(f"  Scenario: {cache.get_scenario_path(config)}")
+        logger.info("\n".join(lines))
 
     status_info = orchestrator.get_status(configs)
 
@@ -529,11 +538,11 @@ def status(
     # Show missing items if any
     for stage_name, stage_info in status_info.items():
         if stage_info["missing"]:
-            console.print(f"\n[yellow]Missing {stage_name}:[/yellow]")
-            for run_id in stage_info["missing"][:10]:  # Show first 10
-                console.print(f"  • {run_id}")
+            items = stage_info["missing"][:10]
+            lines = [f"Missing {stage_name}:"] + [f"  • {run_id}" for run_id in items]
             if len(stage_info["missing"]) > 10:
-                console.print(f"  ... and {len(stage_info['missing']) - 10} more")
+                lines.append(f"  ... and {len(stage_info['missing']) - 10} more")
+            logger.warning("\n".join(lines))
 
 
 @app.command()
@@ -551,7 +560,7 @@ def cache_clear(
     # Load config to get cache_dir
     configs = load_configs(config_path)
     if not configs:
-        console.print("[red]Error: No valid configurations found[/red]")
+        logger.error("No valid configurations found")
         raise typer.Exit(1)
 
     # Use cache_dir from first config (all should have same cache_dir)
@@ -575,11 +584,11 @@ def cache_clear(
     if not confirm:
         confirm = typer.confirm(f"Really delete {desc}?")
         if not confirm:
-            console.print("[yellow]Cancelled[/yellow]")
+            logger.warning("Cancelled")
             return
 
     deleted = cache.clear_cache(stage=stage, gcm=gcm, variable=variable)
-    console.print(f"[green]✓ Deleted {deleted} artifact(s)[/green]")
+    logger.info("✓ Deleted %d artifact(s)", deleted)
 
 
 @app.command()
@@ -596,7 +605,7 @@ def cache_list(
     # Load config to get cache_dir
     configs = load_configs(config_path)
     if not configs:
-        console.print("[red]Error: No valid configurations found[/red]")
+        logger.error("No valid configurations found")
         raise typer.Exit(1)
 
     # Use cache_dir from first config (all should have same cache_dir)
@@ -608,7 +617,7 @@ def cache_list(
     artifacts = cache.list_artifacts(stage=stage, gcm=gcm, variable=variable)
 
     if not artifacts:
-        console.print("[yellow]No cached artifacts found[/yellow]")
+        logger.warning("No cached artifacts found")
         return
 
     table = Table(title=f"Cached Artifacts ({len(artifacts)})", show_header=True)
@@ -659,7 +668,7 @@ def validate(
         try:
             all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
         except pydantic.ValidationError as exc:
-            console.print(f"[red]Invalid input (gcm={g!r}, scenario={s!r}): {exc}[/red]")
+            logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
 
     def _scenario_order(s: str) -> tuple[int, str]:
         if s == "historical":
@@ -729,11 +738,9 @@ def validate(
     single_pair = len(pairs) == 1
 
     if blocking_failures:
-        console.rule("[bold red]Blocking failures[/bold red]", style="red")
+        logger.error("--- Blocking failures ---")
         for r in blocking_failures:
-            console.print(
-                f"  [red]✗[/red] [bold]{r.check_id}[/bold] ({r.gcm}/{r.scenario}): {r.message}"
-            )
+            logger.error("✗ %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, r.message)
             if r.detail:
                 console.print_json(json.dumps(r.detail))
 
@@ -741,6 +748,7 @@ def validate(
         printed = {id(r) for r in blocking_failures}
         for r in all_results:
             if r.detail and id(r) not in printed:
+                # console.rule/print_json used here for structured JSON detail display
                 console.rule(
                     f"[dim]{r.check_id} detail[/dim] for {r.gcm}/{r.scenario}", style="dim"
                 )
