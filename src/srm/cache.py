@@ -65,7 +65,7 @@ class ArtifactCache:
         self.config: BCSDConfig | None = None
 
         # Initialize filesystem (works for s3:// and local paths)
-        if cache_dir.startswith("s3://"):
+        if self.cache_dir.startswith("s3://"):
             self.fs = fsspec.filesystem("s3")
         else:
             self.fs = fsspec.filesystem("local")
