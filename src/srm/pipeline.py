@@ -349,8 +349,7 @@ class BCSDPipeline:
         model_hist = get_experiment(
             gcm=self.config.gcm, scenario="historical", var=self.config.variable
         )
-        if "ensemble_member" in model_hist.dims:
-            model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+        model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         if self.config.subset_bounds:
@@ -543,8 +542,7 @@ class BCSDPipeline:
         model_hist = get_experiment(
             gcm=self.config.gcm, scenario="historical", var=self.config.variable
         )
-        if "ensemble_member" in model_hist.dims:
-            model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+        model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         model_scenario = get_experiment(
