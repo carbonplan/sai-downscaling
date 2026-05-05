@@ -331,12 +331,7 @@ def _get_geomip_netcdf_urls(variables: list[str], config: BaseMIROC_GeoMIP_Confi
 
 
 def _preprocess_cmip6_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """Extract CMIP6 ensemble member (e.g. r1i1p4f2) from URL and add as dimension.
-
-    Source files are CMORized (CF-1.7) and contain variant_label, realization_index,
-    physics_index, forcing_index, and tracking_id attrs that all match the filename token.
-    Extraction is fully corroborated (verified via source NetCDF audit).
-    """
+    """Extract CMIP6 ensemble member (e.g. r1i1p4f2) from URL and add as dimension."""
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
     ensemble = url.split(".nc")[0].split("_gn")[0].split("_")[-1]
@@ -345,13 +340,7 @@ def _preprocess_cmip6_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
 
 
 def _preprocess_geomip_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """Extract GeoMIP ensemble member suffix from URL filename and add as dimension.
-
-    GeoMIP source files are CF-1.0 with no CMOR attrs — no variant_label,
-    realization_index, or any other ensemble metadata. The raw filename suffix
-    (e.g. 'r01') is used as-is. No remapping to CMIP6 ripf form is applied
-    because there is no file-level evidence to support such a correspondence.
-    """
+    """Extract GeoMIP (g6-1.5k) ensemble member suffix from URL filename and add as dimension."""
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
     ensemble = url.split(".nc")[0].split("_")[-1]  # e.g. "r01"
@@ -379,6 +368,7 @@ def _preprocess_miroc(
 
 
 def _derivation_logic(config: BaseMIROC_ES2H_Config) -> str:
+    """For documenting how we get the ensemble_member, ie from attrs or filepath."""
     if isinstance(config, BaseMIROC_CMIP6_Config):
         return (
             "Extracted from CMIP6 DRS filename: "

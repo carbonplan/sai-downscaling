@@ -33,11 +33,6 @@ from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
 
-UKESM_ENSEMBLE_MEMBER_MAP = {
-    "001": "r12i1p1f2",
-    "002": "r2i1p1f2",
-    "003": "r3i1p1f2",
-}
 
 T_PR_VARS = ["pr", "tas", "tasmin", "tasmax"]
 
@@ -144,16 +139,8 @@ class UKESM_Historical_Config(BaseUKESM_Config):
 
     ensemble_members: list = field(
         default_factory=lambda: [
-            # "r1i1p1f2",
             "r2i1p1f2",
             "r3i1p1f2",
-            # "r4i1p1f2",
-            # "r5i1p1f3",
-            # "r6i1p1f3",
-            # "r7i1p1f3",
-            # "r8i1p1f2",
-            # "r9i1p1f2",
-            # "r10i1p1f2",
             "r12i1p1f2",
         ]
     )
@@ -186,16 +173,8 @@ def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Confi
     )
     time_slices = ["18500101-19491230", "19500101-20141230"]
     ensemble_dates = {
-        # "r1i1p1f2": "d20190627",
         "r2i1p1f2": "d20190708",
         "r3i1p1f2": "d20190708",
-        # "r4i1p1f2": "d20190708",
-        # "r5i1p1f3": "d20191115",
-        # "r6i1p1f3": "d20191113",
-        # "r7i1p1f3": "d20191011",
-        # "r8i1p1f2": "d20190708",
-        # "r9i1p1f2": "d20191015",
-        # "r10i1p1f2": "d20191213",
         "r12i1p1f2": "d20191210",
     }
 
@@ -327,6 +306,8 @@ def _preprocess_ukesm(
 
 
 def _derivation_logic(config: BaseUKESM_Config) -> str:
+    """For documenting how we get the ensemble_member, ie from attrs or filepath."""
+
     if type(config) in T_PR_SCENARIOS:
         return (
             "Extracted from filename position index: filename.split('_')[1] "
