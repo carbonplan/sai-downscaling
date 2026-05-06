@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from srm.bcsd_config import BCSDConfig, VariableConfig
-from srm.cache import ArtifactCache
+from srm.cache import ArtifactCache, CacheCheckError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -16,7 +16,7 @@ from srm.cache import ArtifactCache
 def local_cache(tmp_path) -> ArtifactCache:
     """ArtifactCache backed by the local filesystem (avoids S3 in unit tests)."""
     return ArtifactCache(
-        cache_dir=str(tmp_path / "cache"),
+        scratch_dir=str(tmp_path / "cache"),
         environment="qa",
         version="v1",
     )
@@ -26,7 +26,7 @@ def local_cache(tmp_path) -> ArtifactCache:
 def local_cache_with_output(tmp_path) -> ArtifactCache:
     """ArtifactCache with a separate output_dir for final scenario artifacts."""
     return ArtifactCache(
-        cache_dir=str(tmp_path / "cache"),
+        scratch_dir=str(tmp_path / "cache"),
         environment="qa",
         version="v1",
         output_dir=str(tmp_path / "outputs"),
@@ -94,13 +94,13 @@ def make_icechunk_store(path: str) -> None:
 
 
 class TestArtifactCacheInit:
-    def test_trailing_slash_stripped_from_cache_dir(self, tmp_path):
-        cache = ArtifactCache(cache_dir=str(tmp_path) + "/")
-        assert not cache.cache_dir.endswith("/")
+    def test_trailing_slash_stripped_from_scratch_dir(self, tmp_path):
+        cache = ArtifactCache(scratch_dir=str(tmp_path) + "/")
+        assert not cache.scratch_dir.endswith("/")
 
     def test_trailing_slash_stripped_from_output_dir(self, tmp_path):
         cache = ArtifactCache(
-            cache_dir=str(tmp_path / "cache"),
+            scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs") + "/",
         )
         assert not cache.output_dir.endswith("/")
@@ -109,9 +109,9 @@ class TestArtifactCacheInit:
         assert local_cache.output_dir is None
 
     def test_environment_and_version_stored(self, subtests):
-        for env, ver in [("qa", "v1"), ("staging", "v2"), ("production", "v3")]:
+        for env, ver in [("qa", "v1"), ("production", "v2")]:
             with subtests.test(environment=env, version=ver):
-                cache = ArtifactCache(cache_dir="/tmp/cache", environment=env, version=ver)
+                cache = ArtifactCache(scratch_dir="/tmp/cache", environment=env, version=ver)
                 assert cache.environment == env
                 assert cache.version == ver
 
@@ -192,28 +192,28 @@ class TestObsPath:
         assert "/lat-35.0to-22.0_lon16.0to33.0/obs_regridded.icechunk" in path
 
     def test_paths_differ_per_environment(self, subtests, tmp_path, base_config):
-        for env in ("qa", "staging", "production"):
+        for env in ("qa", "production"):
             with subtests.test(environment=env):
-                cache = ArtifactCache(cache_dir=str(tmp_path), environment=env, version="v1")
+                cache = ArtifactCache(scratch_dir=str(tmp_path), environment=env, version="v1")
                 assert f"/{env}/" in cache.get_obs_path(base_config)
 
     def test_paths_differ_per_version(self, subtests, tmp_path, base_config):
         for version in ("v1", "v2", "v3"):
             with subtests.test(version=version):
-                cache = ArtifactCache(cache_dir=str(tmp_path), environment="qa", version=version)
+                cache = ArtifactCache(scratch_dir=str(tmp_path), environment="qa", version=version)
                 assert f"/{version}/" in cache.get_obs_path(base_config)
 
 
 class TestHistoricalPath:
     def test_goes_to_cache_when_no_output_dir(self, local_cache, base_config):
         path = local_cache.get_historical_path(base_config)
-        assert local_cache.cache_dir in path
+        assert local_cache.scratch_dir in path
         assert "/historical/" in path
 
     def test_goes_to_output_dir_when_specified(self, local_cache_with_output, base_config):
         path = local_cache_with_output.get_historical_path(base_config)
         assert local_cache_with_output.output_dir in path
-        assert local_cache_with_output.cache_dir not in path
+        assert local_cache_with_output.scratch_dir not in path
 
     def test_ensemble_label_in_path(self, subtests, local_cache, base_config):
         for label in ("r1i1p1f1", "r12i1p1f2", "01", "r10i1p1f2"):
@@ -244,7 +244,7 @@ class TestHistoricalPath:
 class TestScenarioPath:
     def test_goes_to_cache_scenarios_when_no_output_dir(self, local_cache, base_config):
         path = local_cache.get_scenario_path(base_config)
-        assert local_cache.cache_dir in path
+        assert local_cache.scratch_dir in path
         assert "/ssp245/" in path
 
     def test_goes_to_output_dir_when_specified(self, local_cache_with_output, base_config):
@@ -272,9 +272,9 @@ class TestScenarioPath:
 class TestIntermediatePaths:
     """Tests for intermediate artifact paths (detrended, trend, debiased variants)."""
 
-    def test_detrended_scenario_in_cache_dir(self, local_cache, base_config):
+    def test_detrended_scenario_in_scratch_dir(self, local_cache, base_config):
         path = local_cache.get_detrended_scenario_path(base_config)
-        assert local_cache.cache_dir in path
+        assert local_cache.scratch_dir in path
 
     def test_detrended_scenario_path_structure(self, local_cache, base_config):
         path = local_cache.get_detrended_scenario_path(base_config)
@@ -442,6 +442,43 @@ class TestExists:
         storage = icechunk.local_filesystem_storage(path=str(store))
         icechunk.Repository.open_or_create(storage)
         assert local_cache.exists(str(store)) is False
+
+    def test_non_icechunk_exception_raises_cache_check_error(
+        self, local_cache, tmp_path, monkeypatch
+    ):
+        import icechunk
+
+        def raise_os_error(*a, **kw):
+            raise OSError("simulated network timeout")
+
+        monkeypatch.setattr(icechunk.Repository, "open", raise_os_error)
+        with pytest.raises(CacheCheckError):
+            local_cache.exists(str(tmp_path / "any.icechunk"))
+
+    def test_icechunk_error_without_not_found_message_raises_cache_check_error(
+        self, local_cache, tmp_path, monkeypatch
+    ):
+        import icechunk
+
+        def raise_other_icechunk_error(*a, **kw):
+            raise icechunk.IcechunkError("chunk read failure")
+
+        monkeypatch.setattr(icechunk.Repository, "open", raise_other_icechunk_error)
+        with pytest.raises(CacheCheckError):
+            local_cache.exists(str(tmp_path / "any.icechunk"))
+
+    def test_cache_check_error_chains_original_exception(self, local_cache, tmp_path, monkeypatch):
+        import icechunk
+
+        original = OSError("disk full")
+
+        def raise_original(*a, **kw):
+            raise original
+
+        monkeypatch.setattr(icechunk.Repository, "open", raise_original)
+        with pytest.raises(CacheCheckError) as exc_info:
+            local_cache.exists(str(tmp_path / "any.icechunk"))
+        assert exc_info.value.__cause__ is original
 
 
 # ---------------------------------------------------------------------------

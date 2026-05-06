@@ -6,7 +6,7 @@ The pipeline provides intelligent caching at multiple levels to enable efficient
 
 **Two-Tier Storage:**
 
-1. **cache_dir**: intermediate artifacts that are reused across multiple runs
+1. **scratch_dir**: intermediate artifacts that are reused across multiple runs
    - observations regridded to GCM grid (shared across all ensembles/scenarios)
    - historical downscaling (shared across all scenarios for an ensemble)
 
@@ -29,8 +29,6 @@ s3://carbonplan-scratch/srm/bcsd-cache/
 │   │                   └── obs_regridded.icechunk
 │   └── v2/                                # Version 2 (after methodological changes)
 │       └── ...
-├── staging/
-│   └── ...
 └── production/
     └── ...
 
@@ -63,8 +61,6 @@ s3://carbonplan-scratch/srm/outputs/
 │   │                           └── g6-1.5k.icechunk
 │   └── v2/
 │       └── ...
-├── staging/
-│   └── ...
 └── production/
     └── ...
 ```
@@ -152,7 +148,7 @@ uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --y
 ```
 
 > [!WARNING]
-> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa or staging.
+> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.
 
 See [CLI reference — bcsd cache-clear](../reference/cli.md#bcsd-cache-clear--clear-cache) for all options.
 
@@ -166,7 +162,7 @@ from srm.cache import ArtifactCache
 
 config = BCSDConfig(**yaml.safe_load(open("configs/example.yaml")))
 cache = ArtifactCache(
-    cache_dir=config.cache_dir,
+    scratch_dir=config.scratch_dir,
     environment=config.environment,
     version=config.version,
     output_dir=config.output_dir,

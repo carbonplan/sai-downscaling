@@ -101,6 +101,7 @@ def _mock_transform_scenario_compute():
         patch("srm.pipeline.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
+        patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         mock_qm.from_variable.return_value.apply.return_value = MagicMock()
@@ -122,7 +123,7 @@ def config(tmp_path) -> BCSDConfig:
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
-        cache_dir=str(tmp_path / "cache"),
+        scratch_dir=str(tmp_path / "cache"),
         output_dir=str(tmp_path / "outputs"),
         verbose=False,
         rechunk_workflow=False,
@@ -139,7 +140,7 @@ def pr_config(tmp_path) -> BCSDConfig:
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
-        cache_dir=str(tmp_path / "cache"),
+        scratch_dir=str(tmp_path / "cache"),
         output_dir=str(tmp_path / "outputs"),
         verbose=False,
         rechunk_workflow=False,
@@ -170,8 +171,8 @@ def all_deps_present(pipeline) -> BCSDPipeline:
 
 
 class TestBCSDPipelineInit:
-    def test_cache_uses_config_cache_dir(self, pipeline, config):
-        assert config.cache_dir.rstrip("/") in pipeline.cache.cache_dir
+    def test_cache_uses_config_scratch_dir(self, pipeline, config):
+        assert config.scratch_dir.rstrip("/") in pipeline.cache.scratch_dir
 
     def test_cache_uses_config_environment(self, pipeline, config):
         assert pipeline.cache.environment == config.environment
@@ -260,7 +261,7 @@ class TestPrepareObservationsCompute:
             variable="tas",
             ensemble_member="r1i1p1f1",
             subset_bounds=(-35.0, -22.0, 16.0, 33.0),
-            cache_dir=str(tmp_path / "cache"),
+            scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=False,
@@ -282,7 +283,7 @@ class TestPrepareObservationsCompute:
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
-            cache_dir=str(tmp_path / "cache"),
+            scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=True,
@@ -296,6 +297,53 @@ class TestPrepareObservationsCompute:
         with _mock_prepare_obs_compute() as (mock_get_obs, *_):
             pipeline_pr.prepare_observations()
         mock_get_obs.assert_called_once_with(var="pr")
+
+
+# ---------------------------------------------------------------------------
+# _build_ocean_mask
+# ---------------------------------------------------------------------------
+
+
+class TestBuildOceanMask:
+    def _make_da(self):
+        import numpy as np
+
+        return xr.DataArray(
+            np.zeros((3, 4, 8)),
+            dims=["time", "lat", "lon"],
+            coords={"time": range(3), "lat": [60.0, 30.0, 0.0, -30.0], "lon": list(range(8))},
+        )
+
+    def test_fetches_ocean_mask_from_catalog(self):
+        mock_gdf = MagicMock()
+        with (
+            patch("srm.datasets.catalog") as mock_catalog,
+            patch.dict("sys.modules", {"xproj": MagicMock()}),
+            patch("rasterix.rasterize.geometry_mask", return_value=MagicMock()),
+        ):
+            mock_catalog.get.return_value.to_geodataframe.return_value = mock_gdf
+            BCSDPipeline._build_ocean_mask(self._make_da())
+        mock_catalog.get.assert_called_once_with("ocean-mask")
+
+    def test_passes_lat_sorted_descending_to_geometry_mask(self):
+        """rusterize requires lat in descending order."""
+        captured = {}
+        mock_gdf = MagicMock()
+
+        def capture_template(template, *args, **kwargs):
+            captured["lat"] = template.coords["lat"].values.tolist()
+            return MagicMock()
+
+        with (
+            patch("srm.datasets.catalog") as mock_catalog,
+            patch.dict("sys.modules", {"xproj": MagicMock()}),
+            patch("rasterix.rasterize.geometry_mask", side_effect=capture_template),
+        ):
+            mock_catalog.get.return_value.to_geodataframe.return_value = mock_gdf
+            da = self._make_da()  # lat already descending: [60, 30, 0, -30]
+            BCSDPipeline._build_ocean_mask(da)
+
+        assert captured["lat"] == sorted(captured["lat"], reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +405,7 @@ class TestTransformScenarioBehavior:
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
-            cache_dir=str(tmp_path / "cache"),
+            scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
         )
@@ -438,6 +486,69 @@ class TestTransformScenarioBehavior:
                     pass
         # detrend is called because tas has detrend_data=True
         assert mock_detrend.call_count >= 1 or pipeline.config.detrend_data
+
+    def test_ocean_mask_applied_when_enabled(self, pipeline_pr):
+        """Ocean mask is applied to scenario output when apply_ocean_mask=True (default)."""
+        p = pipeline_pr
+        _make_icechunk_store(p.cache.obs_path)
+        _make_icechunk_store(p.cache.historical_path)
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()
+            ) as mock_mask:
+                p.transform_scenario()
+        mock_mask.assert_called_once()
+
+    def test_ocean_mask_not_applied_when_disabled(self, tmp_path):
+        """_build_ocean_mask is not called when apply_ocean_mask=False."""
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="pr",
+            ensemble_member="r1i1p1f1",
+            scenario="ssp245",
+            predict_period_start=2015,
+            predict_period_end=2100,
+            scratch_dir=str(tmp_path / "cache"),
+            output_dir=str(tmp_path / "outputs"),
+            verbose=False,
+            rechunk_workflow=False,
+            apply_ocean_mask=False,
+        )
+        p = BCSDPipeline(cfg)
+        _make_icechunk_store(p.cache.obs_path)
+        _make_icechunk_store(p.cache.historical_path)
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()
+            ) as mock_mask:
+                p.transform_scenario()
+        mock_mask.assert_not_called()
+
+    def test_write_called_with_chunk_shard_encoding(self, pipeline_pr):
+        """transform_scenario passes chunk/shard/compressor encoding to the write call."""
+        from srm.encoding import (
+            CHUNK_LAT,
+            CHUNK_LON,
+            CHUNK_TIME,
+            SHARD_LAT,
+            SHARD_LON,
+            SHARD_TIME,
+        )
+
+        p = pipeline_pr
+        _make_icechunk_store(p.cache.obs_path)
+        _make_icechunk_store(p.cache.historical_path)
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+            ) as mock_write:
+                p.transform_scenario()
+
+        encoding = mock_write.call_args.kwargs["encoding"]
+        assert "pr" in encoding
+        entry = encoding["pr"]
+        assert entry["chunks"] == (CHUNK_TIME, CHUNK_LAT, CHUNK_LON)
+        assert entry["shards"] == (SHARD_TIME, SHARD_LAT, SHARD_LON)
 
 
 # ---------------------------------------------------------------------------

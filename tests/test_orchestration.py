@@ -61,7 +61,7 @@ def _make_config(
         scenario=scenario,
         predict_period_start=2015,
         predict_period_end=2100,
-        cache_dir=str(tmp_path / "cache"),
+        scratch_dir=str(tmp_path / "cache"),
         output_dir=str(tmp_path / "outputs"),
         verbose=False,
     )
@@ -95,7 +95,7 @@ class TestGetCache:
 
     def test_cache_uses_config_paths_and_env(self, orchestrator, config):
         cache = orchestrator._get_cache(config)
-        assert config.cache_dir.rstrip("/") in cache.cache_dir
+        assert config.scratch_dir.rstrip("/") in cache.scratch_dir
         assert cache.environment == config.environment
         assert cache.version == config.version
 

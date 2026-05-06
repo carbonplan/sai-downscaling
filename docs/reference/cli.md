@@ -20,7 +20,7 @@ uv run bcsd run-matrix [OPTIONS]
 - `--predict-period-end INTEGER`: end year of prediction period (required when `--scenario` is given)
 - `--train-period-start INTEGER`: start year of training period (default: `1978`)
 - `--train-period-end INTEGER`: end year of training period (default: `2014`)
-- `--cache-dir TEXT`: base directory for cached artifacts
+- `--scratch-dir TEXT`: base directory for cached artifacts
 - `--output-dir TEXT`: directory for final outputs
 - `--environment TEXT`: environment (default: `qa`)
 - `--version TEXT`: version identifier (default: `v1`)
@@ -40,7 +40,7 @@ uv run bcsd run-matrix \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario ssp245 --scenario G6-1pt5k \
   --predict-period-start 2015 --predict-period-end 2100 \
-  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --scratch-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/"
 
 # Preview what would run without executing
@@ -206,7 +206,7 @@ uv run bcsd cache-list --config-path PATH [OPTIONS]
 
 **Options:**
 
-- `--config-path TEXT` (required): path to config file or directory (uses cache_dir from config)
+- `--config-path TEXT` (required): path to config file or directory (uses scratch_dir from config)
 - `--stage TEXT`: filter by stage (`obs`/`historical`/`scenarios`)
 - `--gcm TEXT`: filter by GCM model
 - `--variable TEXT`: filter by variable
@@ -214,7 +214,7 @@ uv run bcsd cache-list --config-path PATH [OPTIONS]
 **Examples:**
 
 ```bash
-# List all cached artifacts from config's cache_dir
+# List all cached artifacts from config's scratch_dir
 uv run bcsd cache-list --config-path configs/example.yaml
 
 # List only observation artifacts
@@ -256,4 +256,4 @@ uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --y
 ```
 
 > [!WARNING]
-> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa or staging.
+> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.

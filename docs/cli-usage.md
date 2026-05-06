@@ -10,6 +10,7 @@ Task-oriented guides for common workflows:
 - [Manage the cache](how-to/manage-cache.md) — resumability, force recompute, cache inspection and clearing
 - [Compare outputs across code versions](how-to/compare-outputs-across-versions.md) — validate pipeline changes on a test region
 - [Run a multi-model ensemble](how-to/run-multi-model-ensemble.md) — run across multiple GCMs, variables, members, and scenarios
+- [Deploy the pipeline](how-to/deploy.md) — QA and production runs via GitHub Actions
 
 ## Reference
 

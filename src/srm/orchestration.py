@@ -53,17 +53,17 @@ class BCSDOrchestrator:
         """
         Initialize orchestrator.
 
-        Note: The cache is created on-demand using cache_dir from the configs
+        Note: The cache is created on-demand using scratch_dir from the configs
         to ensure consistency between orchestrator and batch jobs.
         """
-        self._cache_instances = {}  # Cache instances keyed by (cache_dir, environment)
+        self._cache_instances = {}  # Cache instances keyed by (scratch_dir, environment)
 
     def _get_cache(self, config: BCSDConfig) -> ArtifactCache:
-        """Get or create cache instance for config's cache_dir and output_dir."""
-        cache_key = (config.cache_dir, config.output_dir, config.environment, config.version)
+        """Get or create cache instance for config's scratch_dir and output_dir."""
+        cache_key = (config.scratch_dir, config.output_dir, config.environment, config.version)
         if cache_key not in self._cache_instances:
             self._cache_instances[cache_key] = ArtifactCache(
-                cache_dir=config.cache_dir,
+                scratch_dir=config.scratch_dir,
                 environment=config.environment,
                 version=config.version,
                 output_dir=config.output_dir,
@@ -99,7 +99,7 @@ class BCSDOrchestrator:
         if not configs:
             return []
 
-        # Get cache instance from first config (all configs should use same cache_dir)
+        # Get cache instance from first config (all configs should use same scratch_dir)
         cache = self._get_cache(configs[0])
 
         # Filter out configs that are already cached

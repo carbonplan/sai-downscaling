@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from packaging.version import Version
 from pydantic import ValidationError
 
-from srm.bcsd_config import BCSDConfig, CacheConfig, RuntimeConfig, VariableConfig
+from srm.bcsd_config import BCSDConfig, CacheConfig, RuntimeConfig, VariableConfig, _cache_version
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -176,7 +177,7 @@ class TestBCSDConfigConstruction:
 
     def test_default_environment_and_version(self, minimal_config):
         assert minimal_config.environment == "qa"
-        assert minimal_config.version == "v1"
+        assert minimal_config.version == _cache_version
 
     def test_explicit_variable_config_not_overwritten(self):
         """Explicitly supplied variable_config must survive post-init."""
@@ -210,10 +211,19 @@ class TestBCSDConfigConstruction:
                 cfg = BCSDConfig(gcm=gcm, variable="tas", ensemble_member="r1i1p1f1")
                 assert cfg.gcm == gcm
 
+    def test_apply_ocean_mask_defaults_true(self, minimal_config):
+        assert minimal_config.apply_ocean_mask is True
+
+    def test_apply_ocean_mask_can_be_disabled(self):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", apply_ocean_mask=False
+        )
+        assert cfg.apply_ocean_mask is False
+
     def test_model_copy_version_override(self, scenario_config):
-        v2 = scenario_config.model_copy(update={"version": "v2"})
-        assert v2.version == "v2"
-        assert scenario_config.version == "v1"
+        v2 = scenario_config.model_copy(update={"version": "my-custom-version"})
+        assert v2.version == "my-custom-version"
+        assert scenario_config.version == _cache_version
 
 
 # ---------------------------------------------------------------------------
@@ -381,42 +391,46 @@ class TestBCSDConfigValidation:
 
 
 # ---------------------------------------------------------------------------
-# BCSDConfig – to_legacy_kwargs
+# BCSDConfig – version defaulting
 # ---------------------------------------------------------------------------
 
 
-class TestToLegacyKwargs:
-    """Backward-compatibility helper converts fields to the legacy function signature."""
+class TestVersionDefaulting:
+    """Version defaults to the installed package's public version string."""
 
-    def test_historical_only_keys(self, minimal_config):
-        kwargs = minimal_config.to_legacy_kwargs()
-        assert kwargs["gcm"] == "CESM2-WACCM"
-        assert kwargs["var_name"] == "tas"
-        assert kwargs["train_period_start"] == 1978
-        assert kwargs["train_period_end"] == 2014
+    def test_default_version_matches_cache_version(self, minimal_config):
+        assert minimal_config.version == _cache_version
 
-    def test_historical_only_excludes_predict_period(self, minimal_config):
-        kwargs = minimal_config.to_legacy_kwargs()
-        assert "predict_period_start" not in kwargs
-        assert "predict_period_end" not in kwargs
+    def test_default_version_has_no_local_segment(self, minimal_config):
+        assert "+" not in minimal_config.version
 
-    def test_scenario_includes_predict_period(self, scenario_config):
-        kwargs = scenario_config.to_legacy_kwargs()
-        assert kwargs["predict_period_start"] == 2015
-        assert kwargs["predict_period_end"] == 2100
+    def test_default_version_is_valid_pep440(self, minimal_config):
+        v = Version(minimal_config.version)
+        assert v.local is None
 
-    def test_global_run_subset_bounds_is_none(self, minimal_config):
-        assert minimal_config.to_legacy_kwargs()["subset_bounds"] is None
+    def test_explicit_version_override(self):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", version="custom-v99"
+        )
+        assert cfg.version == "custom-v99"
 
-    def test_regional_run_subset_bounds_is_list(self, regional_config):
-        kwargs = regional_config.to_legacy_kwargs()
-        assert isinstance(kwargs["subset_bounds"], list)
-        assert kwargs["subset_bounds"] == [-35.0, -22.0, 16.0, 33.0]
+    def test_env_var_overrides_version(self, monkeypatch):
+        monkeypatch.setenv("BCSD_VERSION", "env-override")
+        cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        assert cfg.version == "env-override"
 
-    def test_verbose_and_rechunk_present(self, minimal_config):
-        kwargs = minimal_config.to_legacy_kwargs()
-        assert "verbose" in kwargs
-        assert "rechunk_workflow" in kwargs
+    def test_cache_config_default_version_has_no_local_segment(self):
+        assert "+" not in CacheConfig().version
+
+    def test_bcsd_and_cache_config_share_same_default(self):
+        bcsd = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        cache = CacheConfig()
+        assert bcsd.version == cache.version
+
+
+# ---------------------------------------------------------------------------
+# BCSDConfig – to_legacy_kwargs
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +442,7 @@ class TestCacheConfig:
     def test_defaults(self):
         cfg = CacheConfig()
         assert cfg.environment == "qa"
-        assert cfg.version == "v1"
+        assert cfg.version == _cache_version
         assert cfg.force_recompute is False
         assert cfg.check_integrity is True
 

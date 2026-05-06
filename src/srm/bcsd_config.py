@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+from importlib.metadata import version as _pkg_version
 from typing import Literal
 
 import pydantic_settings
+from packaging.version import Version as _Version
 from pydantic import BaseModel, Field, computed_field, field_validator
+
+_cache_version = f"v{_Version(_pkg_version('srm')).public}"
 
 MappingType = Literal["parametric", "nonparametric", "nonparametric_hybrid"]
 DownscalingMethod = Literal["additive", "multiplicative"]
@@ -155,7 +159,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     )
 
     # Cache and output paths
-    cache_dir: str = Field(
+    scratch_dir: str = Field(
         "s3://carbonplan-scratch/srm/cache/",
         description="Base directory for cached intermediate artifacts",
     )
@@ -164,11 +168,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     )
     environment: str = Field(
         default="qa",
-        description="Environment name (qa, staging, production). Separates cache/outputs by deployment stage.",
+        description="Environment name (qa, production). Separates cache/outputs by deployment stage.",
     )
     version: str = Field(
-        default="v1",
-        description="Version identifier for cache/output path namespacing (e.g. 'v1', 'v2'). Override with BCSD_VERSION env var.",
+        default=_cache_version,
+        description="Version identifier for cache/output path namespacing. Defaults to the installed package version (e.g. '1.0.post3'). Override with BCSD_VERSION env var.",
     )
 
     model_config = {"env_prefix": "BCSD_"}
@@ -182,6 +186,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     verbose: bool = Field(True, description="Enable verbose logging")
     rechunk_workflow: bool = Field(
         True, description="Enable strategic rechunking between pipeline stages"
+    )
+    apply_ocean_mask: bool = Field(
+        True, description="Mask ocean pixels to NaN in the final scenario output"
     )
     mapping_type: MappingType = Field(
         "parametric",
@@ -322,31 +329,6 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         """Check if this is an SAI intervention scenario"""
         return self.scenario and ("G6" in self.scenario.upper() or "SAI" in self.scenario.upper())
 
-    def to_legacy_kwargs(self) -> dict:
-        """
-        Convert to kwargs dict for legacy run_bcsd function.
-        Useful for backward compatibility during transition.
-        """
-        kwargs = {
-            "gcm": self.gcm,
-            "var_name": self.variable,
-            "train_period_start": self.train_period_start,
-            "train_period_end": self.train_period_end,
-            "verbose": self.verbose,
-            "rechunk_workflow": self.rechunk_workflow,
-            "subset_bounds": list(self.subset_bounds) if self.subset_bounds else None,
-        }
-
-        if self.scenario:
-            kwargs.update(
-                {
-                    "predict_period_start": self.predict_period_start,
-                    "predict_period_end": self.predict_period_end,
-                }
-            )
-
-        return kwargs
-
 
 class CacheConfig(BaseModel):
     """Configuration for artifact caching behavior"""
@@ -357,11 +339,10 @@ class CacheConfig(BaseModel):
     force_recompute: bool = Field(
         False, description="Force recomputation even if cached artifacts exist"
     )
-    environment: str = Field(
-        "qa", description="Environment for cache namespace (qa, staging, production)"
-    )
+    environment: str = Field("qa", description="Environment for cache namespace (qa, production)")
     version: str = Field(
-        "v1", description="Version identifier for cache path namespacing (e.g. 'v1', 'v2')"
+        _cache_version,
+        description="Version identifier for cache path namespacing. Defaults to the installed package version.",
     )
     check_integrity: bool = Field(
         True, description="Verify cached artifacts are valid before using"
@@ -451,16 +432,12 @@ scenario: ssp245
 predict_period_start: 2015
 predict_period_end: 2100
 environment: qa
-version: v1
+# version defaults to installed package version; override here if needed
+# version: 1.0.post3
 """
 
 import yaml
 with open("configs/cesm_tas.yaml") as f:
     config_dict = yaml.safe_load(f)
 config = BCSDConfig(**config_dict)
-
-# 6. Convert to legacy format (backward compatibility)
-legacy_kwargs = config.to_legacy_kwargs()
-from srm.run_bcsd import run_bcsd
-result = run_bcsd(**legacy_kwargs)
 '''

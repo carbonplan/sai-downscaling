@@ -20,6 +20,14 @@ from srm.bcsd_config import BCSDConfig, MappingType, VariableConfig
 logger = logging.getLogger(__name__)
 
 
+class CacheCheckError(Exception):
+    """Raised when an infrastructure error prevents verifying cache existence.
+
+    Distinguishes real errors (S3 auth failure, permission denied, network error)
+    from a simple cache miss. Callers can catch this to decide fallback behavior.
+    """
+
+
 class ArtifactCache:
     """
     S3-based cache manager with dependency tracking.
@@ -30,7 +38,7 @@ class ArtifactCache:
 
     def __init__(
         self,
-        cache_dir: str = "s3://carbonplan-scratch/srm/cache/",
+        scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
         environment: str = "qa",
         version: str = "v1",
         output_dir: str | None = None,
@@ -40,24 +48,24 @@ class ArtifactCache:
 
         Parameters
         ----------
-        cache_dir : str
+        scratch_dir : str
             Base S3 or local path for cache storage (intermediate artifacts)
         environment : str
-            Environment name (qa, staging, production) for cache namespace isolation
+            Environment name (qa, production) for cache namespace isolation
         version : str
             Version identifier included in all paths (e.g. 'v1', 'v2'). Bump to
             invalidate all cached artifacts without changing environment.
         output_dir : str, optional
             Directory for final scenario outputs. If None, scenarios go to cache.
         """
-        self.cache_dir = cache_dir.rstrip("/")
+        self.scratch_dir = scratch_dir.rstrip("/")
         self.environment = environment
         self.version = version
         self.output_dir = output_dir.rstrip("/") if output_dir else None
         self.config: BCSDConfig | None = None
 
         # Initialize filesystem (works for s3:// and local paths)
-        if cache_dir.startswith("s3://"):
+        if self.scratch_dir.startswith("s3://"):
             self.fs = fsspec.filesystem("s3")
         else:
             self.fs = fsspec.filesystem("local")
@@ -78,7 +86,7 @@ class ArtifactCache:
             Initialized cache manager
         """
         cache = cls(
-            cache_dir=config.cache_dir,
+            scratch_dir=config.scratch_dir,
             environment=config.environment,
             version=config.version,
             output_dir=config.output_dir,
@@ -149,7 +157,7 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(config.subset_bounds)
-        return f"{self.cache_dir}/{self.environment}/{self.version}/obs/{config.gcm}/{config.variable}/{subset_id}/obs_regridded.icechunk"
+        return f"{self.scratch_dir}/{self.environment}/{self.version}/obs/{config.gcm}/{config.variable}/{subset_id}/obs_regridded.icechunk"
 
     def get_historical_path(self, config: BCSDConfig) -> str:
         """
@@ -167,7 +175,7 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        base = self.output_dir if self.output_dir else self.cache_dir
+        base = self.output_dir if self.output_dir else self.scratch_dir
         return (
             f"{base}/{self.environment}/{self.version}/historical/"
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/historical.icechunk"
@@ -178,7 +186,7 @@ class ArtifactCache:
         Get path to scenario downscaling output.
 
         Final scenario outputs are written to output_dir (if specified) rather than
-        cache_dir, since they are the final deliverable products.
+        scratch_dir, since they are the final deliverable products.
 
         Parameters
         ----------
@@ -194,7 +202,7 @@ class ArtifactCache:
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
         scenario_lower = config.scenario.lower()
 
-        base = self.output_dir if self.output_dir else self.cache_dir
+        base = self.output_dir if self.output_dir else self.scratch_dir
         return (
             f"{base}/{self.environment}/{self.version}/{scenario_lower}/"
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/{scenario_lower}.icechunk"
@@ -205,7 +213,7 @@ class ArtifactCache:
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
         scenario_lower = config.scenario.lower()
         return (
-            f"{self.cache_dir}/{self.environment}/{self.version}/{scenario_lower}/"
+            f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/detrended.icechunk"
         )
 
@@ -214,7 +222,7 @@ class ArtifactCache:
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
         scenario_lower = config.scenario.lower()
         return (
-            f"{self.cache_dir}/{self.environment}/{self.version}/{scenario_lower}/"
+            f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/trend.icechunk"
         )
 
@@ -222,7 +230,7 @@ class ArtifactCache:
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
         return (
-            f"{self.cache_dir}/{self.environment}/{self.version}/historical/"
+            f"{self.scratch_dir}/{self.environment}/{self.version}/historical/"
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/debiased_coarse.icechunk"
         )
 
@@ -231,7 +239,7 @@ class ArtifactCache:
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
         scenario_lower = config.scenario.lower()
         return (
-            f"{self.cache_dir}/{self.environment}/{self.version}/{scenario_lower}/"
+            f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/debiased_coarse.icechunk"
         )
 
@@ -240,7 +248,7 @@ class ArtifactCache:
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
         scenario_lower = config.scenario.lower()
         return (
-            f"{self.cache_dir}/{self.environment}/{self.version}/{scenario_lower}/"
+            f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
             f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/debiased_retrended_coarse.icechunk"
         )
 
@@ -261,9 +269,9 @@ class ArtifactCache:
         bool
             True if the store exists and has a 'write complete' commit in its ancestry
         """
-        try:
-            import icechunk
+        import icechunk
 
+        try:
             if path.startswith("s3://"):
                 path_no_scheme = path[len("s3://") :]
                 bucket, _, prefix = path_no_scheme.partition("/")
@@ -279,9 +287,13 @@ class ArtifactCache:
             else:
                 logger.debug(f"Cache miss (no write complete commit): {path}")
             return result
+        except icechunk.IcechunkError as e:
+            if "doesn't exist" in str(e) or "does not exist" in str(e):
+                logger.debug(f"Cache miss: {path}: {e}")
+                return False
+            raise CacheCheckError(f"Failed to check cache at {path}") from e
         except Exception as e:
-            logger.debug(f"Cache miss: {path}: {e}")
-            return False
+            raise CacheCheckError(f"Failed to check cache at {path}") from e
 
     def check_dependencies(self, stage: str, config: BCSDConfig) -> dict[str, tuple[bool, str]]:
         """
@@ -400,13 +412,13 @@ class ArtifactCache:
 
         # Build search patterns
         if stage:
-            search_base = f"{self.cache_dir}/{self.environment}/{self.version}/{stage}/"
+            search_base = f"{self.scratch_dir}/{self.environment}/{self.version}/{stage}/"
         else:
-            search_base = f"{self.cache_dir}/{self.environment}/{self.version}/"
+            search_base = f"{self.scratch_dir}/{self.environment}/{self.version}/"
 
         try:
             # List all zarr stores
-            if self.cache_dir.startswith("s3://"):
+            if self.scratch_dir.startswith("s3://"):
                 search_base_no_scheme = search_base.replace("s3://", "")
                 all_paths = self.fs.glob(f"{search_base_no_scheme}**/*.icechunk")
                 all_paths = [f"s3://{p}" for p in all_paths]
@@ -422,7 +434,7 @@ class ArtifactCache:
                     continue
 
                 # Delete the zarr store
-                if self.cache_dir.startswith("s3://"):
+                if self.scratch_dir.startswith("s3://"):
                     path_no_scheme = path.replace("s3://", "")
                     self.fs.rm(path_no_scheme, recursive=True)
                 else:
@@ -478,10 +490,10 @@ class ArtifactCache:
                     search_base = f"{self.output_dir}/{self.environment}/{self.version}/"
                 else:
                     search_base = (
-                        f"{self.cache_dir}/{self.environment}/{self.version}/{stage_name}/"
+                        f"{self.scratch_dir}/{self.environment}/{self.version}/{stage_name}/"
                     )
 
-                if self.cache_dir.startswith("s3://"):
+                if self.scratch_dir.startswith("s3://"):
                     search_base_no_scheme = search_base.replace("s3://", "")
 
                     try:

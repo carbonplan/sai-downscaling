@@ -11,20 +11,25 @@ from pathlib import Path
 
 import typer
 import yaml
+from rich import box
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.table import Table
 
 from srm.bcsd_config import BCSDConfig, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
 
-# Configure logging
+console = Console()
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(console=console, show_path=False, rich_tracebacks=True)],
 )
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
-console = Console()
 
 
 def load_configs(config_path: str) -> list[BCSDConfig]:
@@ -76,7 +81,7 @@ def configs_from_matrix(
     train_period_end: int = 2014,
     predict_period_start: int | None = None,
     predict_period_end: int | None = None,
-    cache_dir: str = "s3://carbonplan-scratch/srm/cache/",
+    scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
     output_dir: str = "s3://carbonplan-scratch/srm/outputs/",
     environment: str = "qa",
     version: str = "v1",
@@ -99,7 +104,7 @@ def configs_from_matrix(
     Parameters
     ----------
     gcms : list[str]
-        GCM names (e.g., ["CESM2-WACCM", "MIROC"])
+        GCM names (e.g., ["CESM2-WACCM", "MIROC-ES2H"])
     variables : list[str]
         Variables to downscale (e.g., ["tas", "pr"])
     members : list[str]
@@ -114,12 +119,12 @@ def configs_from_matrix(
         Start year of prediction period. Required when scenarios contains non-None values.
     predict_period_end : int | None
         End year of prediction period. Required when scenarios contains non-None values.
-    cache_dir : str
+    scratch_dir : str
         Base directory for cached intermediate artifacts
     output_dir : str
         Directory for final downscaled outputs
     environment : str
-        Environment name (qa, staging, production)
+        Environment name (qa, production)
     version : str
         Version identifier
     subset_bounds : tuple[float, float, float, float] | None
@@ -175,7 +180,7 @@ def configs_from_matrix(
                 train_period_end=train_period_end,
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
-                cache_dir=cache_dir,
+                scratch_dir=scratch_dir,
                 output_dir=output_dir,
                 environment=environment,
                 version=version,
@@ -207,7 +212,7 @@ def run(
     configs = [cfg for path in config_path for cfg in load_configs(path)]
     if version is not None:
         configs = [config.model_copy(update={"version": version}) for config in configs]
-    console.print(f"[bold green]Loaded {len(configs)} configuration(s)[/bold green]")
+    logger.info("Loaded %d configuration(s)", len(configs))
 
     orchestrator = BCSDOrchestrator()
 
@@ -238,7 +243,7 @@ def run(
     else:
         raise ValueError(f"Unknown stage: {stage}")
 
-    console.print("[bold green]✓ Complete![/bold green]")
+    logger.info("✓ Complete!")
 
 
 def _print_paths_summary(paths: list[str], configs: list[BCSDConfig], stage: str) -> None:
@@ -274,7 +279,9 @@ def _print_paths_summary(paths: list[str], configs: list[BCSDConfig], stage: str
 
 @app.command()
 def run_matrix(
-    gcm: list[str] = typer.Option(..., help="GCM name (repeatable: --gcm CESM2-WACCM --gcm MIROC)"),
+    gcm: list[str] = typer.Option(
+        ..., help="GCM name (repeatable: --gcm CESM2-WACCM --gcm MIROC-ES2H)"
+    ),
     variable: list[str] = typer.Option(
         ..., help="Variable to downscale (repeatable: --variable tas --variable pr)"
     ),
@@ -284,7 +291,7 @@ def run_matrix(
     scenario: list[str] | None = typer.Option(
         None,
         help=(
-            "Scenario (repeatable: --scenario ssp245 --scenario G6-1pt5k). "
+            "Scenario (repeatable: --scenario SSP245 --scenario G6-1.5K). "
             "Omit for historical-only runs."
         ),
     ),
@@ -296,13 +303,13 @@ def run_matrix(
     predict_period_end: int | None = typer.Option(
         None, help="End year of prediction period. Required when --scenario is provided."
     ),
-    cache_dir: str = typer.Option(
+    scratch_dir: str = typer.Option(
         "s3://carbonplan-scratch/srm/cache/", help="Base directory for cached artifacts"
     ),
     output_dir: str = typer.Option(
         "s3://carbonplan-scratch/srm/outputs/", help="Directory for final outputs"
     ),
-    environment: str = typer.Option("qa", help="Environment (qa, staging, production)"),
+    environment: str = typer.Option("qa", help="Environment (qa, production)"),
     version: str = typer.Option("v1", help="Version identifier (e.g. 'v1', 'v2')"),
     subset_bounds: str | None = typer.Option(
         None,
@@ -355,10 +362,10 @@ def run_matrix(
     Example (2 GCMs x 2 variables x 3 members x 2 scenarios = 24 runs):
 
         bcsd run-matrix \\
-          --gcm CESM2-WACCM --gcm MIROC \\
+          --gcm CESM2-WACCM --gcm MIROC-ES2H \\
           --variable tas --variable pr \\
           --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \\
-          --scenario ssp245 --scenario G6-1pt5k \\
+          --scenario SSP245 --scenario G6-1.5K \\
           --predict-period-start 2015 --predict-period-end 2100
 
     Omit --scenario for historical-only runs.
@@ -369,9 +376,9 @@ def run_matrix(
     # Validate predict periods are provided when scenarios are given
     has_scenarios = any(s is not None for s in scenario_values)
     if has_scenarios and (predict_period_start is None or predict_period_end is None):
-        console.print(
-            "[red]Error: --predict-period-start and --predict-period-end are required "
-            "when --scenario is specified.[/red]"
+        logger.error(
+            "--predict-period-start and --predict-period-end are required "
+            "when --scenario is specified."
         )
         raise typer.Exit(1)
 
@@ -384,9 +391,8 @@ def run_matrix(
                 raise ValueError
             parsed_bounds = (parts[0], parts[1], parts[2], parts[3])
         except ValueError:
-            console.print(
-                "[red]Error: --subset-bounds must be 'lat_min,lat_max,lon_min,lon_max' "
-                "(e.g. '-35,-22,16,33')[/red]"
+            logger.error(
+                "--subset-bounds must be 'lat_min,lat_max,lon_min,lon_max' (e.g. '-35,-22,16,33')"
             )
             raise typer.Exit(1)
 
@@ -399,7 +405,7 @@ def run_matrix(
         train_period_end=train_period_end,
         predict_period_start=predict_period_start,
         predict_period_end=predict_period_end,
-        cache_dir=cache_dir,
+        scratch_dir=scratch_dir,
         output_dir=output_dir,
         environment=environment,
         version=version,
@@ -416,10 +422,13 @@ def run_matrix(
     )
 
     n = len(configs)
-    console.print(
-        f"[bold green]Generated {n} configuration(s): "
-        f"{len(gcm)} GCM(s) x {len(variable)} variable(s) x "
-        f"{len(member)} member(s) x {len(scenario_values)} scenario(s)[/bold green]"
+    logger.info(
+        "Generated %d configuration(s): %d GCM(s) x %d variable(s) x %d member(s) x %d scenario(s)",
+        n,
+        len(gcm),
+        len(variable),
+        len(member),
+        len(scenario_values),
     )
 
     if dry_run:
@@ -460,10 +469,10 @@ def run_matrix(
         _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical")
         _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario")
     else:
-        console.print(f"[red]Error: Unknown stage: {stage}[/red]")
+        logger.error("Unknown stage: %s", stage)
         raise typer.Exit(1)
 
-    console.print("[bold green]✓ Complete![/bold green]")
+    logger.info("✓ Complete!")
 
 
 @app.command()
@@ -485,17 +494,20 @@ def status(
     # Show cache configuration if verbose
     if verbose and configs:
         cache = orchestrator._get_cache(configs[0])
-        console.print("\n[cyan]Cache Configuration:[/cyan]")
-        console.print(f"  Cache Path: {cache.cache_dir}")
-        console.print(f"  Output Path: {cache.output_dir or '(same as cache)'}")
-        console.print(f"  Environment: {cache.environment}")
-        console.print(f"  Version: {cache.version}")
-        console.print("\n[cyan]Example Paths:[/cyan]")
         config = configs[0]
-        console.print(f"  Obs: {cache.get_obs_path(config)}")
-        console.print(f"  Historical: {cache.get_historical_path(config)}")
+        lines = [
+            "Cache Configuration:",
+            f"  Cache Path: {cache.scratch_dir}",
+            f"  Output Path: {cache.output_dir or '(same as cache)'}",
+            f"  Environment: {cache.environment}",
+            f"  Version: {cache.version}",
+            "Example Paths:",
+            f"  Obs: {cache.get_obs_path(config)}",
+            f"  Historical: {cache.get_historical_path(config)}",
+        ]
         if config.scenario:
-            console.print(f"  Scenario: {cache.get_scenario_path(config)}\n")
+            lines.append(f"  Scenario: {cache.get_scenario_path(config)}")
+        logger.info("\n".join(lines))
 
     status_info = orchestrator.get_status(configs)
 
@@ -526,11 +538,11 @@ def status(
     # Show missing items if any
     for stage_name, stage_info in status_info.items():
         if stage_info["missing"]:
-            console.print(f"\n[yellow]Missing {stage_name}:[/yellow]")
-            for run_id in stage_info["missing"][:10]:  # Show first 10
-                console.print(f"  • {run_id}")
+            items = stage_info["missing"][:10]
+            lines = [f"Missing {stage_name}:"] + [f"  • {run_id}" for run_id in items]
             if len(stage_info["missing"]) > 10:
-                console.print(f"  ... and {len(stage_info['missing']) - 10} more")
+                lines.append(f"  ... and {len(stage_info['missing']) - 10} more")
+            logger.warning("\n".join(lines))
 
 
 @app.command()
@@ -545,15 +557,15 @@ def cache_clear(
 ):
     """Clear cached artifacts"""
 
-    # Load config to get cache_dir
+    # Load config to get scratch_dir
     configs = load_configs(config_path)
     if not configs:
-        console.print("[red]Error: No valid configurations found[/red]")
+        logger.error("No valid configurations found")
         raise typer.Exit(1)
 
-    # Use cache_dir from first config (all should have same cache_dir)
+    # Use scratch_dir from first config (all should have same scratch_dir)
     cache = ArtifactCache(
-        cache_dir=configs[0].cache_dir,
+        scratch_dir=configs[0].scratch_dir,
         environment=configs[0].environment,
         version=configs[0].version,
     )
@@ -572,11 +584,11 @@ def cache_clear(
     if not confirm:
         confirm = typer.confirm(f"Really delete {desc}?")
         if not confirm:
-            console.print("[yellow]Cancelled[/yellow]")
+            logger.warning("Cancelled")
             return
 
     deleted = cache.clear_cache(stage=stage, gcm=gcm, variable=variable)
-    console.print(f"[green]✓ Deleted {deleted} artifact(s)[/green]")
+    logger.info("✓ Deleted %d artifact(s)", deleted)
 
 
 @app.command()
@@ -590,22 +602,22 @@ def cache_list(
 ):
     """List cached artifacts"""
 
-    # Load config to get cache_dir
+    # Load config to get scratch_dir
     configs = load_configs(config_path)
     if not configs:
-        console.print("[red]Error: No valid configurations found[/red]")
+        logger.error("No valid configurations found")
         raise typer.Exit(1)
 
-    # Use cache_dir from first config (all should have same cache_dir)
+    # Use scratch_dir from first config (all should have same scratch_dir)
     cache = ArtifactCache(
-        cache_dir=configs[0].cache_dir,
+        scratch_dir=configs[0].scratch_dir,
         environment=configs[0].environment,
         version=configs[0].version,
     )
     artifacts = cache.list_artifacts(stage=stage, gcm=gcm, variable=variable)
 
     if not artifacts:
-        console.print("[yellow]No cached artifacts found[/yellow]")
+        logger.warning("No cached artifacts found")
         return
 
     table = Table(title=f"Cached Artifacts ({len(artifacts)})", show_header=True)
@@ -615,3 +627,132 @@ def cache_list(
         table.add_row(artifact)
 
     console.print(table)
+
+
+@app.command()
+def validate(
+    gcm: list[str] | None = typer.Option(
+        None, "--gcm", help="GCM(s) to validate (repeatable). Defaults to all."
+    ),
+    scenario: list[str] | None = typer.Option(
+        None, "--scenario", help="Scenario(s) to validate (repeatable). Defaults to all."
+    ),
+) -> None:
+    """Validate input datasets against the validation matrix.
+
+    Exits with code 1 if any blocking check fails, otherwise exits with code 0.
+    """
+    import json
+
+    import pydantic
+
+    from srm.validation import (
+        BLOCKING_CHECKS,
+        GCM_OPTIONS,
+        SCENARIO_OPTIONS,
+        CheckStatus,
+        DatasetValidator,
+    )
+
+    _STATUS_SYMBOL = {
+        CheckStatus.PASS: "[green]✓[/green]",
+        CheckStatus.FAIL: "[red]✗[/red]",
+        CheckStatus.UNKNOWN: "[yellow]?[/yellow]",
+        CheckStatus.SKIP: "-",
+    }
+
+    pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
+
+    all_results = []
+    for g, s in pairs:
+        try:
+            all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
+        except pydantic.ValidationError as exc:
+            logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
+
+    def _scenario_order(s: str) -> tuple[int, str]:
+        if s == "historical":
+            return (0, s)
+        if s == "baseline":
+            return (3, s)
+        if "G6" in s or "SAI" in s:
+            return (2, s)
+        return (1, s)
+
+    by_gcm: dict[str, list] = {}
+    for r in all_results:
+        by_gcm.setdefault(r.gcm, []).append(r)
+
+    for gcm_name, gcm_results in by_gcm.items():
+        console.rule(f"[bold]{gcm_name}[/bold]")
+
+        scenarios = sorted(dict.fromkeys(r.scenario for r in gcm_results), key=_scenario_order)
+        check_ids = list(dict.fromkeys(r.check_id for r in gcm_results))
+        index = {(r.check_id, r.scenario): r for r in gcm_results}
+        # Split: cross-all checks (no SKIP for any scenario) vs scenario-scoped (SKIP for some).
+        table_checks = []
+        scoped_checks = []
+        for cid in check_ids:
+            if any(
+                (r := index.get((cid, s))) is None or r.status == CheckStatus.SKIP
+                for s in scenarios
+            ):
+                scoped_checks.append(cid)
+            else:
+                table_checks.append(cid)
+
+        if table_checks:
+            tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+            tbl.add_column("check", style="dim", no_wrap=True)
+            for s in scenarios:
+                tbl.add_column(s, justify="center")
+            for cid in table_checks:
+                row = [cid]
+                for s in scenarios:
+                    r = index.get((cid, s))
+                    row.append(_STATUS_SYMBOL[r.status] if r else " ")
+                tbl.add_row(*row)
+            console.print(tbl)
+
+        if scoped_checks:
+            scoped_tbl = Table(
+                title="Scenario-specific checks",
+                show_header=True,
+                header_style="dim",
+                box=box.SIMPLE_HEAD,
+                padding=(0, 1),
+            )
+            scoped_tbl.add_column("check", style="dim", no_wrap=True)
+            scoped_tbl.add_column("scenario", style="dim")
+            scoped_tbl.add_column("result", justify="center")
+            for cid in scoped_checks:
+                for s in scenarios:
+                    r = index.get((cid, s))
+                    if r and r.status != CheckStatus.SKIP:
+                        scoped_tbl.add_row(cid, s, _STATUS_SYMBOL[r.status])
+            console.print(scoped_tbl)
+
+    blocking_failures = [
+        r for r in all_results if r.status == CheckStatus.FAIL and r.check_id in BLOCKING_CHECKS
+    ]
+    single_pair = len(pairs) == 1
+
+    if blocking_failures:
+        logger.error("--- Blocking failures ---")
+        for r in blocking_failures:
+            logger.error("✗ %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, r.message)
+            if r.detail:
+                console.print_json(json.dumps(r.detail))
+
+    if single_pair:
+        printed = {id(r) for r in blocking_failures}
+        for r in all_results:
+            if r.detail and id(r) not in printed:
+                # console.rule/print_json used here for structured JSON detail display
+                console.rule(
+                    f"[dim]{r.check_id} detail[/dim] for {r.gcm}/{r.scenario}", style="dim"
+                )
+                console.print_json(json.dumps(r.detail))
+
+    if blocking_failures:
+        raise typer.Exit(1)

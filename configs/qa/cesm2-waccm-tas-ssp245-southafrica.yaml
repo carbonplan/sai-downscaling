@@ -1,24 +1,7 @@
-# BCSD configuration: CESM2-WACCM / tas / SSP245 / South Africa
+# BCSD configuration: CESM2-WACCM / tas / SSP245 / South Africa (QA)
 #
 # Equivalent CLI command:
-#   uv run bcsd run-matrix \
-#     --gcm CESM2-WACCM \
-#     --variable tas \
-#     --member r1i1p1f1 \
-#     --scenario SSP245 \
-#     --train-period-start 1978 \
-#     --train-period-end 2014 \
-#     --predict-period-start 2015 \
-#     --predict-period-end 2100 \
-#     --subset-bounds '-35,-22,16,33' \
-#     --cache-dir s3://carbonplan-scratch/srm/bcsd-cache \
-#     --output-dir s3://carbonplan-scratch/srm/outputs \
-#     --environment qa \
-#     --version v5.6_nonparametric_hybrid \
-#     --mapping-type nonparametric_hybrid \
-#     --verbose \
-#     --save-intermediate \
-#     --stage all
+#   uv run bcsd run --config-path configs/qa/
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
@@ -37,10 +20,11 @@ predict_period_end: 2100
 subset_bounds: [-35, -22, 16, 33]
 
 # === Storage ===
-cache_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
-output_dir: "s3://carbonplan-scratch/srm/outputs"
+scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
-version: "v1"
+# version defaults to the installed package version. Override to pin a specific cache namespace.
+# version: "v0.6.0.post5"
 
 # === Bias Correction ===
 mapping_type: "nonparametric_hybrid"
