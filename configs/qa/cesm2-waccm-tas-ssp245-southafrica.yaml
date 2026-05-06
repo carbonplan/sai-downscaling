@@ -21,7 +21,7 @@ subset_bounds: [-35, -22, 16, 33]
 
 # === Storage ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
-output_dir: "s3://carbonplan-scratch/srm/outputs"
+output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
 # version defaults to the installed package version. Override to pin a specific cache namespace.
 # version: "v0.6.0.post5"
