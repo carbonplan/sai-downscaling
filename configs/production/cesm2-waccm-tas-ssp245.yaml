@@ -5,9 +5,9 @@
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
-variable: "tas"
-ensemble_member: "r1i1p1f1"
-scenario: "SSP245"
+variables: ["tas"]
+ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
+scenarios: ["SSP245"]
 
 # === Time Periods ===
 train_period_start: 1978
@@ -23,15 +23,6 @@ environment: "production"
 
 # === Bias Correction ===
 mapping_type: "nonparametric_hybrid"
-
-# === Variable-specific parameters (tas defaults) ===
-variable_config:
-  detrend_data: true
-  detrend_method: "additive"
-  do_windowing: true
-  running_window_length: 31
-  downscaling_method: "additive"
-  downscaling_clim_method: "fft"
 
 # === Additional Options ===
 verbose: true
