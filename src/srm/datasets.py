@@ -156,7 +156,7 @@ class VectorDataset(BaseCatalogEntry):
     """A vector dataset stored as a GeoParquet file (S3 or local)."""
 
     path: str | CloudPath
-    format: typing.Literal["geoparquet"]
+    format: typing.Literal["geoparquet"] = "geoparquet"
 
     def __post_init__(self):
         if isinstance(self.path, str):
