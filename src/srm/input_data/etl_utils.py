@@ -1,3 +1,5 @@
+import json
+
 import dask
 import icechunk
 import xarray as xr
@@ -94,7 +96,6 @@ def apply_ensemble_provenance(
     ensemble_coord: str = "ensemble_member",
 ) -> xr.Dataset:
     """Set ensemble_member provenance on dataset global attrs and ensemble coord attrs."""
-    import json
 
     ds.attrs["ensemble_derivation_logic"] = derivation_logic
     if ensemble_coord in ds.coords:

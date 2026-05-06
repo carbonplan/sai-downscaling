@@ -308,9 +308,7 @@ def _derivation_logic(config: BaseUKESM_Config) -> str:
             "mapping unconfirmed. Update coord values once mapping confirmed "
             "(001->r12i1p1f2, 002->r2i1p1f2, 003->r3i1p1f2)."
         )
-    return (
-        "Extracted from CMIP6 filename: "
-        "url.split('.nc')[0].split('_gn')[0].split('_')[-1]. "    )
+    return "Extracted from CMIP6 filename: url.split('.nc')[0].split('_gn')[0].split('_')[-1]. "
 
 
 def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> xr.Dataset:
