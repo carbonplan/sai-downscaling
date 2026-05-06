@@ -34,7 +34,7 @@ jobs:
         environment:
             name: qa
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v6
             - uses: ./.github/actions/setup
 
             - name: Run BCSD pipeline (QA)
@@ -58,7 +58,7 @@ jobs:
         environment:
             name: production
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v6
               with:
                   ref: ${{ github.event.release.tag_name }}
             - uses: ./.github/actions/setup
