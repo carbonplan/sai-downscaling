@@ -30,8 +30,8 @@ subset_bounds: [-35, -22, 16, 33]     # [lat_min, lat_max, lon_min, lon_max]
 
 # Environment isolation (default: "qa")
 environment: "qa"                      # Environment: qa, staging, production
-# Version identifier (default: "v1")
-version: "v1"                          # Bump to invalidate all cached artifacts without changing environment
+# Version identifier (default: installed package version, e.g. "v1.0.post12")
+# version: "v1.0.post12"              # Override to pin a specific cache namespace
 
 # Variable-specific settings (auto-loaded if not specified)
 variable_config:
@@ -46,6 +46,27 @@ rechunk_workflow: true                 # Enable strategic rechunking (default: t
 mapping_type: "parametric"             # QM method: see MappingType in bcsd_config.py
 ```
 
+## Version Defaulting
+
+The `version` field defaults to the **public version of the installed `srm` package** (e.g. `1.0.post12`), derived via:
+
+```python
+from packaging.version import Version
+from importlib.metadata import version as pkg_version
+"v" + Version(pkg_version("srm")).public  # e.g. "v1.0.post12", strips local/dirty markers
+```
+
+This means:
+- Each commit merged to `main` automatically gets its own cache namespace (via the `post-release` counter).
+- Team members on the same commit share the same cache namespace even if one has a dirty working tree.
+- Cache busts only when you intentionally advance the version (i.e. a new release or new commits on `main`).
+
+To **pin** a specific namespace (e.g. to reuse artifacts across a version bump), override explicitly:
+
+```yaml
+version: "v1.0.post5"   # pin to an earlier commit's cache
+```
+
 ## Environment Variable Override
 
 You can override the `environment` field using the `BCSD_ENVIRONMENT` environment variable, and `version` using `BCSD_VERSION`:
@@ -55,20 +76,20 @@ You can override the `environment` field using the `BCSD_ENVIRONMENT` environmen
 BCSD_ENVIRONMENT=production bcsd run --config-path configs/example.yaml
 
 # Override version for this run
-BCSD_VERSION=v2 bcsd run --config-path configs/example.yaml
+BCSD_VERSION=v1.0.post5 bcsd run --config-path configs/example.yaml
 ```
 
 You can also override `version` directly on the CLI without editing the config file:
 
 ```bash
-# Write outputs under v2/ paths
-uv run bcsd run --config-path configs/example.yaml --version v2
+# Pin to a specific version's cache paths
+uv run bcsd run --config-path configs/example.yaml --version v1.0.post5
 ```
 
 This is useful for:
 
 - testing configs locally with `qa` before running in `production`
-- bumping `version` to invalidate all cached artifacts (e.g. after a methodological change)
+- pinning `version` to reuse cached artifacts from a known-good commit
 - running the same config in different environments without editing the file
 - CI/CD pipelines that deploy to different environments
 

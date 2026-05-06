@@ -30,7 +30,8 @@ predict_period_end: 2100
 # === Storage Configuration ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate artifacts (obs, historical)
 output_dir: "s3://carbonplan-scratch/srm/outputs/" # Final scenario outputs (published results)
-version: "v1" # Version identifier for all output paths (default: v1, can override with BCSD_VERSION env var or --version CLI flag)
+# version defaults to the installed package version (e.g. "v0.6.0.post12"). Override with BCSD_VERSION env var or --version CLI flag to pin a specific cache namespace.
+# version: "v0.6.0.post5"
 
 
 # === Additional Options (optional) ===

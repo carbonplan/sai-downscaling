@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from packaging.version import Version
 from pydantic import ValidationError
 
-from srm.bcsd_config import BCSDConfig, CacheConfig, RuntimeConfig, VariableConfig
+from srm.bcsd_config import BCSDConfig, CacheConfig, RuntimeConfig, VariableConfig, _cache_version
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -176,7 +177,7 @@ class TestBCSDConfigConstruction:
 
     def test_default_environment_and_version(self, minimal_config):
         assert minimal_config.environment == "qa"
-        assert minimal_config.version == "v1"
+        assert minimal_config.version == _cache_version
 
     def test_explicit_variable_config_not_overwritten(self):
         """Explicitly supplied variable_config must survive post-init."""
@@ -220,9 +221,9 @@ class TestBCSDConfigConstruction:
         assert cfg.apply_ocean_mask is False
 
     def test_model_copy_version_override(self, scenario_config):
-        v2 = scenario_config.model_copy(update={"version": "v2"})
-        assert v2.version == "v2"
-        assert scenario_config.version == "v1"
+        v2 = scenario_config.model_copy(update={"version": "my-custom-version"})
+        assert v2.version == "my-custom-version"
+        assert scenario_config.version == _cache_version
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +391,44 @@ class TestBCSDConfigValidation:
 
 
 # ---------------------------------------------------------------------------
+# BCSDConfig – version defaulting
+# ---------------------------------------------------------------------------
+
+
+class TestVersionDefaulting:
+    """Version defaults to the installed package's public version string."""
+
+    def test_default_version_matches_cache_version(self, minimal_config):
+        assert minimal_config.version == _cache_version
+
+    def test_default_version_has_no_local_segment(self, minimal_config):
+        assert "+" not in minimal_config.version
+
+    def test_default_version_is_valid_pep440(self, minimal_config):
+        v = Version(minimal_config.version)
+        assert v.local is None
+
+    def test_explicit_version_override(self):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", version="custom-v99"
+        )
+        assert cfg.version == "custom-v99"
+
+    def test_env_var_overrides_version(self, monkeypatch):
+        monkeypatch.setenv("BCSD_VERSION", "env-override")
+        cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        assert cfg.version == "env-override"
+
+    def test_cache_config_default_version_has_no_local_segment(self):
+        assert "+" not in CacheConfig().version
+
+    def test_bcsd_and_cache_config_share_same_default(self):
+        bcsd = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        cache = CacheConfig()
+        assert bcsd.version == cache.version
+
+
+# ---------------------------------------------------------------------------
 # BCSDConfig – to_legacy_kwargs
 # ---------------------------------------------------------------------------
 
@@ -403,7 +442,7 @@ class TestCacheConfig:
     def test_defaults(self):
         cfg = CacheConfig()
         assert cfg.environment == "qa"
-        assert cfg.version == "v1"
+        assert cfg.version == _cache_version
         assert cfg.force_recompute is False
         assert cfg.check_integrity is True
 
