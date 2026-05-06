@@ -21,6 +21,7 @@ If you want to **run the downscaling pipeline**:
 4. Follow the [Run the pipeline](./how-to/run-pipeline.md) guide for installation, quick start, and batch processing.
 5. See the [CLI reference](./reference/cli.md) for all commands and options.
 6. See the [Configuration reference](./reference/configuration.md) for all config fields and validation rules.
+7. See [Deploy the pipeline](./how-to/deploy.md) for QA and production deployment via GitHub Actions.
 :::
 ::::
 
@@ -69,4 +70,5 @@ how-to/run-pipeline
 how-to/manage-cache
 how-to/compare-outputs-across-versions
 how-to/run-multi-model-ensemble
+how-to/deploy
 ```

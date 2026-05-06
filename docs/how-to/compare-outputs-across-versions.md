@@ -82,7 +82,7 @@ print(diff.max().values, diff.min().values)  # should be ~0 for a pure refactor
 
 ## Tips
 
-- Keep `environment: qa` for all test runs so they never touch staging or production paths.
+- Keep `environment: qa` for all test runs so they never touch production paths.
 - Use descriptive `--version` strings (branch names, commit hashes, date stamps) rather than `v1`/`v2` so it is always clear which code produced which data.
 - Use `bcsd status` to confirm both versions completed before comparing:
 
