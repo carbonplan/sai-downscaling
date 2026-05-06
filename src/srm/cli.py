@@ -613,6 +613,13 @@ def cache_list(
 
 @app.command()
 def validate(
+    config_path: list[str] | None = typer.Option(
+        None,
+        "--config-path",
+        "-c",
+        help="Path to YAML config or directory of configs (can be specified multiple times). "
+        "Derives GCMs and scenarios to validate from the loaded configs.",
+    ),
     gcm: list[str] | None = typer.Option(
         None, "--gcm", help="GCM(s) to validate (repeatable). Defaults to all."
     ),
@@ -623,6 +630,9 @@ def validate(
     """Validate input datasets against the validation matrix.
 
     Exits with code 1 if any blocking check fails, otherwise exits with code 0.
+
+    When --config-path is given, GCMs and scenarios are derived from those configs.
+    Otherwise, --gcm and --scenario filter the check matrix (defaulting to all known values).
     """
     import json
 
@@ -635,6 +645,14 @@ def validate(
         CheckStatus,
         DatasetValidator,
     )
+
+    if config_path:
+        configs = [cfg for path in config_path for cfg in load_configs(path)]
+        gcm = list(dict.fromkeys(c.gcm for c in configs))
+        scenario = list(
+            dict.fromkeys(c.scenario if c.scenario is not None else "historical" for c in configs)
+        )
+        logger.info("Validating %d GCM(s) x %d scenario(s) from configs", len(gcm), len(scenario))
 
     _STATUS_SYMBOL = {
         CheckStatus.PASS: "[green]✓[/green]",
