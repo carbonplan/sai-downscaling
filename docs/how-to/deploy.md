@@ -19,9 +19,9 @@ configs/
     cesm2-waccm-tas-ssp245.yaml               # Global run, CESM2-WACCM / tas / SSP245
 ```
 
-Each file is a standard [BCSD config](../reference/configuration.md). The key difference between environments is `environment: "qa"` vs `environment: "production"` and the presence of `subset_bounds` in QA configs.
+Each file is a [BCSD config](../reference/configuration.md) and supports the matrix format — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination. For example, `ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]` in a single file produces three runs without any extra files.
 
-The `version` field is intentionally left unset in all deploy configs — it defaults to the installed package version at runtime, so the cache namespace automatically tracks the released version.
+The key difference between environments is `environment: "qa"` vs `environment: "production"` and the presence of `subset_bounds` in QA configs. The `version` field is intentionally left unset in all deploy configs — it defaults to the installed package version at runtime, so the cache namespace automatically tracks the released version.
 
 ## QA runs
 
@@ -34,7 +34,9 @@ QA runs execute all configs in `configs/qa/` against a small South Africa spatia
 3. Optionally provide a **version** override to pin a specific cache namespace
 4. Click **Run workflow**
 
-The job runs `bcsd run --config-path configs/qa/` in the `qa` GitHub environment.
+The job runs two steps in order:
+1. `bcsd validate --config-path configs/qa/` — checks input datasets for the GCMs and scenarios referenced by the configs. Exits with code 1 on any blocking failure before Coiled compute is spent.
+2. `bcsd run --config-path configs/qa/` — runs the full pipeline.
 
 ## Production runs
 
@@ -46,16 +48,18 @@ Production runs execute all configs in `configs/production/` globally. They trig
 2. Create and publish a GitHub release with a SemVer tag (e.g., `v1.2.3`)
 3. The `production` workflow job fires automatically
 
-The job checks out the release tag, installs the package at that tag (so `version` in all configs resolves to the release's package version), then runs `bcsd run --config-path configs/production/`.
+The job checks out the release tag, installs the package at that tag (so `version` in all configs resolves to the release's package version), then runs:
+1. `bcsd validate --config-path configs/production/`
+2. `bcsd run --config-path configs/production/`
 
 ## Adding a new production config
 
 To add a new GCM, variable, member, or scenario to future production runs:
 
-1. Create a new YAML file under `configs/production/`
-2. Set `environment: "production"` and omit `version`
-3. Omit `subset_bounds` for a global run
-4. Open a PR — the config will be picked up automatically on the next release
+1. Edit an existing file under `configs/production/` to add a value to a list (e.g. append to `ensemble_members`), or create a new YAML file for a new GCM.
+2. Set `environment: "production"` and omit `version`.
+3. Omit `subset_bounds` for a global run.
+4. Open a PR — the config will be picked up automatically on the next release.
 
 ## Prerequisites
 
