@@ -8,11 +8,13 @@ Checks are organized into the following groups:
 Use :class:`DatasetValidator` to run checks for a given (gcm, scenario) pair.
 """
 
+import datetime
 import enum
 import hashlib
 import traceback
 from typing import ClassVar
 
+import cftime
 import pydantic
 import xarray as xr
 
@@ -36,11 +38,22 @@ GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 
 # Expected inclusive daily time bounds per scenario (CMIP6 conventions).
-_SCENARIO_TIME_BOUNDS: dict[str, tuple[str, str]] = {
-    "historical": ("1850-01-01", "2014-12-31"),
-    "SSP245": ("2015-01-01", "2100-12-31"),
-    "G6-1.5K": ("2035-01-01", "2085-12-31"),
+# End bounds are stored as (year, month) so the actual last day can be derived
+# from the dataset's own calendar — e.g. 360-day calendars end Dec on the 30th.
+_SCENARIO_TIME_BOUNDS: dict[str, tuple[str, int, int]] = {
+    "historical": ("1850-01-01", 2014, 12),
+    "SSP245": ("2015-01-01", 2100, 12),
+    "G6-1.5K": ("2035-01-01", 2085, 12),
 }
+
+
+def _end_of_month(year: int, month: int, calendar: str) -> str:
+    """Return YYYY-MM-DD for the last day of (year, month) in the given CF calendar."""
+    if month == 12:
+        next_first = cftime.datetime(year + 1, 1, 1, calendar=calendar)
+    else:
+        next_first = cftime.datetime(year, month + 1, 1, calendar=calendar)
+    return (next_first - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def _parse_catalog_value(label: str, value: str, options: tuple[str, ...]) -> str:
@@ -446,7 +459,8 @@ class DatasetValidator(pydantic.BaseModel):
         calendar = ds.time.dt.calendar
         n_times = len(time_index)
 
-        expected_start, expected_end = _SCENARIO_TIME_BOUNDS[self.scenario]
+        expected_start, end_year, end_month = _SCENARIO_TIME_BOUNDS[self.scenario]
+        expected_end = _end_of_month(end_year, end_month, calendar)
 
         # Build the expected daily range using the dataset's own calendar so that
         # 360-day (UKESM), noleap (CESM2), and Gregorian (MIROC) datasets are all
