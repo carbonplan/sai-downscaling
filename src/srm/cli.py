@@ -32,6 +32,50 @@ logger = logging.getLogger(__name__)
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
 
 
+_MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("gcms", "gcm", "gcm"),
+    ("variables", "variable", "variable"),
+    ("ensemble_members", "ensemble_member", "ensemble_member"),
+    ("scenarios", "scenario", "scenario"),
+)
+
+
+def _is_matrix_config(config_dict: dict) -> bool:
+    """Return True if any expandable field contains a list."""
+    return any(
+        isinstance(config_dict.get(plural, config_dict.get(singular)), list)
+        for plural, singular, _ in _MATRIX_FIELDS
+    )
+
+
+def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
+    """Expand a matrix config dict into one BCSDConfig per cartesian-product combination."""
+    d = dict(config_dict)
+    axes: dict[str, list] = {}
+    for plural, singular, field in _MATRIX_FIELDS:
+        if plural in d:
+            val = d.pop(plural)
+        elif singular in d:
+            val = d.pop(singular)
+        else:
+            val = None
+        axes[field] = val if isinstance(val, list) else [val]
+
+    if "variable_config" in d and len(axes["variable"]) > 1:
+        raise ValueError(
+            "Cannot use 'variable_config' in a matrix config with multiple variables "
+            f"({axes['variable']}). Remove 'variable_config' to use per-variable defaults, "
+            "or split into separate config files."
+        )
+
+    return [
+        BCSDConfig(gcm=gcm, variable=variable, ensemble_member=member, scenario=scenario, **d)
+        for gcm, variable, member, scenario in itertools.product(
+            axes["gcm"], axes["variable"], axes["ensemble_member"], axes["scenario"]
+        )
+    ]
+
+
 def load_configs(config_path: str) -> list[BCSDConfig]:
     """
     Load configuration(s) from YAML file or directory.
@@ -50,16 +94,20 @@ def load_configs(config_path: str) -> list[BCSDConfig]:
     configs = []
 
     if path.is_file():
-        # Single config file
         with open(path) as f:
             config_dict = yaml.safe_load(f)
+        if _is_matrix_config(config_dict):
+            configs.extend(_expand_matrix_config(config_dict))
+        else:
             configs.append(BCSDConfig(**config_dict))
 
     elif path.is_dir():
-        # Directory of config files
-        for yaml_file in sorted(path.glob("*.yaml")) + sorted(path.glob("*.yml")):
+        for yaml_file in sorted([*path.glob("*.yaml"), *path.glob("*.yml")]):
             with open(yaml_file) as f:
                 config_dict = yaml.safe_load(f)
+            if _is_matrix_config(config_dict):
+                configs.extend(_expand_matrix_config(config_dict))
+            else:
                 configs.append(BCSDConfig(**config_dict))
 
     else:
