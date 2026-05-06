@@ -246,35 +246,17 @@ def run(
     logger.info("✓ Complete!")
 
 
-def _print_paths_summary(paths: list[str], configs: list[BCSDConfig], stage: str) -> None:
-    """Print a Rich table summarising output paths produced by a stage."""
+def _print_paths_summary(paths: list[str], _configs: list[BCSDConfig], stage: str) -> None:
+    """Print output paths produced by a stage, one per line."""
     stage_label = {
         "prepare_observations": "Obs Regridded",
         "fit_historical": "Historical",
         "transform_scenario": "Scenario",
     }.get(stage, stage)
 
-    table = Table(
-        title=f"Output Paths — {stage_label} ({len(paths)} artifact(s))",
-        show_header=True,
-        header_style="bold magenta",
-    )
-    table.add_column("GCM", style="cyan", no_wrap=True)
-    table.add_column("Variable", style="magenta")
-    table.add_column("Member", style="green")
-    table.add_column("Scenario", style="yellow")
-    table.add_column("Path", overflow="fold")
-
-    for cfg, path in zip(configs, paths):
-        table.add_row(
-            cfg.gcm,
-            cfg.variable,
-            cfg.ensemble_member,
-            cfg.scenario or "(historical)",
-            path or "[red]FAILED[/red]",
-        )
-
-    console.print(table)
+    console.print(f"\n{stage_label} ({len(paths)} artifact(s)):")
+    for path in paths:
+        console.print(path or "FAILED")
 
 
 @app.command()

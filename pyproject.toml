@@ -24,7 +24,7 @@
         "xarray-regrid>=0.4.2",
         "xarray[accel]>=2025.12.0",
         "zarr>=3.1.5",
-]
+    ]
     description = "SRM"
     dynamic = ["version"]
     name = "srm"
@@ -50,16 +50,17 @@
     srm = { workspace = true, editable = true }
 
 [tool.pytest.ini_options]
-    addopts = "-m 'not slow and not input_data' -ra"
+    addopts = "-m 'not slow and not input_data' -ra --cov-report=term-missing --cov-report=xml --cov=src/srm "
     markers = [
-        "slow: marks tests as slow/expensive (run with 'pytest -m slow')",
         "input_data: marks tests that validate external input datasets",
+        "slow: marks tests as slow/expensive (run with 'pytest -m slow')",
     ]
 
 [dependency-groups]
     test = [
         "ipdb>=0.13.13",
         "prek>=0.3.0",
+        "pytest-cov>=7.0.0",
         "pytest-xdist>=3.8.0",
         "pytest>=9.0.2",
     ]
@@ -68,8 +69,8 @@
         "bokeh>=3.8.2",
         "coiled>=1.130.0",
         "ipykernel>=7.1.0",
-        "jupyter>=1.1.1",
         "jupyter-server-proxy>=4.4.0",
+        "jupyter>=1.1.1",
     ]
 
     input-data = [
@@ -95,7 +96,7 @@
         "rasterio>=1.5.0",
         "seaborn>=0.13.2",
         "sparse>=0.17.0",
-]
+    ]
 
     dev = [
         "gilknocker==0.4.1",
@@ -115,7 +116,7 @@
         "sphinx-design>=0.7.0",
         "sphinxcontrib-mermaid>=2.0.0",
         "sphinxext-opengraph>=0.13.0",
-]
+    ]
 
 [tool.ruff]
     builtins = ["ellipsis"]
