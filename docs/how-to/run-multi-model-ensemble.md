@@ -7,7 +7,7 @@ There are two ways to run multiple GCMs, variables, ensemble members, and scenar
 Add list values to any YAML config and run it with `bcsd run`:
 
 ```yaml
-# configs/production/cesm2-waccm-tas-ssp245.yaml
+# configs/production/cesm2-waccm.yaml
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr"]
 ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
