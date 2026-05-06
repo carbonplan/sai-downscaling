@@ -51,7 +51,7 @@ class ArtifactCache:
         scratch_dir : str
             Base S3 or local path for cache storage (intermediate artifacts)
         environment : str
-            Environment name (qa, staging, production) for cache namespace isolation
+            Environment name (qa, production) for cache namespace isolation
         version : str
             Version identifier included in all paths (e.g. 'v1', 'v2'). Bump to
             invalidate all cached artifacts without changing environment.

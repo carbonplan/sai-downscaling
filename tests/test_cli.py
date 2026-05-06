@@ -74,12 +74,12 @@ class TestConfigsFromMatrix:
             variables=["tas"],
             members=["r1i1p1f1"],
             scenarios=[None],
-            environment="staging",
+            environment="production",
             version="v2",
             train_period_start=1979,
             train_period_end=2013,
         )
-        assert all(c.environment == "staging" for c in configs)
+        assert all(c.environment == "production" for c in configs)
         assert all(c.version == "v2" for c in configs)
         assert all(c.train_period_start == 1979 for c in configs)
         assert all(c.train_period_end == 2013 for c in configs)

@@ -29,7 +29,7 @@ output_dir: "s3://bucket/path"        # Directory for final scenario outputs
 subset_bounds: [-35, -22, 16, 33]     # [lat_min, lat_max, lon_min, lon_max]
 
 # Environment isolation (default: "qa")
-environment: "qa"                      # Environment: qa, staging, production
+environment: "qa"                      # Environment: qa, production
 # Version identifier (default: installed package version, e.g. "v1.0.post12")
 # version: "v1.0.post12"              # Override to pin a specific cache namespace
 

@@ -256,4 +256,4 @@ uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --y
 ```
 
 > [!WARNING]
-> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa or staging.
+> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.

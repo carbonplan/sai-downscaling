@@ -1,0 +1,38 @@
+# BCSD configuration: CESM2-WACCM / tas / SSP245 / global (production)
+#
+# Equivalent CLI command:
+#   uv run bcsd run --config-path configs/production/
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM"
+variable: "tas"
+ensemble_member: "r1i1p1f1"
+scenario: "SSP245"
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+output_dir: "s3://carbonplan-srm/output"
+environment: "production"
+# version intentionally unset — derived from the installed package version at runtime
+
+# === Bias Correction ===
+mapping_type: "nonparametric_hybrid"
+
+# === Variable-specific parameters (tas defaults) ===
+variable_config:
+  detrend_data: true
+  detrend_method: "additive"
+  do_windowing: true
+  running_window_length: 31
+  downscaling_method: "additive"
+  downscaling_clim_method: "fft"
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true

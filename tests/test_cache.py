@@ -109,7 +109,7 @@ class TestArtifactCacheInit:
         assert local_cache.output_dir is None
 
     def test_environment_and_version_stored(self, subtests):
-        for env, ver in [("qa", "v1"), ("staging", "v2"), ("production", "v3")]:
+        for env, ver in [("qa", "v1"), ("production", "v2")]:
             with subtests.test(environment=env, version=ver):
                 cache = ArtifactCache(scratch_dir="/tmp/cache", environment=env, version=ver)
                 assert cache.environment == env
@@ -192,7 +192,7 @@ class TestObsPath:
         assert "/lat-35.0to-22.0_lon16.0to33.0/obs_regridded.icechunk" in path
 
     def test_paths_differ_per_environment(self, subtests, tmp_path, base_config):
-        for env in ("qa", "staging", "production"):
+        for env in ("qa", "production"):
             with subtests.test(environment=env):
                 cache = ArtifactCache(scratch_dir=str(tmp_path), environment=env, version="v1")
                 assert f"/{env}/" in cache.get_obs_path(base_config)
