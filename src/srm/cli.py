@@ -124,7 +124,7 @@ def configs_from_matrix(
     output_dir : str
         Directory for final downscaled outputs
     environment : str
-        Environment name (qa, staging, production)
+        Environment name (qa, production)
     version : str
         Version identifier
     subset_bounds : tuple[float, float, float, float] | None
@@ -309,7 +309,7 @@ def run_matrix(
     output_dir: str = typer.Option(
         "s3://carbonplan-scratch/srm/outputs/", help="Directory for final outputs"
     ),
-    environment: str = typer.Option("qa", help="Environment (qa, staging, production)"),
+    environment: str = typer.Option("qa", help="Environment (qa, production)"),
     version: str = typer.Option("v1", help="Version identifier (e.g. 'v1', 'v2')"),
     subset_bounds: str | None = typer.Option(
         None,
