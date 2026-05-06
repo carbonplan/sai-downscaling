@@ -17,7 +17,7 @@ predict_period_end: 2100
 
 # === Storage ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
-output_dir: "s3://carbonplan-scratch/srm/outputs"
+output_dir: "s3://carbonplan-srm/output"
 environment: "production"
 # version intentionally unset — derived from the installed package version at runtime
 
