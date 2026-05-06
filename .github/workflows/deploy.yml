@@ -9,7 +9,8 @@ on:
                 type: boolean
                 default: false
             version:
-                description: "Override version (e.g. v2). Leave blank to use installed package version."
+                description: "Override version (e.g. v2). Leave blank to use installed package
+                    version."
                 required: false
                 default: ""
                 type: string
@@ -35,6 +36,8 @@ jobs:
             name: qa
         steps:
             - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
             - uses: ./.github/actions/setup
 
             - name: Run BCSD pipeline (QA)
