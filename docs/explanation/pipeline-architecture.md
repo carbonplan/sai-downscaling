@@ -99,14 +99,14 @@ graph TB
 - **stage 1 (prepare_observations)**: runs once per (GCM, variable, spatial_subset) combination
 - **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination
 - **stage 3 (transform_scenario)**: runs for each scenario configuration
-- **green boxes**: cached intermediate artifacts in `cache_dir/{environment}/{version}/`
+- **green boxes**: cached intermediate artifacts in `scratch_dir/{environment}/{version}/`
 - **gold box**: final output in `output_dir/{environment}/{version}/`
 - **dotted arrows**: cache dependencies (automatic validation)
 
 ## Cache Path Structure
 
 ```
-cache_dir/{environment}/{version}/
+scratch_dir/{environment}/{version}/
 ├── obs/
 │   └── {gcm}_{variable}_{subset_id}_obs_regridded.icechunk
 └── historical/
@@ -301,14 +301,14 @@ def _get_subset_id(subset_bounds):
 
 def get_obs_path(gcm, variable, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
-    return f"{cache_dir}/{environment}/{version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
+    return f"{scratch_dir}/{environment}/{version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
 
 def get_historical_path(gcm, variable, ensemble, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
     if output_dir:
         return f"{output_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
     else:
-        return f"{cache_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
+        return f"{scratch_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
 
 def get_scenario_path(gcm, variable, ensemble, scenario, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
@@ -316,7 +316,7 @@ def get_scenario_path(gcm, variable, ensemble, scenario, subset_bounds):
     if output_dir:
         return f"{output_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
     else:
-        return f"{cache_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
+        return f"{scratch_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
 ```
 
 This ensures:

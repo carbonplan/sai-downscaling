@@ -6,7 +6,7 @@ The pipeline provides intelligent caching at multiple levels to enable efficient
 
 **Two-Tier Storage:**
 
-1. **cache_dir**: intermediate artifacts that are reused across multiple runs
+1. **scratch_dir**: intermediate artifacts that are reused across multiple runs
    - observations regridded to GCM grid (shared across all ensembles/scenarios)
    - historical downscaling (shared across all scenarios for an ensemble)
 
@@ -166,7 +166,7 @@ from srm.cache import ArtifactCache
 
 config = BCSDConfig(**yaml.safe_load(open("configs/example.yaml")))
 cache = ArtifactCache(
-    cache_dir=config.cache_dir,
+    scratch_dir=config.scratch_dir,
     environment=config.environment,
     version=config.version,
     output_dir=config.output_dir,
