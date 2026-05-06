@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+from importlib.metadata import version as _pkg_version
 from typing import Literal
 
 import pydantic_settings
+from packaging.version import Version as _Version
 from pydantic import BaseModel, Field, computed_field, field_validator
+
+_cache_version = f"v{_Version(_pkg_version('srm')).public}"
 
 MappingType = Literal["parametric", "nonparametric", "nonparametric_hybrid"]
 DownscalingMethod = Literal["additive", "multiplicative"]
@@ -167,8 +171,8 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         description="Environment name (qa, staging, production). Separates cache/outputs by deployment stage.",
     )
     version: str = Field(
-        default="v1",
-        description="Version identifier for cache/output path namespacing (e.g. 'v1', 'v2'). Override with BCSD_VERSION env var.",
+        default=_cache_version,
+        description="Version identifier for cache/output path namespacing. Defaults to the installed package version (e.g. '1.0.post3'). Override with BCSD_VERSION env var.",
     )
 
     model_config = {"env_prefix": "BCSD_"}
@@ -339,7 +343,8 @@ class CacheConfig(BaseModel):
         "qa", description="Environment for cache namespace (qa, staging, production)"
     )
     version: str = Field(
-        "v1", description="Version identifier for cache path namespacing (e.g. 'v1', 'v2')"
+        _cache_version,
+        description="Version identifier for cache path namespacing. Defaults to the installed package version.",
     )
     check_integrity: bool = Field(
         True, description="Verify cached artifacts are valid before using"
@@ -429,7 +434,8 @@ scenario: ssp245
 predict_period_start: 2015
 predict_period_end: 2100
 environment: qa
-version: v1
+# version defaults to installed package version; override here if needed
+# version: 1.0.post3
 """
 
 import yaml

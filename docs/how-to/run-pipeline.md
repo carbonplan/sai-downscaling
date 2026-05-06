@@ -75,7 +75,7 @@ uv run bcsd run-matrix \
   --predict-period-start 2015 --predict-period-end 2100 \
   --scratch-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/" \
-  --environment qa --version v1
+  --environment qa
 ```
 
 The orchestrator automatically deduplicates shared work across the matrix:
@@ -119,7 +119,7 @@ predict_period_end: 2100
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/outputs"
 environment: "qa"
-version: "v1"
+# version defaults to installed package version; omit unless pinning a specific cache namespace
 EOF
 done
 
