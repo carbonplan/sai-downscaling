@@ -28,7 +28,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: install uv
         uses: astral-sh/setup-uv@v7
@@ -42,7 +42,7 @@ jobs:
         run: uv run sphinx-build docs docs/_build/html -W --keep-going
 
       - name: upload pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: docs/_build/html
 
@@ -55,4 +55,4 @@ jobs:
     steps:
       - name: deploy to GitHub Pages
         id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

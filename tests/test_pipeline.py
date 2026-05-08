@@ -24,7 +24,12 @@ import pytest
 import xarray as xr
 
 from srm.bcsd_config import BCSDConfig
-from srm.pipeline import BCSDPipeline, calculate_out_of_range_mask
+from srm.pipeline import (
+    BCSDPipeline,
+    _assert_stitched_continuity,
+    calculate_out_of_range_mask,
+    stitch_historical_scenario,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -618,6 +623,154 @@ class TestRunFullPipeline:
             mo.assert_called_once_with(force=False)
             mh.assert_called_once_with(force=False)
             ms.assert_called_once_with(force=False)
+
+
+# ---------------------------------------------------------------------------
+# stitch_historical_scenario
+# ---------------------------------------------------------------------------
+
+
+def _make_daily_da(start: str, end: str, value: float = 1.0) -> xr.DataArray:
+    times = pd.date_range(start, end, freq="D")
+    return xr.DataArray(np.full(len(times), value), coords={"time": times}, dims=["time"])
+
+
+class TestStitchHistoricalScenario:
+    """Tests for stitch_historical_scenario.
+
+    All supported GCMs share the same historical/SSP breakpoint:
+      - historical ends  2014-12-31  (train_period_end = 2014)
+      - SSP245 begins    2015-01-01  (predict_period_start = 2015)
+    """
+
+    # -- SAI path (ssp_timeseries provided) ----------------------------------
+
+    def test_sai_year_2014_is_present(self):
+        """Historical year 2014 must appear in the SAI stitched series."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2034-12-31")
+        sai = _make_daily_da("2035-01-01", "2084-12-31")
+
+        result = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=sai,
+            train_period_end=2014,
+            predict_period_start=2035,
+            ssp_timeseries=ssp,
+        )
+
+        years = np.unique(result["time.year"].values)
+        assert 2014 in years, "Year 2014 is missing from the SAI stitched timeseries"
+
+    def test_sai_no_gap(self):
+        """There must be no missing year anywhere in the SAI stitched series."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2034-12-31")
+        sai = _make_daily_da("2035-01-01", "2084-12-31")
+
+        result = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=sai,
+            train_period_end=2014,
+            predict_period_start=2035,
+            ssp_timeseries=ssp,
+        )
+
+        years = sorted(np.unique(result["time.year"].values).tolist())
+        gaps = [y2 - y1 for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+        assert not gaps, f"Gap(s) found in SAI stitched timeseries: {gaps}"
+
+    def test_sai_no_duplicate_years(self):
+        """No year should appear on more than one side of the SAI stitch."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2034-12-31")
+        sai = _make_daily_da("2035-01-01", "2084-12-31")
+
+        result = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=sai,
+            train_period_end=2014,
+            predict_period_start=2035,
+            ssp_timeseries=ssp,
+        )
+
+        _, counts = np.unique(result["time.year"].values, return_counts=True)
+        assert counts.max() <= 366, "Duplicate years detected in SAI stitched timeseries"
+
+    # -- Non-SAI path (no ssp_timeseries) ------------------------------------
+
+    def test_non_sai_no_gap(self):
+        """Non-SAI stitch must produce a gap-free series at predict_period_start."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2100-12-31")
+
+        result = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=ssp,
+            train_period_end=2014,
+            predict_period_start=2015,
+        )
+
+        years = sorted(np.unique(result["time.year"].values).tolist())
+        gaps = [y2 - y1 for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+        assert not gaps, f"Gap(s) found in non-SAI stitched timeseries: {gaps}"
+
+    def test_non_sai_no_duplicate_years(self):
+        """No year should appear on both sides of the non-SAI stitch."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2100-12-31")
+
+        result = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=ssp,
+            train_period_end=2014,
+            predict_period_start=2015,
+        )
+
+        _, counts = np.unique(result["time.year"].values, return_counts=True)
+        assert counts.max() <= 366, "Duplicate years detected in non-SAI stitched timeseries"
+
+
+# ---------------------------------------------------------------------------
+# _assert_stitched_continuity
+# ---------------------------------------------------------------------------
+
+
+class TestAssertStitchedContinuity:
+    def test_passes_for_clean_series(self):
+        """A clean daily series raises no error."""
+        da = _make_daily_da("2000-01-01", "2002-12-31")
+        _assert_stitched_continuity(da)  # should not raise
+
+    def test_raises_on_duplicate_timestamps(self):
+        """Duplicate timestamps must raise ValueError."""
+        da = xr.concat(
+            [
+                _make_daily_da("2000-01-01", "2001-12-31"),
+                _make_daily_da("2001-06-01", "2002-12-31"),
+            ],
+            dim="time",
+        )
+        with pytest.raises(ValueError, match="duplicate timestamp"):
+            _assert_stitched_continuity(da)
+
+    def test_raises_on_year_gap(self):
+        """A missing year must raise ValueError."""
+        da = xr.concat(
+            [
+                _make_daily_da("2000-01-01", "2001-12-31"),
+                _make_daily_da("2003-01-01", "2004-12-31"),
+            ],
+            dim="time",
+        )
+        with pytest.raises(ValueError, match="year-level gap"):
+            _assert_stitched_continuity(da)
+
+    def test_day_gap_within_year_is_tolerated(self):
+        """A single missing day within a year must NOT raise (known UKESM quirk)."""
+        times = pd.date_range("2014-01-01", "2014-12-31", freq="D").delete(364)  # drop Dec 31
+        da = xr.DataArray(np.ones(len(times)), coords={"time": times}, dims=["time"])
+        _assert_stitched_continuity(da)  # should not raise
 
 
 # ---------------------------------------------------------------------------

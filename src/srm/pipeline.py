@@ -123,6 +123,104 @@ def calculate_out_of_range_mask(
     return out_of_range
 
 
+def _assert_stitched_continuity(result: xr.DataArray) -> None:
+    """Raise ValueError if the stitched timeseries has duplicate timestamps or year-level gaps.
+
+    Day-level gaps within a year are tolerated (some GCMs, e.g. UKESM, are
+    missing a single day at the historical boundary). The checks are:
+
+    1. No duplicate timestamps – the same calendar day must not appear twice.
+    2. No year-level gaps – every integer year between the first and last year
+       must be represented by at least one timestep.
+    """
+    times = result["time"].values
+    unique_times, counts = np.unique(times, return_counts=True)
+    duplicates = unique_times[counts > 1]
+    if len(duplicates):
+        raise ValueError(
+            f"Stitched timeseries contains {len(duplicates)} duplicate timestamp(s); "
+            f"first duplicate: {duplicates[0]}"
+        )
+
+    years = np.unique(result["time.year"].values)
+    gaps = [(int(y1), int(y2)) for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+    if gaps:
+        raise ValueError(f"Stitched timeseries has year-level gap(s): {gaps}")
+
+
+def stitch_historical_scenario(
+    model_hist: xr.DataArray,
+    model_scenario: xr.DataArray,
+    train_period_end: int,
+    predict_period_start: int,
+    ssp_timeseries: xr.DataArray | None = None,
+) -> xr.DataArray:
+    """Stitch historical and scenario data into a continuous timeseries for detrending.
+
+    For SAI scenarios (``ssp_timeseries`` provided), historical data is first
+    concatenated with SSP245 to bridge the gap between the historical period end
+    (``train_period_end``) and the SAI simulation start
+    (``predict_period_start``). The combined series is then concatenated with
+    the SAI scenario.
+
+    For non-SAI scenarios, historical and scenario data are concatenated
+    directly at the ``predict_period_start`` boundary.
+
+    All supported GCMs share the same historical/SSP breakpoint:
+    - historical ends  2014-12-31  (``train_period_end`` = 2014)
+    - SSP245 begins    2015-01-01  (``predict_period_start`` = 2015)
+
+    Parameters
+    ----------
+    model_hist : xr.DataArray
+        Historical GCM data.
+    model_scenario : xr.DataArray
+        Future scenario GCM data (SAI or non-SAI).
+    train_period_end : int
+        Last year of the historical training period (inclusive).
+    predict_period_start : int
+        First year of the prediction period.
+    ssp_timeseries : xr.DataArray, optional
+        SSP245 data used to bridge the historical-to-SAI gap. When provided,
+        the SAI stitching path is taken; otherwise the non-SAI path is used.
+
+    Returns
+    -------
+    xr.DataArray
+        Continuous timeseries spanning from the start of historical data
+        through the end of the scenario period.
+    """
+    if ssp_timeseries is not None:
+        # SAI: historical ≤ train_period_end, then SSP from train_period_end+1,
+        # then SAI from predict_period_start onward.
+        historical_and_ssp = xr.concat(
+            [
+                model_hist.sel(time=model_hist["time.year"] <= train_period_end),
+                ssp_timeseries.sel(time=ssp_timeseries["time.year"] >= train_period_end + 1),
+            ],
+            dim="time",
+        )
+        result = xr.concat(
+            [
+                historical_and_ssp.sel(time=historical_and_ssp["time.year"] < predict_period_start),
+                model_scenario.sel(time=model_scenario["time.year"] >= predict_period_start),
+            ],
+            dim="time",
+        )
+    else:
+        # Non-SAI: historical up to predict_period_start, then scenario.
+        result = xr.concat(
+            [
+                model_hist.sel(time=model_hist["time.year"] < predict_period_start),
+                model_scenario.sel(time=model_scenario["time.year"] >= predict_period_start),
+            ],
+            dim="time",
+        )
+
+    _assert_stitched_continuity(result)
+    return result
+
+
 class BCSDPipeline:
     """
     Three-stage BCSD downscaling pipeline with automatic caching.
@@ -611,39 +709,13 @@ class BCSDPipeline:
             logger.info("Rechunked for detrending (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        if self.config.is_sai_scenario:
-            # SAI simulations run from 2035 to 2084.
-            # Historical ends in 2014/2015, so stitch in SSP data for the gap.
-            historical_and_ssp = xr.concat(
-                [
-                    model_hist.sel(time=model_hist["time.year"] < self.config.train_period_end),
-                    ssp_timeseries.sel(
-                        time=ssp_timeseries["time.year"] >= self.config.train_period_end
-                    ),
-                ],
-                dim="time",
-            )
-            historical_scenario = xr.concat(
-                [
-                    historical_and_ssp.sel(
-                        time=historical_and_ssp["time.year"] < self.config.predict_period_start
-                    ),
-                    model_scenario.sel(
-                        time=model_scenario["time.year"] >= self.config.predict_period_start
-                    ),
-                ],
-                dim="time",
-            )
-        else:
-            historical_scenario = xr.concat(
-                [
-                    model_hist.sel(time=model_hist["time.year"] < self.config.predict_period_start),
-                    model_scenario.sel(
-                        time=model_scenario["time.year"] >= self.config.predict_period_start
-                    ),
-                ],
-                dim="time",
-            )
+        historical_scenario = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=model_scenario,
+            train_period_end=self.config.train_period_end,
+            predict_period_start=self.config.predict_period_start,
+            ssp_timeseries=ssp_timeseries if self.config.is_sai_scenario else None,
+        )
 
         da_baseline_clim = calculate_baseline_climatology(
             da_baseline=model_hist,

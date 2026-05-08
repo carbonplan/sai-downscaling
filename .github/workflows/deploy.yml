@@ -1,0 +1,83 @@
+name: deploy
+
+on:
+    workflow_dispatch:
+        inputs:
+            force:
+                description: "Force recompute even if cached"
+                required: false
+                type: boolean
+                default: false
+            version:
+                description: "Override version (e.g. v2). Leave blank to use installed package
+                    version."
+                required: false
+                default: ""
+                type: string
+    release:
+        types:
+            - published
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    id-token: write
+    contents: read
+
+jobs:
+    qa:
+        name: QA run
+        timeout-minutes: 120
+        runs-on: ubuntu-latest
+        if: github.event_name == 'workflow_dispatch'
+        environment:
+            name: qa
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+            - uses: ./.github/actions/setup
+
+            - name: Validate input datasets (QA)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd validate --config-path configs/qa/
+
+            - name: Run BCSD pipeline (QA)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: |
+                  EXTRA_ARGS=""
+                  if [[ "${{ github.event.inputs.force }}" == "true" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --force"
+                  fi
+                  if [[ -n "${{ github.event.inputs.version }}" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --version ${{ github.event.inputs.version }}"
+                  fi
+                  uv run bcsd run --config-path configs/qa/ $EXTRA_ARGS
+
+    production:
+        name: Production run
+        timeout-minutes: 480
+        runs-on: ubuntu-latest
+        if: github.event_name == 'release'
+        environment:
+            name: production
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  ref: ${{ github.event.release.tag_name }}
+            - uses: ./.github/actions/setup
+
+            - name: Validate input datasets (production)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd validate --config-path configs/production/
+
+            - name: Run BCSD pipeline (production)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: |
+                  uv run bcsd run --config-path configs/production/

@@ -168,7 +168,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     )
     environment: str = Field(
         default="qa",
-        description="Environment name (qa, staging, production). Separates cache/outputs by deployment stage.",
+        description="Environment name (qa, production). Separates cache/outputs by deployment stage.",
     )
     version: str = Field(
         default=_cache_version,
@@ -339,9 +339,7 @@ class CacheConfig(BaseModel):
     force_recompute: bool = Field(
         False, description="Force recomputation even if cached artifacts exist"
     )
-    environment: str = Field(
-        "qa", description="Environment for cache namespace (qa, staging, production)"
-    )
+    environment: str = Field("qa", description="Environment for cache namespace (qa, production)")
     version: str = Field(
         _cache_version,
         description="Version identifier for cache path namespacing. Defaults to the installed package version.",

@@ -121,7 +121,7 @@ output_dir/{environment}/{version}/
 
 Where:
 
-- `{environment}`: `qa`, `staging`, or `production`
+- `{environment}`: `qa` or `production`
 - `{version}`: `v1`, `v2`, etc. (default: `v1`)
 - `{subset_id}`: `global` or `lat{min}to{max}_lon{min}to{max}` (e.g., `lat-35.0to-22.0_lon16.0to33.0`)
 - `{ensemble:03d}`: Zero-padded ensemble member (e.g., `000`, `001`)
@@ -321,7 +321,7 @@ def get_scenario_path(gcm, variable, ensemble, scenario, subset_bounds):
 
 This ensures:
 
-- **environment isolation**: qa/staging/production never mix
+- **environment isolation**: qa/production never mix
 - **spatial subset separation**: Global vs regional runs have different paths
 - **deterministic lookups**: Same config always produces same path
 - **human-readable**: Paths are self-documenting

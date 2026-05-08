@@ -32,6 +32,50 @@ logger = logging.getLogger(__name__)
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
 
 
+_MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("gcms", "gcm", "gcm"),
+    ("variables", "variable", "variable"),
+    ("ensemble_members", "ensemble_member", "ensemble_member"),
+    ("scenarios", "scenario", "scenario"),
+)
+
+
+def _is_matrix_config(config_dict: dict) -> bool:
+    """Return True if any expandable field contains a list."""
+    return any(
+        isinstance(config_dict.get(plural, config_dict.get(singular)), list)
+        for plural, singular, _ in _MATRIX_FIELDS
+    )
+
+
+def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
+    """Expand a matrix config dict into one BCSDConfig per cartesian-product combination."""
+    d = dict(config_dict)
+    axes: dict[str, list] = {}
+    for plural, singular, field in _MATRIX_FIELDS:
+        if plural in d:
+            val = d.pop(plural)
+        elif singular in d:
+            val = d.pop(singular)
+        else:
+            val = None
+        axes[field] = val if isinstance(val, list) else [val]
+
+    if "variable_config" in d and len(axes["variable"]) > 1:
+        raise ValueError(
+            "Cannot use 'variable_config' in a matrix config with multiple variables "
+            f"({axes['variable']}). Remove 'variable_config' to use per-variable defaults, "
+            "or split into separate config files."
+        )
+
+    return [
+        BCSDConfig(gcm=gcm, variable=variable, ensemble_member=member, scenario=scenario, **d)
+        for gcm, variable, member, scenario in itertools.product(
+            axes["gcm"], axes["variable"], axes["ensemble_member"], axes["scenario"]
+        )
+    ]
+
+
 def load_configs(config_path: str) -> list[BCSDConfig]:
     """
     Load configuration(s) from YAML file or directory.
@@ -50,16 +94,20 @@ def load_configs(config_path: str) -> list[BCSDConfig]:
     configs = []
 
     if path.is_file():
-        # Single config file
         with open(path) as f:
             config_dict = yaml.safe_load(f)
+        if _is_matrix_config(config_dict):
+            configs.extend(_expand_matrix_config(config_dict))
+        else:
             configs.append(BCSDConfig(**config_dict))
 
     elif path.is_dir():
-        # Directory of config files
-        for yaml_file in sorted(path.glob("*.yaml")) + sorted(path.glob("*.yml")):
+        for yaml_file in sorted([*path.glob("*.yaml"), *path.glob("*.yml")]):
             with open(yaml_file) as f:
                 config_dict = yaml.safe_load(f)
+            if _is_matrix_config(config_dict):
+                configs.extend(_expand_matrix_config(config_dict))
+            else:
                 configs.append(BCSDConfig(**config_dict))
 
     else:
@@ -124,7 +172,7 @@ def configs_from_matrix(
     output_dir : str
         Directory for final downscaled outputs
     environment : str
-        Environment name (qa, staging, production)
+        Environment name (qa, production)
     version : str
         Version identifier
     subset_bounds : tuple[float, float, float, float] | None
@@ -246,35 +294,17 @@ def run(
     logger.info("✓ Complete!")
 
 
-def _print_paths_summary(paths: list[str], configs: list[BCSDConfig], stage: str) -> None:
-    """Print a Rich table summarising output paths produced by a stage."""
+def _print_paths_summary(paths: list[str], _configs: list[BCSDConfig], stage: str) -> None:
+    """Print output paths produced by a stage, one per line."""
     stage_label = {
         "prepare_observations": "Obs Regridded",
         "fit_historical": "Historical",
         "transform_scenario": "Scenario",
     }.get(stage, stage)
 
-    table = Table(
-        title=f"Output Paths — {stage_label} ({len(paths)} artifact(s))",
-        show_header=True,
-        header_style="bold magenta",
-    )
-    table.add_column("GCM", style="cyan", no_wrap=True)
-    table.add_column("Variable", style="magenta")
-    table.add_column("Member", style="green")
-    table.add_column("Scenario", style="yellow")
-    table.add_column("Path", overflow="fold")
-
-    for cfg, path in zip(configs, paths):
-        table.add_row(
-            cfg.gcm,
-            cfg.variable,
-            cfg.ensemble_member,
-            cfg.scenario or "(historical)",
-            path or "[red]FAILED[/red]",
-        )
-
-    console.print(table)
+    console.print(f"\n{stage_label} ({len(paths)} artifact(s)):")
+    for path in paths:
+        console.print(path or "FAILED")
 
 
 @app.command()
@@ -309,7 +339,7 @@ def run_matrix(
     output_dir: str = typer.Option(
         "s3://carbonplan-scratch/srm/outputs/", help="Directory for final outputs"
     ),
-    environment: str = typer.Option("qa", help="Environment (qa, staging, production)"),
+    environment: str = typer.Option("qa", help="Environment (qa, production)"),
     version: str = typer.Option("v1", help="Version identifier (e.g. 'v1', 'v2')"),
     subset_bounds: str | None = typer.Option(
         None,
@@ -631,6 +661,13 @@ def cache_list(
 
 @app.command()
 def validate(
+    config_path: list[str] | None = typer.Option(
+        None,
+        "--config-path",
+        "-c",
+        help="Path to YAML config or directory of configs (can be specified multiple times). "
+        "Derives GCMs and scenarios to validate from the loaded configs.",
+    ),
     gcm: list[str] | None = typer.Option(
         None, "--gcm", help="GCM(s) to validate (repeatable). Defaults to all."
     ),
@@ -641,6 +678,9 @@ def validate(
     """Validate input datasets against the validation matrix.
 
     Exits with code 1 if any blocking check fails, otherwise exits with code 0.
+
+    When --config-path is given, GCMs and scenarios are derived from those configs.
+    Otherwise, --gcm and --scenario filter the check matrix (defaulting to all known values).
     """
     import json
 
@@ -653,6 +693,14 @@ def validate(
         CheckStatus,
         DatasetValidator,
     )
+
+    if config_path:
+        configs = [cfg for path in config_path for cfg in load_configs(path)]
+        gcm = list(dict.fromkeys(c.gcm for c in configs))
+        scenario = list(
+            dict.fromkeys(c.scenario if c.scenario is not None else "historical" for c in configs)
+        )
+        logger.info("Validating %d GCM(s) x %d scenario(s) from configs", len(gcm), len(scenario))
 
     _STATUS_SYMBOL = {
         CheckStatus.PASS: "[green]✓[/green]",

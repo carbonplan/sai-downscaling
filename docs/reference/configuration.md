@@ -2,10 +2,27 @@
 
 Configuration files use YAML format with Pydantic validation. All fields are validated before execution to catch errors early.
 
+## Matrix config format
+
+Any of the four dimension fields can be a list. `load_configs` expands them into one `BCSDConfig` per cartesian-product combination:
+
+```yaml
+gcm: "CESM2-WACCM"                              # singular — still works
+variables: ["tas", "pr"]                         # list — expands
+ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
+scenarios: ["SSP245", "G6-1.5K"]
+predict_period_start: 2015
+predict_period_end: 2100
+```
+
+Both singular (`variable`) and plural (`variables`) key names are accepted. All other fields are shared across every combination.
+
+**Restriction:** `variable_config` may not be set when `variables` contains more than one entry — it would silently apply to every variable, including those with incompatible settings (e.g. additive `tas` settings applied to `pr`). Remove it and rely on per-variable defaults (see [Variable-Specific Auto-Configuration](#variable-specific-auto-configuration)), or split into separate files.
+
 ## Required Fields
 
 ```yaml
-# Model identifiers
+# Model identifiers (singular or list)
 gcm: "CESM2-WACCM"                    # GCM model name
 variable: "tas"                        # Variable: tas, tasmax, pr, rsds
 ensemble_member: "r1i1p1f1"            # Ensemble member label (e.g. "r1i1p1f1", "01")
@@ -29,7 +46,7 @@ output_dir: "s3://bucket/path"        # Directory for final scenario outputs
 subset_bounds: [-35, -22, 16, 33]     # [lat_min, lat_max, lon_min, lon_max]
 
 # Environment isolation (default: "qa")
-environment: "qa"                      # Environment: qa, staging, production
+environment: "qa"                      # Environment: qa, production
 # Version identifier (default: installed package version, e.g. "v1.0.post12")
 # version: "v1.0.post12"              # Override to pin a specific cache namespace
 

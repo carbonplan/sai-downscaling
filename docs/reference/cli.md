@@ -104,11 +104,43 @@ stage 3 (transform_scenario):
 
 ---
 
+## `bcsd validate` — Validate Input Datasets
+
+Validate input datasets against the validation matrix before running the pipeline. Exits with code 1 if any blocking check fails.
+
+```bash
+uv run bcsd validate [OPTIONS]
+```
+
+**Options:**
+
+- `--config-path TEXT / -c TEXT` (repeatable): path to YAML config or directory. Derives the GCMs and scenarios to validate from the loaded configs. Supports the matrix format (list fields).
+- `--gcm TEXT` (repeatable): GCM(s) to validate explicitly. Defaults to all known GCMs when neither `--config-path` nor `--gcm` is given.
+- `--scenario TEXT` (repeatable): scenario(s) to validate explicitly. Defaults to all known scenarios when neither `--config-path` nor `--scenario` is given.
+
+**Examples:**
+
+```bash
+# Validate only the datasets referenced by a config directory (recommended)
+uv run bcsd validate --config-path configs/qa/
+uv run bcsd validate --config-path configs/production/
+
+# Validate a specific GCM/scenario combination
+uv run bcsd validate --gcm CESM2-WACCM --scenario SSP245
+
+# Validate all known datasets
+uv run bcsd validate
+```
+
+When `--config-path` is given, `bcsd validate` extracts the unique GCMs and scenarios from those configs and validates only those combinations. This matches exactly what `bcsd run` will consume.
+
+---
+
 ## `bcsd run` — Execute Pipeline from Config File
 
-Run the BCSD downscaling pipeline for a **single config** or a **directory of pre-existing config files**.
+Run the BCSD downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format) — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination.
 
-> For new multi-run workflows, prefer `bcsd run-matrix` instead.
+> For ad-hoc multi-run workflows from the command line without config files, use `bcsd run-matrix` instead.
 
 ```bash
 uv run bcsd run --config-path PATH [OPTIONS]
@@ -256,4 +288,4 @@ uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --y
 ```
 
 > [!WARNING]
-> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa or staging.
+> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.
