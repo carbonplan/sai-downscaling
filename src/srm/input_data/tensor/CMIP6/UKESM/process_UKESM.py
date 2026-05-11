@@ -43,6 +43,13 @@ VAR_PREFIX_MAP = {
     "tasmax": "T",
 }
 
+# Maps raw variable names in G6-1.5K-SAI T files to CF standard names
+T_VAR_MAP = {
+    "temp": "tasmax",
+    "temp_1": "tasmin",
+    "temp_2": "tas",
+}
+
 
 @dataclass
 class BaseUKESM_Config(BaseETLConfig):
@@ -100,19 +107,20 @@ class UKESM_SSP245_T_PR_Config(BaseUKESM_Config):
 class UKESM_G6_1p5K_Config(BaseUKESM_Config):
     scenario: str = "G6-1.5K"
     catalog_key: str = "UKESM-G6-1.5K-virtual"
-    # t_pr_catalog_key intentionally absent: Cindy's G6-1.5K T/PR files were identical to
-    # Reinstate once source files are confirmed distinct. Only hurs/rsds from CEDA written.
+    t_pr_catalog_key: str = "UKESM-G6-1.5K-t-pr-virtual"
     materialized_key: str = "UKESM-G6-1.5K-icechunk"
+    t_pr_materialized_key: str = "UKESM-G6-1.5K-t-pr-icechunk"
     s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K"
 
 
-# UKESM_G6_1p5K_T_PR_Config disabled: see note in UKESM_G6_1p5K_Config above.
-# @dataclass
-# class UKESM_G6_1p5K_T_PR_Config(BaseUKESM_Config):
-#     scenario: str = "G6-1.5K"
-#     catalog_key: str = "UKESM-G6-1.5K-t-pr-virtual"
-#     materialized_key: str = "UKESM-G6-1.5K-icechunk"
-#     s3_input_prefix: str = "input/tensor/UKESM/G6-1.5K/netcdf"
+@dataclass
+class UKESM_G6_1p5K_T_PR_Config(BaseUKESM_Config):
+    scenario: str = "G6-1.5K"
+    catalog_key: str = "UKESM-G6-1.5K-t-pr-virtual"
+    materialized_key: str = "UKESM-G6-1.5K-t-pr-icechunk"
+    s3_input_prefix: str = "input/tensor/UKESM/G6-1.5K/netcdf"
+    # raw source prefix for NetCDF3 files to be prepared
+    s3_raw_prefix: str = "input/tensor/UKESM/netcdf_G6-1.5K-SAI"
 
 
 @dataclass
@@ -157,11 +165,11 @@ SCENARIO_CONFIG_MAP = {
     "SSP245": UKESM_SSP245_Config,
     "SSP245-t-pr": UKESM_SSP245_T_PR_Config,
     "G6-1.5K": UKESM_G6_1p5K_Config,
-    # "G6-1.5K-t-pr": UKESM_G6_1p5K_T_PR_Config,  # disabled; see UKESM_G6_1p5K_Config
+    "G6-1.5K-t-pr": UKESM_G6_1p5K_T_PR_Config,
     "historical": UKESM_Historical_Config,
 }
 
-T_PR_SCENARIOS = {UKESM_SSP245_T_PR_Config}  # UKESM_G6_1p5K_T_PR_Config disabled
+T_PR_SCENARIOS = {UKESM_SSP245_T_PR_Config, UKESM_G6_1p5K_T_PR_Config}
 
 
 def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Config) -> None:
@@ -321,6 +329,71 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> 
         }
     )
     return apply_ensemble_provenance(ds, _derivation_logic(config))
+
+
+def _prepare_g6_t_pr(config: UKESM_G6_1p5K_T_PR_Config) -> None:
+    """Convert raw G6-1.5K-SAI NetCDF3 files to rechunked NetCDF4 on S3.
+
+    Reads NetCDF3 files eagerly into memory via EagerStoreReader (run on Coiled for
+    same-region S3 throughput), writes rechunked NetCDF4 to a local temp file, then
+    uploads via obstore.
+    PRECT: squeeze surface dim, rename precip->pr, rename t->time.
+    T: squeeze ht dim, rename t->time, split temp/temp_1/temp_2 -> tasmax/tasmin/tas.
+    """
+    import tempfile
+    from pathlib import Path
+
+    raw_store = from_url(
+        f"s3://{config.s3_bucket}",
+        region="us-west-2",
+        skip_signature=True,
+        client_options={"timeout": "3600s"},
+    )
+    out_store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
+    rechunk = {"time": 365, "latitude": 72, "longitude": 96}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for member in config.ensemble_members:
+            # --- PRECT ---
+            raw_path = f"{config.s3_raw_prefix}/PRECT/PRECT_{member}.nc"
+            local_nc = Path(tmpdir) / f"PRECT_{member}.nc"
+            print(f"downloading s3://{config.s3_bucket}/{raw_path}")
+            with open(local_nc, "wb") as f:
+                for chunk in obs.get(raw_store, raw_path):
+                    f.write(bytes(chunk))
+
+            ds = xr.open_dataset(local_nc, engine="scipy", chunks={})
+            ds = ds.isel(surface=0).drop_vars("surface")
+            ds = ds.rename({"t": "time", "precip": "pr"}).drop_encoding()
+            ds = ds.chunk(rechunk)
+            out_local = Path(tmpdir) / f"PRECT_{member}_pr_rechunked.nc"
+            ds.to_netcdf(out_local, engine="h5netcdf", mode="w")
+            local_nc.unlink()
+            out_s3 = f"{config.s3_input_prefix}/PRECT/PRECT_{member}_pr_rechunked.nc"
+            print(f"uploading s3://{config.s3_bucket}/{out_s3}")
+            obs.put(out_store, out_s3, out_local.read_bytes())
+            out_local.unlink()
+
+            # --- T ---
+            raw_path = f"{config.s3_raw_prefix}/T/T_{member}.nc"
+            local_nc = Path(tmpdir) / f"T_{member}.nc"
+            print(f"downloading s3://{config.s3_bucket}/{raw_path}")
+            with open(local_nc, "wb") as f:
+                for chunk in obs.get(raw_store, raw_path):
+                    f.write(bytes(chunk))
+
+            ds = xr.open_dataset(local_nc, engine="scipy", chunks={})
+            ds = ds.isel(ht=0).drop_vars("ht")
+            ds = ds.rename({"t": "time"}).drop_encoding()
+            for raw_var, cf_var in T_VAR_MAP.items():
+                var_ds = ds[[raw_var]].rename({raw_var: cf_var}).chunk(rechunk)
+                out_local = Path(tmpdir) / f"T_{member}_{cf_var}_rechunked.nc"
+                var_ds.to_netcdf(out_local, engine="h5netcdf", mode="w")
+                out_s3 = f"{config.s3_input_prefix}/T/T_{member}_{cf_var}_rechunked.nc"
+                print(f"uploading s3://{config.s3_bucket}/{out_s3}")
+                obs.put(out_store, out_s3, out_local.read_bytes())
+                out_local.unlink()
+            local_nc.unlink()
 
 
 @click.group()
@@ -495,9 +568,35 @@ def process(variable, scenario, coiled, all_variables, subset):
             client.shutdown()
 
 
+@click.command()
+@click.option("--scenario", type=click.Choice(["G6-1.5K-t-pr"]), required=True)
+@click.option(
+    "--member", multiple=True, help="Limit to specific ensemble members (e.g. --member 001)"
+)
+@click.option("--coiled/--local", default=False)
+def prepare(scenario, member, coiled):
+    """Convert raw G6-1.5K-SAI NetCDF3 files to rechunked NetCDF4 on S3."""
+    import coiled as coiled_lib
+
+    config = SCENARIO_CONFIG_MAP[scenario]()
+    if member:
+        config.ensemble_members = list(member)
+
+    if coiled:
+
+        @coiled_lib.function(vm_type="r8g.4xlarge", region="us-west-2")
+        def _remote_prepare(cfg):
+            _prepare_g6_t_pr(cfg)
+
+        _remote_prepare(config)
+    else:
+        _prepare_g6_t_pr(config)
+
+
 cli.add_command(fetch)
 cli.add_command(virtualize)
 cli.add_command(process)
+cli.add_command(prepare)
 
 if __name__ == "__main__":
     cli()
