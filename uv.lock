@@ -4095,7 +4095,6 @@ dependencies = [
     { name = "s3fs" },
     { name = "tabulate" },
     { name = "typer" },
-    { name = "virtualizarr" },
     { name = "xarray", extra = ["accel"] },
     { name = "xarray-regrid" },
     { name = "zarr" },
@@ -4192,7 +4191,7 @@ requires-dist = [
     { name = "flox", specifier = ">=0.11.1" },
     { name = "geopandas", specifier = ">=1.1.3" },
     { name = "ibicus", specifier = ">=1.2.0" },
-    { name = "icechunk", specifier = ">=1.1.15" },
+    { name = "icechunk", specifier = ">=2.0.0" },
     { name = "netcdf4", specifier = ">=1.7.4" },
     { name = "obstore", specifier = ">=0.8.2" },
     { name = "pint-xarray", specifier = ">=0.6.0" },
@@ -4205,7 +4204,6 @@ requires-dist = [
     { name = "s3fs", specifier = ">=0.4.2" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "typer", specifier = ">=0.21.2" },
-    { name = "virtualizarr", specifier = ">=2.6.0" },
     { name = "xarray", extras = ["accel"], specifier = ">=2025.12.0" },
     { name = "xarray-regrid", specifier = ">=0.4.2" },
     { name = "zarr", specifier = ">=3.1.5" },
@@ -4249,7 +4247,7 @@ dev = [
     { name = "s3fs", specifier = ">=2026.1.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "sparse", specifier = ">=0.17.0" },
-    { name = "virtualizarr", specifier = ">=2.2.1" },
+    { name = "virtualizarr", specifier = ">=2.6.1" },
     { name = "xclim", specifier = ">=0.59.1" },
 ]
 docs = [
@@ -4270,7 +4268,7 @@ input-data = [
     { name = "h5py", specifier = "==3.14.0" },
     { name = "obspec-utils", specifier = ">=0.9.0" },
     { name = "s3fs", specifier = ">=2026.1.0" },
-    { name = "virtualizarr", specifier = ">=2.2.1" },
+    { name = "virtualizarr", specifier = ">=2.6.1" },
     { name = "xclim", specifier = ">=0.59.1" },
 ]
 qa = [
@@ -4605,7 +4603,7 @@ wheels = [
 
 [[package]]
 name = "virtualizarr"
-version = "2.6.0"
+version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numcodecs" },
@@ -4618,9 +4616,9 @@ dependencies = [
     { name = "xarray" },
     { name = "zarr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/c0/16d8add1271556fec95be115746e5666d0c022006d9e34a5751665bfd7c2/virtualizarr-2.6.0.tar.gz", hash = "sha256:0acefe70e1fcc1143d256ac8194609bf82c5b3262d74152398d22af39f914552", size = 246523, upload-time = "2026-04-16T19:27:58.797Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/42/44aa48d97933970d98429eb1600cf82b896516eb6c4c9209bfdb41110ed6/virtualizarr-2.6.1.tar.gz", hash = "sha256:6d713304bba092feb55a9068f694a5969760266b02f5cec4c0f859598da95e7a", size = 255582, upload-time = "2026-05-03T10:42:42.439Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/ba/6d49af13274f5161db0f857ce812bb0bea6936932403d42314a6115294f0/virtualizarr-2.6.0-py3-none-any.whl", hash = "sha256:28860b10e12211d4fd862eb01d74e398193b37bdf6b59c7209241ddd83e6589e", size = 213271, upload-time = "2026-04-16T19:27:57.417Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/4c/0b1ce4f3780f3d1ed97b0bde246a504dcec7fca47a720d44184da560ff04/virtualizarr-2.6.1-py3-none-any.whl", hash = "sha256:bcf5790ed96f3a3e35dd8a86fd5b4e300170ceaf6b012cc969444620965943f4", size = 219810, upload-time = "2026-05-03T10:42:40.671Z" },
 ]
 
 [[package]]
