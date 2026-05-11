@@ -702,9 +702,6 @@ class Catalog:
                 expected_vars=[
                     VarStandards.HURS,
                     VarStandards.RSDS,
-                    # T/PR vars (pr, tas, tasmin, tasmax, dtr) excluded: Cindy's G6-1.5K T/PR files
-                    # were identical to SSP245 throughout full period — suspect transfer error.
-                    # Pending confirmation before including. Only CEDA CMORized vars written here.
                 ],
             ),
             "UKESM-G6-1.5K-virtual": VirtualDataset(
@@ -729,6 +726,28 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.TASMIN,
                     VarStandards.TASMAX,
+                ],
+            ),
+            "UKESM-G6-1.5K-t-pr-icechunk": Dataset(
+                name="UKESM-G6-1.5K-t-pr-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K-T-PR/UKESM-G6-1.5K-t-pr.icechunk",
+                format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 960,
+                    "lat": 144,
+                    "lon": 192,
+                },
+                ensemble_members=["001", "002", "003"],
+                license="OGLv3",
+                citation="Simulations run by Andy Jones in collaboration with Jim Haywood and Matthew Henry. The UK Earth System Model is developed and maintained by the Met Office Hadley Centre.",
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.DTR,
                 ],
             ),
             "ERA5": Dataset(
