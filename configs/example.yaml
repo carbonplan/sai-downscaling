@@ -7,7 +7,7 @@
 # === Model and Scenario ===
 gcm: "CESM2-WACCM" # GCM model name
 variable: "tas" # Variable: tas, tasmax, pr, rsds
-ensemble_member: "r1i1p1f1" # Ensemble member label. CESM2-WACCM SSP245/historical: ripf label (e.g. 'r1i1p1f1'). CESM2-WACCM G6-1.5K: CESM run number (e.g. '001', '002', '003'). MIROC/UKESM: ripf label (e.g. 'r1i1p4f2').
+ensemble_member: "r3i1p1f1" # Ensemble member label. CESM2-WACCM SSP245/historical: ripf label (e.g. 'r1i1p1f1'). CESM2-WACCM G6-1.5K: CESM run number (e.g. '001', '002', '003'). MIROC/UKESM: ripf label (e.g. 'r1i1p4f2').
 scenario: "SSP245" # Scenario: historical, SSP245, G6-1pt5k, G6sulfur, G6solar
 
 # === Time Periods ===
@@ -31,6 +31,7 @@ predict_period_end: 2100
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate artifacts (obs, historical)
 output_dir: "s3://carbonplan-scratch/srm/outputs/" # Final scenario outputs (published results)
 environment: "qa" # Environment: qa, production (default: qa, can override with BCSD_ENVIRONMENT env var)
+version: "v0.6.0run2"
 # version defaults to the installed package version (e.g. "v0.6.0.post12"). Override with BCSD_VERSION env var or --version CLI flag to pin a specific cache namespace.
 # version: "v0.6.0.post5"
 
@@ -38,6 +39,6 @@ environment: "qa" # Environment: qa, production (default: qa, can override with 
 # === Additional Options (optional) ===
 # verbose: true                       # Enable verbose logging (default: true)
 # rechunk_workflow: true              # Enable strategic rechunking (default: true)
-# apply_ocean_mask: true              # Mask ocean pixels to NaN in final output (default: true)
-mapping_type: "nonparametric"          # Bias correction method: "parametric" or "nonparametric" (default: "parametric")
-save_intermediate: false                 # Save intermediate artifacts (default: false)
+apply_ocean_mask: false              # Mask ocean pixels to NaN in final output (default: true)
+mapping_type: "nonparametric_hybrid"          # Bias correction method: "parametric" or "nonparametric" (default: "parametric")
+save_intermediate: true                 # Save intermediate artifacts (default: false)
