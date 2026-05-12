@@ -201,9 +201,9 @@ class VirtualDataset(BaseDataset):
 class Catalog:
     def __init__(self):
         self.datasets: dict[str, BaseDataset] = {
-            "CESM2-WACCM-historical-icechunk-old": Dataset(
-                name="CESM2-WACCM-historical-icechunk-old",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2_WACCM_Historical_old.icechunk",
+            "CESM2-WACCM-historical-icechunk-NCAR-provided": Dataset(
+                name="CESM2-WACCM-historical-icechunk-NCAR-provided",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-historical-NCAR-provided.icechunk",
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
                 expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
@@ -238,9 +238,9 @@ class Catalog:
                     VarStandards.TAS,
                 ],
             ),
-            "CESM2-WACCM-historical-virtual-old": VirtualDataset(
-                name="CESM2-WACCM-historical-virtual-old",
-                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical-virtual_old.icechunk",
+            "CESM2-WACCM-historical-virtual-NCAR-provided": VirtualDataset(
+                name="CESM2-WACCM-historical-virtual-NCAR-provided",
+                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-historical-virtual-NCAR-provided.icechunk",
                 format="icechunk",
                 license="CC-BY-4.0",
                 citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 CMIP historical. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10071",
@@ -256,9 +256,9 @@ class Catalog:
                     VarStandards.TASMIN,
                 ],
             ),
-            "CESM2-WACCM-G6-1.5K-icechunk-old": Dataset(
-                name="CESM2-WACCM-G6-1.5K-icechunk-old",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k_pancakes_old.icechunk",
+            "CESM2-WACCM-G6-1.5K-icechunk-NCAR-provided": Dataset(
+                name="CESM2-WACCM-G6-1.5K-icechunk-NCAR-provided",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k-NCAR-provided.icechunk",
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
                 expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
@@ -298,9 +298,9 @@ class Catalog:
                     # tasmin/tasmax not available for CESM2-WACCM in CMIP6 (confirmed: NASA NEX, CEDA, Metagrid all missing)
                 ],
             ),
-            "CESM2-WACCM-G6-1.5K-virtual-old": VirtualDataset(
-                name="CESM2-WACCM-G6-1.5K-virtual-old",
-                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5K-virtual_old.icechunk",
+            "CESM2-WACCM-G6-1.5K-virtual-NCAR-provided": VirtualDataset(
+                name="CESM2-WACCM-G6-1.5K-virtual-NCAR-provided",
+                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5K-virtual-NCAR-provided.icechunk",
                 format="icechunk",
                 citation="Lee, W. R., Visioni, D., Wagman, B. M., Wentland, C. R., Kravitz, B., Watanabe, S., Sekiya, T., Jones, A., Haywood, J., Henry, M., and Bednarz, E. M. (2025). G6-1.5K-SAI and G6sulfur: changes in impacts and uncertainty depending on stratospheric aerosol injection strategy in the Geoengineering Model Intercomparison Project. EGUsphere [preprint]. https://doi.org/10.5194/egusphere-2025-5742. Simulations run by Walker Lee using CESM2 (https://doi.org/10.5065/D67H1H0V). Walker Lee granted permission to share this data.",
                 expected_vars=[
@@ -323,9 +323,9 @@ class Catalog:
                     # tasmin/tasmax not available for CESM2-WACCM in CMIP6 (confirmed: NASA NEX, CEDA, Metagrid all missing)
                 ],
             ),
-            "CESM2-WACCM-SSP245-icechunk-old": Dataset(
-                name="CESM2-WACCM-SSP245-icechunk-old",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2_WACCM_SSP245_old.icechunk",
+            "CESM2-WACCM-SSP245-icechunk-NCAR-provided": Dataset(
+                name="CESM2-WACCM-SSP245-icechunk-NCAR-provided",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245-NCAR-provided.icechunk",
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
                 expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
@@ -702,9 +702,6 @@ class Catalog:
                 expected_vars=[
                     VarStandards.HURS,
                     VarStandards.RSDS,
-                    # T/PR vars (pr, tas, tasmin, tasmax, dtr) excluded: Cindy's G6-1.5K T/PR files
-                    # were identical to SSP245 throughout full period — suspect transfer error.
-                    # Pending confirmation before including. Only CEDA CMORized vars written here.
                 ],
             ),
             "UKESM-G6-1.5K-virtual": VirtualDataset(
@@ -729,6 +726,28 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.TASMIN,
                     VarStandards.TASMAX,
+                ],
+            ),
+            "UKESM-G6-1.5K-t-pr-icechunk": Dataset(
+                name="UKESM-G6-1.5K-t-pr-icechunk",
+                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K-T-PR/UKESM-G6-1.5K-t-pr.icechunk",
+                format="icechunk",
+                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
+                expected_shards={
+                    "ensemble_member": 1,
+                    "time": 960,
+                    "lat": 144,
+                    "lon": 192,
+                },
+                ensemble_members=["001", "002", "003"],
+                license="OGLv3",
+                citation="Simulations run by Andy Jones in collaboration with Jim Haywood and Matthew Henry. The UK Earth System Model is developed and maintained by the Met Office Hadley Centre.",
+                expected_vars=[
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.DTR,
                 ],
             ),
             "ERA5": Dataset(
