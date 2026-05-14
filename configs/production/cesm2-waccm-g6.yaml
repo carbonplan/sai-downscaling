@@ -3,27 +3,23 @@
 # Equivalent CLI command:
 #   uv run bcsd run --config-path configs/production/cesm2-waccm-g6.yaml
 
-# === Model and Scenario ===
+# === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds", "tasmax"]
 ensemble_members: ["001", "002", "003"]
 scenarios: ["G6-1.5K"]
 
-# === Time Periods ===
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
 predict_period_end: 2084
 
-# === Storage ===
+mapping_type: "nonparametric_hybrid"
+
+# === PipelineOptions: Operational Settings ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-srm/output"
 environment: "production"
 # version intentionally unset — derived from the installed package version at runtime
-
-# === Bias Correction ===
-mapping_type: "nonparametric_hybrid"
-
-# === Additional Options ===
 verbose: true
 save_intermediate: true
