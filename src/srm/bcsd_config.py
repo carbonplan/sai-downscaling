@@ -200,6 +200,17 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         description="Save intermediate artifacts (e.g. detrended data, quantile mapping results) to cache for debugging and analysis)",
     )
 
+    # Resolved lineage members (populated by batch runner via resolve_member_lineage).
+    # None falls back to ensemble_member at each call site, preserving backward compatibility.
+    historical_ensemble_member: str | None = Field(
+        None,
+        description="Resolved historical ensemble member. When set, overrides ensemble_member for historical data loads.",
+    )
+    ssp245_ensemble_member: str | None = Field(
+        None,
+        description="Resolved SSP245 bridge member for SAI scenarios. When set, overrides ensemble_member for SSP245 bridge loads.",
+    )
+
     def model_post_init(self, __context) -> None:
         """Post-initialization validation and auto-population"""
         # Auto-populate variable_config if not provided
@@ -288,6 +299,8 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             "subset_bounds": self.subset_bounds,
             "variable_config": self.variable_config.model_dump() if self.variable_config else None,
             "mapping_type": self.mapping_type,
+            "historical_ensemble_member": self.historical_ensemble_member,
+            "ssp245_ensemble_member": self.ssp245_ensemble_member,
         }
 
         # Create stable string representation and hash

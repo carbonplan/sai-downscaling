@@ -1,0 +1,106 @@
+is data in our buckets?,will data be used?,gcm,experiment_id,ensemble_id,variable,data provenance,parent_experiment_ensemble_ids,is this row complete or is info missing?,notes
+Yes,Yes,CESM2(WACCM),G6-1.5K,001,tas,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r1i1p1f1'),('ssp245','001')]",,"Email from Walker ""I ran the three G6-1.5K-SAI ensemble members 001, 002, and 003, and can say with certainty that they branched from the WACCM SSP2-4.5 ensemble members 001, 002, and 003, respectively. I believe that WACCM SSP2-4.5 ensemble members 001-005 branched from WACCM Historical ensemble members 001-005, respectively, and that WACCM SSP2-4.5 members 006 through 010 were reruns of 001-005 with perturbed initial conditions in order to provide more ensemble members for the ARISE-SAI-1.5 ensemble."""
+Yes,Yes,CESM2(WACCM),G6-1.5K,001,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','001'),('ssp245','009')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,001,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','001'),('ssp245','009')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,001,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r1i1p1f1'),('ssp245','001')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,001,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r1i1p1f1'),('ssp245','001')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,001,pr,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r1i1p1f1'),('ssp245','001')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,002,tas,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r2i1p1f1'),('ssp245','002')]",,"Email from Walker ""I ran the three G6-1.5K-SAI ensemble members 001, 002, and 003, and can say with certainty that they branched from the WACCM SSP2-4.5 ensemble members 001, 002, and 003, respectively. I believe that WACCM SSP2-4.5 ensemble members 001-005 branched from WACCM Historical ensemble members 001-005, respectively, and that WACCM SSP2-4.5 members 006 through 010 were reruns of 001-005 with perturbed initial conditions in order to provide more ensemble members for the ARISE-SAI-1.5 ensemble."""
+Yes,Yes,CESM2(WACCM),G6-1.5K,002,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','001'),('ssp245','007')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,002,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','001'),('ssp245','007')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,002,"rsds
+","Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r2i1p1f1'),('ssp245','002')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,002,"hurs
+","Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r2i1p1f1'),('ssp245','002')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,002,"pr
+","Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r2i1p1f1'),('ssp245','002')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,003,tas,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r3i1p1f1'),('ssp245','003')]",,"Email from Walker ""I ran the three G6-1.5K-SAI ensemble members 001, 002, and 003, and can say with certainty that they branched from the WACCM SSP2-4.5 ensemble members 001, 002, and 003, respectively. I believe that WACCM SSP2-4.5 ensemble members 001-005 branched from WACCM Historical ensemble members 001-005, respectively, and that WACCM SSP2-4.5 members 006 through 010 were reruns of 001-005 with perturbed initial conditions in order to provide more ensemble members for the ARISE-SAI-1.5 ensemble."""
+Yes,Yes,CESM2(WACCM),G6-1.5K,003,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','001'),('ssp245','008')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,003,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','001'),('ssp245','008')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,003,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r3i1p1f1'),('ssp245','003')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,003,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r3i1p1f1'),('ssp245','003')]",,
+Yes,Yes,CESM2(WACCM),G6-1.5K,003,pr,"Transferred from derecho, /glade/campaign/cesm/collections/ARISE-SAI-1.5","[('historical','r3i1p1f1'),('ssp245','003')]",,
+Yes,Yes,CESM2(WACCM),historical,001,tas,Transferred from derecho,"[('historical','001')]","no ensemble_member in the dataset attrs or filepath, but provided by email Claire Zarakas - does this sound correct?","Email from Simone Tilmes: ""I ran the historical simulation, based on ensemble member 1, and it should be the same as ensemble member 1, just with the min/max temperature bug fix."""
+Yes,Yes,CESM2(WACCM),historical,001,tasmax,Transferred from derecho,"[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),historical,001,tasmin,Transferred from derecho,"[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),historical,001,"rsds
+",Transferred from derecho,"[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),historical,001,hurs,Transferred from derecho,"[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),historical,001,pr,Transferred from derecho,"[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),historical,r1i1p1f1,tas,"Zarr sourced from pangeo cmip6 intake-esm catalog - https://storage.googleapis.com/cmip6/pangeo-cmip6.json
+","[('historical','r1i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),historical,r2i1p1f1,tas,"Zarr sourced from pangeo cmip6 intake-esm catalog - https://storage.googleapis.com/cmip6/pangeo-cmip6.json
+
+","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),historical,r3i1p1f1,tas,"Zarr sourced from pangeo cmip6 intake-esm catalog - https://storage.googleapis.com/cmip6/pangeo-cmip6.json
+
+","[('historical','r3i1p1f1')]",,
+No,No,CESM2(WACCM),historical,r1i1p1f1,tasmax,?,,,tasmax and tasmin error for this ensemble member
+No,No,CESM2(WACCM),historical,r2i1p1f1,tasmax,?,,,tasmax and tasmin error for this ensemble member
+No,No,CESM2(WACCM),historical,r3i1p1f1,tasmax,?,,,tasmax and tasmin error for this ensemble member
+No,No,CESM2(WACCM),historical,r1i1p1f1,tasmin,?,,,tasmax and tasmin error for this ensemble member
+No,No,CESM2(WACCM),historical,r2i1p1f1,tasmin,?,,,tasmax and tasmin error for this ensemble member
+No,No,CESM2(WACCM),historical,r3i1p1f1,tasmin,?,,,tasmax and tasmin error for this ensemble member
+Yes,Yes,CESM2(WACCM),SSP245,001,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r1i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,001,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r1i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,001,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r1i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,001,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r1i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,002,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,002,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,002,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,002,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,003,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,003,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,003,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,003,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,004,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,004,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,004,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,004,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,005,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,005,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,No,CESM2(WACCM),SSP245,001,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,002,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,003,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,004,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,005,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,006,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,001,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,002,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,003,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,004,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,005,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,No,CESM2(WACCM),SSP245,006,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,tasmax and tasmin error for this ensemble member
+Yes,Yes,CESM2(WACCM),SSP245,005,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,005,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,NO - https://github.com/carbonplan/srm-downscaling/issues/226#issuecomment-4435492042,CESM2(WACCM),SSP245,006,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,"not full time extent, not present in processed catalog"
+Yes,"NO - https://github.com/carbonplan/srm-downscaling/issues/226#issuecomment-4435492042
+",CESM2(WACCM),SSP245,006,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,"not full time extent, not present in processed catalog"
+Yes,"NO - https://github.com/carbonplan/srm-downscaling/issues/226#issuecomment-4435492042
+",CESM2(WACCM),SSP245,006,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,"not full time extent, not present in processed catalog"
+Yes,"NO - https://github.com/carbonplan/srm-downscaling/issues/226#issuecomment-4435492042
+",CESM2(WACCM),SSP245,006,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/",,,"not full time extent, not present in processed catalog"
+Yes,Yes,CESM2(WACCM),SSP245,007,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,007,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),SSP245,007,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),SSP245,007,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,007,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,007,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,008,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,008,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),SSP245,008,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),SSP245,008,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,008,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,008,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,009,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,009,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),SSP245,009,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),SSP245,009,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,009,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,009,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r2i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,010,tas,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,010,tasmax,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),SSP245,010,tasmin,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','001')]",,
+Yes,Yes,CESM2(WACCM),SSP245,010,rsds,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,010,hurs,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
+Yes,Yes,CESM2(WACCM),SSP245,010,pr,"Transferred from derecho, /glade/campaign/cesm/collections/CESM2-WACCM-SSP245/","[('historical','r3i1p1f1')]",,
