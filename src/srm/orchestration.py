@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache
 from srm.pipeline import BCSDPipeline
 
@@ -49,26 +49,28 @@ class BCSDOrchestrator:
         "transform_scenario": ["r8g.24xlarge"],
     }
 
-    def __init__(self):
+    def __init__(self, options: PipelineOptions):
         """
         Initialize orchestrator.
 
-        Note: The cache is created on-demand using scratch_dir from the configs
-        to ensure consistency between orchestrator and batch jobs.
+        Parameters
+        ----------
+        options : PipelineOptions
+            Operational settings containing storage paths and runtime flags.
         """
-        self._cache_instances = {}  # Cache instances keyed by (scratch_dir, environment)
+        self.options = options
+        self._cache: ArtifactCache | None = None
 
-    def _get_cache(self, config: BCSDConfig) -> ArtifactCache:
-        """Get or create cache instance for config's scratch_dir and output_dir."""
-        cache_key = (config.scratch_dir, config.output_dir, config.environment, config.version)
-        if cache_key not in self._cache_instances:
-            self._cache_instances[cache_key] = ArtifactCache(
-                scratch_dir=config.scratch_dir,
-                environment=config.environment,
-                version=config.version,
-                output_dir=config.output_dir,
+    def _get_cache(self) -> ArtifactCache:
+        """Get or create cache instance from options."""
+        if self._cache is None:
+            self._cache = ArtifactCache(
+                scratch_dir=self.options.scratch_dir,
+                environment=self.options.environment,
+                version=self.options.version,
+                output_dir=self.options.output_dir,
             )
-        return self._cache_instances[cache_key]
+        return self._cache
 
     def submit_stage(
         self,
@@ -99,8 +101,7 @@ class BCSDOrchestrator:
         if not configs:
             return []
 
-        # Get cache instance from first config (all configs should use same scratch_dir)
-        cache = self._get_cache(configs[0])
+        cache = self._get_cache()
 
         # Filter out configs that are already cached
         configs_to_run = []
@@ -110,7 +111,7 @@ class BCSDOrchestrator:
             output_path = cache.get_output_path(stage, config)
 
             if cache.exists(output_path) and not force:
-                if config.verbose:
+                if self.options.verbose:
                     logger.info(f"⊙ Skipping {config.run_id} - output exists: {output_path}")
                 output_paths.append(output_path)
             else:
@@ -184,7 +185,7 @@ class BCSDOrchestrator:
         # Exclude computed fields (run_id, config_hash, detrend_data, etc.) since they
         # are derived values and BCSDConfig does not accept them as constructor inputs.
         computed_fields = set(BCSDConfig.model_computed_fields.keys())
-        cache = self._get_cache(configs[0])
+        cache = self._get_cache()
         command = ["python", "-m", "srm.batch_runner", stage]
 
         remaining = list(configs)
@@ -198,7 +199,14 @@ class BCSDOrchestrator:
                 )
 
             task_var_dicts = [
-                {"CONFIG_JSON": json.dumps(config.model_dump(exclude=computed_fields))}
+                {
+                    "CONFIG_JSON": json.dumps(
+                        {
+                            **config.model_dump(exclude=computed_fields),
+                            "options": self.options.model_dump(),
+                        }
+                    )
+                }
                 for config in remaining
             ]
 
@@ -275,7 +283,7 @@ class BCSDOrchestrator:
         completed_paths = []
 
         for config in configs:
-            pipeline = BCSDPipeline(config)
+            pipeline = BCSDPipeline(config, self.options)
 
             if stage == "prepare_observations":
                 path = pipeline.prepare_observations()
@@ -418,7 +426,7 @@ class BCSDOrchestrator:
         if not configs:
             return status
 
-        cache = self._get_cache(configs[0])
+        cache = self._get_cache()
 
         # Check obs (deduplicated)
         obs_configs = self._deduplicate_obs_configs(configs)

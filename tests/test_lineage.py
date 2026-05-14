@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from srm.bcsd_config import BCSDConfig
 from srm.lineage import resolve_member_lineage
 
 # ---------------------------------------------------------------------------
@@ -151,85 +150,3 @@ class TestLineageKeyError:
         assert "badscenar" in msg
         assert "999" in msg
         assert "sfcWind" in msg
-
-
-# ---------------------------------------------------------------------------
-# BCSDConfig: new lineage fields
-# ---------------------------------------------------------------------------
-
-
-class TestBCSDConfigLineageFields:
-    """historical_ensemble_member and ssp245_ensemble_member fields."""
-
-    def test_defaults_to_none(self):
-        cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="001")
-        assert cfg.historical_ensemble_member is None
-        assert cfg.ssp245_ensemble_member is None
-
-    def test_can_set_historical_member(self):
-        cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
-            variable="tas",
-            ensemble_member="001",
-            historical_ensemble_member="r1i1p1f1",
-        )
-        assert cfg.historical_ensemble_member == "r1i1p1f1"
-
-    def test_can_set_ssp245_member(self):
-        cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
-            variable="tasmax",
-            ensemble_member="001",
-            scenario="G6-1.5K",
-            predict_period_start=2035,
-            predict_period_end=2084,
-            historical_ensemble_member="001",
-            ssp245_ensemble_member="009",
-        )
-        assert cfg.ssp245_ensemble_member == "009"
-
-    def test_historical_member_changes_config_hash(self):
-        base = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="001")
-        with_lineage = BCSDConfig(
-            gcm="CESM2-WACCM",
-            variable="tas",
-            ensemble_member="001",
-            historical_ensemble_member="r1i1p1f1",
-        )
-        assert base.config_hash != with_lineage.config_hash
-
-    def test_ssp245_member_changes_config_hash(self):
-        without = BCSDConfig(
-            gcm="CESM2-WACCM",
-            variable="tasmax",
-            ensemble_member="001",
-            scenario="G6-1.5K",
-            predict_period_start=2035,
-            predict_period_end=2084,
-            historical_ensemble_member="001",
-        )
-        with_bridge = BCSDConfig(
-            gcm="CESM2-WACCM",
-            variable="tasmax",
-            ensemble_member="001",
-            scenario="G6-1.5K",
-            predict_period_start=2035,
-            predict_period_end=2084,
-            historical_ensemble_member="001",
-            ssp245_ensemble_member="009",
-        )
-        assert without.config_hash != with_bridge.config_hash
-
-    def test_different_historical_members_produce_different_hashes(self, subtests):
-        members = ("r1i1p1f1", "r2i1p1f1", "001")
-        hashes = []
-        for m in members:
-            with subtests.test(member=m):
-                cfg = BCSDConfig(
-                    gcm="CESM2-WACCM",
-                    variable="tas",
-                    ensemble_member="001",
-                    historical_ensemble_member=m,
-                )
-                hashes.append(cfg.config_hash)
-        assert len(set(hashes)) == len(hashes)

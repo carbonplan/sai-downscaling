@@ -23,7 +23,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
@@ -114,15 +114,8 @@ def _mock_transform_scenario_compute():
 
 
 @pytest.fixture
-def config(tmp_path) -> BCSDConfig:
-    """Standard ssp245 config backed by local tmp directories."""
-    return BCSDConfig(
-        gcm="CESM2-WACCM",
-        variable="tas",
-        ensemble_member="r1i1p1f1",
-        scenario="ssp245",
-        predict_period_start=2015,
-        predict_period_end=2100,
+def pipeline_options(tmp_path) -> PipelineOptions:
+    return PipelineOptions(
         scratch_dir=str(tmp_path / "cache"),
         output_dir=str(tmp_path / "outputs"),
         verbose=False,
@@ -131,7 +124,20 @@ def config(tmp_path) -> BCSDConfig:
 
 
 @pytest.fixture
-def pr_config(tmp_path) -> BCSDConfig:
+def config() -> BCSDConfig:
+    """Standard ssp245 config."""
+    return BCSDConfig(
+        gcm="CESM2-WACCM",
+        variable="tas",
+        ensemble_member="r1i1p1f1",
+        scenario="ssp245",
+        predict_period_start=2015,
+        predict_period_end=2100,
+    )
+
+
+@pytest.fixture
+def pr_config() -> BCSDConfig:
     """Precipitation config (no detrending, divide downscaling method)."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
@@ -140,21 +146,17 @@ def pr_config(tmp_path) -> BCSDConfig:
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
-        scratch_dir=str(tmp_path / "cache"),
-        output_dir=str(tmp_path / "outputs"),
-        verbose=False,
-        rechunk_workflow=False,
     )
 
 
 @pytest.fixture
-def pipeline(config) -> BCSDPipeline:
-    return BCSDPipeline(config)
+def pipeline(config, pipeline_options) -> BCSDPipeline:
+    return BCSDPipeline(config, pipeline_options)
 
 
 @pytest.fixture
-def pipeline_pr(pr_config) -> BCSDPipeline:
-    return BCSDPipeline(pr_config)
+def pipeline_pr(pr_config, pipeline_options) -> BCSDPipeline:
+    return BCSDPipeline(pr_config, pipeline_options)
 
 
 @pytest.fixture
@@ -171,18 +173,18 @@ def all_deps_present(pipeline) -> BCSDPipeline:
 
 
 class TestBCSDPipelineInit:
-    def test_cache_uses_config_scratch_dir(self, pipeline, config):
-        assert config.scratch_dir.rstrip("/") in pipeline.cache.scratch_dir
+    def test_cache_uses_options_scratch_dir(self, pipeline):
+        assert pipeline.options.scratch_dir.rstrip("/") in pipeline.cache.scratch_dir
 
-    def test_cache_uses_config_environment(self, pipeline, config):
-        assert pipeline.cache.environment == config.environment
+    def test_cache_uses_options_environment(self, pipeline):
+        assert pipeline.cache.environment == pipeline.options.environment
 
-    def test_cache_uses_config_version(self, pipeline, config):
-        assert pipeline.cache.version == config.version
+    def test_cache_uses_options_version(self, pipeline):
+        assert pipeline.cache.version == pipeline.options.version
 
-    def test_cache_has_output_dir(self, pipeline, config):
+    def test_cache_has_output_dir(self, pipeline):
         assert pipeline.cache.output_dir is not None
-        assert config.output_dir.rstrip("/") in pipeline.cache.output_dir
+        assert pipeline.options.output_dir.rstrip("/") in pipeline.cache.output_dir
 
     def test_state_initialized_empty(self, pipeline):
         assert pipeline._state == {}
@@ -261,12 +263,14 @@ class TestPrepareObservationsCompute:
             variable="tas",
             ensemble_member="r1i1p1f1",
             subset_bounds=(-35.0, -22.0, 16.0, 33.0),
+        )
+        opts = PipelineOptions(
             scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=False,
         )
-        p = BCSDPipeline(cfg)
+        p = BCSDPipeline(cfg, opts)
         with _mock_prepare_obs_compute() as (_, _, _, mock_subset, _):
             p.prepare_observations()
         # Once for obs_fine, once for model_grid
@@ -283,12 +287,14 @@ class TestPrepareObservationsCompute:
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
+        )
+        opts = PipelineOptions(
             scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=True,
         )
-        p = BCSDPipeline(cfg)
+        p = BCSDPipeline(cfg, opts)
         with _mock_prepare_obs_compute() as (_, _, _, _, mock_rechunk):
             p.prepare_observations()
         mock_rechunk.assert_called_once()
@@ -405,12 +411,14 @@ class TestTransformScenarioBehavior:
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
+        )
+        opts = PipelineOptions(
             scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
         )
         with pytest.raises(ValueError, match="scenario must be specified"):
-            BCSDPipeline(cfg).transform_scenario()
+            BCSDPipeline(cfg, opts).transform_scenario()
 
     def test_raises_when_both_deps_missing(self, pipeline):
         with pytest.raises(ValueError, match="Missing dependencies"):
@@ -428,7 +436,9 @@ class TestTransformScenarioBehavior:
                 pipeline.transform_scenario()
             except Exception:
                 pass
-        mock_validate.assert_called_once_with("transform_scenario", pipeline.config)
+        mock_validate.assert_called_once_with(
+            "transform_scenario", pipeline.config, hist_member=pipeline._hist_member
+        )
 
     def test_returns_cached_scenario_path(self, all_deps_present):
         pipeline = all_deps_present
@@ -508,13 +518,15 @@ class TestTransformScenarioBehavior:
             scenario="ssp245",
             predict_period_start=2015,
             predict_period_end=2100,
+        )
+        opts = PipelineOptions(
             scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=False,
             apply_ocean_mask=False,
         )
-        p = BCSDPipeline(cfg)
+        p = BCSDPipeline(cfg, opts)
         _make_icechunk_store(p.cache.obs_path)
         _make_icechunk_store(p.cache.historical_path)
         with _mock_transform_scenario_compute():
