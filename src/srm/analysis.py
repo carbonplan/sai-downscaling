@@ -6,7 +6,7 @@ import seaborn as sns
 import xarray as xr
 
 from srm import catalog
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache
 from srm.utils import lon_to_180
 
@@ -44,16 +44,31 @@ class BCSDRun:
 
     COLORS = {"obs": "#1b1e23", "scenario": "#bc85d9", "historical": "#e587b6"}
 
-    def __init__(self, bcsd_config: BCSDConfig):
+    def __init__(self, bcsd_config: BCSDConfig, options: PipelineOptions | None = None):
         self.config = bcsd_config
+        self.options = options or PipelineOptions()
         self._location_cache = {}
+
+        self._hist_member = bcsd_config.ensemble_member
+        if bcsd_config.scenario is not None:
+            from srm.lineage import resolve_member_lineage
+
+            try:
+                self._hist_member, _ = resolve_member_lineage(
+                    bcsd_config.gcm,
+                    bcsd_config.scenario,
+                    bcsd_config.ensemble_member,
+                    bcsd_config.variable,
+                )
+            except KeyError:
+                pass
 
     def __repr__(self):
         return f"BCSDRun(gcm={self.config.gcm}, ensemble={self.config.ensemble_member}, var={self.config.variable}, scenario={self.config.scenario})"
 
     @cached_property
     def _cache(self) -> ArtifactCache:
-        return ArtifactCache.from_config(self.config)
+        return ArtifactCache.from_config(self.config, self.options)
 
     @cached_property
     def obs(self) -> xr.Dataset:
@@ -61,7 +76,9 @@ class BCSDRun:
 
     @cached_property
     def historical(self) -> xr.Dataset:
-        return load_cached_data(self._cache.historical_path)
+        return load_cached_data(
+            self._cache.get_historical_path(self.config, hist_member=self._hist_member)
+        )
 
     @cached_property
     def scenario(self) -> xr.Dataset:
@@ -137,8 +154,10 @@ def load_nasa_nex(*, dataset: str):
         case _:
             raise ValueError("dataset must take value `ssp245` or `historical`")
 
+    from srm.utils import to_proleptic_gregorian
+
     ds = lon_to_180(ds)
-    ds = ds.convert_calendar("standard")  # to datatime[ns] from cftime.DatetimeNoLeap
+    ds = to_proleptic_gregorian(ds)
     era5_ds = catalog.get("ERA5").to_xarray()
     ds = ds.reindex(lat=era5_ds.lat, lon=era5_ds.lon, method="nearest", tolerance=0.15)
     return ds

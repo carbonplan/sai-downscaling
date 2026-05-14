@@ -1,18 +1,18 @@
-# BCSD configuration: CESM2-WACCM / tas / SSP245 / South Africa (QA)
+# BCSD configuration: CESM2-WACCM / G6-1.5K / all variables / South Africa (QA)
 #
 # Equivalent CLI command:
-#   uv run bcsd run --config-path configs/qa/
+#   uv run bcsd run --config-path configs/qa/cesm2-waccm-g6.yaml
 
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
-variables: ["tas"]
+variables: ["tas", "pr"]
 ensemble_members: ["001", "002", "003"]
-scenarios: ["SSP245"]
+scenarios: ["G6-1.5K"]
 
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2100
+predict_period_end: 2084
 
 # South Africa region: [lat_min, lat_max, lon_min, lon_max]
 subset_bounds: [-35, -22, 16, 33]

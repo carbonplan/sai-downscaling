@@ -85,7 +85,7 @@ class TestConfigJsonReading:
         os.environ["CONFIG_JSON"] = valid_config_json
         captured = {}
 
-        def fake_init(self, config):
+        def fake_init(self, config, options):
             captured["config"] = config
             # Prevent real pipeline operations
             raise StopIteration("stop")

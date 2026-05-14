@@ -15,7 +15,7 @@ from pathlib import Path
 
 import fsspec
 
-from srm.bcsd_config import BCSDConfig, MappingType, VariableConfig
+from srm.bcsd_config import BCSDConfig, MappingType, PipelineOptions, VariableConfig
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +71,16 @@ class ArtifactCache:
             self.fs = fsspec.filesystem("local")
 
     @classmethod
-    def from_config(cls, config: BCSDConfig) -> ArtifactCache:
+    def from_config(cls, config: BCSDConfig, options: PipelineOptions) -> ArtifactCache:
         """
-        Create ArtifactCache instance from BCSDConfig.
+        Create ArtifactCache instance from BCSDConfig and PipelineOptions.
 
         Parameters
         ----------
         config : BCSDConfig
-            Configuration object containing cache parameters
+            Run-identity configuration
+        options : PipelineOptions
+            Operational settings containing storage paths
 
         Returns
         -------
@@ -86,10 +88,10 @@ class ArtifactCache:
             Initialized cache manager
         """
         cache = cls(
-            scratch_dir=config.scratch_dir,
-            environment=config.environment,
-            version=config.version,
-            output_dir=config.output_dir,
+            scratch_dir=options.scratch_dir,
+            environment=options.environment,
+            version=options.version,
+            output_dir=options.output_dir,
         )
         cache.config = config
         return cache
@@ -159,7 +161,7 @@ class ArtifactCache:
         subset_id = self._get_subset_id(config.subset_bounds)
         return f"{self.scratch_dir}/{self.environment}/{self.version}/obs/{config.gcm}/{config.variable}/{subset_id}/obs_regridded.icechunk"
 
-    def get_historical_path(self, config: BCSDConfig) -> str:
+    def get_historical_path(self, config: BCSDConfig, hist_member: str | None = None) -> str:
         """
         Get path to cached historical downscaling artifact.
 
@@ -167,6 +169,8 @@ class ArtifactCache:
         ----------
         config : BCSDConfig
             Run configuration
+        hist_member : str, optional
+            Resolved historical ensemble member. Defaults to config.ensemble_member.
 
         Returns
         -------
@@ -175,10 +179,11 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        member = hist_member or config.ensemble_member
         base = self.output_dir if self.output_dir else self.scratch_dir
         return (
             f"{base}/{self.environment}/{self.version}/historical/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/historical.icechunk"
+            f"{config.gcm}/{config.variable}/{member}/{subset_id}/{varconfig_id}/historical.icechunk"
         )
 
     def get_scenario_path(self, config: BCSDConfig) -> str:
@@ -295,7 +300,9 @@ class ArtifactCache:
         except Exception as e:
             raise CacheCheckError(f"Failed to check cache at {path}") from e
 
-    def check_dependencies(self, stage: str, config: BCSDConfig) -> dict[str, tuple[bool, str]]:
+    def check_dependencies(
+        self, stage: str, config: BCSDConfig, hist_member: str | None = None
+    ) -> dict[str, tuple[bool, str]]:
         """
         Check if all dependencies for a stage exist.
 
@@ -320,7 +327,7 @@ class ArtifactCache:
 
         elif stage == "transform_scenario":
             obs_path = self.get_obs_path(config)
-            hist_path = self.get_historical_path(config)
+            hist_path = self.get_historical_path(config, hist_member=hist_member)
             return {
                 "obs_regridded": (self.exists(obs_path), obs_path),
                 "historical": (self.exists(hist_path), hist_path),
@@ -329,7 +336,9 @@ class ArtifactCache:
         else:
             raise ValueError(f"Unknown stage: {stage}")
 
-    def validate_dependencies(self, stage: str, config: BCSDConfig) -> None:
+    def validate_dependencies(
+        self, stage: str, config: BCSDConfig, hist_member: str | None = None
+    ) -> None:
         """
         Validate that all dependencies exist, raising error if missing.
 
@@ -345,7 +354,7 @@ class ArtifactCache:
         ValueError
             If any required dependencies are missing
         """
-        deps = self.check_dependencies(stage, config)
+        deps = self.check_dependencies(stage, config, hist_member=hist_member)
         missing = {name: path for name, (exists, path) in deps.items() if not exists}
 
         if missing:
@@ -355,7 +364,9 @@ class ArtifactCache:
                 f"Run the required upstream stages first."
             )
 
-    def get_output_path(self, stage: str, config: BCSDConfig) -> str:
+    def get_output_path(
+        self, stage: str, config: BCSDConfig, hist_member: str | None = None
+    ) -> str:
         """
         Get output path for a given stage and config.
 
@@ -375,7 +386,7 @@ class ArtifactCache:
             return self.get_obs_path(config)
 
         elif stage == "fit_historical":
-            return self.get_historical_path(config)
+            return self.get_historical_path(config, hist_member=hist_member)
 
         elif stage == "transform_scenario":
             if config.scenario is None:

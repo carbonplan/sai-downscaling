@@ -2,6 +2,15 @@
 
 Configuration files use YAML format with Pydantic validation. All fields are validated before execution to catch errors early.
 
+## Two-class model
+
+Configuration is split across two Pydantic classes loaded from the same flat YAML:
+
+- **`BCSDConfig`** — run identity: the parameters that uniquely identify a BCSD run and affect computation results (model, variable, time periods, bias-correction method). Changes here bust the cache.
+- **`PipelineOptions`** — operational settings: storage paths, environment, version, and runtime flags. Changes here do not affect computation results.
+
+Both classes use `extra="ignore"`, so a single flat YAML file is accepted by both — no nested sections required.
+
 ## Matrix config format
 
 Any of the four dimension fields can be a list. `load_configs` expands them into one `BCSDConfig` per cartesian-product combination:
@@ -19,49 +28,60 @@ Both singular (`variable`) and plural (`variables`) key names are accepted. All 
 
 **Restriction:** `variable_config` may not be set when `variables` contains more than one entry — it would silently apply to every variable, including those with incompatible settings (e.g. additive `tas` settings applied to `pr`). Remove it and rely on per-variable defaults (see [Variable-Specific Auto-Configuration](#variable-specific-auto-configuration)), or split into separate files.
 
-## Required Fields
+## BCSDConfig Fields (run identity)
+
+These fields identify a BCSD run and affect computation results. Changing any of these busts the cache (`config_hash` covers all of them).
 
 ```yaml
 # Model identifiers (singular or list)
 gcm: "CESM2-WACCM"                    # GCM model name
 variable: "tas"                        # Variable: tas, tasmax, pr, rsds
 ensemble_member: "r1i1p1f1"            # Ensemble member label (e.g. "r1i1p1f1", "01")
-scenario: "SSP245"                     # Scenario: SSP245, G6-1.5K, etc.
+scenario: "SSP245"                     # Scenario: SSP245, G6-1.5K, etc. (null for historical-only)
 
 # Time periods
-train_period_start: 1978               # Training period start year
-train_period_end: 2014                 # Training period end year
+train_period_start: 1978               # Training period start year (default: 1978)
+train_period_end: 2014                 # Training period end year (default: 2014)
 predict_period_start: 2015             # Prediction period start year (required if scenario set)
 predict_period_end: 2100               # Prediction period end year (required if scenario set)
 
-# Storage
-scratch_dir: "s3://bucket/path"         # Base directory for intermediate artifacts
-output_dir: "s3://bucket/path"        # Directory for final scenario outputs
-```
-
-## Optional Fields
-
-```yaml
 # Spatial subsetting (null for global)
 subset_bounds: [-35, -22, 16, 33]     # [lat_min, lat_max, lon_min, lon_max]
 
-# Environment isolation (default: "qa")
-environment: "qa"                      # Environment: qa, production
-# Version identifier (default: installed package version, e.g. "v1.0.post12")
-# version: "v1.0.post12"              # Override to pin a specific cache namespace
+# Bias-correction method
+mapping_type: "parametric"             # QM method: parametric, nonparametric, nonparametric_hybrid (default: "parametric")
 
-# Variable-specific settings (auto-loaded if not specified)
+# Variable-specific settings (auto-loaded from per-variable defaults if not specified)
 variable_config:
   detrend_data: true                   # Whether to detrend (auto-set based on variable)
   do_windowing: true                   # Use 31-day running window for QM
   downscaling_method: "additive"       # "additive" for temp, "multiplicative" for precip
   downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
-
-# Runtime options
-verbose: true                          # Enable verbose logging (default: true)
-rechunk_workflow: true                 # Enable strategic rechunking (default: true)
-mapping_type: "parametric"             # QM method: see MappingType in bcsd_config.py
 ```
+
+**Required:** `gcm`, `variable`, `ensemble_member`. All others have defaults or are conditionally required (e.g. `predict_period_*` when `scenario` is set).
+
+## PipelineOptions Fields (operational)
+
+These fields control storage paths and runtime behavior. They do not affect computation results and are not included in `config_hash`.
+
+```yaml
+# Storage paths
+scratch_dir: "s3://bucket/path"        # Base directory for intermediate artifacts (default: s3://carbonplan-scratch/srm/cache/)
+output_dir: "s3://bucket/path"         # Directory for final scenario outputs (default: s3://carbonplan-scratch/srm/outputs/)
+
+# Environment and versioning
+environment: "qa"                      # Environment: qa, production (default: "qa")
+# version: "v1.0.post12"              # Override to pin a specific cache namespace (default: installed package version)
+
+# Runtime flags
+verbose: true                          # Enable verbose logging (default: true)
+rechunk_workflow: true                 # Enable strategic rechunking between stages (default: true)
+apply_ocean_mask: true                 # Mask ocean pixels to NaN in final output (default: true)
+save_intermediate: false               # Save intermediate artifacts for debugging (default: false)
+```
+
+All `PipelineOptions` fields are optional — defaults are suitable for most runs. Override `scratch_dir` and `output_dir` to point at your own storage.
 
 ## Version Defaulting
 

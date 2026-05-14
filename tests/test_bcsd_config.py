@@ -6,7 +6,14 @@ import pytest
 from packaging.version import Version
 from pydantic import ValidationError
 
-from srm.bcsd_config import BCSDConfig, CacheConfig, RuntimeConfig, VariableConfig, _cache_version
+from srm.bcsd_config import (
+    BCSDConfig,
+    CacheConfig,
+    PipelineOptions,
+    RuntimeConfig,
+    VariableConfig,
+    _cache_version,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -175,9 +182,10 @@ class TestBCSDConfigConstruction:
         assert minimal_config.train_period_start == 1978
         assert minimal_config.train_period_end == 2014
 
-    def test_default_environment_and_version(self, minimal_config):
-        assert minimal_config.environment == "qa"
-        assert minimal_config.version == _cache_version
+    def test_default_environment_and_version(self):
+        opts = PipelineOptions()
+        assert opts.environment == "qa"
+        assert opts.version == _cache_version
 
     def test_explicit_variable_config_not_overwritten(self):
         """Explicitly supplied variable_config must survive post-init."""
@@ -211,19 +219,18 @@ class TestBCSDConfigConstruction:
                 cfg = BCSDConfig(gcm=gcm, variable="tas", ensemble_member="r1i1p1f1")
                 assert cfg.gcm == gcm
 
-    def test_apply_ocean_mask_defaults_true(self, minimal_config):
-        assert minimal_config.apply_ocean_mask is True
+    def test_apply_ocean_mask_defaults_true(self):
+        assert PipelineOptions().apply_ocean_mask is True
 
     def test_apply_ocean_mask_can_be_disabled(self):
-        cfg = BCSDConfig(
-            gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", apply_ocean_mask=False
-        )
-        assert cfg.apply_ocean_mask is False
+        opts = PipelineOptions(apply_ocean_mask=False)
+        assert opts.apply_ocean_mask is False
 
-    def test_model_copy_version_override(self, scenario_config):
-        v2 = scenario_config.model_copy(update={"version": "my-custom-version"})
+    def test_model_copy_version_override(self):
+        opts = PipelineOptions()
+        v2 = opts.model_copy(update={"version": "my-custom-version"})
         assert v2.version == "my-custom-version"
-        assert scenario_config.version == _cache_version
+        assert opts.version == _cache_version
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +245,7 @@ class TestBCSDConfigComputedFields:
         assert minimal_config.run_id == "CESM2-WACCM_tas_r1i1p1f1"
 
     def test_run_id_with_scenario(self, scenario_config):
-        assert scenario_config.run_id == "CESM2-WACCM_tas_r1i1p1f1_ssp245"
+        assert scenario_config.run_id == "CESM2-WACCM_tas_r1i1p1f1_SSP245"
 
     def test_run_id_includes_subset_marker(self, regional_config):
         assert "subset" in regional_config.run_id
@@ -398,34 +405,30 @@ class TestBCSDConfigValidation:
 class TestVersionDefaulting:
     """Version defaults to the installed package's public version string."""
 
-    def test_default_version_matches_cache_version(self, minimal_config):
-        assert minimal_config.version == _cache_version
+    def test_default_version_matches_cache_version(self):
+        assert PipelineOptions().version == _cache_version
 
-    def test_default_version_has_no_local_segment(self, minimal_config):
-        assert "+" not in minimal_config.version
+    def test_default_version_has_no_local_segment(self):
+        assert "+" not in PipelineOptions().version
 
-    def test_default_version_is_valid_pep440(self, minimal_config):
-        v = Version(minimal_config.version)
+    def test_default_version_is_valid_pep440(self):
+        v = Version(PipelineOptions().version)
         assert v.local is None
 
     def test_explicit_version_override(self):
-        cfg = BCSDConfig(
-            gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", version="custom-v99"
-        )
-        assert cfg.version == "custom-v99"
+        opts = PipelineOptions(version="custom-v99")
+        assert opts.version == "custom-v99"
 
     def test_env_var_overrides_version(self, monkeypatch):
         monkeypatch.setenv("BCSD_VERSION", "env-override")
-        cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
-        assert cfg.version == "env-override"
+        opts = PipelineOptions()
+        assert opts.version == "env-override"
 
     def test_cache_config_default_version_has_no_local_segment(self):
         assert "+" not in CacheConfig().version
 
-    def test_bcsd_and_cache_config_share_same_default(self):
-        bcsd = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
-        cache = CacheConfig()
-        assert bcsd.version == cache.version
+    def test_pipeline_options_and_cache_config_share_same_default(self):
+        assert PipelineOptions().version == CacheConfig().version
 
 
 # ---------------------------------------------------------------------------

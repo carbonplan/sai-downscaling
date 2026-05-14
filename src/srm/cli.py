@@ -16,7 +16,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 
-from srm.bcsd_config import BCSDConfig, VariableConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
 
@@ -38,6 +38,104 @@ _MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("ensemble_members", "ensemble_member", "ensemble_member"),
     ("scenarios", "scenario", "scenario"),
 )
+
+
+def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
+    """Print a compact table of resolved ensemble member lineage.
+
+    Only rows where lineage differs from ensemble_member are shown, deduplicated
+    by (gcm, variable, ensemble_member).
+    """
+    from srm.lineage import resolve_member_lineage
+
+    table = Table(
+        title="Ensemble Member Lineage",
+        show_header=True,
+        header_style="bold cyan",
+        box=box.SIMPLE_HEAD,
+    )
+    table.add_column("GCM", style="cyan")
+    table.add_column("Variable")
+    table.add_column("Member", justify="right")
+    table.add_column("→ Historical", style="green", justify="right")
+    table.add_column("→ SSP245 Bridge", style="yellow", justify="right")
+
+    seen: set[tuple[str, str, str]] = set()
+    for cfg in configs:
+        if cfg.scenario is None:
+            continue
+        key = (cfg.gcm, cfg.variable, cfg.ensemble_member)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            hist, ssp245 = resolve_member_lineage(
+                cfg.gcm, cfg.scenario, cfg.ensemble_member, cfg.variable
+            )
+        except KeyError:
+            continue
+        if hist == cfg.ensemble_member and ssp245 == cfg.ensemble_member:
+            continue
+        ssp = ssp245 if ssp245 != cfg.ensemble_member else "—"
+        table.add_row(cfg.gcm, cfg.variable, cfg.ensemble_member, hist, ssp)
+
+    if table.row_count:
+        console.print(table)
+
+
+def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
+    """Cross-scenario validation: check resolved members exist in target stores.
+
+    Uses static catalog ensemble_members metadata when available; falls back to
+    a lazy store open (reads coordinate metadata only, no data loaded). Silently
+    skips stores that are unreachable or have no member metadata.
+    """
+    from srm.datasets import catalog
+    from srm.lineage import resolve_member_lineage
+
+    errors: list[str] = []
+    _store_cache: dict[str, frozenset[str] | None] = {}
+
+    def _members(store_name: str) -> frozenset[str] | None:
+        if store_name not in _store_cache:
+            try:
+                entry = catalog.get(store_name)
+                if entry.ensemble_members is not None:
+                    _store_cache[store_name] = frozenset(entry.ensemble_members)
+                else:
+                    ds = entry.to_xarray()
+                    coord = ds.coords.get("ensemble_member")
+                    _store_cache[store_name] = (
+                        frozenset(str(m) for m in coord.values) if coord is not None else None
+                    )
+            except Exception:
+                _store_cache[store_name] = None
+        return _store_cache[store_name]
+
+    for config in configs:
+        if config.scenario is None:
+            continue
+        try:
+            hist, ssp245 = resolve_member_lineage(
+                config.gcm, config.scenario, config.ensemble_member, config.variable
+            )
+        except KeyError:
+            continue
+        hist_store = f"{config.gcm}-historical-icechunk"
+        known = _members(hist_store)
+        if known is not None and hist not in known:
+            errors.append(
+                f"  {config.gcm}/{config.variable}: historical:{hist!r} not in {hist_store}"
+            )
+        ssp245_store = f"{config.gcm}-SSP245-icechunk"
+        known = _members(ssp245_store)
+        if ssp245 is not None and known is not None and ssp245 not in known:
+            errors.append(
+                f"  {config.gcm}/{config.variable}: ssp245:{ssp245!r} not in {ssp245_store}"
+            )
+
+    if errors:
+        raise ValueError("Resolved ensemble members not found in stores:\n" + "\n".join(errors))
 
 
 def _is_matrix_config(config_dict: dict) -> bool:
@@ -76,9 +174,13 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
     ]
 
 
-def load_configs(config_path: str) -> list[BCSDConfig]:
+def load_configs(config_path: str) -> tuple[list[BCSDConfig], PipelineOptions]:
     """
     Load configuration(s) from YAML file or directory.
+
+    The same flat YAML is parsed into both BCSDConfig (run identity) and
+    PipelineOptions (operational settings). Unknown keys are silently ignored
+    by each class via extra="ignore".
 
     Parameters
     ----------
@@ -87,15 +189,17 @@ def load_configs(config_path: str) -> list[BCSDConfig]:
 
     Returns
     -------
-    list[BCSDConfig]
-        List of loaded configurations
+    tuple[list[BCSDConfig], PipelineOptions]
+        Loaded run configs and operational options (from the first YAML file).
     """
     path = Path(config_path)
     configs = []
+    options: PipelineOptions | None = None
 
     if path.is_file():
         with open(path) as f:
             config_dict = yaml.safe_load(f)
+        options = PipelineOptions(**config_dict)
         if _is_matrix_config(config_dict):
             configs.extend(_expand_matrix_config(config_dict))
         else:
@@ -105,6 +209,8 @@ def load_configs(config_path: str) -> list[BCSDConfig]:
         for yaml_file in sorted([*path.glob("*.yaml"), *path.glob("*.yml")]):
             with open(yaml_file) as f:
                 config_dict = yaml.safe_load(f)
+            if options is None:
+                options = PipelineOptions(**config_dict)
             if _is_matrix_config(config_dict):
                 configs.extend(_expand_matrix_config(config_dict))
             else:
@@ -116,7 +222,7 @@ def load_configs(config_path: str) -> list[BCSDConfig]:
     if not configs:
         raise ValueError(f"No valid configs found in: {config_path}")
 
-    return configs
+    return configs, options or PipelineOptions()
 
 
 def configs_from_matrix(
@@ -144,7 +250,7 @@ def configs_from_matrix(
     downscaling_method: str | None = None,
     downscaling_clim_method: str | None = None,
     detrend_method: str | None = None,
-) -> list[BCSDConfig]:
+) -> tuple[list[BCSDConfig], PipelineOptions]:
     """
     Generate BCSDConfig objects for every cartesian-product combination of GCMs,
     variables, ensemble members, and scenarios.
@@ -201,6 +307,14 @@ def configs_from_matrix(
     list[BCSDConfig]
         One config per cartesian-product combination.
     """
+    options = PipelineOptions(
+        scratch_dir=scratch_dir,
+        output_dir=output_dir,
+        environment=environment,
+        version=version,
+        verbose=verbose,
+        save_intermediate=save_intermediate,
+    )
     configs = []
     for gcm, variable, member, scenario in itertools.product(gcms, variables, members, scenarios):
         vc = VariableConfig.for_variable(variable)
@@ -228,18 +342,12 @@ def configs_from_matrix(
                 train_period_end=train_period_end,
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
-                scratch_dir=scratch_dir,
-                output_dir=output_dir,
-                environment=environment,
-                version=version,
                 subset_bounds=subset_bounds,
-                save_intermediate=save_intermediate,
                 mapping_type=mapping_type,
-                verbose=verbose,
                 variable_config=vc,
             )
         )
-    return configs
+    return configs, options
 
 
 @app.command()
@@ -257,12 +365,16 @@ def run(
     """Run BCSD pipeline with automatic caching and resumability"""
 
     # Load configs
-    configs = [cfg for path in config_path for cfg in load_configs(path)]
+    loaded = [load_configs(path) for path in config_path]
+    configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
+    options = loaded[0][1] if loaded else PipelineOptions()
     if version is not None:
-        configs = [config.model_copy(update={"version": version}) for config in configs]
+        options = options.model_copy(update={"version": version})
     logger.info("Loaded %d configuration(s)", len(configs))
+    _print_lineage_summary(configs)
+    _validate_lineage_members(configs)
 
-    orchestrator = BCSDOrchestrator()
+    orchestrator = BCSDOrchestrator(options)
 
     if stage == "obs" or stage == "prepare_observations":
         paths = orchestrator.submit_stage(
@@ -426,7 +538,7 @@ def run_matrix(
             )
             raise typer.Exit(1)
 
-    configs = configs_from_matrix(
+    configs, options = configs_from_matrix(
         gcms=gcm,
         variables=variable,
         members=member,
@@ -451,6 +563,8 @@ def run_matrix(
         detrend_method=detrend_method,
     )
 
+    _validate_lineage_members(configs)
+
     n = len(configs)
     logger.info(
         "Generated %d configuration(s): %d GCM(s) x %d variable(s) x %d member(s) x %d scenario(s)",
@@ -460,6 +574,7 @@ def run_matrix(
         len(member),
         len(scenario_values),
     )
+    _print_lineage_summary(configs)
 
     if dry_run:
         table = Table(
@@ -476,7 +591,7 @@ def run_matrix(
         console.print(table)
         return
 
-    orchestrator = BCSDOrchestrator()
+    orchestrator = BCSDOrchestrator(options)
 
     if stage == "obs" or stage == "prepare_observations":
         paths = orchestrator.submit_stage(
@@ -516,14 +631,16 @@ def status(
     ),
 ):
     """Check status of cached artifacts for given configs"""
-    configs = [cfg for path in config_path for cfg in load_configs(path)]
+    loaded = [load_configs(path) for path in config_path]
+    configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
+    options = loaded[0][1] if loaded else PipelineOptions()
     if version is not None:
-        configs = [config.model_copy(update={"version": version}) for config in configs]
-    orchestrator = BCSDOrchestrator()
+        options = options.model_copy(update={"version": version})
+    orchestrator = BCSDOrchestrator(options)
 
     # Show cache configuration if verbose
     if verbose and configs:
-        cache = orchestrator._get_cache(configs[0])
+        cache = orchestrator._get_cache()
         config = configs[0]
         lines = [
             "Cache Configuration:",
@@ -587,17 +704,13 @@ def cache_clear(
 ):
     """Clear cached artifacts"""
 
-    # Load config to get scratch_dir
-    configs = load_configs(config_path)
-    if not configs:
-        logger.error("No valid configurations found")
-        raise typer.Exit(1)
+    # Load config to get storage options
+    _, options = load_configs(config_path)
 
-    # Use scratch_dir from first config (all should have same scratch_dir)
     cache = ArtifactCache(
-        scratch_dir=configs[0].scratch_dir,
-        environment=configs[0].environment,
-        version=configs[0].version,
+        scratch_dir=options.scratch_dir,
+        environment=options.environment,
+        version=options.version,
     )
 
     # Build description
@@ -632,17 +745,13 @@ def cache_list(
 ):
     """List cached artifacts"""
 
-    # Load config to get scratch_dir
-    configs = load_configs(config_path)
-    if not configs:
-        logger.error("No valid configurations found")
-        raise typer.Exit(1)
+    # Load config to get storage options
+    _, options = load_configs(config_path)
 
-    # Use scratch_dir from first config (all should have same scratch_dir)
     cache = ArtifactCache(
-        scratch_dir=configs[0].scratch_dir,
-        environment=configs[0].environment,
-        version=configs[0].version,
+        scratch_dir=options.scratch_dir,
+        environment=options.environment,
+        version=options.version,
     )
     artifacts = cache.list_artifacts(stage=stage, gcm=gcm, variable=variable)
 
@@ -695,7 +804,8 @@ def validate(
     )
 
     if config_path:
-        configs = [cfg for path in config_path for cfg in load_configs(path)]
+        loaded = [load_configs(path) for path in config_path]
+        configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
         gcm = list(dict.fromkeys(c.gcm for c in configs))
         scenario = list(
             dict.fromkeys(c.scenario if c.scenario is not None else "historical" for c in configs)

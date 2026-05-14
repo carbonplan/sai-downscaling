@@ -23,7 +23,7 @@ import xarray as xr
 from ibicus.debias import QuantileMapping
 from icechunk.xarray import to_icechunk
 
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache
 from srm.datasets import BaseDataset, catalog as _catalog
 from srm.downscaling_utils import (
@@ -159,9 +159,12 @@ def stitch_historical_scenario(
 
     For SAI scenarios (``ssp_timeseries`` provided), historical data is first
     concatenated with SSP245 to bridge the gap between the historical period end
-    (``train_period_end``) and the SAI simulation start
-    (``predict_period_start``). The combined series is then concatenated with
-    the SAI scenario.
+    (``train_period_end``) and the first available year of the SAI simulation.
+    The combined series is then concatenated with the SAI scenario. The SAI
+    splice point is inferred from the first timestep in ``model_scenario``
+    rather than from ``predict_period_start``, because the scenario data may
+    start later than the requested prediction window (e.g. G6-1.5K begins in
+    2035 even when ``predict_period_start`` is 2015).
 
     For non-SAI scenarios, historical and scenario data are concatenated
     directly at the ``predict_period_start`` boundary.
@@ -179,7 +182,9 @@ def stitch_historical_scenario(
     train_period_end : int
         Last year of the historical training period (inclusive).
     predict_period_start : int
-        First year of the prediction period.
+        First year of the prediction period. Used as the stitch boundary for
+        non-SAI scenarios. For SAI scenarios the splice point is inferred from
+        the first year present in ``model_scenario``.
     ssp_timeseries : xr.DataArray, optional
         SSP245 data used to bridge the historical-to-SAI gap. When provided,
         the SAI stitching path is taken; otherwise the non-SAI path is used.
@@ -191,8 +196,27 @@ def stitch_historical_scenario(
         through the end of the scenario period.
     """
     if ssp_timeseries is not None:
-        # SAI: historical ≤ train_period_end, then SSP from train_period_end+1,
-        # then SAI from predict_period_start onward.
+        if model_scenario.time.size == 0:
+            raise ValueError(
+                "model_scenario contains no timesteps for the requested predict period. "
+                "Verify that predict_period_start/predict_period_end overlap the scenario's "
+                "available time range."
+            )
+        # Use the first year present in the (already-sliced) scenario array as
+        # the splice point.  predict_period_start may be earlier than the SAI
+        # data start (e.g. predict_period_start=2015 but G6-1.5K begins 2035),
+        # so we cannot rely on it here.
+        sai_start_year = int(model_scenario["time.year"].min())
+        ssp_min_year = int(ssp_timeseries["time.year"].min())
+        if ssp_min_year >= sai_start_year:
+            raise ValueError(
+                f"SSP245 bridge data starts at {ssp_min_year} but the SAI scenario starts "
+                f"at {sai_start_year}. The bridge must cover the gap "
+                f"{train_period_end + 1}–{sai_start_year - 1}. "
+                f"Use a bridge dataset that spans this period."
+            )
+        # SAI: historical ≤ train_period_end, then SSP from train_period_end+1
+        # up to (but not including) the SAI start, then SAI data.
         historical_and_ssp = xr.concat(
             [
                 model_hist.sel(time=model_hist["time.year"] <= train_period_end),
@@ -202,8 +226,8 @@ def stitch_historical_scenario(
         )
         result = xr.concat(
             [
-                historical_and_ssp.sel(time=historical_and_ssp["time.year"] < predict_period_start),
-                model_scenario.sel(time=model_scenario["time.year"] >= predict_period_start),
+                historical_and_ssp.sel(time=historical_and_ssp["time.year"] < sai_start_year),
+                model_scenario.sel(time=model_scenario["time.year"] >= sai_start_year),
             ],
             dim="time",
         )
@@ -261,20 +285,46 @@ class BCSDPipeline:
     >>> result = pipeline.transform_scenario()
     """
 
-    def __init__(self, config: BCSDConfig):
+    def __init__(self, config: BCSDConfig, options: PipelineOptions):
         """
-        Initialize pipeline with configuration.
+        Initialize pipeline with configuration and operational options.
+
+        Ensemble member lineage is resolved automatically from the lineage
+        table. Unknown GCM / scenario / member combinations are silently
+        skipped (lineage members fall back to ensemble_member).
 
         Parameters
         ----------
         config : BCSDConfig
-            Configuration for the BCSD run
+            Run-identity configuration for the BCSD run
+        options : PipelineOptions
+            Operational settings (storage paths, runtime flags)
         """
         self.config = config
-        self.cache = ArtifactCache.from_config(config)
-
-        # State dictionary for intermediate results (mostly for debugging)
+        self.options = options
+        self.cache = ArtifactCache.from_config(config, options)
         self._state = {}
+
+        self._hist_member = config.ensemble_member
+        self._ssp245_member = config.ensemble_member
+        if config.scenario is not None:
+            from srm.lineage import resolve_member_lineage
+
+            try:
+                self._hist_member, self._ssp245_member = resolve_member_lineage(
+                    config.gcm, config.scenario, config.ensemble_member, config.variable
+                )
+            except KeyError:
+                pass
+
+        if self._hist_member != config.ensemble_member:
+            parts = [
+                f"ensemble_member={config.ensemble_member!r}",
+                f"historical={self._hist_member!r}",
+            ]
+            if self._ssp245_member != config.ensemble_member:
+                parts.append(f"ssp245_bridge={self._ssp245_member!r}")
+            logger.info("Lineage resolved — %s", "  ".join(parts))
 
     @staticmethod
     def _icechunk_storage(path: str):
@@ -304,6 +354,8 @@ class BCSDPipeline:
             "scenario": self.config.scenario or "historical",
             "variable": self.config.variable,
             "ensemble_member": self.config.ensemble_member,
+            "historical_ensemble_member": self._hist_member,
+            "ssp245_ensemble_member": self._ssp245_member,
         }
 
         if source_dataset is not None:
@@ -422,7 +474,7 @@ class BCSDPipeline:
             )
         logger.info("Regridded observations to coarse grid (%.2fs)", time.perf_counter() - t0)
 
-        if self.config.rechunk_workflow:
+        if self.options.rechunk_workflow:
             obs_coarse = rechunk(obs_coarse, pattern="full_space")
 
         t0 = time.perf_counter()
@@ -438,7 +490,9 @@ class BCSDPipeline:
 
     def _load_gcm_obs(self) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
         """Load obs_coarse (from cache), obs_fine, and model_hist, subsetted to training period."""
-        deps = self.cache.check_dependencies("fit_historical", self.config)
+        deps = self.cache.check_dependencies(
+            "fit_historical", self.config, hist_member=self._hist_member
+        )
         obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
 
         obs_fine = get_obs(var=self.config.variable)
@@ -447,7 +501,7 @@ class BCSDPipeline:
         model_hist = get_experiment(
             gcm=self.config.gcm, scenario="historical", var=self.config.variable
         )
-        model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+        model_hist = model_hist.sel(ensemble_member=self._hist_member)
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         if self.config.subset_bounds:
@@ -570,7 +624,7 @@ class BCSDPipeline:
         """
         self.cache.validate_dependencies("fit_historical", self.config)
 
-        output_path = self.cache.historical_path
+        output_path = self.cache.get_historical_path(self.config, hist_member=self._hist_member)
 
         if self.cache.exists(output_path) and not force:
             logger.info("✓ Using cached historical: %s", output_path)
@@ -591,7 +645,7 @@ class BCSDPipeline:
         model_hist_debiased = self._apply_bias_correction(obs_coarse, model_hist)
         logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
 
-        if self.config.save_intermediate:
+        if self.options.save_intermediate:
             t0 = time.perf_counter()
             debiased_path = self.cache.get_debiased_historical_path(self.config)
             model_hist_debiased.name = self.config.variable
@@ -631,7 +685,9 @@ class BCSDPipeline:
         obs_coarse/obs_fine/model_hist are subsetted to the training period;
         model_scenario to the predict period. ssp_timeseries is None for non-SAI scenarios.
         """
-        deps = self.cache.check_dependencies("transform_scenario", self.config)
+        deps = self.cache.check_dependencies(
+            "transform_scenario", self.config, hist_member=self._hist_member
+        )
         obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
 
         obs_fine = get_obs(var=self.config.variable)
@@ -640,7 +696,7 @@ class BCSDPipeline:
         model_hist = get_experiment(
             gcm=self.config.gcm, scenario="historical", var=self.config.variable
         )
-        model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+        model_hist = model_hist.sel(ensemble_member=self._hist_member)
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         model_scenario = get_experiment(
@@ -655,7 +711,7 @@ class BCSDPipeline:
             ssp_timeseries = get_experiment(
                 gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
             )
-            ssp_timeseries = ssp_timeseries.sel(ensemble_member=self.config.ensemble_member)
+            ssp_timeseries = ssp_timeseries.sel(ensemble_member=self._ssp245_member)
             ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
 
         if self.config.subset_bounds:
@@ -700,7 +756,7 @@ class BCSDPipeline:
         if not self.config.detrend_data:
             return model_scenario, None
 
-        if self.config.rechunk_workflow:
+        if self.options.rechunk_workflow:
             t0 = time.perf_counter()
             model_hist = rechunk(model_hist, pattern="full_time").persist()
             model_scenario = rechunk(model_scenario, pattern="full_time").persist()
@@ -736,7 +792,7 @@ class BCSDPipeline:
         scenario_trend = scenario_trend.sel(time=predict_slice)
         logger.info("Detrended scenario (%.2fs)", time.perf_counter() - t0)
 
-        if self.config.save_intermediate:
+        if self.options.save_intermediate:
             t0 = time.perf_counter()
             detrended_path = self.cache.get_detrended_scenario_path(self.config)
             scenario_detrended.name = self.config.variable
@@ -871,7 +927,9 @@ class BCSDPipeline:
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
 
-        self.cache.validate_dependencies("transform_scenario", self.config)
+        self.cache.validate_dependencies(
+            "transform_scenario", self.config, hist_member=self._hist_member
+        )
 
         output_path = self.cache.scenario_path
 
@@ -903,7 +961,7 @@ class BCSDPipeline:
         )
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 
-        if self.config.save_intermediate:
+        if self.options.save_intermediate:
             t0 = time.perf_counter()
             debiased_path = self.cache.get_debiased_scenario_path(self.config)
             scenario_debiased.name = self.config.variable
@@ -921,7 +979,7 @@ class BCSDPipeline:
             )
             logger.info("Re-trended scenario (%.2fs)", time.perf_counter() - t0)
 
-        if self.config.save_intermediate:
+        if self.options.save_intermediate:
             t0 = time.perf_counter()
             debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
             scenario_debiased.name = self.config.variable
@@ -940,7 +998,7 @@ class BCSDPipeline:
         logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        if self.config.apply_ocean_mask:
+        if self.options.apply_ocean_mask:
             scenario_downscaled = scenario_downscaled.where(
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})

@@ -23,7 +23,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
@@ -114,15 +114,8 @@ def _mock_transform_scenario_compute():
 
 
 @pytest.fixture
-def config(tmp_path) -> BCSDConfig:
-    """Standard ssp245 config backed by local tmp directories."""
-    return BCSDConfig(
-        gcm="CESM2-WACCM",
-        variable="tas",
-        ensemble_member="r1i1p1f1",
-        scenario="ssp245",
-        predict_period_start=2015,
-        predict_period_end=2100,
+def pipeline_options(tmp_path) -> PipelineOptions:
+    return PipelineOptions(
         scratch_dir=str(tmp_path / "cache"),
         output_dir=str(tmp_path / "outputs"),
         verbose=False,
@@ -131,7 +124,20 @@ def config(tmp_path) -> BCSDConfig:
 
 
 @pytest.fixture
-def pr_config(tmp_path) -> BCSDConfig:
+def config() -> BCSDConfig:
+    """Standard ssp245 config."""
+    return BCSDConfig(
+        gcm="CESM2-WACCM",
+        variable="tas",
+        ensemble_member="r1i1p1f1",
+        scenario="ssp245",
+        predict_period_start=2015,
+        predict_period_end=2100,
+    )
+
+
+@pytest.fixture
+def pr_config() -> BCSDConfig:
     """Precipitation config (no detrending, divide downscaling method)."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
@@ -140,21 +146,17 @@ def pr_config(tmp_path) -> BCSDConfig:
         scenario="ssp245",
         predict_period_start=2015,
         predict_period_end=2100,
-        scratch_dir=str(tmp_path / "cache"),
-        output_dir=str(tmp_path / "outputs"),
-        verbose=False,
-        rechunk_workflow=False,
     )
 
 
 @pytest.fixture
-def pipeline(config) -> BCSDPipeline:
-    return BCSDPipeline(config)
+def pipeline(config, pipeline_options) -> BCSDPipeline:
+    return BCSDPipeline(config, pipeline_options)
 
 
 @pytest.fixture
-def pipeline_pr(pr_config) -> BCSDPipeline:
-    return BCSDPipeline(pr_config)
+def pipeline_pr(pr_config, pipeline_options) -> BCSDPipeline:
+    return BCSDPipeline(pr_config, pipeline_options)
 
 
 @pytest.fixture
@@ -171,18 +173,18 @@ def all_deps_present(pipeline) -> BCSDPipeline:
 
 
 class TestBCSDPipelineInit:
-    def test_cache_uses_config_scratch_dir(self, pipeline, config):
-        assert config.scratch_dir.rstrip("/") in pipeline.cache.scratch_dir
+    def test_cache_uses_options_scratch_dir(self, pipeline):
+        assert pipeline.options.scratch_dir.rstrip("/") in pipeline.cache.scratch_dir
 
-    def test_cache_uses_config_environment(self, pipeline, config):
-        assert pipeline.cache.environment == config.environment
+    def test_cache_uses_options_environment(self, pipeline):
+        assert pipeline.cache.environment == pipeline.options.environment
 
-    def test_cache_uses_config_version(self, pipeline, config):
-        assert pipeline.cache.version == config.version
+    def test_cache_uses_options_version(self, pipeline):
+        assert pipeline.cache.version == pipeline.options.version
 
-    def test_cache_has_output_dir(self, pipeline, config):
+    def test_cache_has_output_dir(self, pipeline):
         assert pipeline.cache.output_dir is not None
-        assert config.output_dir.rstrip("/") in pipeline.cache.output_dir
+        assert pipeline.options.output_dir.rstrip("/") in pipeline.cache.output_dir
 
     def test_state_initialized_empty(self, pipeline):
         assert pipeline._state == {}
@@ -261,12 +263,14 @@ class TestPrepareObservationsCompute:
             variable="tas",
             ensemble_member="r1i1p1f1",
             subset_bounds=(-35.0, -22.0, 16.0, 33.0),
+        )
+        opts = PipelineOptions(
             scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=False,
         )
-        p = BCSDPipeline(cfg)
+        p = BCSDPipeline(cfg, opts)
         with _mock_prepare_obs_compute() as (_, _, _, mock_subset, _):
             p.prepare_observations()
         # Once for obs_fine, once for model_grid
@@ -283,12 +287,14 @@ class TestPrepareObservationsCompute:
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
+        )
+        opts = PipelineOptions(
             scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=True,
         )
-        p = BCSDPipeline(cfg)
+        p = BCSDPipeline(cfg, opts)
         with _mock_prepare_obs_compute() as (_, _, _, _, mock_rechunk):
             p.prepare_observations()
         mock_rechunk.assert_called_once()
@@ -405,12 +411,14 @@ class TestTransformScenarioBehavior:
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
+        )
+        opts = PipelineOptions(
             scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
         )
         with pytest.raises(ValueError, match="scenario must be specified"):
-            BCSDPipeline(cfg).transform_scenario()
+            BCSDPipeline(cfg, opts).transform_scenario()
 
     def test_raises_when_both_deps_missing(self, pipeline):
         with pytest.raises(ValueError, match="Missing dependencies"):
@@ -428,7 +436,9 @@ class TestTransformScenarioBehavior:
                 pipeline.transform_scenario()
             except Exception:
                 pass
-        mock_validate.assert_called_once_with("transform_scenario", pipeline.config)
+        mock_validate.assert_called_once_with(
+            "transform_scenario", pipeline.config, hist_member=pipeline._hist_member
+        )
 
     def test_returns_cached_scenario_path(self, all_deps_present):
         pipeline = all_deps_present
@@ -508,13 +518,15 @@ class TestTransformScenarioBehavior:
             scenario="ssp245",
             predict_period_start=2015,
             predict_period_end=2100,
+        )
+        opts = PipelineOptions(
             scratch_dir=str(tmp_path / "cache"),
             output_dir=str(tmp_path / "outputs"),
             verbose=False,
             rechunk_workflow=False,
             apply_ocean_mask=False,
         )
-        p = BCSDPipeline(cfg)
+        p = BCSDPipeline(cfg, opts)
         _make_icechunk_store(p.cache.obs_path)
         _make_icechunk_store(p.cache.historical_path)
         with _mock_transform_scenario_compute():
@@ -696,6 +708,53 @@ class TestStitchHistoricalScenario:
 
         _, counts = np.unique(result["time.year"].values, return_counts=True)
         assert counts.max() <= 366, "Duplicate years detected in SAI stitched timeseries"
+
+    def test_sai_predict_period_start_earlier_than_sai_data(self):
+        """Regression: predict_period_start earlier than actual SAI data start must not gap.
+
+        Reproduces the production failure where predict_period_start=2015 but
+        G6-1.5K data only begins in 2035, causing a (2014, 2035) gap when the
+        SSP245 bridge was incorrectly discarded.
+        """
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2034-12-31")
+        sai = _make_daily_da("2035-01-01", "2084-12-31")
+
+        result = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=sai,
+            train_period_end=2014,
+            predict_period_start=2015,  # earlier than SAI data start (2035)
+            ssp_timeseries=ssp,
+        )
+
+        years = sorted(np.unique(result["time.year"].values).tolist())
+        gaps = [y2 - y1 for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+        assert not gaps, f"Gap(s) found in stitched timeseries: {gaps}"
+
+        # SSP bridge years must be present
+        assert all(y in years for y in range(2015, 2035)), "SSP bridge years (2015-2034) missing"
+        # SAI years must be present
+        assert 2035 in years, "SAI start year (2035) missing"
+        assert years[-1] == 2084, "SAI end year (2084) missing"
+        # No year-level duplicates
+        _, counts = np.unique(result["time.year"].values, return_counts=True)
+        assert counts.max() <= 366, "Duplicate years detected in stitched timeseries"
+
+    def test_sai_empty_scenario_raises(self):
+        """An empty model_scenario must raise a clear ValueError."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2034-12-31")
+        empty_sai = _make_daily_da("2035-01-01", "2034-12-31")  # empty range
+
+        with pytest.raises(ValueError, match="no timesteps"):
+            stitch_historical_scenario(
+                model_hist=model_hist,
+                model_scenario=empty_sai,
+                train_period_end=2014,
+                predict_period_start=2015,
+                ssp_timeseries=ssp,
+            )
 
     # -- Non-SAI path (no ssp_timeseries) ------------------------------------
 

@@ -197,11 +197,10 @@ VM types are selected per pipeline stage to match resource requirements:
 
 The CLI is built on several key components:
 
-1. **BCSDConfig** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
-   - Pydantic v2 configuration with comprehensive validation
-   - field validators for SAI scenarios, time periods, spatial bounds
-   - computed fields: `run_id`, `config_hash`, `detrend_data`, etc.
-   - environment variable override support via `model_config`
+1. **BCSDConfig** + **PipelineOptions** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
+   - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `mapping_type`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `detrend_data`, etc.
+   - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `version`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`. Does not affect computation results or cache keys.
+   - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 
 2. **ArtifactCache** ([src/srm/cache.py](../../src/srm/cache.py))
    - S3-based cache with fsspec backend
@@ -224,8 +223,9 @@ The CLI is built on several key components:
 
 5. **batch_runner** ([src/srm/batch_runner.py](../../src/srm/batch_runner.py))
    - entry point for Coiled batch jobs
-   - reads serialized config from `CONFIG_JSON` environment variable
-   - creates pipeline and runs requested stage
+   - reads `CONFIG_JSON` environment variable (structure: `{"options": {...PipelineOptions fields...}, ...BCSDConfig fields...}`)
+   - pops the `"options"` key to construct `PipelineOptions`; remaining keys construct `BCSDConfig`
+   - creates `BCSDPipeline(config, options)` and runs the requested stage
    - minimal dependencies for fast VM startup
 
 6. **CLI** ([src/srm/cli.py](../../src/srm/cli.py))
