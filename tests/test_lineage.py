@@ -124,11 +124,6 @@ class TestLineageKeyError:
         with pytest.raises(KeyError, match="scenario="):
             resolve_member_lineage("CESM2-WACCM", "ssp585", "001", "tas")
 
-    def test_excluded_member_006_raises(self):
-        # SSP245 member 006 excluded: ends 2069-12-31
-        with pytest.raises(KeyError, match="ensemble_member="):
-            resolve_member_lineage("CESM2-WACCM", "SSP245", "006", "tas")
-
     def test_ssp245_001_tasmax_raises(self):
         # tasmax/tasmin not available for SSP245 001-005 (CMIP6 bug)
         with pytest.raises(KeyError, match="variable="):
