@@ -6,7 +6,7 @@ import seaborn as sns
 import xarray as xr
 
 from srm import catalog
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache
 from srm.utils import lon_to_180
 
@@ -44,8 +44,9 @@ class BCSDRun:
 
     COLORS = {"obs": "#1b1e23", "scenario": "#bc85d9", "historical": "#e587b6"}
 
-    def __init__(self, bcsd_config: BCSDConfig):
+    def __init__(self, bcsd_config: BCSDConfig, options: PipelineOptions | None = None):
         self.config = bcsd_config
+        self.options = options or PipelineOptions()
         self._location_cache = {}
 
     def __repr__(self):
@@ -53,7 +54,7 @@ class BCSDRun:
 
     @cached_property
     def _cache(self) -> ArtifactCache:
-        return ArtifactCache.from_config(self.config)
+        return ArtifactCache.from_config(self.config, self.options)
 
     @cached_property
     def obs(self) -> xr.Dataset:
