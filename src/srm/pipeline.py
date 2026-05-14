@@ -159,9 +159,12 @@ def stitch_historical_scenario(
 
     For SAI scenarios (``ssp_timeseries`` provided), historical data is first
     concatenated with SSP245 to bridge the gap between the historical period end
-    (``train_period_end``) and the SAI simulation start
-    (``predict_period_start``). The combined series is then concatenated with
-    the SAI scenario.
+    (``train_period_end``) and the first available year of the SAI simulation.
+    The combined series is then concatenated with the SAI scenario. The SAI
+    splice point is inferred from the first timestep in ``model_scenario``
+    rather than from ``predict_period_start``, because the scenario data may
+    start later than the requested prediction window (e.g. G6-1.5K begins in
+    2035 even when ``predict_period_start`` is 2015).
 
     For non-SAI scenarios, historical and scenario data are concatenated
     directly at the ``predict_period_start`` boundary.
@@ -179,7 +182,9 @@ def stitch_historical_scenario(
     train_period_end : int
         Last year of the historical training period (inclusive).
     predict_period_start : int
-        First year of the prediction period.
+        First year of the prediction period. Used as the stitch boundary for
+        non-SAI scenarios. For SAI scenarios the splice point is inferred from
+        the first year present in ``model_scenario``.
     ssp_timeseries : xr.DataArray, optional
         SSP245 data used to bridge the historical-to-SAI gap. When provided,
         the SAI stitching path is taken; otherwise the non-SAI path is used.
@@ -191,8 +196,27 @@ def stitch_historical_scenario(
         through the end of the scenario period.
     """
     if ssp_timeseries is not None:
-        # SAI: historical ≤ train_period_end, then SSP from train_period_end+1,
-        # then SAI from predict_period_start onward.
+        if model_scenario.time.size == 0:
+            raise ValueError(
+                "model_scenario contains no timesteps for the requested predict period. "
+                "Verify that predict_period_start/predict_period_end overlap the scenario's "
+                "available time range."
+            )
+        # Use the first year present in the (already-sliced) scenario array as
+        # the splice point.  predict_period_start may be earlier than the SAI
+        # data start (e.g. predict_period_start=2015 but G6-1.5K begins 2035),
+        # so we cannot rely on it here.
+        sai_start_year = int(model_scenario["time.year"].min())
+        ssp_min_year = int(ssp_timeseries["time.year"].min())
+        if ssp_min_year >= sai_start_year:
+            raise ValueError(
+                f"SSP245 bridge data starts at {ssp_min_year} but the SAI scenario starts "
+                f"at {sai_start_year}. The bridge must cover the gap "
+                f"{train_period_end + 1}–{sai_start_year - 1}. "
+                f"Use a bridge dataset that spans this period."
+            )
+        # SAI: historical ≤ train_period_end, then SSP from train_period_end+1
+        # up to (but not including) the SAI start, then SAI data.
         historical_and_ssp = xr.concat(
             [
                 model_hist.sel(time=model_hist["time.year"] <= train_period_end),
@@ -202,8 +226,8 @@ def stitch_historical_scenario(
         )
         result = xr.concat(
             [
-                historical_and_ssp.sel(time=historical_and_ssp["time.year"] < predict_period_start),
-                model_scenario.sel(time=model_scenario["time.year"] >= predict_period_start),
+                historical_and_ssp.sel(time=historical_and_ssp["time.year"] < sai_start_year),
+                model_scenario.sel(time=model_scenario["time.year"] >= sai_start_year),
             ],
             dim="time",
         )

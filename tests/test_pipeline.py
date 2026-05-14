@@ -709,6 +709,53 @@ class TestStitchHistoricalScenario:
         _, counts = np.unique(result["time.year"].values, return_counts=True)
         assert counts.max() <= 366, "Duplicate years detected in SAI stitched timeseries"
 
+    def test_sai_predict_period_start_earlier_than_sai_data(self):
+        """Regression: predict_period_start earlier than actual SAI data start must not gap.
+
+        Reproduces the production failure where predict_period_start=2015 but
+        G6-1.5K data only begins in 2035, causing a (2014, 2035) gap when the
+        SSP245 bridge was incorrectly discarded.
+        """
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2034-12-31")
+        sai = _make_daily_da("2035-01-01", "2084-12-31")
+
+        result = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=sai,
+            train_period_end=2014,
+            predict_period_start=2015,  # earlier than SAI data start (2035)
+            ssp_timeseries=ssp,
+        )
+
+        years = sorted(np.unique(result["time.year"].values).tolist())
+        gaps = [y2 - y1 for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+        assert not gaps, f"Gap(s) found in stitched timeseries: {gaps}"
+
+        # SSP bridge years must be present
+        assert all(y in years for y in range(2015, 2035)), "SSP bridge years (2015-2034) missing"
+        # SAI years must be present
+        assert 2035 in years, "SAI start year (2035) missing"
+        assert years[-1] == 2084, "SAI end year (2084) missing"
+        # No year-level duplicates
+        _, counts = np.unique(result["time.year"].values, return_counts=True)
+        assert counts.max() <= 366, "Duplicate years detected in stitched timeseries"
+
+    def test_sai_empty_scenario_raises(self):
+        """An empty model_scenario must raise a clear ValueError."""
+        model_hist = _make_daily_da("1978-01-01", "2014-12-31")
+        ssp = _make_daily_da("2015-01-01", "2034-12-31")
+        empty_sai = _make_daily_da("2035-01-01", "2034-12-31")  # empty range
+
+        with pytest.raises(ValueError, match="no timesteps"):
+            stitch_historical_scenario(
+                model_hist=model_hist,
+                model_scenario=empty_sai,
+                train_period_end=2014,
+                predict_period_start=2015,
+                ssp_timeseries=ssp,
+            )
+
     # -- Non-SAI path (no ssp_timeseries) ------------------------------------
 
     def test_non_sai_no_gap(self):

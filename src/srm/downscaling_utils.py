@@ -100,9 +100,14 @@ def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]
         pattern, the input is returned unchanged.
     """
     if pattern == "full_space":
+        time_chunks = da.chunksizes.get("time", ())
+        # zarr requires last chunk ≤ first; inherited concat chunks can violate this
+        # (e.g. ssp-bridge piece 7305 + g6 piece 18250 after predict-period slice)
+        zarr_valid = len(time_chunks) <= 1 or time_chunks[-1] <= time_chunks[0]
         already_chunked = (
             "time" in da.chunksizes
-            and len(da.chunksizes["time"]) > 1
+            and len(time_chunks) > 1
+            and zarr_valid
             and "lat" in da.chunksizes
             and len(da.chunksizes["lat"]) == 1
             and "lon" in da.chunksizes
