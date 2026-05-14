@@ -62,6 +62,47 @@ def _resolve_lineage(configs: list[BCSDConfig]) -> list[BCSDConfig]:
     return resolved
 
 
+def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
+    """Print a compact table of resolved ensemble member lineage.
+
+    Only rows where lineage was actually resolved (historical_ensemble_member set)
+    are shown. Rows are deduplicated by (gcm, variable, ensemble_member) since
+    resolution is deterministic for that key.
+    """
+    resolved = [c for c in configs if c.historical_ensemble_member is not None]
+    if not resolved:
+        return
+
+    table = Table(
+        title=f"Ensemble Member Lineage ({len(resolved)} config(s) resolved)",
+        show_header=True,
+        header_style="bold cyan",
+        box=box.SIMPLE_HEAD,
+    )
+    table.add_column("GCM", style="cyan")
+    table.add_column("Variable")
+    table.add_column("Member", justify="right")
+    table.add_column("→ Historical", style="green", justify="right")
+    table.add_column("→ SSP245 Bridge", style="yellow", justify="right")
+
+    seen: set[tuple[str, str, str]] = set()
+    for cfg in resolved:
+        key = (cfg.gcm, cfg.variable, cfg.ensemble_member)
+        if key in seen:
+            continue
+        seen.add(key)
+        ssp = cfg.ssp245_ensemble_member if cfg.ssp245_ensemble_member is not None else "—"
+        table.add_row(
+            cfg.gcm,
+            cfg.variable,
+            cfg.ensemble_member,
+            cfg.historical_ensemble_member,
+            ssp,
+        )
+
+    console.print(table)
+
+
 def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
     """Cross-scenario validation: check resolved members exist in target stores.
 
@@ -334,9 +375,7 @@ def run(
         configs = [config.model_copy(update={"version": version}) for config in configs]
     logger.info("Loaded %d configuration(s)", len(configs))
     configs = _resolve_lineage(configs)
-    resolved_count = sum(1 for c in configs if c.historical_ensemble_member is not None)
-    if resolved_count:
-        logger.info("Resolved lineage for %d/%d config(s)", resolved_count, len(configs))
+    _print_lineage_summary(configs)
     _validate_lineage_members(configs)
 
     orchestrator = BCSDOrchestrator()
@@ -540,9 +579,7 @@ def run_matrix(
         len(member),
         len(scenario_values),
     )
-    resolved_count = sum(1 for c in configs if c.historical_ensemble_member is not None)
-    if resolved_count:
-        logger.info("Resolved lineage for %d/%d config(s)", resolved_count, n)
+    _print_lineage_summary(configs)
 
     if dry_run:
         table = Table(

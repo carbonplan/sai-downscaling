@@ -272,9 +272,16 @@ class BCSDPipeline:
         """
         self.config = config
         self.cache = ArtifactCache.from_config(config)
-
-        # State dictionary for intermediate results (mostly for debugging)
         self._state = {}
+
+        if config.historical_ensemble_member is not None:
+            parts = [
+                f"ensemble_member={config.ensemble_member!r}",
+                f"historical={config.historical_ensemble_member!r}",
+            ]
+            if config.ssp245_ensemble_member is not None:
+                parts.append(f"ssp245_bridge={config.ssp245_ensemble_member!r}")
+            logger.info("Lineage resolved — %s", "  ".join(parts))
 
     @staticmethod
     def _icechunk_storage(path: str):
