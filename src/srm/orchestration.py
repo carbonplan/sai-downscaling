@@ -108,7 +108,8 @@ class BCSDOrchestrator:
         output_paths = []
 
         for config in configs:
-            output_path = cache.get_output_path(stage, config)
+            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
+            output_path = cache.get_output_path(stage, config, hist_member=hist_member)
 
             if cache.exists(output_path) and not force:
                 if self.options.verbose:
@@ -237,7 +238,15 @@ class BCSDOrchestrator:
             still_failed = [
                 config
                 for config in remaining
-                if not cache.exists(cache.get_output_path(stage, config))
+                if not cache.exists(
+                    cache.get_output_path(
+                        stage,
+                        config,
+                        hist_member=self._resolve_hist_member(config)
+                        if stage == "fit_historical"
+                        else None,
+                    )
+                )
             ]
 
             if not still_failed:
@@ -262,7 +271,16 @@ class BCSDOrchestrator:
         logger.info(f"✓ All {len(configs)} {stage} tasks completed")
 
         # Collect and return all output paths (now guaranteed to exist)
-        return [cache.get_output_path(stage, config) for config in configs]
+        return [
+            cache.get_output_path(
+                stage,
+                config,
+                hist_member=self._resolve_hist_member(config)
+                if stage == "fit_historical"
+                else None,
+            )
+            for config in configs
+        ]
 
     def _run_local(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
         """
@@ -384,6 +402,10 @@ class BCSDOrchestrator:
         """
         Extract unique (GCM, variable, ensemble) combinations for historical downscaling.
 
+        Deduplication uses the resolved historical ensemble member so that multiple
+        scenario configs that share the same lineage parent are not submitted as
+        separate historical tasks.
+
         Parameters
         ----------
         configs : list[BCSDConfig]
@@ -397,11 +419,42 @@ class BCSDOrchestrator:
         seen = set()
         unique = []
         for config in configs:
-            key = (config.gcm, config.variable, config.ensemble_member)
+            key = (config.gcm, config.variable, self._resolve_hist_member(config))
             if key not in seen:
                 seen.add(key)
                 unique.append(config)
         return unique
+
+    @staticmethod
+    def _resolve_hist_member(config: BCSDConfig) -> str:
+        """
+        Return the resolved historical ensemble member for a config.
+
+        Mirrors the lineage resolution in ``BCSDPipeline.__init__``: for SAI/SSP245
+        scenarios the raw ``ensemble_member`` may map to a different historical parent
+        member.  Falls back to ``config.ensemble_member`` when no lineage entry exists.
+
+        Parameters
+        ----------
+        config : BCSDConfig
+            Run configuration
+
+        Returns
+        -------
+        str
+            Resolved historical member (e.g. ``"r1i1p1f1"`` for CESM2-WACCM ``"001"``)
+        """
+        if config.scenario is None:
+            return config.ensemble_member
+        try:
+            from srm.lineage import resolve_member_lineage
+
+            hist_member, _ = resolve_member_lineage(
+                config.gcm, config.scenario, config.ensemble_member, config.variable
+            )
+            return hist_member
+        except KeyError:
+            return config.ensemble_member
 
     def get_status(self, configs: list[BCSDConfig]) -> dict[str, dict]:
         """
@@ -442,7 +495,7 @@ class BCSDOrchestrator:
         hist_configs = self._deduplicate_historical_configs(configs)
         status["fit_historical"]["total"] = len(hist_configs)
         for config in hist_configs:
-            path = cache.get_historical_path(config)
+            path = cache.get_historical_path(config, hist_member=self._resolve_hist_member(config))
             if cache.exists(path):
                 status["fit_historical"]["cached"] += 1
             else:

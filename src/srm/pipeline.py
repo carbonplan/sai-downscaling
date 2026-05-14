@@ -600,7 +600,7 @@ class BCSDPipeline:
         """
         self.cache.validate_dependencies("fit_historical", self.config)
 
-        output_path = self.cache.historical_path
+        output_path = self.cache.get_historical_path(self.config, hist_member=self._hist_member)
 
         if self.cache.exists(output_path) and not force:
             logger.info("✓ Using cached historical: %s", output_path)
