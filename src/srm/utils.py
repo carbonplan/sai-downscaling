@@ -55,3 +55,24 @@ def convert_precip_units(da: xr.DataArray) -> xr.DataArray:
     pint_xarray.unit_registry.enable_contexts("hydro")
     result = da.pint.quantify().pint.to("mm/day").pint.dequantify().astype(da.dtype)
     return result
+
+
+def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
+    """Convert any GCM Dataset to proleptic_gregorian via linear interpolation.
+
+    - noleap    : inserts NaN on Feb 29 of each leap year, then linearly interpolates
+    - 360_day   : maps dates by position within the year (align_on='year'), inserts NaN
+                  on ~6 missing days per year, then linearly interpolates
+    - gregorian / standard : type-cast only, no data change
+    """
+    calendar = ds.time.dt.calendar
+    if calendar in ("proleptic_gregorian", "gregorian", "standard"):
+        return ds.convert_calendar("proleptic_gregorian", use_cftime=False)
+    align = "year" if calendar == "360_day" else None
+    return (
+        ds.convert_calendar(
+            "proleptic_gregorian", align_on=align, missing=float("nan"), use_cftime=False
+        )
+        .chunk({"time": -1})
+        .interpolate_na(dim="time")
+    )

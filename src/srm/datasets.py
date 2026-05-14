@@ -141,12 +141,14 @@ class Dataset(BaseDataset):
         return f"{self.path.cloud_prefix}{self.bucket}/"
 
     def to_xarray(self) -> xr.Dataset:
+        from srm.utils import to_proleptic_gregorian
+
         if self.format == "icechunk":
-            return self._open_icechunk(self.prefix, is_virtual=False)
+            return to_proleptic_gregorian(self._open_icechunk(self.prefix, is_virtual=False))
         elif self.format == "zarr":
             import xarray as xr
 
-            return xr.open_zarr(self.path)
+            return to_proleptic_gregorian(xr.open_zarr(self.path))
         else:
             raise ValueError(f"Unknown format: {self.format}")
 
