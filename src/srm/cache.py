@@ -175,10 +175,11 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        hist_member = config.historical_ensemble_member or config.ensemble_member
         base = self.output_dir if self.output_dir else self.scratch_dir
         return (
             f"{base}/{self.environment}/{self.version}/historical/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/historical.icechunk"
+            f"{config.gcm}/{config.variable}/{hist_member}/{subset_id}/{varconfig_id}/historical.icechunk"
         )
 
     def get_scenario_path(self, config: BCSDConfig) -> str:
