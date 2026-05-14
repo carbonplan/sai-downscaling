@@ -48,9 +48,11 @@ def _ds_no_members() -> xr.Dataset:
     )
 
 
-def _ds_with_time(start: str, end: str, freq: str = "D", calendar: str = "standard") -> xr.Dataset:
-    """Minimal xr.Dataset with a cftime time axis."""
-    times = xr.date_range(start=start, end=end, freq=freq, calendar=calendar, use_cftime=True)
+def _ds_with_time(start: str, end: str, freq: str = "D") -> xr.Dataset:
+    """Minimal xr.Dataset with a numpy datetime64 time axis (matching to_xarray() output)."""
+    import pandas as pd
+
+    times = pd.date_range(start=start, end=end, freq=freq)
     return xr.Dataset(
         {"tas": (["time"], np.zeros(len(times)))},
         coords={"time": times},
@@ -316,7 +318,7 @@ class TestCheckTemporalCoverage:
         assert result.status == CheckStatus.FAIL
 
     def test_pass_correct_ssp245_coverage(self, mock_datasets):
-        ds = _ds_with_time("2015-01-01", "2100-12-31", calendar="standard")
+        ds = _ds_with_time("2015-01-01", "2100-12-31")
         mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
@@ -324,27 +326,27 @@ class TestCheckTemporalCoverage:
         assert result.detail["actual_end"] == "2100-12-31"
 
     def test_fail_wrong_start_date(self, mock_datasets):
-        ds = _ds_with_time("2016-01-01", "2100-12-31", calendar="standard")
+        ds = _ds_with_time("2016-01-01", "2100-12-31")
         mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
         assert "start date" in result.message
 
     def test_fail_wrong_end_date(self, mock_datasets):
-        ds = _ds_with_time("2015-01-01", "2099-12-31", calendar="standard")
+        ds = _ds_with_time("2015-01-01", "2099-12-31")
         mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
         assert "end date" in result.message
 
     def test_pass_correct_g6_coverage(self, mock_datasets):
-        ds = _ds_with_time("2035-01-01", "2085-12-31", calendar="standard")
+        ds = _ds_with_time("2035-01-01", "2085-12-31")
         mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="G6-1.5K").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
 
     def test_pass_correct_historical_coverage(self, mock_datasets):
-        ds = _ds_with_time("1850-01-01", "2014-12-31", calendar="standard")
+        ds = _ds_with_time("1850-01-01", "2014-12-31")
         mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"
