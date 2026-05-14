@@ -8,12 +8,13 @@ Checks are organized into the following groups:
 Use :class:`DatasetValidator` to run checks for a given (gcm, scenario) pair.
 """
 
+import datetime
 import enum
 import hashlib
 import traceback
 from typing import ClassVar
 
-import pandas as pd
+import cftime
 import pydantic
 import xarray as xr
 
@@ -36,13 +37,22 @@ GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 
 # Expected inclusive daily time bounds per scenario (CMIP6 conventions).
-# to_xarray() normalizes all GCM calendars to proleptic_gregorian (numpy datetime64),
-# so end dates are fixed Gregorian strings regardless of original GCM calendar.
-_SCENARIO_TIME_BOUNDS: dict[str, tuple[str, str]] = {
-    "historical": ("1850-01-01", "2014-12-31"),
-    "SSP245": ("2015-01-01", "2100-12-31"),
-    "G6-1.5K": ("2035-01-01", "2085-12-31"),
+# End bounds are stored as (year, month) so the actual last day can be derived
+# from the dataset's own calendar — e.g. 360-day calendars end Dec on the 30th.
+_SCENARIO_TIME_BOUNDS: dict[str, tuple[str, int, int]] = {
+    "historical": ("1850-01-01", 2014, 12),
+    "SSP245": ("2015-01-01", 2100, 12),
+    "G6-1.5K": ("2035-01-01", 2085, 12),
 }
+
+
+def _end_of_month(year: int, month: int, calendar: str) -> str:
+    """Return YYYY-MM-DD for the last day of (year, month) in the given CF calendar."""
+    if month == 12:
+        next_first = cftime.datetime(year + 1, 1, 1, calendar=calendar)
+    else:
+        next_first = cftime.datetime(year, month + 1, 1, calendar=calendar)
+    return (next_first - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def _parse_catalog_value(label: str, value: str, options: tuple[str, ...]) -> str:
@@ -174,7 +184,10 @@ class DatasetValidator(pydantic.BaseModel):
                 self._dataset_cache[key] = None
             else:
                 try:
-                    self._dataset_cache[key] = catalog_ds.to_xarray()
+                    try:
+                        self._dataset_cache[key] = catalog_ds.to_xarray(convert_calendar=False)
+                    except TypeError:
+                        self._dataset_cache[key] = catalog_ds.to_xarray()
                 except Exception as exc:
                     tb = traceback.format_exc()
                     self._load_errors[key] = (f"Failed to load dataset {key}: {exc}", tb)
@@ -388,10 +401,10 @@ class DatasetValidator(pydantic.BaseModel):
         """
         E2: Time axis must be gapless with correct first and last dates.
 
-        Time axis must span the expected date range with no gaps.
-
-        to_xarray() normalizes all GCM calendars to proleptic_gregorian (numpy
-        datetime64), so expected bounds are fixed Gregorian strings.
+        Calendar-aware: uses the dataset's own calendar to derive the expected
+        last day of the month (360-day calendars end Dec on the 30th, all others
+        on the 31st). The expected daily range is built with xr.date_range in
+        the same calendar so counts are always comparable.
         """
         key = f"{self.gcm}-{self.scenario}-icechunk"
         ds, err = self._open_dataset(key, on_missing=CheckStatus.SKIP)
@@ -403,10 +416,16 @@ class DatasetValidator(pydantic.BaseModel):
             return self._result(CheckStatus.SKIP, "Dataset has no time dimension.")
 
         time_index = ds.indexes["time"]
+        calendar = ds.time.dt.calendar
         n_times = len(time_index)
 
-        expected_start, expected_end = _SCENARIO_TIME_BOUNDS[self.scenario]
-        n_expected = len(pd.date_range(start=expected_start, end=expected_end, freq="D"))
+        expected_start, end_year, end_month = _SCENARIO_TIME_BOUNDS[self.scenario]
+        expected_end = _end_of_month(end_year, end_month, calendar)
+
+        expected_range = xr.date_range(
+            start=expected_start, end=expected_end, freq="D", calendar=calendar, use_cftime=True
+        )
+        n_expected = len(expected_range)
 
         actual_start_str = time_index[0].strftime("%Y-%m-%d")
         actual_end_str = time_index[-1].strftime("%Y-%m-%d")

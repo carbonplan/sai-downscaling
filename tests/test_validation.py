@@ -18,7 +18,7 @@ from srm.validation import CheckStatus, DatasetValidator
 
 
 def _catalog_entry(ds: xr.Dataset) -> MagicMock:
-    """Return a mock catalog entry whose to_xarray() returns ds."""
+    """Return a mock catalog entry whose to_xarray() returns ds (any kwargs accepted)."""
     entry = MagicMock()
     entry.to_xarray.return_value = ds
     return entry
@@ -48,11 +48,9 @@ def _ds_no_members() -> xr.Dataset:
     )
 
 
-def _ds_with_time(start: str, end: str, freq: str = "D") -> xr.Dataset:
-    """Minimal xr.Dataset with a numpy datetime64 time axis (matching to_xarray() output)."""
-    import pandas as pd
-
-    times = pd.date_range(start=start, end=end, freq=freq)
+def _ds_with_time(start: str, end: str, freq: str = "D", calendar: str = "standard") -> xr.Dataset:
+    """Minimal xr.Dataset with a cftime time axis."""
+    times = xr.date_range(start=start, end=end, freq=freq, calendar=calendar, use_cftime=True)
     return xr.Dataset(
         {"tas": (["time"], np.zeros(len(times)))},
         coords={"time": times},
