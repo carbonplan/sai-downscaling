@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 
@@ -109,6 +110,32 @@ def test_rechunk_full_time_noop_when_already_chunked(sample_3d_da):
     result = rechunk(already_chunked, pattern="full_time")
 
     assert result is already_chunked
+
+
+def test_rechunk_full_space_forces_rechunk_when_last_chunk_larger_than_first():
+    """Regression: concat-inherited chunks (e.g. ssp-bridge 7305 + g6 18250) must be
+    rechunked even though lat/lon are full-extent, because zarr requires last ≤ first."""
+    time_ssp = pd.date_range("2015-01-01", "2034-12-31", freq="D")
+    time_g6 = pd.date_range("2035-01-01", "2084-12-31", freq="D")
+    lat = np.array([0.0, 1.0])
+    lon = np.array([10.0, 11.0])
+
+    def _make(times):
+        return xr.DataArray(
+            np.ones((len(times), 2, 2), dtype=np.float32),
+            dims=["time", "lat", "lon"],
+            coords={"time": times, "lat": lat, "lon": lon},
+        ).chunk({"time": -1, "lat": -1, "lon": -1})
+
+    # Simulate what concat produces: last chunk (g6) is larger than first (ssp)
+    concat_da = xr.concat([_make(time_ssp), _make(time_g6)], dim="time")
+    assert concat_da.chunksizes["time"][-1] > concat_da.chunksizes["time"][0]
+
+    result = rechunk(concat_da, pattern="full_space")
+
+    # After rechunking, last chunk must be ≤ first (zarr-valid)
+    result_chunks = result.chunksizes["time"]
+    assert result_chunks[-1] <= result_chunks[0]
 
 
 def test_calculate_baseline_climatology_preserves_input_dtype():
