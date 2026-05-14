@@ -192,6 +192,19 @@ def get_experiment(
     return da
 
 
+def get_historical_experiment(gcm: str, member: str, var: str) -> xr.DataArray:
+    """Load a single historical ensemble member, routing to the correct store by member label.
+    CMIP6-style labels (r*i*p*f*) use the pangeo-prefixed store; numeric labels use the standard store."""
+    key = (
+        f"pangeo-{gcm}-historical-icechunk"
+        if member.startswith("r")
+        else f"{gcm}-historical-icechunk"
+    )
+    ds = catalog.get(key).to_xarray()
+    ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
+    return ds[var].sel(ensemble_member=member)
+
+
 def get_obs(var: str = "tas", coord_bounds_list: list | None = None):
     era5 = catalog.get("ERA5").to_xarray()
     era5 = era5.proj.assign_crs(spatial_ref="epsg:4326")
