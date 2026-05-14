@@ -314,7 +314,9 @@ def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:
         # Store all raw attributes and the URL for this specific member
         full_manifest[member_id] = _capture_provenance(ds, zstore_url)
 
-        ds = preprocess_with_provenance(ds, zstore_url, True)
+        ds = _attach_source_manifest(ds, zstore_url)
+        ds = ds.expand_dims({"ensemble_member": [member_id]})
+        ds.attrs["ensemble_member_source"] = "variant_label"
         datasets.append(ds)
 
     # Combine all members into a single dataset
