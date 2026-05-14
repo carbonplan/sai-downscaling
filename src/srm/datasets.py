@@ -89,15 +89,13 @@ class BaseDataset(BaseCatalogEntry, ABC):
             repo = icechunk.Repository.open(
                 storage, authorize_virtual_chunk_access=credentials, config=config
             )
-            chunks = {}
 
         else:
             repo = icechunk.Repository.open(storage, config=config)
-            chunks = self.encoding["shards"]
 
         session = repo.readonly_session("main")
         return xr.open_dataset(
-            session.store, engine="zarr", chunks=chunks, consolidated=False, zarr_format=3
+            session.store, engine="zarr", chunks="auto", consolidated=False, zarr_format=3
         )
 
     def get_chunking_dict(self) -> dict[str, int]:
@@ -139,14 +137,12 @@ class Dataset(BaseDataset):
         return f"{self.path.cloud_prefix}{self.bucket}/"
 
     def to_xarray(self) -> xr.Dataset:
-        from srm.utils import to_proleptic_gregorian
-
         if self.format == "icechunk":
-            return to_proleptic_gregorian(self._open_icechunk(self.prefix, is_virtual=False))
+            return self._open_icechunk(self.prefix, is_virtual=False)
         elif self.format == "zarr":
             import xarray as xr
 
-            return to_proleptic_gregorian(xr.open_zarr(self.path))
+            return xr.open_dataset(self.path, engine="zarr", chunks="audo")
         else:
             raise ValueError(f"Unknown format: {self.format}")
 
@@ -215,7 +211,7 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
                 expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
-                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                ensemble_members=["001"],
                 expected_vars=self.standard_vars,
             ),
             "CESM2-WACCM-historical-virtual-icechunk": VirtualDataset(
@@ -255,8 +251,19 @@ class Catalog:
                     "lat": 192,
                     "lon": 288,
                 },
-                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
-                expected_vars=self.standard_vars,
+                ensemble_members=[
+                    "001",
+                    "002",
+                    "003",
+                    "004",
+                    "005",
+                    "006",
+                    "007",
+                    "008",
+                    "009",
+                    "010",
+                ],
+                expected_vars=self.standard_vars + [VarStandards.DTR],
             ),
             "CESM2-WACCM-SSP245-001-005-virtual": VirtualDataset(
                 name="CESM2-WACCM-SSP245-001-005-virtual",
@@ -268,6 +275,12 @@ class Catalog:
                     VarStandards.HURS,
                     VarStandards.PR,
                 ],
+            ),
+            "CESM2-WACCM-SSP245-006-virtual": VirtualDataset(
+                name="CESM2-WACCM-SSP245-006-virtual",
+                virtual_path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245-006-virtual.icechunk",
+                format="icechunk",
+                expected_vars=self.standard_vars,
             ),
             "CESM2-WACCM-SSP245-007-010-virtual": VirtualDataset(
                 name="CESM2-WACCM-SSP245-007-010-virtual",

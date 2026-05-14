@@ -21,6 +21,7 @@ from srm.input_data.etl_utils import (
     build_encoding_dict,
     determine_write_mode,
     get_var_specs,
+    load_dtr_from_store,
     trim_negative_precipitation,
     update_variable_attrs,
     virtualize_and_combine,
@@ -30,7 +31,7 @@ from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
 
-SHARED_VARIABLES = ["tas", "rsds", "hurs", "pr", "tasmax", "tasmin"]
+SHARED_VARIABLES = ["tas", "rsds", "hurs", "pr", "tasmax", "tasmin", "dtr"]
 SHARED_ENSEMBLE_MEMBERS = ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
 
 
@@ -146,16 +147,29 @@ class CESM_SSP245_Config(BaseCESM_Config):
     scenario: str = "SSP245"
     catalog_key: str = "CESM2-WACCM-SSP245-001-005-virtual"
     catalog_key_5: str = "CESM2-WACCM-SSP245-001-005-virtual"
+    catalog_key_6: str = "CESM2-WACCM-SSP245-006-virtual"
     catalog_key_7_10: str = "CESM2-WACCM-SSP245-007-010-virtual"
     materialized_key: str = "CESM2-WACCM-SSP245-icechunk"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-SSP245/netcdf"
     has_ensemble: bool = True
     ensemble_members: list = field(
-        default_factory=lambda: ["001", "002", "003", "004", "005", "007", "008", "009", "010"]
-    )  # 006 has time range ending in 2069, excluded.
-    variables_7_10_only: list = field(default_factory=lambda: ["tasmax", "tasmin"])
+        default_factory=lambda: [
+            "001",
+            "002",
+            "003",
+            "004",
+            "005",
+            "006",
+            "007",
+            "008",
+            "009",
+            "010",
+        ]
+    )
+    variables_6_10_only: list = field(default_factory=lambda: ["tasmax", "tasmin"])
 
     subset_5: list = field(default_factory=lambda: ["001", "002", "003", "004", "005"])
+    subset_6: list = field(default_factory=lambda: ["006"])
     subset_7_10: list = field(default_factory=lambda: ["007", "008", "009", "010"])
 
 
@@ -414,21 +428,27 @@ def virtualize(scenario, coiled):
 
         if scenario == "ssp245":
             virt_cat_5 = catalog.get(config.catalog_key_5)
+            virt_cat_6 = catalog.get(config.catalog_key_6)
             virt_cat_7_10 = catalog.get(config.catalog_key_7_10)
             variables_5 = [var.name for var in virt_cat_5.expected_vars]
-            variables_7_10 = [var.name for var in virt_cat_7_10.expected_vars]
+            variables_6_10 = [var.name for var in virt_cat_7_10.expected_vars]
 
             netcdf_urls_all_5 = _get_netcdf_urls(config, variables_5)
-            netcdf_urls_all_7_10 = _get_netcdf_urls(config, variables_7_10)
+            netcdf_urls_all_6_10 = _get_netcdf_urls(config, variables_6_10)
 
             netcdf_urls_5 = [
                 path
                 for path in netcdf_urls_all_5
                 if any(f"CMIP6-SSP2-4.5-WACCM.{num}." in path for num in config.subset_5)
             ]
+            netcdf_urls_6 = [
+                path
+                for path in netcdf_urls_all_6_10
+                if any(f"CMIP6-SSP2-4.5-WACCM.{num}." in path for num in config.subset_6)
+            ]
             netcdf_urls_7_10 = [
                 path
-                for path in netcdf_urls_all_7_10
+                for path in netcdf_urls_all_6_10
                 if any(f"CMIP6-SSP2-4.5-WACCM.{num}." in path for num in config.subset_7_10)
             ]
 
@@ -440,7 +460,7 @@ def virtualize(scenario, coiled):
                 drop_variables=["ilev", "lev"],
                 preprocess_fn=preprocess_fn,
             )
-            print(f"ds6, {combined_ds_5}")
+            print(f"ds5, {combined_ds_5}")
 
             repo_config = icechunk.RepositoryConfig.default()
             repo_config.set_virtual_chunk_container(
@@ -459,6 +479,26 @@ def virtualize(scenario, coiled):
             session_5.commit(f"{scenario}: virtualized 001-005 variables {variables_5}")
             repo_5.save_config()
 
+            # member 006 virtualized separately — ends 20691230, one day short of 007-010
+            combined_ds_6 = virtualize_and_combine(
+                urls=netcdf_urls_6,
+                registry=registry,
+                parser=parser,
+                loadable_variables=loadable_variables,
+                preprocess_fn=preprocess_fn,
+                drop_variables=["ilev", "lev"],
+            )
+            print(f"ds6, {combined_ds_6}")
+            storage_6 = icechunk.s3_storage(
+                bucket=virt_cat_6.bucket, prefix=virt_cat_6.prefix, region=config.region
+            )
+            repo_6 = icechunk.Repository.open_or_create(storage_6, repo_config)
+            session_6 = repo_6.writable_session("main")
+
+            combined_ds_6.vz.to_icechunk(session_6.store)
+            session_6.commit(f"{scenario}: virtualized 006 variables {variables_6_10}")
+            repo_6.save_config()
+
             combined_ds_7_10 = virtualize_and_combine(
                 urls=netcdf_urls_7_10,
                 registry=registry,
@@ -475,7 +515,7 @@ def virtualize(scenario, coiled):
             session_7_10 = repo_7_10.writable_session("main")
 
             combined_ds_7_10.vz.to_icechunk(session_7_10.store)
-            session_7_10.commit(f"{scenario}: virtualized 007-010 variables {variables_7_10}")
+            session_7_10.commit(f"{scenario}: virtualized 007-010 variables {variables_6_10}")
             repo_7_10.save_config()
 
         elif _is_pangeo_scenario(scenario):
@@ -560,6 +600,8 @@ def process(variable, scenario, coiled, all_variables, subset):
         else:
             # --- (Virtual store to Icechunk chunks) ncar provided historical, ssp245 and g6-1.5k---
             virtual_keys = [config.catalog_key]
+            if hasattr(config, "catalog_key_6"):
+                virtual_keys.append(config.catalog_key_6)
             if hasattr(config, "catalog_key_7_10"):
                 virtual_keys.append(config.catalog_key_7_10)
 
@@ -570,28 +612,33 @@ def process(variable, scenario, coiled, all_variables, subset):
             )
 
             for var in variables:
-                cesm_var = _get_cesm_var_from_cmip6(var, config)
-                var_keys = (
-                    [config.catalog_key_7_10]
-                    if hasattr(config, "variables_7_10_only") and var in config.variables_7_10_only
-                    else virtual_keys
-                )
+                if var.lower() == "dtr":
+                    # tasmax/tasmin only exist for members 006-010; dtr inherits that partial coverage
+                    ds = load_dtr_from_store(materialized_cat.bucket, materialized_cat.prefix)
+                else:
+                    cesm_var = _get_cesm_var_from_cmip6(var, config)
+                    var_keys = (
+                        [config.catalog_key_6, config.catalog_key_7_10]
+                        if hasattr(config, "variables_6_10_only")
+                        and var in config.variables_6_10_only
+                        else virtual_keys
+                    )
 
-                subsets = []
-                for cat_key in var_keys:
-                    _ds = catalog.get(cat_key).to_xarray()[[cesm_var]]
-                    _ds = _preprocess_cesm(_ds, config, cesm_var, subset=subset)
-                    subsets.append(_ds)
+                    subsets = []
+                    for cat_key in var_keys:
+                        _ds = catalog.get(cat_key).to_xarray()[[cesm_var]]
+                        _ds = _preprocess_cesm(_ds, config, cesm_var, subset=subset)
+                        subsets.append(_ds)
 
-                ds = (
-                    xr.concat(subsets, dim="ensemble_member", join="outer")
-                    if len(subsets) > 1
-                    else subsets[0]
-                )
-                if hasattr(config, "ensemble_members") and "ensemble_member" in ds.dims:
-                    ds = ds.reindex(ensemble_member=config.ensemble_members)
-                if canonical_time is not None and len(ds.time) < len(canonical_time):
-                    ds = ds.reindex(time=canonical_time)
+                    ds = (
+                        xr.concat(subsets, dim="ensemble_member", join="outer")
+                        if len(subsets) > 1
+                        else subsets[0]
+                    )
+                    if hasattr(config, "ensemble_members") and "ensemble_member" in ds.dims:
+                        ds = ds.reindex(ensemble_member=config.ensemble_members)
+                    if canonical_time is not None and len(ds.time) < len(canonical_time):
+                        ds = ds.reindex(time=canonical_time)
                 ds = _update_attrs(ds, var_specs, config)
 
                 repo, session = init_repo(
