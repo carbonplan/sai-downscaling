@@ -245,7 +245,7 @@ class TestBCSDConfigComputedFields:
         assert minimal_config.run_id == "CESM2-WACCM_tas_r1i1p1f1"
 
     def test_run_id_with_scenario(self, scenario_config):
-        assert scenario_config.run_id == "CESM2-WACCM_tas_r1i1p1f1_ssp245"
+        assert scenario_config.run_id == "CESM2-WACCM_tas_r1i1p1f1_SSP245"
 
     def test_run_id_includes_subset_marker(self, regional_config):
         assert "subset" in regional_config.run_id

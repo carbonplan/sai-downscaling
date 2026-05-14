@@ -65,7 +65,7 @@ class TestConfigsFromMatrix:
             predict_period_end=2100,
         )
         actual = {(c.gcm, c.variable, c.ensemble_member, c.scenario) for c in configs}
-        expected = set(itertools.product(gcms, variables, members, scenarios))
+        expected = set(itertools.product(gcms, variables, members, [s.upper() for s in scenarios]))
         assert actual == expected
 
     def test_shared_params_applied_to_all_configs(self):
@@ -117,7 +117,7 @@ class TestConfigsFromMatrix:
             predict_period_end=2100,
         )
         assert len(configs) == 3
-        assert {c.scenario for c in configs} == set(scenarios)
+        assert {c.scenario for c in configs} == {s.upper() for s in scenarios}
 
     def test_empty_members_returns_empty_list(self):
         configs, options = configs_from_matrix(
@@ -141,7 +141,7 @@ class TestConfigsFromMatrix:
         assert cfg.gcm == "CESM2-WACCM"
         assert cfg.variable == "pr"
         assert cfg.ensemble_member == "r3i1p1f1"
-        assert cfg.scenario == "ssp245"
+        assert cfg.scenario == "SSP245"
         assert cfg.predict_period_start == 2020
         assert cfg.predict_period_end == 2080
         assert isinstance(options, PipelineOptions)
