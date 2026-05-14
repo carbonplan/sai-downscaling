@@ -108,8 +108,10 @@ class TestBCSDRunConstruction:
     def test_cache_is_bound_to_config(self, run, config):
         assert run._cache.config is config
 
-    def test_cache_uses_config_scratch_dir(self, run, config):
-        assert run._cache.scratch_dir == config.scratch_dir.rstrip("/")
+    def test_cache_uses_default_scratch_dir(self, run):
+        from srm.bcsd_config import PipelineOptions
+
+        assert run._cache.scratch_dir == PipelineOptions().scratch_dir.rstrip("/")
 
     def test_cache_is_cached_property(self, run):
         """Accessing _cache twice returns the same object."""

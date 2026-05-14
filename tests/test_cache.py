@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from srm.bcsd_config import BCSDConfig, VariableConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache, CacheCheckError
 
 # ---------------------------------------------------------------------------
@@ -123,11 +123,11 @@ class TestArtifactCacheInit:
 
 class TestFromConfig:
     def test_config_stored_on_cache(self, base_config):
-        cache = ArtifactCache.from_config(base_config)
+        cache = ArtifactCache.from_config(base_config, PipelineOptions())
         assert cache.config is base_config
 
     def test_path_properties_match_explicit_methods(self, base_config):
-        cache = ArtifactCache.from_config(base_config)
+        cache = ArtifactCache.from_config(base_config, PipelineOptions())
         assert cache.obs_path == cache.get_obs_path(base_config)
         assert cache.historical_path == cache.get_historical_path(base_config)
         assert cache.scenario_path == cache.get_scenario_path(base_config)
