@@ -126,8 +126,14 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     ensemble_member: str = Field(..., description="Ensemble member label (e.g. 'r1i1p1f1', '01')")
     scenario: str | None = Field(
         None,
-        description="Scenario name (e.g., 'ssp245', 'G6-1.5K'). None for historical-only runs.",
+        description="Scenario name (e.g., 'SSP245', 'G6-1.5K'). None for historical-only runs.",
     )
+
+    @field_validator("scenario", mode="before")
+    @classmethod
+    def normalize_scenario(cls, v: str | None) -> str | None:
+        """Uppercase scenario so 'ssp245' and 'SSP245' are equivalent."""
+        return v.upper() if v is not None else v
 
     # Time periods.
     # Ensure that the train period end and start fall between 1950 and 2014

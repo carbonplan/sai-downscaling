@@ -129,7 +129,7 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
             )
         ssp245_store = f"{config.gcm}-SSP245-icechunk"
         known = _members(ssp245_store)
-        if known is not None and ssp245 not in known:
+        if ssp245 is not None and known is not None and ssp245 not in known:
             errors.append(
                 f"  {config.gcm}/{config.variable}: ssp245:{ssp245!r} not in {ssp245_store}"
             )
