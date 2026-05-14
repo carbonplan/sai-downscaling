@@ -358,10 +358,6 @@ class BCSDPipeline:
             "ssp245_ensemble_member": self._ssp245_member,
         }
 
-        if source_dataset is not None:
-            dataset_attrs["license"] = source_dataset.license
-            dataset_attrs["citation"] = source_dataset.citation
-
         return dataset_attrs
 
     def _write_to_icechunk(
