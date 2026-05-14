@@ -38,19 +38,20 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None]]:
     # Members 001-005: standard variables only (tasmax/tasmin have the CMIP6 bug: not usable).
     # Members 007-010: tasmax/tasmin available via corrected run ("001").
     # Member 006 excluded: ends 2069-12-31, shorter than G6 runs (to 2084-12-31).
-    add("CESM2-WACCM", "ssp245", "001", _std, "r1i1p1f1")
-    add("CESM2-WACCM", "ssp245", "002", _std, "r2i1p1f1")
-    add("CESM2-WACCM", "ssp245", "003", _std, "r3i1p1f1")
-    add("CESM2-WACCM", "ssp245", "004", _std, "r2i1p1f1")
-    add("CESM2-WACCM", "ssp245", "005", _std, "r3i1p1f1")
-    add("CESM2-WACCM", "ssp245", "007", _std, "r2i1p1f1")
-    add("CESM2-WACCM", "ssp245", "007", _tmx, "001")
-    add("CESM2-WACCM", "ssp245", "008", _std, "r3i1p1f1")
-    add("CESM2-WACCM", "ssp245", "008", _tmx, "001")
-    add("CESM2-WACCM", "ssp245", "009", _std, "r2i1p1f1")
-    add("CESM2-WACCM", "ssp245", "009", _tmx, "001")
-    add("CESM2-WACCM", "ssp245", "010", _std, "r3i1p1f1")
-    add("CESM2-WACCM", "ssp245", "010", _tmx, "001")
+    # Scenario label matches catalog key case: "SSP245".
+    add("CESM2-WACCM", "SSP245", "001", _std, "r1i1p1f1")
+    add("CESM2-WACCM", "SSP245", "002", _std, "r2i1p1f1")
+    add("CESM2-WACCM", "SSP245", "003", _std, "r3i1p1f1")
+    add("CESM2-WACCM", "SSP245", "004", _std, "r2i1p1f1")
+    add("CESM2-WACCM", "SSP245", "005", _std, "r3i1p1f1")
+    add("CESM2-WACCM", "SSP245", "007", _std, "r2i1p1f1")
+    add("CESM2-WACCM", "SSP245", "007", _tmx, "001")
+    add("CESM2-WACCM", "SSP245", "008", _std, "r3i1p1f1")
+    add("CESM2-WACCM", "SSP245", "008", _tmx, "001")
+    add("CESM2-WACCM", "SSP245", "009", _std, "r2i1p1f1")
+    add("CESM2-WACCM", "SSP245", "009", _tmx, "001")
+    add("CESM2-WACCM", "SSP245", "010", _std, "r3i1p1f1")
+    add("CESM2-WACCM", "SSP245", "010", _tmx, "001")
 
     return table
 

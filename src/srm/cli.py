@@ -40,6 +40,119 @@ _MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def _resolve_lineage(configs: list[BCSDConfig]) -> list[BCSDConfig]:
+    """Resolve ensemble member lineage for each config, skipping unknown combinations."""
+    from srm.lineage import resolve_member_lineage
+
+    resolved = []
+    for config in configs:
+        if config.scenario is None:
+            resolved.append(config)
+            continue
+        try:
+            hist, ssp245 = resolve_member_lineage(
+                config.gcm, config.scenario, config.ensemble_member, config.variable
+            )
+            config = config.model_copy(
+                update={"historical_ensemble_member": hist, "ssp245_ensemble_member": ssp245}
+            )
+        except KeyError:
+            pass
+        resolved.append(config)
+    return resolved
+
+
+def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
+    """Print a compact table of resolved ensemble member lineage.
+
+    Only rows where lineage was actually resolved (historical_ensemble_member set)
+    are shown. Rows are deduplicated by (gcm, variable, ensemble_member) since
+    resolution is deterministic for that key.
+    """
+    resolved = [c for c in configs if c.historical_ensemble_member is not None]
+    if not resolved:
+        return
+
+    table = Table(
+        title=f"Ensemble Member Lineage ({len(resolved)} config(s) resolved)",
+        show_header=True,
+        header_style="bold cyan",
+        box=box.SIMPLE_HEAD,
+    )
+    table.add_column("GCM", style="cyan")
+    table.add_column("Variable")
+    table.add_column("Member", justify="right")
+    table.add_column("→ Historical", style="green", justify="right")
+    table.add_column("→ SSP245 Bridge", style="yellow", justify="right")
+
+    seen: set[tuple[str, str, str]] = set()
+    for cfg in resolved:
+        key = (cfg.gcm, cfg.variable, cfg.ensemble_member)
+        if key in seen:
+            continue
+        seen.add(key)
+        ssp = cfg.ssp245_ensemble_member if cfg.ssp245_ensemble_member is not None else "—"
+        table.add_row(
+            cfg.gcm,
+            cfg.variable,
+            cfg.ensemble_member,
+            cfg.historical_ensemble_member,
+            ssp,
+        )
+
+    console.print(table)
+
+
+def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
+    """Cross-scenario validation: check resolved members exist in target stores.
+
+    Uses static catalog ensemble_members metadata when available; falls back to
+    a lazy store open (reads coordinate metadata only, no data loaded). Silently
+    skips stores that are unreachable or have no member metadata.
+    """
+    from srm.datasets import catalog
+
+    errors: list[str] = []
+    _cache: dict[str, frozenset[str] | None] = {}
+
+    def _members(store_name: str) -> frozenset[str] | None:
+        if store_name not in _cache:
+            try:
+                entry = catalog.get(store_name)
+                if entry.ensemble_members is not None:
+                    _cache[store_name] = frozenset(entry.ensemble_members)
+                else:
+                    ds = entry.to_xarray()
+                    coord = ds.coords.get("ensemble_member")
+                    _cache[store_name] = (
+                        frozenset(str(m) for m in coord.values) if coord is not None else None
+                    )
+            except Exception:
+                _cache[store_name] = None
+        return _cache[store_name]
+
+    for config in configs:
+        if config.historical_ensemble_member is not None:
+            store = f"{config.gcm}-historical-icechunk"
+            known = _members(store)
+            if known is not None and config.historical_ensemble_member not in known:
+                errors.append(
+                    f"  {config.gcm}/{config.variable}: "
+                    f"historical:{config.historical_ensemble_member!r} not in {store}"
+                )
+        if config.ssp245_ensemble_member is not None:
+            store = f"{config.gcm}-SSP245-icechunk"
+            known = _members(store)
+            if known is not None and config.ssp245_ensemble_member not in known:
+                errors.append(
+                    f"  {config.gcm}/{config.variable}: "
+                    f"ssp245:{config.ssp245_ensemble_member!r} not in {store}"
+                )
+
+    if errors:
+        raise ValueError("Resolved ensemble members not found in stores:\n" + "\n".join(errors))
+
+
 def _is_matrix_config(config_dict: dict) -> bool:
     """Return True if any expandable field contains a list."""
     return any(
@@ -261,6 +374,9 @@ def run(
     if version is not None:
         configs = [config.model_copy(update={"version": version}) for config in configs]
     logger.info("Loaded %d configuration(s)", len(configs))
+    configs = _resolve_lineage(configs)
+    _print_lineage_summary(configs)
+    _validate_lineage_members(configs)
 
     orchestrator = BCSDOrchestrator()
 
@@ -451,6 +567,9 @@ def run_matrix(
         detrend_method=detrend_method,
     )
 
+    configs = _resolve_lineage(configs)
+    _validate_lineage_members(configs)
+
     n = len(configs)
     logger.info(
         "Generated %d configuration(s): %d GCM(s) x %d variable(s) x %d member(s) x %d scenario(s)",
@@ -460,6 +579,7 @@ def run_matrix(
         len(member),
         len(scenario_values),
     )
+    _print_lineage_summary(configs)
 
     if dry_run:
         table = Table(

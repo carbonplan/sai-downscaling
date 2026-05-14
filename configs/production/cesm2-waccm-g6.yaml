@@ -1,19 +1,19 @@
-# BCSD configuration: CESM2-WACCM / tas / SSP245 / global (production)
+# BCSD configuration: CESM2-WACCM / G6-1.5K / all variables / global (production)
 #
 # Equivalent CLI command:
-#   uv run bcsd run --config-path configs/production/
+#   uv run bcsd run --config-path configs/production/cesm2-waccm-g6.yaml
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
-variables: ["tas"]
+variables: ["tas", "pr", "rsds", "tasmax"]
 ensemble_members: ["001", "002", "003"]
-scenarios: ["SSP245"]
+scenarios: ["G6-1.5K"]
 
 # === Time Periods ===
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2100
+predict_period_end: 2084
 
 # === Storage ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"

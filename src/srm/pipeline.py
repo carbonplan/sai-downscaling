@@ -265,16 +265,45 @@ class BCSDPipeline:
         """
         Initialize pipeline with configuration.
 
+        Ensemble member lineage is resolved automatically when
+        ``historical_ensemble_member`` is not already set on the config.
+        Unknown GCM / scenario / member combinations are silently skipped
+        (fields remain ``None``, which falls back to ``ensemble_member`` at
+        every call site).
+
         Parameters
         ----------
         config : BCSDConfig
             Configuration for the BCSD run
         """
+        if config.scenario is not None and config.historical_ensemble_member is None:
+            from srm.lineage import resolve_member_lineage
+
+            try:
+                hist, ssp245 = resolve_member_lineage(
+                    config.gcm, config.scenario, config.ensemble_member, config.variable
+                )
+                config = config.model_copy(
+                    update={
+                        "historical_ensemble_member": hist,
+                        "ssp245_ensemble_member": ssp245,
+                    }
+                )
+            except KeyError:
+                pass
+
         self.config = config
         self.cache = ArtifactCache.from_config(config)
-
-        # State dictionary for intermediate results (mostly for debugging)
         self._state = {}
+
+        if config.historical_ensemble_member is not None:
+            parts = [
+                f"ensemble_member={config.ensemble_member!r}",
+                f"historical={config.historical_ensemble_member!r}",
+            ]
+            if config.ssp245_ensemble_member is not None:
+                parts.append(f"ssp245_bridge={config.ssp245_ensemble_member!r}")
+            logger.info("Lineage resolved — %s", "  ".join(parts))
 
     @staticmethod
     def _icechunk_storage(path: str):
