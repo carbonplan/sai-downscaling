@@ -370,7 +370,7 @@ class Catalog:
                 },
                 license="CC-BY-4.0",
                 citation="Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 ScenarioMIP ssp245. Version 20200206. Earth System Grid Federation. https://doi.org/10.22033/ESGF/CMIP6.10101",
-                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+                ensemble_members=["001", "002", "003", "004", "005", "007", "008", "009", "010"],
                 expected_vars=[
                     VarStandards.HURS,
                     VarStandards.PR,
