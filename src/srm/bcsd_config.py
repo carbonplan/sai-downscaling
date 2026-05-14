@@ -113,11 +113,11 @@ class VariableConfig(BaseModel):
 
 class BCSDConfig(pydantic_settings.BaseSettings):
     """
-    Main configuration for BCSD downscaling pipeline.
+    Run-identity configuration for BCSD downscaling pipeline.
 
-    This config captures all parameters needed to uniquely identify a BCSD run,
-    including model, variable, ensemble member, scenario, time periods, and
-    optional spatial subsetting.
+    Captures the parameters that uniquely identify a BCSD run: model, variable,
+    ensemble member, scenario, time periods, spatial subsetting, and bias-correction
+    method. Operational settings (paths, flags) live in PipelineOptions.
     """
 
     # Model and data identifiers
@@ -158,57 +158,16 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         None, description="Spatial bounds as (lat_min, lat_max, lon_min, lon_max). None for global."
     )
 
-    # Cache and output paths
-    scratch_dir: str = Field(
-        "s3://carbonplan-scratch/srm/cache/",
-        description="Base directory for cached intermediate artifacts",
-    )
-    output_dir: str = Field(
-        "s3://carbonplan-scratch/srm/outputs/", description="Directory for final downscaled outputs"
-    )
-    environment: str = Field(
-        default="qa",
-        description="Environment name (qa, production). Separates cache/outputs by deployment stage.",
-    )
-    version: str = Field(
-        default=_cache_version,
-        description="Version identifier for cache/output path namespacing. Defaults to the installed package version (e.g. '1.0.post3'). Override with BCSD_VERSION env var.",
-    )
-
-    model_config = {"env_prefix": "BCSD_"}
-
-    # Variable-specific settings (auto-populated)
-    variable_config: VariableConfig | None = Field(
-        None, description="Variable-specific BCSD parameters. Auto-populated if None."
-    )
-
-    # Runtime options
-    verbose: bool = Field(True, description="Enable verbose logging")
-    rechunk_workflow: bool = Field(
-        True, description="Enable strategic rechunking between pipeline stages"
-    )
-    apply_ocean_mask: bool = Field(
-        True, description="Mask ocean pixels to NaN in the final scenario output"
-    )
     mapping_type: MappingType = Field(
         "parametric",
         description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 
-    save_intermediate: bool = Field(
-        False,
-        description="Save intermediate artifacts (e.g. detrended data, quantile mapping results) to cache for debugging and analysis)",
-    )
+    model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 
-    # Resolved lineage members (populated by batch runner via resolve_member_lineage).
-    # None falls back to ensemble_member at each call site, preserving backward compatibility.
-    historical_ensemble_member: str | None = Field(
-        None,
-        description="Resolved historical ensemble member. When set, overrides ensemble_member for historical data loads.",
-    )
-    ssp245_ensemble_member: str | None = Field(
-        None,
-        description="Resolved SSP245 bridge member for SAI scenarios. When set, overrides ensemble_member for SSP245 bridge loads.",
+    # Variable-specific settings (auto-populated)
+    variable_config: VariableConfig | None = Field(
+        None, description="Variable-specific BCSD parameters. Auto-populated if None."
     )
 
     def model_post_init(self, __context) -> None:
@@ -299,8 +258,6 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             "subset_bounds": self.subset_bounds,
             "variable_config": self.variable_config.model_dump() if self.variable_config else None,
             "mapping_type": self.mapping_type,
-            "historical_ensemble_member": self.historical_ensemble_member,
-            "ssp245_ensemble_member": self.ssp245_ensemble_member,
         }
 
         # Create stable string representation and hash
@@ -341,6 +298,47 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     def is_sai_scenario(self) -> bool:
         """Check if this is an SAI intervention scenario"""
         return self.scenario and ("G6" in self.scenario.upper() or "SAI" in self.scenario.upper())
+
+
+class PipelineOptions(pydantic_settings.BaseSettings):
+    """
+    Operational settings for the BCSD pipeline.
+
+    Covers infrastructure (storage paths, environment, version) and runtime
+    flags (verbosity, rechunking, post-processing). These do not affect
+    computation results and are separate from BCSDConfig run identity.
+
+    All fields can be overridden via BCSD_* environment variables.
+    """
+
+    scratch_dir: str = Field(
+        "s3://carbonplan-scratch/srm/cache/",
+        description="Base directory for cached intermediate artifacts",
+    )
+    output_dir: str = Field(
+        "s3://carbonplan-scratch/srm/outputs/", description="Directory for final downscaled outputs"
+    )
+    environment: str = Field(
+        default="qa",
+        description="Environment name (qa, production). Separates cache/outputs by deployment stage.",
+    )
+    version: str = Field(
+        default=_cache_version,
+        description="Version identifier for cache/output path namespacing. Defaults to the installed package version (e.g. '1.0.post3'). Override with BCSD_VERSION env var.",
+    )
+    verbose: bool = Field(True, description="Enable verbose logging")
+    rechunk_workflow: bool = Field(
+        True, description="Enable strategic rechunking between pipeline stages"
+    )
+    apply_ocean_mask: bool = Field(
+        True, description="Mask ocean pixels to NaN in the final scenario output"
+    )
+    save_intermediate: bool = Field(
+        False,
+        description="Save intermediate artifacts (e.g. detrended data, quantile mapping results) to cache for debugging and analysis",
+    )
+
+    model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 
 
 class CacheConfig(BaseModel):

@@ -12,7 +12,7 @@ import os
 
 import typer
 
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.pipeline import BCSDPipeline
 
 app = typer.Typer()
@@ -44,12 +44,14 @@ def run_stage(
 
         # Parse config from JSON
         config_dict = json.loads(config_json)
+        options_dict = config_dict.pop("options", {})
         config = BCSDConfig(**config_dict)
+        options = PipelineOptions(**options_dict)
 
         logger.info(f"Running {stage} for {config.run_id}")
 
         # Create pipeline and run stage
-        pipeline = BCSDPipeline(config)
+        pipeline = BCSDPipeline(config, options)
 
         if stage == "prepare_observations":
             result_path = pipeline.prepare_observations()
