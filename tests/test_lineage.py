@@ -90,14 +90,14 @@ class TestSSP245Lineage:
     )
     @pytest.mark.parametrize("variable", _STANDARD_VARS)
     def test_ssp245_standard_vars(self, member, expected_hist, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "ssp245", member, variable)
+        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
         assert hist == expected_hist
         assert ssp245 is None
 
     @pytest.mark.parametrize("member", ("007", "008", "009", "010"))
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_ssp245_tmax_tmin_members(self, member, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "ssp245", member, variable)
+        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
         assert hist == "001"
         assert ssp245 is None
 
@@ -105,7 +105,7 @@ class TestSSP245Lineage:
         members = ("001", "002", "003", "004", "005", "007", "008", "009", "010")
         for member in members:
             with subtests.test(member=member):
-                _, ssp245 = resolve_member_lineage("CESM2-WACCM", "ssp245", member, "tas")
+                _, ssp245 = resolve_member_lineage("CESM2-WACCM", "SSP245", member, "tas")
                 assert ssp245 is None
 
 
@@ -128,16 +128,16 @@ class TestLineageKeyError:
     def test_excluded_member_006_raises(self):
         # SSP245 member 006 excluded: ends 2069-12-31
         with pytest.raises(KeyError, match="ensemble_member="):
-            resolve_member_lineage("CESM2-WACCM", "ssp245", "006", "tas")
+            resolve_member_lineage("CESM2-WACCM", "SSP245", "006", "tas")
 
     def test_ssp245_001_tasmax_raises(self):
         # tasmax/tasmin not available for SSP245 001-005 (CMIP6 bug)
         with pytest.raises(KeyError, match="variable="):
-            resolve_member_lineage("CESM2-WACCM", "ssp245", "001", "tasmax")
+            resolve_member_lineage("CESM2-WACCM", "SSP245", "001", "tasmax")
 
     def test_ssp245_005_tasmin_raises(self):
         with pytest.raises(KeyError):
-            resolve_member_lineage("CESM2-WACCM", "ssp245", "005", "tasmin")
+            resolve_member_lineage("CESM2-WACCM", "SSP245", "005", "tasmin")
 
     def test_g6_unknown_member_raises(self):
         with pytest.raises(KeyError):
