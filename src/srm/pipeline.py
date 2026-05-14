@@ -304,6 +304,10 @@ class BCSDPipeline:
             "scenario": self.config.scenario or "historical",
             "variable": self.config.variable,
             "ensemble_member": self.config.ensemble_member,
+            "historical_ensemble_member": self.config.historical_ensemble_member
+            or self.config.ensemble_member,
+            "ssp245_ensemble_member": self.config.ssp245_ensemble_member
+            or self.config.ensemble_member,
         }
 
         if source_dataset is not None:
@@ -447,7 +451,9 @@ class BCSDPipeline:
         model_hist = get_experiment(
             gcm=self.config.gcm, scenario="historical", var=self.config.variable
         )
-        model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+        model_hist = model_hist.sel(
+            ensemble_member=self.config.historical_ensemble_member or self.config.ensemble_member
+        )
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         if self.config.subset_bounds:
@@ -640,7 +646,9 @@ class BCSDPipeline:
         model_hist = get_experiment(
             gcm=self.config.gcm, scenario="historical", var=self.config.variable
         )
-        model_hist = model_hist.sel(ensemble_member=self.config.ensemble_member)
+        model_hist = model_hist.sel(
+            ensemble_member=self.config.historical_ensemble_member or self.config.ensemble_member
+        )
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         model_scenario = get_experiment(
@@ -655,7 +663,9 @@ class BCSDPipeline:
             ssp_timeseries = get_experiment(
                 gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
             )
-            ssp_timeseries = ssp_timeseries.sel(ensemble_member=self.config.ensemble_member)
+            ssp_timeseries = ssp_timeseries.sel(
+                ensemble_member=self.config.ssp245_ensemble_member or self.config.ensemble_member
+            )
             ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
 
         if self.config.subset_bounds:
