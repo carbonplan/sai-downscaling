@@ -117,130 +117,95 @@ class TestCheckEnsembleMemberDim:
         assert "traceback" in result.detail
 
 
-# ── check_ssp245_hist_member_pairing ─────────────────────────────────────────
+# ── check_lineage_member_availability ────────────────────────────────────────
+
+# CESM2-WACCM SSP245 requires hist members: r1i1p1f1, r2i1p1f1, r3i1p1f1, 001
+_CESM2_HIST_MEMBERS = ("r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001")
+# CESM2-WACCM G6-1.5K additionally requires SSP245 bridge members: 001-003, 007-009
+_CESM2_G6_SSP245_MEMBERS = ("001", "002", "003", "007", "008", "009")
 
 
-class TestCheckSsp245HistMemberPairing:
-    def test_skip_wrong_scenario(self, mock_datasets):
+class TestCheckLineageMemberAvailability:
+    def test_skip_no_lineage_registered(self, mock_datasets):
+        # MIROC-ES2H has no lineage registered yet
+        result = DatasetValidator(
+            gcm="MIROC-ES2H", scenario="SSP245"
+        ).check_lineage_member_availability()
+        assert result.status == CheckStatus.SKIP
+        assert "No lineage registered" in result.message
+
+    def test_skip_historical_scenario(self, mock_datasets):
+        # No lineage entries for any historical scenario
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"
-        ).check_ssp245_hist_member_pairing()
-        assert result.status == CheckStatus.SKIP
-        assert "SSP245" in result.message
-
-    def test_skip_ssp245_missing(self, mock_datasets):
-        result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="SSP245"
-        ).check_ssp245_hist_member_pairing()
+        ).check_lineage_member_availability()
         assert result.status == CheckStatus.SKIP
 
-    def test_fail_historical_missing(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_with_members("r1i1p1f1"))
+    def test_fail_historical_store_missing(self, mock_datasets):
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="SSP245"
-        ).check_ssp245_hist_member_pairing()
+        ).check_lineage_member_availability()
         assert result.status == CheckStatus.FAIL
         assert "not found" in result.message
 
-    def test_pass_historical_no_member_dim(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_with_members("r1i1p1f1"))
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_no_members())
+    def test_pass_ssp245_all_hist_present(self, mock_datasets):
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_members(*_CESM2_HIST_MEMBERS)
+        )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="SSP245"
-        ).check_ssp245_hist_member_pairing()
+        ).check_lineage_member_availability()
         assert result.status == CheckStatus.PASS
-        assert "single shared run" in result.message
+        assert "historical" in result.message
 
-    def test_pass_all_matched(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1", "r2i1p1f1")
-        )
+    def test_fail_ssp245_hist_member_missing(self, mock_datasets):
+        # Missing "001" — needed for tasmax/tasmin members 007-010
         mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
             _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
         )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="SSP245"
-        ).check_ssp245_hist_member_pairing()
-        assert result.status == CheckStatus.PASS
-        assert "2 SSP245 members" in result.message
+        ).check_lineage_member_availability()
+        assert result.status == CheckStatus.FAIL
+        assert "001" in result.detail["missing_historical"]
 
-    def test_fail_unmatched_members(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1", "r4i1p1f1")
-        )
+    def test_pass_g6_all_members_present(self, mock_datasets):
         mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1")
+            _ds_with_members(*_CESM2_HIST_MEMBERS)
         )
-        result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="SSP245"
-        ).check_ssp245_hist_member_pairing()
-        assert result.status == CheckStatus.FAIL
-        assert "r4i1p1f1" in result.detail["unmatched"]
-
-    def test_skip_ssp245_no_member_dim(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_no_members())
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1")
-        )
-        result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="SSP245"
-        ).check_ssp245_hist_member_pairing()
-        assert result.status == CheckStatus.SKIP
-        assert "nothing to check" in result.message
-
-
-# ── check_g6_ssp245_member_pairing ───────────────────────────────────────────
-
-
-class TestCheckG6Ssp245MemberPairing:
-    def test_skip_wrong_scenario(self, mock_datasets):
-        result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="SSP245"
-        ).check_g6_ssp245_member_pairing()
-        assert result.status == CheckStatus.SKIP
-
-    def test_skip_g6_missing(self, mock_datasets):
-        result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
-        ).check_g6_ssp245_member_pairing()
-        assert result.status == CheckStatus.SKIP
-
-    def test_fail_ssp245_missing(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(_ds_with_members("r1i1p1f1"))
-        result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
-        ).check_g6_ssp245_member_pairing()
-        assert result.status == CheckStatus.FAIL
-
-    def test_fail_ssp245_no_member_dim(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(_ds_with_members("r1i1p1f1"))
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_no_members())
-        result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
-        ).check_g6_ssp245_member_pairing()
-        assert result.status == CheckStatus.FAIL
-        assert "cannot verify" in result.message
-
-    def test_pass_all_matched(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(_ds_with_members("r1i1p1f1"))
         mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1", "r2i1p1f1")
+            _ds_with_members(*_CESM2_G6_SSP245_MEMBERS)
         )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
-        ).check_g6_ssp245_member_pairing()
+        ).check_lineage_member_availability()
         assert result.status == CheckStatus.PASS
+        assert "SSP245" in result.message
 
-    def test_fail_unmatched_g6_member(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1", "r9i1p1f1")
+    def test_fail_g6_ssp245_bridge_member_missing(self, mock_datasets):
+        # Missing SSP245 "009" — bridge for G6 member 001 tasmax/tasmin
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_members(*_CESM2_HIST_MEMBERS)
         )
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_with_members("r1i1p1f1"))
+        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(
+            _ds_with_members("001", "002", "003", "007", "008")  # 009 missing
+        )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
-        ).check_g6_ssp245_member_pairing()
+        ).check_lineage_member_availability()
         assert result.status == CheckStatus.FAIL
-        assert "r9i1p1f1" in result.detail["unmatched"]
+        assert "009" in result.detail["missing_ssp245"]
+
+    def test_fail_g6_ssp245_store_missing(self, mock_datasets):
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_members(*_CESM2_HIST_MEMBERS)
+        )
+        # SSP245 store absent
+        result = DatasetValidator(
+            gcm="CESM2-WACCM", scenario="G6-1.5K"
+        ).check_lineage_member_availability()
+        assert result.status == CheckStatus.FAIL
+        assert "not found" in result.message
 
 
 # ── check_g6_not_identical_to_ssp245 ─────────────────────────────────────────
@@ -400,9 +365,10 @@ class TestValidate:
         check_ids = [r.check_id for r in results]
         assert "ensemble_member_dim" in check_ids
         assert "temporal_coverage" in check_ids
-        assert "ssp245_hist_member_pairing" in check_ids
-        assert "g6_ssp245_member_pairing" in check_ids
+        assert "lineage_member_availability" in check_ids
         assert "g6_not_identical_to_ssp245" in check_ids
+        assert "ssp245_hist_member_pairing" not in check_ids
+        assert "g6_ssp245_member_pairing" not in check_ids
 
     def test_all_results_have_correct_gcm_scenario(self, mock_datasets):
         results = DatasetValidator(gcm="MIROC-ES2H", scenario="historical").run_checks()

@@ -78,3 +78,13 @@ def resolve_member_lineage(
             f"Add this combination to the lookup table in srm/lineage.py."
         )
     return _LINEAGE[key]
+
+
+def get_lineage_entries(gcm: str, scenario: str) -> dict[tuple[str, str], tuple[str, str | None]]:
+    """Return {(member, variable): (historical_member, ssp245_member)} for all registered entries.
+
+    Returns an empty dict if no lineage is registered for the given gcm/scenario.
+    """
+    return {
+        (m, v): parents for (g, s, m, v), parents in _LINEAGE.items() if g == gcm and s == scenario
+    }
