@@ -20,8 +20,13 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None]]:
         for var in variables:
             table[(gcm, scenario, member, var)] = (hist, ssp245)
 
-    _std = ("tas", "pr", "rsds", "hurs")
-    _tmx = ("tasmax", "tasmin")
+    _std = (
+        "tas",
+        "pr",
+        "rsds",
+        "hurs",
+    )
+    _tmx = ("tasmax", "tasmin", "dtr")
 
     # CESM2-WACCM G6-1.5K
     # Standard variables branch from r1/r2/r3i1p1f1 historical and SSP245 001/002/003 bridge.
