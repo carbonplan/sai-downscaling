@@ -14,7 +14,7 @@ MappingType = Literal["parametric", "nonparametric", "nonparametric_hybrid"]
 DownscalingMethod = Literal["additive", "multiplicative"]
 DownscalingClimMethod = Literal["simple", "fft"]
 DetrendMethod = Literal["additive", "multiplicative"]
-VariableName = Literal["tas", "tasmax", "pr", "rsds", "dtr"]
+VariableName = Literal["tas", "tasmax", "pr", "rsds", "dtr", "hurs"]
 
 
 class VariableConfig(BaseModel):
@@ -65,6 +65,13 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "simple",
+            },
+            "hurs": {
+                "detrend_data": True,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "downscaling_method": "additive",
+                "downscaling_clim_method": "fft",
             },
         }
 
