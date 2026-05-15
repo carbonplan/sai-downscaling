@@ -193,13 +193,11 @@ def get_experiment(
 
 
 def get_historical_experiment(gcm: str, member: str, var: str) -> xr.DataArray:
-    """Load a single historical ensemble member, routing to the correct store by member label.
-    CMIP6-style labels (r*i*p*f*) use the pangeo-prefixed store; numeric labels use the standard store."""
-    key = (
-        f"pangeo-{gcm}-historical-icechunk"
-        if member.startswith("r")
-        else f"{gcm}-historical-icechunk"
-    )
+    """Load a single historical ensemble member, routing to the correct source dataset.
+    CESM2-WACCM has a two historical dataset options, so we route to the pangeo-prefixed store for r*i*p*f* members,
+    while others use the standard store path."""
+    use_pangeo = gcm == "CESM2-WACCM" and member.startswith("r")
+    key = f"pangeo-{gcm}-historical-icechunk" if use_pangeo else f"{gcm}-historical-icechunk"
     ds = catalog.get(key).to_xarray()
     ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
     return ds[var].sel(ensemble_member=member)
