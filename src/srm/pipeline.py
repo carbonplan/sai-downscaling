@@ -46,7 +46,14 @@ logger = logging.getLogger(__name__)
 def _make_debiaser(variable: str, **kwargs):
     if variable == "rsds":
         return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
-    return QuantileMapping.from_variable(variable=variable, **kwargs)
+
+    elif (
+        variable == "dtr"
+    ):  # Ibicus does not accept dtr as a valid var, we are usign tasrange, which seem the same.
+        return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
+
+    else:
+        return QuantileMapping.from_variable(variable=variable, **kwargs)
 
 
 def calculate_out_of_range_mask(
