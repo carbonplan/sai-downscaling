@@ -27,7 +27,7 @@ from srm.input_data.etl_utils import (
     virtualize_and_combine,
     write_dataset_to_icechunk,
 )
-from srm.utils import lon_to_180
+from srm.utils import lon_to_180, to_proleptic_gregorian
 
 zarr.config.set({"async.concurrency": 128})
 
@@ -581,7 +581,7 @@ def process(variable, scenario, coiled, all_variables, subset):
             ds = get_CESM_WACCM_ds(scenario)
             available = [v for v in variables if v in ds]
             ds = ds[available]
-            # ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False, align_on="date")
+            ds = to_proleptic_gregorian(ds)
             ds = trim_negative_precipitation(ds)
             ds = lon_to_180(ds, lon_name="lon")
             ds = ds.sortby(["lat", "lon"])
