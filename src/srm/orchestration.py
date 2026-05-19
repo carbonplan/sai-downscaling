@@ -214,7 +214,7 @@ class BCSDOrchestrator:
             vm_type = self._STAGE_VM_TYPES.get(stage, ["c8g.12xlarge"])
             job_result = coiled.batch.run(
                 command=command,
-                name=f"bcsd-{stage}-{remaining[0].gcm}",
+                name=f"bcsd-{stage}-{remaining[0].gcm}-{remaining[0].variable}",
                 vm_type=vm_type,
                 scheduler_vm_type=vm_type,
                 region="us-west-2",
