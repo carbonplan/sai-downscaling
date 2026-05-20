@@ -110,7 +110,7 @@ class BaseCESM_Config(BaseETLConfig):
     process_cluster: dict = field(
         default_factory=lambda: {
             "n_workers": [4, 16],
-            "worker_vm_types": ["m8g.2xlarge"],
+            "worker_vm_types": ["r8g.4xlarge"],
             "scheduler_vm_types": "c8g.xlarge",
         }
     )
@@ -581,7 +581,7 @@ def process(variable, scenario, coiled, all_variables, subset):
             ds = get_CESM_WACCM_ds(scenario)
             available = [v for v in variables if v in ds]
             ds = ds[available]
-            ds = to_proleptic_gregorian(ds)
+            ds = to_proleptic_gregorian(ds, allow_rechunk=True)
             ds = trim_negative_precipitation(ds)
             ds = lon_to_180(ds, lon_name="lon")
             ds = ds.sortby(["lat", "lon"])
