@@ -11,7 +11,7 @@ from srm.lineage import resolve_member_lineage
 # ---------------------------------------------------------------------------
 
 _STANDARD_VARS = ("tas", "pr", "rsds", "hurs")
-_TMAX_MIN_VARS = ("tasmax", "tasmin")
+_TMAX_MIN_VARS = ("tasmax", "tasmin", "dtr")
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +81,7 @@ class TestSSP245Lineage:
             ("003", "r3i1p1f1"),
             ("004", "r2i1p1f1"),
             ("005", "r3i1p1f1"),
+            ("006", "r1i1p1f1"),
             ("007", "r2i1p1f1"),
             ("008", "r3i1p1f1"),
             ("009", "r2i1p1f1"),
@@ -93,7 +94,7 @@ class TestSSP245Lineage:
         assert hist == expected_hist
         assert ssp245 is None
 
-    @pytest.mark.parametrize("member", ("007", "008", "009", "010"))
+    @pytest.mark.parametrize("member", ("006", "007", "008", "009", "010"))
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_ssp245_tmax_tmin_members(self, member, variable):
         hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
@@ -101,7 +102,7 @@ class TestSSP245Lineage:
         assert ssp245 is None
 
     def test_ssp245_ssp245_member_always_none(self, subtests):
-        members = ("001", "002", "003", "004", "005", "007", "008", "009", "010")
+        members = ("001", "002", "003", "004", "005", "006", "007", "008", "009", "010")
         for member in members:
             with subtests.test(member=member):
                 _, ssp245 = resolve_member_lineage("CESM2-WACCM", "SSP245", member, "tas")
