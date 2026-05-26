@@ -8,6 +8,7 @@ It automatically detects cached artifacts and submits only necessary tasks.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Literal
 
@@ -211,10 +212,16 @@ class BCSDOrchestrator:
                 for config in remaining
             ]
 
+            gcms = "-".join(sorted({c.gcm for c in remaining}))
+            variables = "-".join(sorted({c.variable for c in remaining}))
+            config_hashes: list[str] = [c.config_hash for c in remaining]
+            batch_hash = hashlib.sha256("".join(sorted(config_hashes)).encode()).hexdigest()[:8]
+            job_name = f"bcsd-{stage}-{gcms}-{variables}-{batch_hash}"
+
             vm_type = self._STAGE_VM_TYPES.get(stage, ["c8g.12xlarge"])
             job_result = coiled.batch.run(
                 command=command,
-                name=f"bcsd-{stage}-{remaining[0].gcm}",
+                name=job_name,
                 vm_type=vm_type,
                 scheduler_vm_type=vm_type,
                 region="us-west-2",

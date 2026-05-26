@@ -199,9 +199,7 @@ def virtualize_and_combine(
     )
 
 
-def load_dtr_from_store(
-    bucket: str, prefix: str, shards: dict, region: str = "us-west-2"
-) -> xr.Dataset:
+def load_dtr_from_store(bucket: str, prefix: str, region: str = "us-west-2") -> xr.Dataset:
     """Load DTR (diurnal temperature range) from an existing icechunk store.
 
     Computes dtr = tasmax - tasmin. tasmax and tasmin must already be present
@@ -210,7 +208,7 @@ def load_dtr_from_store(
     storage = icechunk.s3_storage(bucket=bucket, prefix=prefix, region=region)
     repo = icechunk.Repository.open(storage)
     session = repo.readonly_session("main")
-    ds = xr.open_dataset(session.store, engine="zarr", chunks=shards)
+    ds = xr.open_dataset(session.store, engine="zarr", chunks="auto")
     if "tasmax" not in ds or "tasmin" not in ds:
         raise ValueError("tasmax and tasmin must be processed before dtr")
     dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")

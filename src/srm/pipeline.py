@@ -31,6 +31,7 @@ from srm.downscaling_utils import (
     detrend,
     downscale_from_coarse,
     get_experiment,
+    get_historical_experiment,
     get_obs,
     interpolate_fine_to_coarse_grid,
     rechunk,
@@ -45,7 +46,14 @@ logger = logging.getLogger(__name__)
 def _make_debiaser(variable: str, **kwargs):
     if variable == "rsds":
         return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
-    return QuantileMapping.from_variable(variable=variable, **kwargs)
+
+    elif (
+        variable == "dtr"
+    ):  # Ibicus does not accept dtr as a valid var, we are usign tasrange, which seem the same.
+        return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
+
+    else:
+        return QuantileMapping.from_variable(variable=variable, **kwargs)
 
 
 def calculate_out_of_range_mask(
@@ -358,10 +366,6 @@ class BCSDPipeline:
             "ssp245_ensemble_member": self._ssp245_member,
         }
 
-        if source_dataset is not None:
-            dataset_attrs["license"] = source_dataset.license
-            dataset_attrs["citation"] = source_dataset.citation
-
         return dataset_attrs
 
     def _write_to_icechunk(
@@ -498,10 +502,9 @@ class BCSDPipeline:
         obs_fine = get_obs(var=self.config.variable)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
-        model_hist = get_experiment(
-            gcm=self.config.gcm, scenario="historical", var=self.config.variable
+        model_hist = get_historical_experiment(
+            gcm=self.config.gcm, member=self._hist_member, var=self.config.variable
         )
-        model_hist = model_hist.sel(ensemble_member=self._hist_member)
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         if self.config.subset_bounds:
@@ -693,10 +696,9 @@ class BCSDPipeline:
         obs_fine = get_obs(var=self.config.variable)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
-        model_hist = get_experiment(
-            gcm=self.config.gcm, scenario="historical", var=self.config.variable
+        model_hist = get_historical_experiment(
+            gcm=self.config.gcm, member=self._hist_member, var=self.config.variable
         )
-        model_hist = model_hist.sel(ensemble_member=self._hist_member)
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         model_scenario = get_experiment(
