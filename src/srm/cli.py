@@ -121,7 +121,11 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
             )
         except KeyError:
             continue
-        hist_store = f"{config.gcm}-historical-icechunk"
+        hist_store = (
+            f"pangeo-{config.gcm}-historical-icechunk"
+            if hist.startswith("r")
+            else f"{config.gcm}-historical-icechunk"
+        )
         known = _members(hist_store)
         if known is not None and hist not in known:
             errors.append(

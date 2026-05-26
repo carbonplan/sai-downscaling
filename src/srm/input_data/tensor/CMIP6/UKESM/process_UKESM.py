@@ -29,7 +29,7 @@ from srm.input_data.etl_utils import (
     virtualize_and_combine,
     write_dataset_to_icechunk,
 )
-from srm.utils import lon_to_180
+from srm.utils import lon_to_180, to_proleptic_gregorian
 
 zarr.config.set({"async.concurrency": 128})
 
@@ -292,7 +292,7 @@ def _preprocess_ukesm(
 
     if not isinstance(config, UKESM_Historical_Config):
         ds = ds.drop_duplicates(dim="time", keep="first")
-    ds = ds.convert_calendar("proleptic_gregorian", use_cftime=False, align_on="date")
+    ds = to_proleptic_gregorian(ds)
     ds = ds.drop_encoding()
     ds = lon_to_180(ds, lon_name="lon")
     ds = ds.sortby(["lat", "lon"])
