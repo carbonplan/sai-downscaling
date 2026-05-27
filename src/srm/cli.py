@@ -908,7 +908,7 @@ def validate(
                 for s in scenarios
                 if (r := index.get((cid, s))) is not None and r.status != CheckStatus.SKIP
             ]
-            if len(non_skip) <= 1:
+            if len(non_skip) == 1:
                 scoped_checks.append(cid)
             else:
                 table_checks.append(cid)
@@ -942,7 +942,8 @@ def validate(
                     r = index.get((cid, s))
                     if r and r.status != CheckStatus.SKIP:
                         scoped_tbl.add_row(cid, s, _STATUS_SYMBOL[r.status])
-            console.print(scoped_tbl)
+            if scoped_tbl.row_count:
+                console.print(scoped_tbl)
 
         _print_validate_lineage_summary(gcm_name, scenarios)
 
