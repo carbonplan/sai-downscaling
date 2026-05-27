@@ -1,0 +1,34 @@
+# BCSD configuration: MIROC-ES2H (QA)
+#
+# Equivalent CLI command:
+#   uv run bcsd run --config-path configs/qa/
+
+# === Model and Scenario ===
+gcm: "MIROC-ES2H"
+variables: ["tas"]
+ensemble_members: ["r1i1p4f2", "r2i1p4f2", "r3i1p4f2"]
+scenarios: ["SSP245"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+
+# === Spatial Subsetting ===
+# South Africa region: [lat_min, lat_max, lon_min, lon_max]
+subset_bounds: [-35, -22, 16, 33]
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+output_dir: "s3://carbonplan-scratch/srm/output"
+environment: "qa"
+# version defaults to the installed package version. Override to pin a specific cache namespace.
+# version: "v0.6.0.post5"
+
+# === Bias Correction ===
+mapping_type: "nonparametric_hybrid"
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true

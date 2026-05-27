@@ -190,9 +190,9 @@ class TestValidateLineageMembers:
         with patch("srm.datasets.catalog") as cat:
             cat.get.return_value = entry
             _validate_lineage_members(cfgs)
-        # Should query both historical and SSP245 stores, once each
+        # tas/pr/rsds → pangeo hist store; tasmax → standard hist store; all share SSP245
         called_stores = {call.args[0] for call in cat.get.call_args_list}
+        assert "pangeo-CESM2-WACCM-historical-icechunk" in called_stores
         assert "CESM2-WACCM-historical-icechunk" in called_stores
         assert "CESM2-WACCM-SSP245-icechunk" in called_stores
-        # Should only call each store once
-        assert cat.get.call_count == 2
+        assert cat.get.call_count == 3

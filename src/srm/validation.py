@@ -3,7 +3,7 @@ Input data validation checks for BCSD pipeline datasets.
 
 Checks are organized into the following groups:
 - integrity: checks for data completeness and correctness, such as missing values, duplicates
-- cross-scenario: member consistency across historical, SSP245, and G6 scenarios
+- lineage: verifies that all lineage-resolved parent members exist in their stores
 
 Use :class:`DatasetValidator` to run checks for a given (gcm, scenario) pair.
 """
@@ -24,8 +24,7 @@ from srm.datasets import catalog
 BLOCKING_CHECKS = {
     "ensemble_member_dim",
     "g6_not_identical_to_ssp245",
-    "ssp245_hist_member_pairing",
-    "g6_ssp245_member_pairing",
+    "lineage_member_availability",
     "temporal_coverage",
 }
 WARNING_CHECKS: set[str] = set()
@@ -35,11 +34,33 @@ INFO_CHECKS: set[str] = set()
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 
-# Expected inclusive daily time bounds per scenario (CMIP6 conventions).
-_SCENARIO_TIME_BOUNDS: dict[str, tuple[str, str]] = {
-    "historical": ("1850-01-01", "2014-12-31"),
-    "SSP245": ("2015-01-01", "2100-12-31"),
-    "G6-1.5K": ("2035-01-01", "2085-12-31"),
+# Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
+# CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
+# as the first day of the month following the final data month.
+# The standard CESM2-WACCM historical store only covers 1978–2015; the full 1850–2014 CMIP6
+# range lives in the pangeo-prefixed store (see _PANGEO_HISTORICAL_TIME_BOUNDS below).
+_SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
+    "CESM2-WACCM": {
+        "historical": ("1978-01-01", "2015-01-16"),
+        "SSP245": ("2015-01-01", "2101-01-01"),
+        "G6-1.5K": ("2035-01-01", "2085-01-01"),
+    },
+    "MIROC-ES2H": {
+        "historical": ("1850-01-01", "2014-12-31"),
+        "SSP245": ("2015-01-01", "2100-12-31"),
+        "G6-1.5K": ("2035-01-01", "2084-12-31"),
+    },
+    "UKESM": {
+        "historical": ("1850-01-01", "2014-12-31"),
+        "SSP245": ("2015-01-01", "2099-12-31"),
+        "G6-1.5K": ("2035-01-01", "2084-12-31"),
+    },
+}
+
+# Expected bounds for pangeo-prefixed historical stores (full CMIP6 1850–2014 period).
+# CESM2-WACCM first-of-next-month convention: last time step is 2015-01-01.
+_PANGEO_HISTORICAL_TIME_BOUNDS: dict[str, tuple[str, str]] = {
+    "CESM2-WACCM": ("1850-01-01", "2015-01-01"),
 }
 
 
@@ -121,8 +142,7 @@ class DatasetValidator(pydantic.BaseModel):
         "check_ensemble_member_dim",
         "check_g6_not_identical_to_ssp245",
         "check_temporal_coverage",
-        "check_ssp245_hist_member_pairing",
-        "check_g6_ssp245_member_pairing",
+        "check_lineage_member_availability",
     ]
 
     @pydantic.field_validator("gcm")
@@ -173,7 +193,10 @@ class DatasetValidator(pydantic.BaseModel):
                 self._dataset_cache[key] = None
             else:
                 try:
-                    self._dataset_cache[key] = catalog_ds.to_xarray()
+                    try:
+                        self._dataset_cache[key] = catalog_ds.to_xarray(convert_calendar=False)
+                    except TypeError:
+                        self._dataset_cache[key] = catalog_ds.to_xarray()
                 except Exception as exc:
                     tb = traceback.format_exc()
                     self._load_errors[key] = (f"Failed to load dataset {key}: {exc}", tb)
@@ -192,82 +215,6 @@ class DatasetValidator(pydantic.BaseModel):
             )
             return None, self._result(on_missing, f"Dataset not found in catalog: {key}", detail)
         return ds, None
-
-    def _member_pairing(
-        self,
-        primary_key: str,
-        ref_key: str,
-        primary_label: str,
-        ref_label: str,
-        ref_none_status: CheckStatus,
-    ) -> CheckResult:
-        """
-        Shared body for both member-pairing checks.
-
-        Parameters
-        ----------
-        primary_key : str
-            Catalog key for the primary dataset (the one being checked).
-        ref_key : str
-            Catalog key for the reference dataset.
-        primary_label : str
-            Human-readable name for the primary dataset (e.g. ``"SSP245"``).
-        ref_label : str
-            Human-readable name for the reference dataset (e.g. ``"historical"``).
-        ref_none_status : CheckStatus
-            Status to emit when the reference has no ``ensemble_member`` dimension.
-            Use ``PASS`` when the reference is a single shared run (historical),
-            ``FAIL`` when pairing is required (SSP245 as bridge for G6).
-        """
-        primary_ds, err = self._open_dataset(primary_key, on_missing=CheckStatus.SKIP)
-        if err is not None:
-            return err
-        assert primary_ds is not None
-
-        ref_ds, err = self._open_dataset(ref_key, on_missing=CheckStatus.FAIL)
-        if err is not None:
-            return err
-        assert ref_ds is not None
-
-        primary_members = _get_ensemble_members(primary_ds)
-        if primary_members is None:
-            return self._result(
-                CheckStatus.SKIP,
-                f"{primary_label} dataset has no ensemble_member dimension; nothing to check.",
-            )
-
-        ref_members = _get_ensemble_members(ref_ds)
-        if ref_members is None:
-            if ref_none_status == CheckStatus.PASS:
-                return self._result(
-                    CheckStatus.PASS,
-                    f"{ref_label} has no ensemble_member dim; "
-                    f"treated as single shared run matching all {primary_label} members.",
-                    {"primary_members": sorted(primary_members)},
-                )
-            return self._result(
-                CheckStatus.FAIL,
-                f"{ref_label} dataset has no ensemble_member dimension; "
-                f"cannot verify {primary_label} member pairing.",
-            )
-
-        unmatched = sorted(set(primary_members) - set(ref_members))
-        if unmatched:
-            return self._result(
-                CheckStatus.FAIL,
-                f"{len(unmatched)} {primary_label} member(s) not found in {ref_label}.",
-                {
-                    "unmatched": unmatched,
-                    "primary_members": sorted(primary_members),
-                    "ref_members": sorted(ref_members),
-                },
-            )
-
-        return self._result(
-            CheckStatus.PASS,
-            f"All {len(primary_members)} {primary_label} members present in {ref_label}.",
-            {"members": sorted(primary_members)},
-        )
 
     # ── public check methods ─────────────────────────────────────────────────────
 
@@ -298,38 +245,105 @@ class DatasetValidator(pydantic.BaseModel):
             detail,
         )
 
-    def check_ssp245_hist_member_pairing(self) -> CheckResult:
+    def check_lineage_member_availability(self) -> CheckResult:
         """
-        D1: Every SSP245 ensemble member must have a matching member in the historical store.
+        D1/D2: All lineage-resolved parent members must exist in their stores.
 
-        Skipped when scenario is not ``'SSP245'``. Passes automatically when the historical
-        dataset has no ensemble_member dimension (treated as a single shared run).
-        """
-        if self.scenario != "SSP245":
-            return self._result(CheckStatus.SKIP, "Only applicable to SSP245 scenario.")
-        return self._member_pairing(
-            primary_key=f"{self.gcm}-SSP245-icechunk",
-            ref_key=f"{self.gcm}-historical-icechunk",
-            primary_label="SSP245",
-            ref_label="historical",
-            ref_none_status=CheckStatus.PASS,
-        )
+        For each (member, variable) pair registered in the lineage table, resolves the
+        historical_member and (for G6-1.5K) the ssp245_member, then checks those exist
+        in the respective icechunk stores.
 
-    def check_g6_ssp245_member_pairing(self) -> CheckResult:
+        Skipped when no lineage is registered for this (gcm, scenario).
         """
-        D2: Every G6-1.5K ensemble member must have a matching member in the SSP245 store.
+        from srm.lineage import get_lineage_entries
 
-        The SSP245 bridge run is required for SAI scenario detrending. Skipped when
-        scenario is not ``'G6-1.5K'`` or when the GCM has no G6-1.5K dataset in the catalog.
-        """
-        if self.scenario != "G6-1.5K":
-            return self._result(CheckStatus.SKIP, "Only applicable to G6-1.5K scenario.")
-        return self._member_pairing(
-            primary_key=f"{self.gcm}-G6-1.5K-icechunk",
-            ref_key=f"{self.gcm}-SSP245-icechunk",
-            primary_label="G6-1.5K",
-            ref_label="SSP245",
-            ref_none_status=CheckStatus.FAIL,
+        entries = get_lineage_entries(self.gcm, self.scenario)
+        if not entries:
+            return self._result(
+                CheckStatus.SKIP,
+                f"No lineage registered for {self.gcm} {self.scenario}; skipping.",
+            )
+
+        hist_members_needed: set[str] = set()
+        ssp245_members_needed: set[str] = set()
+        for hist, ssp245 in entries.values():
+            hist_members_needed.add(hist)
+            if ssp245 is not None:
+                ssp245_members_needed.add(ssp245)
+
+        # Members starting with "r" (CMIP6 format, e.g. r1i1p1f1) are stored in the
+        # pangeo-prefixed historical store; others use the standard store.
+        # This mirrors the routing in cli.py and downscaling_utils.get_historical_experiment.
+        standard_hist_needed = {m for m in hist_members_needed if not m.startswith("r")}
+        pangeo_hist_needed = {m for m in hist_members_needed if m.startswith("r")}
+
+        issues: list[str] = []
+        detail: dict = {}
+        missing_hist: list[str] = []
+
+        if standard_hist_needed:
+            hist_ds, err = self._open_dataset(
+                f"{self.gcm}-historical-icechunk", on_missing=CheckStatus.FAIL
+            )
+            if err is not None:
+                return err
+            assert hist_ds is not None
+            hist_available = set(_get_ensemble_members(hist_ds) or [])
+            detail["historical_needed"] = sorted(standard_hist_needed)
+            detail["historical_available"] = sorted(hist_available)
+            missing = sorted(standard_hist_needed - hist_available)
+            if missing:
+                missing_hist.extend(missing)
+                detail["missing_historical"] = missing
+
+        if pangeo_hist_needed:
+            pangeo_ds, err = self._open_dataset(
+                f"pangeo-{self.gcm}-historical-icechunk", on_missing=CheckStatus.FAIL
+            )
+            if err is not None:
+                return err
+            assert pangeo_ds is not None
+            pangeo_available = set(_get_ensemble_members(pangeo_ds) or [])
+            detail["pangeo_historical_needed"] = sorted(pangeo_hist_needed)
+            detail["pangeo_historical_available"] = sorted(pangeo_available)
+            missing = sorted(pangeo_hist_needed - pangeo_available)
+            if missing:
+                missing_hist.extend(missing)
+                detail["missing_pangeo_historical"] = missing
+
+        if missing_hist:
+            issues.append(f"{len(missing_hist)} resolved historical member(s) missing")
+            detail["missing_historical_combined"] = sorted(missing_hist)
+
+        if ssp245_members_needed:
+            ssp245_ds, err = self._open_dataset(
+                f"{self.gcm}-SSP245-icechunk", on_missing=CheckStatus.FAIL
+            )
+            if err is not None:
+                return err
+            assert ssp245_ds is not None
+            ssp245_available = set(_get_ensemble_members(ssp245_ds) or [])
+            detail["ssp245_needed"] = sorted(ssp245_members_needed)
+            detail["ssp245_available"] = sorted(ssp245_available)
+            missing_ssp245 = sorted(ssp245_members_needed - ssp245_available)
+            if missing_ssp245:
+                issues.append(f"{len(missing_ssp245)} resolved SSP245 bridge member(s) missing")
+                detail["missing_ssp245"] = missing_ssp245
+
+        if issues:
+            return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
+
+        hist_labels = []
+        if standard_hist_needed:
+            hist_labels.append("historical")
+        if pangeo_hist_needed:
+            hist_labels.append(f"pangeo-{self.gcm}-historical")
+        store_labels = ", ".join(hist_labels) + (" and SSP245" if ssp245_members_needed else "")
+        return self._result(
+            CheckStatus.PASS,
+            f"All {len(entries)} lineage entries resolve to available members "
+            f"in {store_labels} store(s).",
+            detail,
         )
 
     def check_g6_not_identical_to_ssp245(self) -> CheckResult:
@@ -422,46 +436,23 @@ class DatasetValidator(pydantic.BaseModel):
             {"checked_members": checked_members, "variable_sampled": var},
         )
 
-    def check_temporal_coverage(self) -> CheckResult:
-        """
-        E2: Time axis must be gapless with correct first and last dates.
-
-        Calendar-aware: uses ``xr.cftime_range`` with the dataset's own calendar so
-        that 360-day (UKESM), noleap (CESM2), and Gregorian (MIROC) datasets are
-        handled correctly without unsafe coercion to numpy datetime64.
-        """
-        key = f"{self.gcm}-{self.scenario}-icechunk"
-        ds, err = self._open_dataset(key, on_missing=CheckStatus.SKIP)
-        if err is not None:
-            return err
-        assert ds is not None
-
-        if "time" not in ds.dims:
-            return self._result(CheckStatus.SKIP, "Dataset has no time dimension.")
-
+    def _check_store_temporal(
+        self, ds: xr.Dataset, expected_start: str, expected_end: str
+    ) -> tuple[list[str], dict]:
+        """Check one dataset's time axis against expected bounds. Returns (issues, detail)."""
         time_index = ds.indexes["time"]
-        # ds.time.dt.calendar works for both CFTime and numpy datetime64 (returns
-        # "proleptic_gregorian" for the latter), so xr.cftime_range always gets the
-        # right calendar — no unsafe astype("datetime64") cast needed.
         calendar = ds.time.dt.calendar
         n_times = len(time_index)
-
-        expected_start, expected_end = _SCENARIO_TIME_BOUNDS[self.scenario]
-
-        # Build the expected daily range using the dataset's own calendar so that
-        # 360-day (UKESM), noleap (CESM2), and Gregorian (MIROC) datasets are all
-        # handled correctly.
-        expected_range = xr.date_range(
-            start=expected_start, end=expected_end, freq="D", calendar=calendar, use_cftime=True
-        )
-        n_expected = len(expected_range)
-
-        # strftime works on both cftime.datetime and pandas.Timestamp.
         actual_start_str = time_index[0].strftime("%Y-%m-%d")
         actual_end_str = time_index[-1].strftime("%Y-%m-%d")
 
+        n_expected = len(
+            xr.date_range(
+                start=expected_start, end=expected_end, freq="D", calendar=calendar, use_cftime=True
+            )
+        )
+
         detail: dict = {
-            "calendar": calendar,
             "actual_start": actual_start_str,
             "actual_end": actual_end_str,
             "n_times": n_times,
@@ -469,7 +460,6 @@ class DatasetValidator(pydantic.BaseModel):
             "expected_start": expected_start,
             "expected_end": expected_end,
         }
-
         issues: list[str] = []
 
         if actual_start_str != expected_start:
@@ -483,7 +473,6 @@ class DatasetValidator(pydantic.BaseModel):
             detail["n_missing_or_extra"] = delta
             issues.append(f"{abs(delta)} {label} time steps (expected {n_expected}, got {n_times})")
         elif n_times > 1:
-            # Counts match; verify regularity (gaps / duplicates within the range).
             inferred_freq = xr.infer_freq(ds.time)
             if inferred_freq != "D":
                 detail["inferred_freq"] = inferred_freq
@@ -492,9 +481,52 @@ class DatasetValidator(pydantic.BaseModel):
                     "possible gaps or duplicates within range"
                 )
 
+        return issues, detail
+
+    def check_temporal_coverage(self) -> CheckResult:
+        """
+        E2: Time axis must be gapless with correct first and last dates.
+
+        Bounds are looked up per GCM from ``_SCENARIO_TIME_BOUNDS`` (explicit observed date
+        strings). For historical scenarios, also checks the pangeo-prefixed store when
+        bounds are registered in ``_PANGEO_HISTORICAL_TIME_BOUNDS``.
+        """
+        key = f"{self.gcm}-{self.scenario}-icechunk"
+        ds, err = self._open_dataset(key, on_missing=CheckStatus.SKIP)
+        if err is not None:
+            return err
+        assert ds is not None
+
+        if "time" not in ds.dims:
+            return self._result(CheckStatus.SKIP, "Dataset has no time dimension.")
+
+        gcm_bounds = _SCENARIO_TIME_BOUNDS.get(self.gcm, {})
+        if self.scenario not in gcm_bounds:
+            return self._result(
+                CheckStatus.SKIP,
+                f"No time bounds defined for {self.gcm} / {self.scenario}.",
+            )
+        expected_start, expected_end = gcm_bounds[self.scenario]
+
+        issues, detail = self._check_store_temporal(ds, expected_start, expected_end)
+
+        # For historical scenarios, also check the pangeo-prefixed store.
+        if self.scenario == "historical" and self.gcm in _PANGEO_HISTORICAL_TIME_BOUNDS:
+            pangeo_key = f"pangeo-{self.gcm}-historical-icechunk"
+            pangeo_ds, pangeo_err = self._open_dataset(pangeo_key, on_missing=CheckStatus.SKIP)
+            if pangeo_err is not None and pangeo_err.status == CheckStatus.FAIL:
+                issues.append(f"pangeo-historical store failed to load: {pangeo_err.message}")
+                detail["pangeo_load_error"] = pangeo_err.detail.get("traceback", "")
+            elif pangeo_ds is not None and "time" in pangeo_ds.dims:
+                p_start, p_end = _PANGEO_HISTORICAL_TIME_BOUNDS[self.gcm]
+                p_issues, p_detail = self._check_store_temporal(pangeo_ds, p_start, p_end)
+                issues.extend(f"pangeo-historical: {i}" for i in p_issues)
+                detail.update({f"pangeo_{k}": v for k, v in p_detail.items()})
+
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
 
+        n_times = len(ds.indexes["time"])
         return self._result(
             CheckStatus.PASS,
             f"Temporal coverage complete: {expected_start} to {expected_end} ({n_times} daily steps, no gaps).",

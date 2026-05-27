@@ -1,0 +1,29 @@
+# BCSD configuration: MIROC-ES2H (production)
+#
+# Equivalent CLI command:
+#   uv run bcsd run --config-path configs/production/
+
+# === Model and Scenario ===
+gcm: "MIROC-ES2H"
+variables: ["tas"]
+ensemble_members: ["r1i1p4f2", "r2i1p4f2", "r3i1p4f2"]
+scenarios: ["SSP245"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+output_dir: "s3://carbonplan-srm/output"
+environment: "production"
+# version intentionally unset — derived from the installed package version at runtime
+
+# === Bias Correction ===
+mapping_type: "nonparametric_hybrid"
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true

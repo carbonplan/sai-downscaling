@@ -25,6 +25,7 @@ class ERA5Config:
         "mean_surface_downward_short_wave_radiation_flux",
         "mean_surface_downward_long_wave_radiation_flux",
         "surface_pressure",
+        "hurs",
     ]
     ALL_VARS = MAX_RESAMPLING | MIN_RESAMPLING | MEAN_RESAMPLING
 
@@ -36,6 +37,7 @@ class ERA5Config:
         "mean_surface_downward_short_wave_radiation_flux": "rsds",
         "mean_surface_downward_long_wave_radiation_flux": "rlds",
         "surface_pressure": "ps",
+        "hurs": "hurs",
     }
 
     input_url: str = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
@@ -51,7 +53,7 @@ class ERA5Config:
         + list(get_args(MIN_RESAMPLING))
         + list(get_args(MEAN_RESAMPLING))
     )
-    DERIVED_VARS = ["dtr"]
+    DERIVED_VARS = ["dtr", "hurs"]
 
     def __post_init__(self):
         """Fetch output location from catalog and unpack"""
@@ -81,7 +83,7 @@ def _resample_time(ds, variable):
         raise ValueError(f"Unknown variable: {variable}")
 
 
-def _load_era5(variable, config: ERA5Config):
+def _load_era5(variable, config: ERA5Config) -> xr.Dataset:
     # chunks=None skips using dask.
     # This uses xarray’s internally private lazy indexing classes, but data is eagerly loaded into memory as numpy arrays when accessed.
     # This can be more efficient ... when large arrays are sliced before computation.
@@ -209,7 +211,17 @@ def process_era5_pipeline(
             if var == "dtr":
                 ds = load_dtr_from_store(config.bucket, config.prefix, config.encoding["shards"])
             else:
-                ds = _load_era5(variable=var, config=config)
+                if var == "hurs":
+                    import xclim
+
+                    era5_tas = _load_era5(variable="2m_temperature", config=config)
+                    era5_tdps = _load_era5(variable="2m_dewpoint_temperature", config=config)
+                    ds = xclim.convert.relative_humidity_from_dewpoint(
+                        tas=era5_tas["2m_temperature"], tdps=era5_tdps["2m_dewpoint_temperature"]
+                    ).to_dataset(name="hurs")
+
+                else:
+                    ds = _load_era5(variable=var, config=config)
                 ds = _preprocess_era5(ds, config)
 
                 if var == "mean_total_precipitation_rate":
