@@ -119,9 +119,7 @@ class TestCheckEnsembleMemberDim:
 
 # ── check_lineage_member_availability ────────────────────────────────────────
 
-# CESM2-WACCM SSP245 requires hist members: r1i1p1f1, r2i1p1f1, r3i1p1f1, 001
-_CESM2_HIST_MEMBERS = ("r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001")
-# CESM2-WACCM G6-1.5K additionally requires SSP245 bridge members: 001-003, 007-009
+# CESM2-WACCM G6-1.5K requires SSP245 bridge members: 001-003, 007-009
 _CESM2_G6_SSP245_MEMBERS = ("001", "002", "003", "007", "008", "009")
 
 
@@ -349,12 +347,40 @@ class TestCheckTemporalCoverage:
         assert result.status == CheckStatus.PASS
 
     def test_pass_correct_historical_coverage(self, mock_datasets):
-        ds = _ds_with_time("1850-01-01", "2015-01-01")
+        ds = _ds_with_time("1978-01-01", "2015-01-16")
         mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"
         ).check_temporal_coverage()
         assert result.status == CheckStatus.PASS
+
+    def test_pass_historical_with_pangeo_coverage(self, mock_datasets):
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_time("1978-01-01", "2015-01-16")
+        )
+        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_time("1850-01-01", "2015-01-01")
+        )
+        result = DatasetValidator(
+            gcm="CESM2-WACCM", scenario="historical"
+        ).check_temporal_coverage()
+        assert result.status == CheckStatus.PASS
+        assert "pangeo_actual_start" in result.detail
+        assert result.detail["pangeo_actual_start"] == "1850-01-01"
+        assert result.detail["pangeo_actual_end"] == "2015-01-01"
+
+    def test_fail_historical_pangeo_wrong_end(self, mock_datasets):
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_time("1978-01-01", "2015-01-16")
+        )
+        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_time("1850-01-01", "2014-12-31")  # wrong end for CESM2-WACCM
+        )
+        result = DatasetValidator(
+            gcm="CESM2-WACCM", scenario="historical"
+        ).check_temporal_coverage()
+        assert result.status == CheckStatus.FAIL
+        assert "pangeo-historical" in result.message
 
 
 # ── validate() ───────────────────────────────────────────────────────────────

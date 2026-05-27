@@ -37,9 +37,11 @@ SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
 # CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
 # as the first day of the month following the final data month.
+# The standard CESM2-WACCM historical store only covers 1978–2015; the full 1850–2014 CMIP6
+# range lives in the pangeo-prefixed store (see _PANGEO_HISTORICAL_TIME_BOUNDS below).
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     "CESM2-WACCM": {
-        "historical": ("1850-01-01", "2015-01-01"),
+        "historical": ("1978-01-01", "2015-01-16"),
         "SSP245": ("2015-01-01", "2101-01-01"),
         "G6-1.5K": ("2035-01-01", "2085-01-01"),
     },
@@ -53,6 +55,12 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
         "SSP245": ("2015-01-01", "2099-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
     },
+}
+
+# Expected bounds for pangeo-prefixed historical stores (full CMIP6 1850–2014 period).
+# CESM2-WACCM first-of-next-month convention: last time step is 2015-01-01.
+_PANGEO_HISTORICAL_TIME_BOUNDS: dict[str, tuple[str, str]] = {
+    "CESM2-WACCM": ("1850-01-01", "2015-01-01"),
 }
 
 
@@ -428,42 +436,21 @@ class DatasetValidator(pydantic.BaseModel):
             {"checked_members": checked_members, "variable_sampled": var},
         )
 
-    def check_temporal_coverage(self) -> CheckResult:
-        """
-        E2: Time axis must be gapless with correct first and last dates.
-
-        Bounds are looked up per GCM from ``_SCENARIO_TIME_BOUNDS`` (explicit observed date
-        strings). The expected daily count is built with ``xr.date_range`` using the dataset's
-        own calendar so counts are always calendar-correct.
-        """
-        key = f"{self.gcm}-{self.scenario}-icechunk"
-        ds, err = self._open_dataset(key, on_missing=CheckStatus.SKIP)
-        if err is not None:
-            return err
-        assert ds is not None
-
-        if "time" not in ds.dims:
-            return self._result(CheckStatus.SKIP, "Dataset has no time dimension.")
-
+    def _check_store_temporal(
+        self, ds: xr.Dataset, expected_start: str, expected_end: str
+    ) -> tuple[list[str], dict]:
+        """Check one dataset's time axis against expected bounds. Returns (issues, detail)."""
         time_index = ds.indexes["time"]
         calendar = ds.time.dt.calendar
         n_times = len(time_index)
-
-        gcm_bounds = _SCENARIO_TIME_BOUNDS.get(self.gcm, {})
-        if self.scenario not in gcm_bounds:
-            return self._result(
-                CheckStatus.SKIP,
-                f"No time bounds defined for {self.gcm} / {self.scenario}.",
-            )
-        expected_start, expected_end = gcm_bounds[self.scenario]
-
-        expected_range = xr.date_range(
-            start=expected_start, end=expected_end, freq="D", calendar=calendar, use_cftime=True
-        )
-        n_expected = len(expected_range)
-
         actual_start_str = time_index[0].strftime("%Y-%m-%d")
         actual_end_str = time_index[-1].strftime("%Y-%m-%d")
+
+        n_expected = len(
+            xr.date_range(
+                start=expected_start, end=expected_end, freq="D", calendar=calendar, use_cftime=True
+            )
+        )
 
         detail: dict = {
             "actual_start": actual_start_str,
@@ -473,7 +460,6 @@ class DatasetValidator(pydantic.BaseModel):
             "expected_start": expected_start,
             "expected_end": expected_end,
         }
-
         issues: list[str] = []
 
         if actual_start_str != expected_start:
@@ -487,7 +473,6 @@ class DatasetValidator(pydantic.BaseModel):
             detail["n_missing_or_extra"] = delta
             issues.append(f"{abs(delta)} {label} time steps (expected {n_expected}, got {n_times})")
         elif n_times > 1:
-            # Counts match; verify regularity (gaps / duplicates within the range).
             inferred_freq = xr.infer_freq(ds.time)
             if inferred_freq != "D":
                 detail["inferred_freq"] = inferred_freq
@@ -496,9 +481,52 @@ class DatasetValidator(pydantic.BaseModel):
                     "possible gaps or duplicates within range"
                 )
 
+        return issues, detail
+
+    def check_temporal_coverage(self) -> CheckResult:
+        """
+        E2: Time axis must be gapless with correct first and last dates.
+
+        Bounds are looked up per GCM from ``_SCENARIO_TIME_BOUNDS`` (explicit observed date
+        strings). For historical scenarios, also checks the pangeo-prefixed store when
+        bounds are registered in ``_PANGEO_HISTORICAL_TIME_BOUNDS``.
+        """
+        key = f"{self.gcm}-{self.scenario}-icechunk"
+        ds, err = self._open_dataset(key, on_missing=CheckStatus.SKIP)
+        if err is not None:
+            return err
+        assert ds is not None
+
+        if "time" not in ds.dims:
+            return self._result(CheckStatus.SKIP, "Dataset has no time dimension.")
+
+        gcm_bounds = _SCENARIO_TIME_BOUNDS.get(self.gcm, {})
+        if self.scenario not in gcm_bounds:
+            return self._result(
+                CheckStatus.SKIP,
+                f"No time bounds defined for {self.gcm} / {self.scenario}.",
+            )
+        expected_start, expected_end = gcm_bounds[self.scenario]
+
+        issues, detail = self._check_store_temporal(ds, expected_start, expected_end)
+
+        # For historical scenarios, also check the pangeo-prefixed store.
+        if self.scenario == "historical" and self.gcm in _PANGEO_HISTORICAL_TIME_BOUNDS:
+            pangeo_key = f"pangeo-{self.gcm}-historical-icechunk"
+            pangeo_ds, pangeo_err = self._open_dataset(pangeo_key, on_missing=CheckStatus.SKIP)
+            if pangeo_err is not None and pangeo_err.status == CheckStatus.FAIL:
+                issues.append(f"pangeo-historical store failed to load: {pangeo_err.message}")
+                detail["pangeo_load_error"] = pangeo_err.detail.get("traceback", "")
+            elif pangeo_ds is not None and "time" in pangeo_ds.dims:
+                p_start, p_end = _PANGEO_HISTORICAL_TIME_BOUNDS[self.gcm]
+                p_issues, p_detail = self._check_store_temporal(pangeo_ds, p_start, p_end)
+                issues.extend(f"pangeo-historical: {i}" for i in p_issues)
+                detail.update({f"pangeo_{k}": v for k, v in p_detail.items()})
+
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
 
+        n_times = len(ds.indexes["time"])
         return self._result(
             CheckStatus.PASS,
             f"Temporal coverage complete: {expected_start} to {expected_end} ({n_times} daily steps, no gaps).",
