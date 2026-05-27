@@ -83,6 +83,54 @@ def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
         console.print(table)
 
 
+def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
+    """Print a per-scenario lineage table for the validate command.
+
+    Deduplicated by (member, hist, ssp245_bridge); variables sharing the same
+    parents are listed together. Skipped when no lineage is registered for
+    the GCM/scenario pair.
+    """
+    from srm.lineage import get_lineage_entries
+
+    for scenario in scenarios:
+        if scenario == "historical":
+            continue
+        entries = get_lineage_entries(gcm, scenario)
+        if not entries:
+            continue
+
+        has_ssp245 = any(ssp is not None for _, ssp in entries.values())
+
+        tbl = Table(
+            title=f"Lineage — {scenario}",
+            show_header=True,
+            header_style="bold",
+            box=box.SIMPLE_HEAD,
+            padding=(0, 1),
+        )
+        tbl.add_column("member", style="cyan", no_wrap=True)
+        tbl.add_column("variables", style="dim", no_wrap=True)
+        tbl.add_column("→ historical", style="green", justify="right")
+        if has_ssp245:
+            tbl.add_column("→ SSP245 bridge", style="yellow", justify="right")
+
+        seen: dict[tuple[str, str, str | None], list[str]] = {}
+        for (member, var), (hist, ssp245) in sorted(entries.items()):
+            key = (member, hist, ssp245)
+            if key not in seen:
+                seen[key] = []
+            if var not in seen[key]:
+                seen[key].append(var)
+
+        for (member, hist, ssp245), variables in sorted(seen.items()):
+            row = [member, "/".join(sorted(variables)), hist]
+            if has_ssp245:
+                row.append(ssp245 or "—")
+            tbl.add_row(*row)
+
+        console.print(tbl)
+
+
 def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
     """Cross-scenario validation: check resolved members exist in target stores.
 
@@ -855,10 +903,12 @@ def validate(
         table_checks = []
         scoped_checks = []
         for cid in check_ids:
-            if any(
-                (r := index.get((cid, s))) is None or r.status == CheckStatus.SKIP
+            non_skip = [
+                s
                 for s in scenarios
-            ):
+                if (r := index.get((cid, s))) is not None and r.status != CheckStatus.SKIP
+            ]
+            if len(non_skip) <= 1:
                 scoped_checks.append(cid)
             else:
                 table_checks.append(cid)
@@ -893,6 +943,8 @@ def validate(
                     if r and r.status != CheckStatus.SKIP:
                         scoped_tbl.add_row(cid, s, _STATUS_SYMBOL[r.status])
             console.print(scoped_tbl)
+
+        _print_validate_lineage_summary(gcm_name, scenarios)
 
     blocking_failures = [
         r for r in all_results if r.status == CheckStatus.FAIL and r.check_id in BLOCKING_CHECKS
