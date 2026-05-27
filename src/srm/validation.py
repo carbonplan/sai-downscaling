@@ -8,13 +8,11 @@ Checks are organized into the following groups:
 Use :class:`DatasetValidator` to run checks for a given (gcm, scenario) pair.
 """
 
-import datetime
 import enum
 import hashlib
 import traceback
 from typing import ClassVar
 
-import cftime
 import pydantic
 import xarray as xr
 
@@ -36,23 +34,26 @@ INFO_CHECKS: set[str] = set()
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 
-# Expected inclusive daily time bounds per scenario (CMIP6 conventions).
-# End bounds are stored as (year, month) so the actual last day can be derived
-# from the dataset's own calendar — e.g. 360-day calendars end Dec on the 30th.
-_SCENARIO_TIME_BOUNDS: dict[str, tuple[str, int, int]] = {
-    "historical": ("1850-01-01", 2014, 12),
-    "SSP245": ("2015-01-01", 2100, 12),
-    "G6-1.5K": ("2035-01-01", 2085, 12),
+# Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
+# CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
+# as the first day of the month following the final data month.
+_SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
+    "CESM2-WACCM": {
+        "historical": ("1850-01-01", "2015-01-01"),
+        "SSP245": ("2015-01-01", "2101-01-01"),
+        "G6-1.5K": ("2035-01-01", "2085-01-01"),
+    },
+    "MIROC-ES2H": {
+        "historical": ("1850-01-01", "2014-12-31"),
+        "SSP245": ("2015-01-01", "2100-12-31"),
+        "G6-1.5K": ("2035-01-01", "2084-12-31"),
+    },
+    "UKESM": {
+        "historical": ("1850-01-01", "2014-12-31"),
+        "SSP245": ("2015-01-01", "2099-12-31"),
+        "G6-1.5K": ("2035-01-01", "2084-12-31"),
+    },
 }
-
-
-def _end_of_month(year: int, month: int, calendar: str) -> str:
-    """Return YYYY-MM-DD for the last day of (year, month) in the given CF calendar."""
-    if month == 12:
-        next_first = cftime.datetime(year + 1, 1, 1, calendar=calendar)
-    else:
-        next_first = cftime.datetime(year, month + 1, 1, calendar=calendar)
-    return (next_first - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def _parse_catalog_value(label: str, value: str, options: tuple[str, ...]) -> str:
@@ -401,10 +402,9 @@ class DatasetValidator(pydantic.BaseModel):
         """
         E2: Time axis must be gapless with correct first and last dates.
 
-        Calendar-aware: uses the dataset's own calendar to derive the expected
-        last day of the month (360-day calendars end Dec on the 30th, all others
-        on the 31st). The expected daily range is built with xr.date_range in
-        the same calendar so counts are always comparable.
+        Bounds are looked up per GCM from ``_SCENARIO_TIME_BOUNDS`` (explicit observed date
+        strings). The expected daily count is built with ``xr.date_range`` using the dataset's
+        own calendar so counts are always calendar-correct.
         """
         key = f"{self.gcm}-{self.scenario}-icechunk"
         ds, err = self._open_dataset(key, on_missing=CheckStatus.SKIP)
@@ -419,8 +419,13 @@ class DatasetValidator(pydantic.BaseModel):
         calendar = ds.time.dt.calendar
         n_times = len(time_index)
 
-        expected_start, end_year, end_month = _SCENARIO_TIME_BOUNDS[self.scenario]
-        expected_end = _end_of_month(end_year, end_month, calendar)
+        gcm_bounds = _SCENARIO_TIME_BOUNDS.get(self.gcm, {})
+        if self.scenario not in gcm_bounds:
+            return self._result(
+                CheckStatus.SKIP,
+                f"No time bounds defined for {self.gcm} / {self.scenario}.",
+            )
+        expected_start, expected_end = gcm_bounds[self.scenario]
 
         expected_range = xr.date_range(
             start=expected_start, end=expected_end, freq="D", calendar=calendar, use_cftime=True
