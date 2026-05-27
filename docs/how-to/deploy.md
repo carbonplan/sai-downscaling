@@ -14,9 +14,13 @@ Configs are organised by environment under `configs/`:
 ```
 configs/
   qa/
-    cesm2-waccm-tas-ssp245-southafrica.yaml   # South Africa subset — fast end-to-end check
+    cesm2-waccm.yaml   # CESM2-WACCM — South Africa subset, fast end-to-end check
+    miroc-es2h.yaml    # MIROC-ES2H — South Africa subset, fast end-to-end check
+    ukesm.yaml         # UKESM — South Africa subset, fast end-to-end check
   production/
-    cesm2-waccm-tas-ssp245.yaml               # Global run, CESM2-WACCM / tas / SSP245
+    cesm2-waccm.yaml   # CESM2-WACCM — global run
+    miroc-es2h.yaml    # MIROC-ES2H — global run
+    ukesm.yaml         # UKESM — global run
 ```
 
 Each file is a [BCSD config](../reference/configuration.md) and supports the matrix format — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination. For example, `ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]` in a single file produces three runs without any extra files.
