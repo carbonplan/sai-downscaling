@@ -263,24 +263,49 @@ class DatasetValidator(pydantic.BaseModel):
             if ssp245 is not None:
                 ssp245_members_needed.add(ssp245)
 
-        hist_ds, err = self._open_dataset(
-            f"{self.gcm}-historical-icechunk", on_missing=CheckStatus.FAIL
-        )
-        if err is not None:
-            return err
-        assert hist_ds is not None
-        hist_available = set(_get_ensemble_members(hist_ds) or [])
+        # Members starting with "r" (CMIP6 format, e.g. r1i1p1f1) are stored in the
+        # pangeo-prefixed historical store; others use the standard store.
+        # This mirrors the routing in cli.py and downscaling_utils.get_historical_experiment.
+        standard_hist_needed = {m for m in hist_members_needed if not m.startswith("r")}
+        pangeo_hist_needed = {m for m in hist_members_needed if m.startswith("r")}
 
         issues: list[str] = []
-        detail: dict = {
-            "historical_needed": sorted(hist_members_needed),
-            "historical_available": sorted(hist_available),
-        }
+        detail: dict = {}
+        missing_hist: list[str] = []
 
-        missing_hist = sorted(hist_members_needed - hist_available)
+        if standard_hist_needed:
+            hist_ds, err = self._open_dataset(
+                f"{self.gcm}-historical-icechunk", on_missing=CheckStatus.FAIL
+            )
+            if err is not None:
+                return err
+            assert hist_ds is not None
+            hist_available = set(_get_ensemble_members(hist_ds) or [])
+            detail["historical_needed"] = sorted(standard_hist_needed)
+            detail["historical_available"] = sorted(hist_available)
+            missing = sorted(standard_hist_needed - hist_available)
+            if missing:
+                missing_hist.extend(missing)
+                detail["missing_historical"] = missing
+
+        if pangeo_hist_needed:
+            pangeo_ds, err = self._open_dataset(
+                f"pangeo-{self.gcm}-historical-icechunk", on_missing=CheckStatus.FAIL
+            )
+            if err is not None:
+                return err
+            assert pangeo_ds is not None
+            pangeo_available = set(_get_ensemble_members(pangeo_ds) or [])
+            detail["pangeo_historical_needed"] = sorted(pangeo_hist_needed)
+            detail["pangeo_historical_available"] = sorted(pangeo_available)
+            missing = sorted(pangeo_hist_needed - pangeo_available)
+            if missing:
+                missing_hist.extend(missing)
+                detail["missing_pangeo_historical"] = missing
+
         if missing_hist:
             issues.append(f"{len(missing_hist)} resolved historical member(s) missing")
-            detail["missing_historical"] = missing_hist
+            detail["missing_historical_combined"] = sorted(missing_hist)
 
         if ssp245_members_needed:
             ssp245_ds, err = self._open_dataset(
@@ -300,7 +325,12 @@ class DatasetValidator(pydantic.BaseModel):
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
 
-        store_labels = "historical" + (" and SSP245" if ssp245_members_needed else "")
+        hist_labels = []
+        if standard_hist_needed:
+            hist_labels.append("historical")
+        if pangeo_hist_needed:
+            hist_labels.append(f"pangeo-{self.gcm}-historical")
+        store_labels = ", ".join(hist_labels) + (" and SSP245" if ssp245_members_needed else "")
         return self._result(
             CheckStatus.PASS,
             f"All {len(entries)} lineage entries resolve to available members "

@@ -149,8 +149,9 @@ class TestCheckLineageMemberAvailability:
         assert "not found" in result.message
 
     def test_pass_ssp245_all_hist_present(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members(*_CESM2_HIST_MEMBERS)
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members("001"))
+        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
         )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="SSP245"
@@ -159,8 +160,9 @@ class TestCheckLineageMemberAvailability:
         assert "historical" in result.message
 
     def test_fail_ssp245_hist_member_missing(self, mock_datasets):
-        # Missing "001" — needed for tasmax/tasmin members 007-010
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+        # Missing "001" from standard store — needed for tasmax/tasmin members 007-010
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members())
+        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
             _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
         )
         result = DatasetValidator(
@@ -170,8 +172,9 @@ class TestCheckLineageMemberAvailability:
         assert "001" in result.detail["missing_historical"]
 
     def test_pass_g6_all_members_present(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members(*_CESM2_HIST_MEMBERS)
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members("001"))
+        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
         )
         mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(
             _ds_with_members(*_CESM2_G6_SSP245_MEMBERS)
@@ -184,8 +187,9 @@ class TestCheckLineageMemberAvailability:
 
     def test_fail_g6_ssp245_bridge_member_missing(self, mock_datasets):
         # Missing SSP245 "009" — bridge for G6 member 001 tasmax/tasmin
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members(*_CESM2_HIST_MEMBERS)
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members("001"))
+        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
         )
         mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(
             _ds_with_members("001", "002", "003", "007", "008")  # 009 missing
@@ -197,8 +201,9 @@ class TestCheckLineageMemberAvailability:
         assert "009" in result.detail["missing_ssp245"]
 
     def test_fail_g6_ssp245_store_missing(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members(*_CESM2_HIST_MEMBERS)
+        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members("001"))
+        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
+            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
         )
         # SSP245 store absent
         result = DatasetValidator(
@@ -316,12 +321,12 @@ class TestCheckTemporalCoverage:
         assert result.status == CheckStatus.FAIL
 
     def test_pass_correct_ssp245_coverage(self, mock_datasets):
-        ds = _ds_with_time("2015-01-01", "2100-12-31")
+        ds = _ds_with_time("2015-01-01", "2101-01-01")
         mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
         assert result.detail["actual_start"] == "2015-01-01"
-        assert result.detail["actual_end"] == "2100-12-31"
+        assert result.detail["actual_end"] == "2101-01-01"
 
     def test_fail_wrong_start_date(self, mock_datasets):
         ds = _ds_with_time("2016-01-01", "2100-12-31")
@@ -338,13 +343,13 @@ class TestCheckTemporalCoverage:
         assert "end date" in result.message
 
     def test_pass_correct_g6_coverage(self, mock_datasets):
-        ds = _ds_with_time("2035-01-01", "2085-12-31")
+        ds = _ds_with_time("2035-01-01", "2085-01-01")
         mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="G6-1.5K").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
 
     def test_pass_correct_historical_coverage(self, mock_datasets):
-        ds = _ds_with_time("1850-01-01", "2014-12-31")
+        ds = _ds_with_time("1850-01-01", "2015-01-01")
         mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"
