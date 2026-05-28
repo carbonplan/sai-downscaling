@@ -193,10 +193,7 @@ class DatasetValidator(pydantic.BaseModel):
                 self._dataset_cache[key] = None
             else:
                 try:
-                    try:
-                        self._dataset_cache[key] = catalog_ds.to_xarray(convert_calendar=False)
-                    except TypeError:
-                        self._dataset_cache[key] = catalog_ds.to_xarray()
+                    self._dataset_cache[key] = catalog_ds.to_xarray()
                 except Exception as exc:
                     tb = traceback.format_exc()
                     self._load_errors[key] = (f"Failed to load dataset {key}: {exc}", tb)

@@ -136,17 +136,8 @@ class Dataset(BaseDataset):
     def bucket_uri(self) -> str:
         return f"{self.path.cloud_prefix}{self.bucket}/"
 
-    def to_xarray(self, convert_calendar: bool = True) -> xr.Dataset:
-        """Open the dataset as an xarray Dataset.
-
-        Parameters
-        ----------
-        convert_calendar:
-            When True (default), normalizes the time axis to proleptic_gregorian
-            via ``to_proleptic_gregorian`` (includes interpolation for noleap and
-            360-day calendars). Pass False for lightweight metadata / validation
-            access where triggering a full interpolate_na is unacceptable.
-        """
+    def to_xarray(self) -> xr.Dataset:
+        """Open the dataset as an xarray Dataset with time normalized to proleptic_gregorian."""
         if self.format == "icechunk":
             ds = self._open_icechunk(self.prefix, is_virtual=False)
         elif self.format == "zarr":
@@ -156,11 +147,9 @@ class Dataset(BaseDataset):
         else:
             raise ValueError(f"Unknown format: {self.format}")
 
-        if convert_calendar:
-            from srm.utils import to_proleptic_gregorian
+        from srm.utils import to_proleptic_gregorian
 
-            return to_proleptic_gregorian(ds)
-        return ds
+        return to_proleptic_gregorian(ds)
 
 
 @dataclass(kw_only=True)
