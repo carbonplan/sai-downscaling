@@ -88,7 +88,7 @@ class TestCrossScenarioConsistency:
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     def test_ssp245_hist_member_pairing(self, gcm):
         """D1: every SSP245 member has a match in the historical store."""
-        result = SRMDatasetValidator(gcm=gcm, scenario="SSP245").check_ssp245_hist_member_pairing()
+        result = SRMDatasetValidator(gcm=gcm, scenario="SSP245").check_lineage_member_availability()
         if result.status == CheckStatus.SKIP:
             pytest.skip(result.message)
         assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
@@ -96,7 +96,9 @@ class TestCrossScenarioConsistency:
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     def test_g6_ssp245_member_pairing(self, gcm):
         """D2: every G6 member has a match in the SSP245 store."""
-        result = SRMDatasetValidator(gcm=gcm, scenario="G6-1.5K").check_g6_ssp245_member_pairing()
+        result = SRMDatasetValidator(
+            gcm=gcm, scenario="G6-1.5K"
+        ).check_lineage_member_availability()
         if result.status == CheckStatus.SKIP:
             pytest.skip(result.message)
         assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
