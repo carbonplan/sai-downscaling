@@ -268,7 +268,7 @@ def _finalize_metadata(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
         "experiment_lineage": lineage,
         "ensemble_derivation_logic": derivation_logic,  # ie, did it come from attrs / parsing the filepath.
         "processing_steps": (
-            "time_drop_duplicates, lon_to_180, lat_lon_sort, trim_negative_precip"
+            "time_drop_duplicates, lon_to_180, lat_lon_sort, trim_negative_precip, convert_calendar_to_proleptic_gregorian"
         ),
     }
 
@@ -641,6 +641,7 @@ def process(variable, scenario, coiled, all_variables, subset):
                         ds = ds.reindex(ensemble_member=config.ensemble_members)
                     if canonical_time is not None and len(ds.time) < len(canonical_time):
                         ds = ds.reindex(time=canonical_time)
+                    ds = to_proleptic_gregorian(ds)
                 ds = _update_attrs(ds, var_specs, config)
 
                 repo, session = init_repo(
