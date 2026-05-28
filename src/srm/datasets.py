@@ -147,9 +147,7 @@ class Dataset(BaseDataset):
         else:
             raise ValueError(f"Unknown format: {self.format}")
 
-        from srm.utils import to_proleptic_gregorian
-
-        return to_proleptic_gregorian(ds)
+        return ds
 
 
 @dataclass(kw_only=True)
