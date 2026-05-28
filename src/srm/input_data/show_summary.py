@@ -3,7 +3,7 @@
 import os
 import sys
 
-from srm.datasets import Dataset, catalog
+from srm.datasets import catalog
 
 _KEY_MAP: dict[tuple[str, str], str] = {
     ("CESM2-WACCM", "pangeo-historical"): "pangeo-CESM2-WACCM-historical-icechunk",
@@ -35,9 +35,7 @@ def main() -> None:
         print(f"Catalog key {key!r} not found — skipping summary")
         return
 
-    ds = (
-        entry.to_xarray(convert_calendar=False) if isinstance(entry, Dataset) else entry.to_xarray()
-    )
+    ds = entry.to_xarray()
     summary = f"## {gcm} / {scenario}\n\n```\n{repr(ds)}\n```\n"
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
