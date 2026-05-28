@@ -581,7 +581,7 @@ def process(variable, scenario, coiled, all_variables, subset):
             ds = get_CESM_WACCM_ds(scenario)
             available = [v for v in variables if v in ds]
             ds = ds[available]
-            ds = to_proleptic_gregorian(ds, allow_rechunk=True)
+            ds = to_proleptic_gregorian(ds)
             ds = trim_negative_precipitation(ds)
             ds = lon_to_180(ds, lon_name="lon")
             ds = ds.sortby(["lat", "lon"])
