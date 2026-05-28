@@ -49,8 +49,11 @@ Common paths:
 | CESM2-WACCM | `ssp245` | `s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2_WACCM_SSP245.icechunk/` |
 | CESM2-WACCM | `G6-1.5K` | `s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k.icechunk/` |
 
-> [!WARNING]
-> S3 cleanup is irreversible. The workflow does not create a backup before deleting. Double-check the path before triggering — a trailing `/` is required to avoid accidentally deleting adjacent stores.
+:::{admonition} S3 cleanup is irreversible
+:class: warning
+
+The workflow does not create a backup before deleting. Double-check the path before triggering — a trailing `/` is required to avoid accidentally deleting adjacent stores.
+:::
 
 ## Job summary
 
