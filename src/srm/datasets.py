@@ -245,7 +245,7 @@ class Catalog:
             ),
             "CESM2-WACCM-SSP245-icechunk": Dataset(
                 name="CESM2-WACCM-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2_WACCM_SSP245.icechunk",
+                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245.icechunk",
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
                 expected_shards={
