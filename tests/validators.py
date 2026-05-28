@@ -31,7 +31,7 @@ class DatasetValidator:
             self.ds = ds_info
         else:
             self.ds_info = ds_info
-            self.ds = ds_info.to_xarray()
+            self.ds = ds_info.to_xarray(convert_calendar=False)
 
     def _validate_coord(
         self,
