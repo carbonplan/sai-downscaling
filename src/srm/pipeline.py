@@ -44,13 +44,8 @@ logger = logging.getLogger(__name__)
 
 
 def _make_debiaser(variable: str, **kwargs):
-    if variable == "rsds":
-        return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
-
-    elif (
-        variable == "dtr"
-    ):  # Ibicus does not accept dtr as a valid var, we are usign tasrange, which seem the same.
-        return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
+    if variable in ["tas", "tasmax", "tasmin", "hurs", "rsds", "dtr"]:
+        return QuantileMapping(distribution=scipy.stats.normal, **kwargs)
 
     else:
         return QuantileMapping.from_variable(variable=variable, **kwargs)
@@ -882,8 +877,8 @@ class BCSDPipeline:
             # Use one parametric debiaser for low out-of-range values, another for high, and nonparametric everywhere else
 
             if self.config.variable == "pr":
-                low_dist = scipy.stats.gamma
-                high_dist = scipy.stats.genextreme
+                low_dist = scipy.stats.weibull_min
+                high_dist = scipy.stats.gumbel_r
 
                 parametric_low_np = _make_debiaser(
                     mapping_type="parametric", distribution=low_dist, **common_kwargs
