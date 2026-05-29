@@ -49,8 +49,6 @@ def _make_debiaser(variable: str, **kwargs):
         return QuantileMapping(distribution=scipy.stats.norm, **kwargs)
     elif variable == "pr":
         return QuantileMapping(distribution=PrecipitationHurdleModelGamma, **kwargs)
-    else:
-        return QuantileMapping.from_variable(variable=variable, **kwargs)
 
 
 def calculate_out_of_range_mask(
@@ -879,14 +877,16 @@ class BCSDPipeline:
             # Use one parametric debiaser for low out-of-range values, another for high, and nonparametric everywhere else
 
             if self.config.variable == "pr":
+                # We call QuantileMapping directly here rather than _make_debiaser because we need to specify different distributions for the low and high tails, and _make_debiaser defines a different distribution to use for pr
+                # This is not an optimal solution but it avoids adding more complexity to _make_debiaser and the debiaser classes just for this one case
                 low_dist = scipy.stats.weibull_min
                 high_dist = scipy.stats.gumbel_r
 
-                parametric_low_np = _make_debiaser(
+                parametric_low_np = QuantileMapping(
                     mapping_type="parametric", distribution=low_dist, **common_kwargs
                 ).apply(**apply_kwargs)
 
-                parametric_high_np = _make_debiaser(
+                parametric_high_np = QuantileMapping(
                     mapping_type="parametric", distribution=high_dist, **common_kwargs
                 ).apply(**apply_kwargs)
             else:
