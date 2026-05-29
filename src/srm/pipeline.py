@@ -21,6 +21,7 @@ import numpy as np
 import scipy.stats
 import xarray as xr
 from ibicus.debias import QuantileMapping
+from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
@@ -46,7 +47,8 @@ logger = logging.getLogger(__name__)
 def _make_debiaser(variable: str, **kwargs):
     if variable in ["tas", "tasmax", "tasmin", "hurs", "rsds", "dtr"]:
         return QuantileMapping(distribution=scipy.stats.normal, **kwargs)
-
+    elif variable == "pr":
+        return QuantileMapping(distribution=PrecipitationHurdleModelGamma, **kwargs)
     else:
         return QuantileMapping.from_variable(variable=variable, **kwargs)
 
