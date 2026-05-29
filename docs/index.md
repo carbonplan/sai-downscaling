@@ -47,7 +47,7 @@ contributing
 :hidden:
 :maxdepth: 2
 :caption: Methods
-
+explanation/scientific-approach
 explanation/pipeline-architecture
 ```
 
