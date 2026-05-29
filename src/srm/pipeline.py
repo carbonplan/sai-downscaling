@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 def _make_debiaser(variable: str, **kwargs):
     if variable in ["tas", "tasmax", "tasmin", "hurs", "rsds", "dtr"]:
-        return QuantileMapping(distribution=scipy.stats.normal, **kwargs)
+        return QuantileMapping(distribution=scipy.stats.norm, **kwargs)
     elif variable == "pr":
         return QuantileMapping(distribution=PrecipitationHurdleModelGamma, **kwargs)
     else:
@@ -531,7 +531,7 @@ class BCSDPipeline:
         """
         mapping_type = (
             "nonparametric"
-            if self.config.mapping_type == "nonparametric_hybrid"
+            if self.config.mapping_type in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
             else self.config.mapping_type
         )
         debiaser = _make_debiaser(
