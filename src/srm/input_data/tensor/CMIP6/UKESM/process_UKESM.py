@@ -329,14 +329,16 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> 
     return apply_ensemble_provenance(ds, _derivation_logic(config))
 
 
-def _disk_chunk_encoding(ds: xr.Dataset, target_bytes: int = 128 * 1024**2) -> dict:
-    """h5netcdf chunksizes (time, lat, lon) targeting ~target_bytes per chunk."""
-    enc = {}
-    for name, da in ds.data_vars.items():
-        per_t = da.sizes["lat"] * da.sizes["lon"] * da.dtype.itemsize
-        ct = max(1, min(da.sizes["time"], target_bytes // per_t))
-        enc[name] = {"chunksizes": (ct, da.sizes["lat"], da.sizes["lon"])}
-    return enc
+# ~128MB/chunk for float32 at 144x192
+_DISK_CHUNKS = {"time": 1095, "lat": 144, "lon": 192}
+
+
+def _disk_chunk_encoding(ds: xr.Dataset) -> dict:
+    """h5netcdf chunksizes per var, ordered by dims, ~128MB per chunk."""
+    return {
+        name: {"chunksizes": tuple(_DISK_CHUNKS[d] for d in da.dims)}
+        for name, da in ds.data_vars.items()
+    }
 
 
 def _prepare_single_member(member: str, config: BaseUKESM_Config) -> None:
