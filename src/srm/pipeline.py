@@ -44,11 +44,13 @@ from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_encoding
 logger = logging.getLogger(__name__)
 
 
-def _make_debiaser(variable: str, **kwargs):
-    if variable in ["tas", "tasmax", "tasmin", "hurs", "rsds", "dtr"]:
-        return QuantileMapping(distribution=scipy.stats.norm, **kwargs)
-    elif variable == "pr":
-        return QuantileMapping(distribution=PrecipitationHurdleModelGamma, **kwargs)
+def _make_debiaser(variable: str, distribution=None, **kwargs):
+    if distribution is None:
+        if variable in ["tas", "tasmax", "tasmin", "hurs", "rsds", "dtr"]:
+            distribution = scipy.stats.norm
+        elif variable == "pr":
+            distribution = PrecipitationHurdleModelGamma
+    return QuantileMapping(distribution=distribution, **kwargs)
 
 
 def calculate_out_of_range_mask(
@@ -882,13 +884,12 @@ class BCSDPipeline:
                 low_dist = scipy.stats.weibull_min
                 high_dist = scipy.stats.gumbel_r
 
-                parametric_low_np = QuantileMapping(
-                    mapping_type="parametric", distribution=low_dist, **common_kwargs
-                ).apply(**apply_kwargs)
-
-                parametric_high_np = QuantileMapping(
-                    mapping_type="parametric", distribution=high_dist, **common_kwargs
-                ).apply(**apply_kwargs)
+                parametric_low_np = _make_debiaser(distribution=low_dist, **common_kwargs).apply(
+                    **apply_kwargs
+                )
+                parametric_high_np = _make_debiaser(distribution=high_dist, **common_kwargs).apply(
+                    **apply_kwargs
+                )
             else:
                 # Unless explicitly specified, use the same parametric debiaser for both tails even if calling "nonparametric_hybrid_2sided"
                 parametric_low_np = _make_debiaser(
