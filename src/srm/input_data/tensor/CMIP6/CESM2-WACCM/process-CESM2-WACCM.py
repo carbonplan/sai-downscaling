@@ -109,8 +109,8 @@ class BaseCESM_Config(BaseETLConfig):
 
     process_cluster: dict = field(
         default_factory=lambda: {
-            "n_workers": [4, 16],
-            "worker_vm_types": ["r8g.4xlarge"],
+            "n_workers": [6, 16],
+            "worker_vm_types": ["r8g.8xlarge"],
             "scheduler_vm_types": "c8g.xlarge",
         }
     )
