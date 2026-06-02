@@ -99,11 +99,11 @@ class UKESM_SSP245_Config(BaseUKESM_Config):
 class UKESM_SSP245_T_PR_Config(BaseUKESM_Config):
     scenario: str = "SSP245"
     catalog_key: str = "UKESM-SSP245-t-pr-virtual"
-    materialized_key: str = "UKESM-SSP245-icechunk"
+    materialized_key: str = "UKESM-SSP245-t-pr-icechunk"
     # rechunked NetCDF4 output prefix
     s3_input_prefix: str = "input/tensor/UKESM/netcdf/ssp245"
     # raw source prefix for NetCDF3 files to be prepared
-    s3_raw_prefix: str = "input/tensor/UKESM/netcdf_SSP245-SAI"
+    s3_raw_prefix: str = "input/tensor/UKESM/SSP245_transfer_from_NCAR"
 
 
 @dataclass
