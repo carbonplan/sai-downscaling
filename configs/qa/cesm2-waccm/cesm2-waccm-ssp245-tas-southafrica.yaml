@@ -1,0 +1,30 @@
+# BCSD configuration: CESM2-WACCM / tas / SSP245 / all members / South Africa (QA)
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM"
+variables: ["tas"]
+ensemble_members: ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"]
+scenarios: ["SSP245"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+
+# === Spatial Subsetting ===
+# South Africa region: [lat_min, lat_max, lon_min, lon_max]
+subset_bounds: [-35, -22, 16, 33]
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+output_dir: "s3://carbonplan-scratch/srm/output"
+environment: "qa"
+
+# === Bias Correction ===
+mapping_type: "nonparametric_hybrid"
+
+# === Additional Options ===
+apply_ocean_mask: true
+verbose: true
+save_intermediate: true

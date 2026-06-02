@@ -258,7 +258,7 @@ def load_configs(config_path: str) -> tuple[list[BCSDConfig], PipelineOptions]:
             configs.append(BCSDConfig(**config_dict))
 
     elif path.is_dir():
-        for yaml_file in sorted([*path.glob("*.yaml"), *path.glob("*.yml")]):
+        for yaml_file in sorted([*path.rglob("*.yaml"), *path.rglob("*.yml")]):
             with open(yaml_file) as f:
                 config_dict = yaml.safe_load(f)
             if options is None:
