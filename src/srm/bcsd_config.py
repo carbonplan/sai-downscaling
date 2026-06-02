@@ -346,7 +346,7 @@ class PipelineOptions(pydantic_settings.BaseSettings):
         True, description="Enable strategic rechunking between pipeline stages"
     )
     apply_ocean_mask: bool = Field(
-        True, description="Mask ocean pixels to NaN in the final scenario output"
+        False, description="Mask ocean pixels to NaN in the final scenario output"
     )
     save_intermediate: bool = Field(
         False,

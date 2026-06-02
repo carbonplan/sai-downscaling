@@ -25,6 +25,5 @@ environment: "qa"
 mapping_type: "nonparametric_hybrid"
 
 # === Additional Options ===
-apply_ocean_mask: true
 verbose: true
 save_intermediate: true
