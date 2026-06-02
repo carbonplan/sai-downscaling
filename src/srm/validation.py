@@ -32,7 +32,7 @@ INFO_CHECKS: set[str] = set()
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
-SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K", "baseline")
+SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
 # CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
@@ -47,9 +47,8 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
-        "SSP245": ("2015-01-01", "2100-12-31"),
+        "SSP245": ("2015-01-01", "2084-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
-        "baseline": ("2035-01-01", "2084-12-31"),
     },
     "UKESM": {
         "historical": ("1850-01-01", "2014-12-31"),
@@ -320,47 +319,20 @@ class DatasetValidator(pydantic.BaseModel):
             issues.append(f"{len(missing_hist)} resolved historical member(s) missing")
             detail["missing_historical_combined"] = sorted(missing_hist)
 
-        geomip_bridge: set[str] = set()
-        standard_ssp245_bridge: set[str] = set()
-
         if ssp245_members_needed:
-            # GeoMIP-format members (e.g. r01–r10: "r" prefix with no "i/p/f" suffix) are
-            # paired baseline runs stored in {gcm}-baseline-icechunk, not the SSP245 store.
-            # Standard CMIP6-format bridge members (e.g. CESM2-WACCM "001") use the SSP245 store.
-            geomip_bridge = {m for m in ssp245_members_needed if m.startswith("r") and "i" not in m}
-            standard_ssp245_bridge = ssp245_members_needed - geomip_bridge
-
-            if standard_ssp245_bridge:
-                ssp245_ds, err = self._open_dataset(
-                    f"{self.gcm}-SSP245-icechunk", on_missing=CheckStatus.FAIL
-                )
-                if err is not None:
-                    return err
-                assert ssp245_ds is not None
-                ssp245_available = set(_get_ensemble_members(ssp245_ds) or [])
-                detail["ssp245_needed"] = sorted(standard_ssp245_bridge)
-                detail["ssp245_available"] = sorted(ssp245_available)
-                missing_ssp245 = sorted(standard_ssp245_bridge - ssp245_available)
-                if missing_ssp245:
-                    issues.append(f"{len(missing_ssp245)} resolved SSP245 bridge member(s) missing")
-                    detail["missing_ssp245"] = missing_ssp245
-
-            if geomip_bridge:
-                baseline_ds, err = self._open_dataset(
-                    f"{self.gcm}-baseline-icechunk", on_missing=CheckStatus.FAIL
-                )
-                if err is not None:
-                    return err
-                assert baseline_ds is not None
-                baseline_available = set(_get_ensemble_members(baseline_ds) or [])
-                detail["baseline_bridge_needed"] = sorted(geomip_bridge)
-                detail["baseline_bridge_available"] = sorted(baseline_available)
-                missing_baseline = sorted(geomip_bridge - baseline_available)
-                if missing_baseline:
-                    issues.append(
-                        f"{len(missing_baseline)} resolved baseline bridge member(s) missing"
-                    )
-                    detail["missing_baseline_bridge"] = missing_baseline
+            ssp245_ds, err = self._open_dataset(
+                f"{self.gcm}-SSP245-icechunk", on_missing=CheckStatus.FAIL
+            )
+            if err is not None:
+                return err
+            assert ssp245_ds is not None
+            ssp245_available = set(_get_ensemble_members(ssp245_ds) or [])
+            detail["ssp245_needed"] = sorted(ssp245_members_needed)
+            detail["ssp245_available"] = sorted(ssp245_available)
+            missing_ssp245 = sorted(ssp245_members_needed - ssp245_available)
+            if missing_ssp245:
+                issues.append(f"{len(missing_ssp245)} resolved SSP245 bridge member(s) missing")
+                detail["missing_ssp245"] = missing_ssp245
 
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
@@ -370,15 +342,7 @@ class DatasetValidator(pydantic.BaseModel):
             hist_labels.append("historical")
         if pangeo_hist_needed:
             hist_labels.append(f"pangeo-{self.gcm}-historical")
-        bridge_labels = []
-        if ssp245_members_needed:
-            if standard_ssp245_bridge:
-                bridge_labels.append("SSP245")
-            if geomip_bridge:
-                bridge_labels.append("baseline")
-        store_labels = ", ".join(hist_labels) + (
-            f" and {'/'.join(bridge_labels)}" if bridge_labels else ""
-        )
+        store_labels = ", ".join(hist_labels) + (" and SSP245" if ssp245_members_needed else "")
         return self._result(
             CheckStatus.PASS,
             f"All {len(entries)} lineage entries resolve to available members "

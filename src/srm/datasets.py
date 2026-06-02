@@ -341,8 +341,8 @@ class Catalog:
                     VarStandards.DTR,
                 ],
             ),
-            "MIROC-ES2H-SSP245-virtual": VirtualDataset(
-                name="MIROC-ES2H-SSP245-virtual",
+            "MIROC-ES2H-esgf-SSP245-virtual": VirtualDataset(
+                name="MIROC-ES2H-esgf-SSP245-virtual",
                 virtual_path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/ssp245/icechunk/MIROC-ES2H-SSP245-virtual.icechunk",
                 format="icechunk",
                 ensemble_members=["r1i1p4f2", "r2i1p4f2", "r3i1p4f2"],
@@ -355,8 +355,8 @@ class Catalog:
                     VarStandards.TASMIN,
                 ],
             ),
-            "MIROC-ES2H-SSP245-icechunk": Dataset(
-                name="MIROC-ES2H-SSP245-icechunk",
+            "MIROC-ES2H-esgf-SSP245-icechunk": Dataset(
+                name="MIROC-ES2H-esgf-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/ssp245/icechunk/MIROC-ES2H-SSP245.icechunk",
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
@@ -435,8 +435,8 @@ class Catalog:
                     VarStandards.DTR,
                 ],
             ),
-            "MIROC-ES2H-baseline-virtual": VirtualDataset(
-                name="MIROC-ES2H-baseline-virtual",
+            "MIROC-ES2H-SSP245-virtual": VirtualDataset(
+                name="MIROC-ES2H-SSP245-virtual",
                 virtual_path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/baseline/icechunk/MIROC-ES2H-baseline-virtual.icechunk",
                 format="icechunk",
                 ensemble_members=[
@@ -460,8 +460,8 @@ class Catalog:
                     VarStandards.TASMIN,
                 ],
             ),
-            "MIROC-ES2H-baseline-icechunk": Dataset(
-                name="MIROC-ES2H-baseline-icechunk",
+            "MIROC-ES2H-SSP245-icechunk": Dataset(
+                name="MIROC-ES2H-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/baseline/icechunk/MIROC-ES2H-baseline.icechunk",
                 format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
