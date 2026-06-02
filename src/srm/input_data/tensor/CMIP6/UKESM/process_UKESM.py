@@ -99,8 +99,11 @@ class UKESM_SSP245_Config(BaseUKESM_Config):
 class UKESM_SSP245_T_PR_Config(BaseUKESM_Config):
     scenario: str = "SSP245"
     catalog_key: str = "UKESM-SSP245-t-pr-virtual"
-    materialized_key: str = "UKESM-SSP245-icechunk"
+    materialized_key: str = "UKESM-SSP245-t-pr-icechunk"
+    # rechunked NetCDF4 output prefix
     s3_input_prefix: str = "input/tensor/UKESM/netcdf/ssp245"
+    # raw source prefix for NetCDF3 files to be prepared
+    s3_raw_prefix: str = "input/tensor/UKESM/SSP245_transfer_from_NCAR"
 
 
 @dataclass
@@ -265,20 +268,15 @@ def _preprocess_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
 
 
 def _preprocess_ensemble_t_pr(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """Extract ensemble member from filename pattern: PREFIX_001_var_corrected.nc
-    and normalize latitude/longitude dim names to lat/lon.
+    """Extract ensemble member from filename pattern: PREFIX_001_var_rechunked.nc.
 
-    Raw positional ID (e.g. '001') stored under 'ensemble_member' dim in its own
-    separate icechunk store. CMIP6 ripf mapping unconfirmed; update coord values
-    once confirmed (001/002/003 -> r12i1p1f2/r2i1p1f2/r3i1p1f2).
+    Raw positional ID (e.g. '001'). update coord values
     """
     if url is None:
         raise ValueError("url parameter is required to determine ensemble member")
     filename = url.split("/")[-1]
     member_idx = filename.split("_")[1]
     ds = ds.expand_dims({"ensemble_member": [member_idx]})
-    if "latitude" in ds.dims:
-        ds = ds.rename({"latitude": "lat", "longitude": "lon"})
     return ds
 
 
@@ -331,69 +329,76 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> 
     return apply_ensemble_provenance(ds, _derivation_logic(config))
 
 
-def _prepare_g6_t_pr(config: UKESM_G6_1p5K_T_PR_Config) -> None:
-    """Convert raw G6-1.5K-SAI NetCDF3 files to rechunked NetCDF4 on S3.
+# ~128MB/chunk for float32 at 144x192
+_DISK_CHUNKS = {"time": 1095, "lat": 144, "lon": 192}
 
-    Reads NetCDF3 files eagerly into memory via EagerStoreReader (run on Coiled for
-    same-region S3 throughput), writes rechunked NetCDF4 to a local temp file, then
-    uploads via obstore.
-    PRECT: squeeze surface dim, rename precip->pr, rename t->time.
-    T: squeeze ht dim, rename t->time, split temp/temp_1/temp_2 -> tasmax/tasmin/tas.
+
+def _disk_chunk_encoding(ds: xr.Dataset) -> dict:
+    """h5netcdf chunksizes per var, ordered by dims, ~128MB per chunk."""
+    return {
+        name: {"chunksizes": tuple(_DISK_CHUNKS[d] for d in da.dims)}
+        for name, da in ds.data_vars.items()
+    }
+
+
+def _prepare_single_member(member: str, config: BaseUKESM_Config) -> None:
+    """Convert one member's raw t-pr NetCDF3 files to rechunked NetCDF4 on S3.
+
+    Pulls the NetCDF3 to local disk via fsspec simplecache. opens with scipy, normalizes dims/vars, loads to memory, writes NetCDF4
+    PRECT: squeeze surface, rename precip->pr, t->time, latitude/longitude->lat/lon.
+    T: squeeze ht, rename t->time, latitude/longitude->lat/lon, split
+    temp/temp_1/temp_2 -> tasmax/tasmin/tas (one file per var).
     """
     import tempfile
     from pathlib import Path
 
-    raw_store = from_url(
-        f"s3://{config.s3_bucket}",
-        region="us-west-2",
-        skip_signature=True,
-        client_options={"timeout": "3600s"},
+    import fsspec
+
+    write_store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
+    cache_kw = {"simplecache": {"cache_storage": "/tmp/fsspec_cache"}}
+    print(member)
+
+    # --- PRECT -> pr ---
+    # Read eagerly (.load) while the simplecache file exists
+    fpath = f"s3://{config.s3_bucket}/{config.s3_raw_prefix}/PRECT/PRECT_{member}.nc"
+    cache = fsspec.open_local(f"simplecache::{fpath}", **cache_kw)
+    ds = (
+        xr.open_dataset(cache, engine="scipy")
+        .squeeze("surface")
+        .drop_vars("surface")
+        .rename({"t": "time", "latitude": "lat", "longitude": "lon", "precip": "pr"})
+        .drop_encoding()
+        .load()
     )
-    out_store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
-    rechunk = {"time": 365, "latitude": 72, "longitude": 96}
+    with tempfile.NamedTemporaryFile(suffix=".nc") as tmp:
+        ds.to_netcdf(tmp.name, engine="h5netcdf", encoding=_disk_chunk_encoding(ds))
+        out = f"{config.s3_input_prefix}/PRECT/PRECT_{member}_pr_rechunked.nc"
+        print(f"uploading s3://{config.s3_bucket}/{out}")
+        obs.put(write_store, out, Path(tmp.name).read_bytes())
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        for member in config.ensemble_members:
-            # --- PRECT ---
-            raw_path = f"{config.s3_raw_prefix}/PRECT/PRECT_{member}.nc"
-            local_nc = Path(tmpdir) / f"PRECT_{member}.nc"
-            print(f"downloading s3://{config.s3_bucket}/{raw_path}")
-            with open(local_nc, "wb") as f:
-                for chunk in obs.get(raw_store, raw_path):
-                    f.write(bytes(chunk))
+    # --- T -> tasmax/tasmin/tas (split) ---
+    fpath = f"s3://{config.s3_bucket}/{config.s3_raw_prefix}/T/T_{member}.nc"
+    cache = fsspec.open_local(f"simplecache::{fpath}", **cache_kw)
+    ds = (
+        xr.open_dataset(cache, engine="scipy")
+        .squeeze("ht")
+        .drop_vars("ht")
+        .rename({"t": "time", "latitude": "lat", "longitude": "lon", **T_VAR_MAP})
+        .drop_encoding()
+        .load()
+    )
+    for cf_var in T_VAR_MAP.values():
+        sub = ds[[cf_var]]
+        with tempfile.NamedTemporaryFile(suffix=".nc") as tmp:
+            sub.to_netcdf(tmp.name, engine="h5netcdf", encoding=_disk_chunk_encoding(sub))
+            out = f"{config.s3_input_prefix}/T/T_{member}_{cf_var}_rechunked.nc"
+            print(f"uploading s3://{config.s3_bucket}/{out}")
+            obs.put(write_store, out, Path(tmp.name).read_bytes())
 
-            ds = xr.open_dataset(local_nc, engine="scipy", chunks={})
-            ds = ds.isel(surface=0).drop_vars("surface")
-            ds = ds.rename({"t": "time", "precip": "pr"}).drop_encoding()
-            ds = ds.chunk(rechunk)
-            out_local = Path(tmpdir) / f"PRECT_{member}_pr_rechunked.nc"
-            ds.to_netcdf(out_local, engine="h5netcdf", mode="w")
-            local_nc.unlink()
-            out_s3 = f"{config.s3_input_prefix}/PRECT/PRECT_{member}_pr_rechunked.nc"
-            print(f"uploading s3://{config.s3_bucket}/{out_s3}")
-            obs.put(out_store, out_s3, out_local.read_bytes())
-            out_local.unlink()
 
-            # --- T ---
-            raw_path = f"{config.s3_raw_prefix}/T/T_{member}.nc"
-            local_nc = Path(tmpdir) / f"T_{member}.nc"
-            print(f"downloading s3://{config.s3_bucket}/{raw_path}")
-            with open(local_nc, "wb") as f:
-                for chunk in obs.get(raw_store, raw_path):
-                    f.write(bytes(chunk))
-
-            ds = xr.open_dataset(local_nc, engine="scipy", chunks={})
-            ds = ds.isel(ht=0).drop_vars("ht")
-            ds = ds.rename({"t": "time"}).drop_encoding()
-            for raw_var, cf_var in T_VAR_MAP.items():
-                var_ds = ds[[raw_var]].rename({raw_var: cf_var}).chunk(rechunk)
-                out_local = Path(tmpdir) / f"T_{member}_{cf_var}_rechunked.nc"
-                var_ds.to_netcdf(out_local, engine="h5netcdf", mode="w")
-                out_s3 = f"{config.s3_input_prefix}/T/T_{member}_{cf_var}_rechunked.nc"
-                print(f"uploading s3://{config.s3_bucket}/{out_s3}")
-                obs.put(out_store, out_s3, out_local.read_bytes())
-                out_local.unlink()
-            local_nc.unlink()
+def _prepare_t_pr(config: BaseUKESM_Config) -> None:
+    for member in config.ensemble_members:
+        _prepare_single_member(member, config)
 
 
 @click.group()
@@ -427,9 +432,6 @@ def fetch(variable, scenario):
 @click.option("--coiled/--local", default=False)
 def virtualize(scenario, coiled):
     """Virtualize netcdf files into virtual icechunk dataset"""
-    from obspec_utils.readers import BufferedStoreReader
-    from obspec_utils.wrappers import CachingReadableStore, SplittingReadableStore
-
     config = SCENARIO_CONFIG_MAP[scenario]()
     virt_cat = catalog.get(config.catalog_key)
     variables = [var.name for var in virt_cat.expected_vars]
@@ -445,19 +447,15 @@ def virtualize(scenario, coiled):
 
     try:
         base_store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
-        registry = ObjectStoreRegistry(
-            {f"s3://{config.s3_bucket}": CachingReadableStore(SplittingReadableStore(base_store))}
-        )
+        registry = ObjectStoreRegistry({f"s3://{config.s3_bucket}": base_store})
 
         if is_t_pr:
-            parser = HDFParser(reader_factory=BufferedStoreReader)
+            parser = HDFParser()
             netcdf_urls = _get_netcdf_urls_t_pr(config, variables)
             preprocess_fn = _preprocess_ensemble_t_pr
-            loadable_variables = ["latitude", "longitude", "time"]
+            loadable_variables = ["lat", "lon", "time"]
         else:
-            parser = HDFParser(
-                drop_variables=config.drop_variables, reader_factory=BufferedStoreReader
-            )
+            parser = HDFParser(drop_variables=config.drop_variables)
             netcdf_urls = _get_netcdf_urls(config, variables)
             preprocess_fn = _preprocess_ensemble
             loadable_variables = ["lat", "lon", "time"]
@@ -532,9 +530,7 @@ def process(variable, scenario, coiled, all_variables, subset):
             target_cat = t_pr_mat_cat if use_t_pr_store else mat_cat
 
             if var.lower() == "dtr":
-                ds = load_dtr_from_store(
-                    target_cat.bucket, target_cat.prefix, config.encoding["shards"]
-                )
+                ds = load_dtr_from_store(target_cat.bucket, target_cat.prefix)
             else:
                 source_key = t_pr_key if (var in T_PR_VARS and t_pr_key) else config.catalog_key
                 ds = catalog.get(source_key).to_xarray()[[var]]
@@ -569,28 +565,29 @@ def process(variable, scenario, coiled, all_variables, subset):
 
 
 @click.command()
-@click.option("--scenario", type=click.Choice(["G6-1.5K-t-pr"]), required=True)
+@click.option("--scenario", type=click.Choice(["G6-1.5K-t-pr", "SSP245-t-pr"]), required=True)
 @click.option(
     "--member", multiple=True, help="Limit to specific ensemble members (e.g. --member 001)"
 )
 @click.option("--coiled/--local", default=False)
 def prepare(scenario, member, coiled):
-    """Convert raw G6-1.5K-SAI NetCDF3 files to rechunked NetCDF4 on S3."""
-    import coiled as coiled_lib
-
+    """Convert raw t-pr NetCDF3 files to rechunked NetCDF4 on S3."""
     config = SCENARIO_CONFIG_MAP[scenario]()
     if member:
         config.ensemble_members = list(member)
 
     if coiled:
+        import coiled
 
-        @coiled_lib.function(vm_type="r8g.4xlarge", region="us-west-2")
-        def _remote_prepare(cfg):
-            _prepare_g6_t_pr(cfg)
-
-        _remote_prepare(config)
+        remote_fn = coiled.function(
+            vm_type="r8g.4xlarge",
+            region="us-west-2",
+            disk_size=200,
+            tags={"Project": "SRM"},
+        )(_prepare_single_member)
+        list(remote_fn.map(config.ensemble_members, [config] * len(config.ensemble_members)))
     else:
-        _prepare_g6_t_pr(config)
+        _prepare_t_pr(config)
 
 
 cli.add_command(fetch)
