@@ -46,8 +46,10 @@ logger = logging.getLogger(__name__)
 
 def _make_debiaser(variable: str, distribution=None, **kwargs):
     if distribution is None:
-        if variable in ["tas", "tasmax", "tasmin", "hurs", "rsds", "dtr"]:
+        if variable in ["tas", "tasmax"]:
             distribution = scipy.stats.norm
+        elif variable in ["hurs", "rsds", "dtr"]:
+            distribution = scipy.stats.beta
         elif variable == "pr":
             distribution = PrecipitationHurdleModelGamma
     return QuantileMapping(distribution=distribution, **kwargs)
@@ -878,9 +880,8 @@ class BCSDPipeline:
         elif self.config.mapping_type == "nonparametric_hybrid_2sided":
             # Use one parametric debiaser for low out-of-range values, another for high, and nonparametric everywhere else
 
-            if self.config.variable == "pr":
-                # We call QuantileMapping directly here rather than _make_debiaser because we need to specify different distributions for the low and high tails, and _make_debiaser defines a different distribution to use for pr
-                # This is not an optimal solution but it avoids adding more complexity to _make_debiaser and the debiaser classes just for this one case
+            if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:
+                # Use different parametric distributions for low vs. high tails
                 low_dist = scipy.stats.weibull_min
                 high_dist = scipy.stats.gumbel_r
 
