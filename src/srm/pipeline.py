@@ -21,6 +21,7 @@ import numpy as np
 import scipy.stats
 import xarray as xr
 from ibicus.debias import QuantileMapping
+from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
@@ -43,17 +44,15 @@ from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_encoding
 logger = logging.getLogger(__name__)
 
 
-def _make_debiaser(variable: str, **kwargs):
-    if variable == "rsds":
-        return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
-
-    elif (
-        variable == "dtr"
-    ):  # Ibicus does not accept dtr as a valid var, we are usign tasrange, which seem the same.
-        return QuantileMapping(distribution=scipy.stats.beta, **kwargs)
-
-    else:
-        return QuantileMapping.from_variable(variable=variable, **kwargs)
+def _make_debiaser(variable: str, distribution=None, **kwargs):
+    if distribution is None:
+        if variable in ["tas", "tasmax"]:
+            distribution = scipy.stats.norm
+        elif variable in ["hurs", "rsds", "dtr"]:
+            distribution = scipy.stats.beta
+        elif variable == "pr":
+            distribution = PrecipitationHurdleModelGamma
+    return QuantileMapping(distribution=distribution, **kwargs)
 
 
 def calculate_out_of_range_mask(
@@ -124,11 +123,12 @@ def calculate_out_of_range_mask(
 
     doy = scenario_detrended["time.dayofyear"]
 
-    out_of_range = (scenario_detrended > rolling_doy_max.sel(dayofyear=doy)) | (
-        scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
-    )
+    out_of_range_low = scenario_detrended > rolling_doy_max.sel(dayofyear=doy)
+    out_of_range_high = scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
 
-    return out_of_range
+    out_of_range = out_of_range_low | out_of_range_high
+
+    return out_of_range, out_of_range_low, out_of_range_high
 
 
 def _assert_stitched_continuity(result: xr.DataArray) -> None:
@@ -533,7 +533,7 @@ class BCSDPipeline:
         """
         mapping_type = (
             "nonparametric"
-            if self.config.mapping_type == "nonparametric_hybrid"
+            if self.config.mapping_type in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
             else self.config.mapping_type
         )
         debiaser = _make_debiaser(
@@ -870,16 +870,51 @@ class BCSDPipeline:
                 **apply_kwargs
             )
 
-            out_of_range = calculate_out_of_range_mask(
+            out_of_range, _, _ = calculate_out_of_range_mask(
                 model_hist=model_hist,
                 scenario_detrended=scenario_detrended,
                 center_window=self.config.running_window_length,
             )
             debiased_np = np.where(out_of_range.values, parametric_np, nonparametric_np)
 
+        elif self.config.mapping_type == "nonparametric_hybrid_2sided":
+            # Use one parametric debiaser for low out-of-range values, another for high, and nonparametric everywhere else
+
+            if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:
+                # Use different parametric distributions for low vs. high tails
+                low_dist = scipy.stats.weibull_min
+                high_dist = scipy.stats.gumbel_r
+
+                parametric_low_np = _make_debiaser(distribution=low_dist, **common_kwargs).apply(
+                    **apply_kwargs
+                )
+                parametric_high_np = _make_debiaser(distribution=high_dist, **common_kwargs).apply(
+                    **apply_kwargs
+                )
+            else:
+                # Unless explicitly specified, use the same parametric debiaser for both tails even if calling "nonparametric_hybrid_2sided"
+                parametric_low_np = _make_debiaser(
+                    mapping_type="parametric", **common_kwargs
+                ).apply(**apply_kwargs)
+
+                parametric_high_np = parametric_low_np
+
+            nonparametric_np = _make_debiaser(mapping_type="nonparametric", **common_kwargs).apply(
+                **apply_kwargs
+            )
+
+            _, out_of_range_low, out_of_range_high = calculate_out_of_range_mask(
+                model_hist=model_hist,
+                scenario_detrended=scenario_detrended,
+                center_window=self.config.running_window_length,
+            )
+
+            debiased_np = np.where(out_of_range_low.values, parametric_low_np, nonparametric_np)
+            debiased_np = np.where(out_of_range_high.values, parametric_high_np, debiased_np)
+
         else:
             raise ValueError(
-                "mapping_type must be 'parametric', 'nonparametric', or 'nonparametric_hybrid'."
+                "mapping_type must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
 
         return xr.DataArray(
