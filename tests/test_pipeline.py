@@ -852,7 +852,7 @@ class TestCalculateOutOfRangeMask:
         model_hist = _make_time_series(10.0)
         scenario = _make_time_series(10.0, start_year=2050, end_year=2052)
 
-        result = calculate_out_of_range_mask(
+        result, _, _ = calculate_out_of_range_mask(
             model_hist=model_hist, scenario_detrended=scenario, center_window=31
         )
 
@@ -863,7 +863,7 @@ class TestCalculateOutOfRangeMask:
         model_hist = _make_time_series(10.0)
         scenario = _make_time_series(20.0, start_year=2050, end_year=2052)
 
-        result = calculate_out_of_range_mask(
+        result, _, _ = calculate_out_of_range_mask(
             model_hist=model_hist, scenario_detrended=scenario, center_window=31
         )
 
@@ -874,7 +874,7 @@ class TestCalculateOutOfRangeMask:
         model_hist = _make_time_series(10.0)
         scenario = _make_time_series(0.0, start_year=2050, end_year=2052)
 
-        result = calculate_out_of_range_mask(
+        result, _, _ = calculate_out_of_range_mask(
             model_hist=model_hist, scenario_detrended=scenario, center_window=31
         )
 
