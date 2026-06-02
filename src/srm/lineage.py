@@ -59,6 +59,35 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None]]:
     add("CESM2-WACCM", "SSP245", "010", _std, "r3i1p1f1")
     add("CESM2-WACCM", "SSP245", "010", _tmx, "001")
 
+    _all = _std + _tmx
+
+    # MIROC-ES2H SSP245 (standard CMIP6 runs; no SAI bridge).
+    # Physics tag p4f2 is non-standard — these are not in the public CMIP6 archive;
+    # data sourced from JAMSTEC (Shingo Watanabe).
+    add("MIROC-ES2H", "SSP245", "r1i1p4f2", _all, "r1i1p4f2")
+    add("MIROC-ES2H", "SSP245", "r2i1p4f2", _all, "r2i1p4f2")
+    add("MIROC-ES2H", "SSP245", "r3i1p4f2", _all, "r3i1p4f2")
+
+    # MIROC-ES2H G6-1.5K and baseline (paired SSP245).
+    # Members r01–r10 use abbreviated IDs (GeoMIP runs, not CMIP6 ripf format).
+    # Historical parent cycles: r01/r04/r07/r10→r1i1p4f2, r02/r05/r08→r2i1p4f2, r03/r06/r09→r3i1p4f2.
+    # Source: JAMSTEC GeoMIP server (Shingo Watanabe).
+    _miroc_g6_lineage = [
+        ("r01", "r1i1p4f2"),
+        ("r02", "r2i1p4f2"),
+        ("r03", "r3i1p4f2"),
+        ("r04", "r1i1p4f2"),
+        ("r05", "r2i1p4f2"),
+        ("r06", "r3i1p4f2"),
+        ("r07", "r1i1p4f2"),
+        ("r08", "r2i1p4f2"),
+        ("r09", "r3i1p4f2"),
+        ("r10", "r1i1p4f2"),
+    ]
+    for member, hist in _miroc_g6_lineage:
+        add("MIROC-ES2H", "G6-1.5K", member, _all, hist, member)
+        add("MIROC-ES2H", "baseline", member, _all, hist, member)
+
     return table
 
 
