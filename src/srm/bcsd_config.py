@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field, computed_field, field_validator
 
 _cache_version = f"v{_Version(_pkg_version('srm')).public}"
 
-MappingType = Literal["parametric", "nonparametric", "nonparametric_hybrid"]
+MappingType = Literal[
+    "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided"
+]
 DownscalingMethod = Literal["additive", "multiplicative"]
 DownscalingClimMethod = Literal["simple", "fft"]
 DetrendMethod = Literal["additive", "multiplicative"]
