@@ -110,7 +110,7 @@ class BaseCESM_Config(BaseETLConfig):
     process_cluster: dict = field(
         default_factory=lambda: {
             "n_workers": [6, 16],
-            "worker_vm_types": ["r8g.8xlarge"],
+            "worker_vm_types": ["r8g.12xlarge"],
             "scheduler_vm_types": "c8g.xlarge",
         }
     )
@@ -629,7 +629,10 @@ def process(variable, scenario, coiled, all_variables, subset):
                     subsets = []
                     for cat_key in var_keys:
                         _ds = catalog.get(cat_key).to_xarray()[[cesm_var]]
-                        _ds = _preprocess_cesm(_ds, config, cesm_var, subset=subset)
+                        # _standardize_vars renames cesm_var -> cmip6 var inside
+                        # _preprocess_cesm, so pass the cmip6 name (var) to match
+                        # the cmorization_functions keys ("pr", "hurs").
+                        _ds = _preprocess_cesm(_ds, config, var, subset=subset)
                         subsets.append(_ds)
 
                     ds = (
