@@ -688,7 +688,8 @@ class BCSDPipeline:
         For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
         G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
         When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap before the
-        GeoMIP data begins.
+        GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
+        dataset is converted via to_proleptic_gregorian before concat.
         """
         primary_ds = _catalog.get(f"{self.config.gcm}-SSP245-icechunk").to_xarray()
         primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
@@ -701,7 +702,12 @@ class BCSDPipeline:
             return primary
 
         # Gap detected: prepend ESGF data for the missing years before the GeoMIP start.
-        esgf_ds = _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
+        # ESGF may use a different calendar — convert to proleptic_gregorian (primary's calendar).
+        from srm.utils import to_proleptic_gregorian
+
+        esgf_ds = to_proleptic_gregorian(
+            _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
+        )
         esgf_bridge = esgf_ds[self.config.variable].sel(ensemble_member=self._ssp245_esgf_member)
         esgf_gap = esgf_bridge.isel(time=(esgf_bridge.time.dt.year < primary_start_year).values)
         return xr.concat([esgf_gap, primary], dim="time")

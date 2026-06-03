@@ -36,8 +36,8 @@ def _make_options(tmp_path) -> PipelineOptions:
 
 
 def _make_annual_ds(start_year: int, end_year: int, member: str, var: str = "tas") -> xr.Dataset:
-    """Annual year-start timestamps with an ensemble_member dimension."""
-    times = xr.cftime_range(f"{start_year}", f"{end_year}", freq="YS", calendar="standard")
+    """Annual year-start timestamps (numpy datetime64) with an ensemble_member dimension."""
+    times = xr.date_range(f"{start_year}", f"{end_year}", freq="YS", use_cftime=False)
     data = np.zeros((1, len(times), 2, 2))
     da = xr.DataArray(
         data,
@@ -147,3 +147,48 @@ def test_bridge_esgf_uses_correct_member(tmp_path):
     # If selection used "r01" on the ESGF ds (which only has r1i1p4f2), it would raise.
     assert result is not None
     assert int(result.time.dt.year.min()) == 2015
+
+
+def test_bridge_calendar_aligned_to_primary(tmp_path):
+    """ESGF data with a different calendar is converted to match the primary before concat."""
+    config = _make_config()
+    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+
+    # Use two different cftime calendars (noleap for GeoMIP, 360_day for ESGF).
+    # to_proleptic_gregorian converts both to numpy datetime64 (proleptic_gregorian),
+    # ensuring no calendar mismatch at concat time.
+    def _make_cftime_ds(start: str, end: str, calendar: str, member: str) -> xr.Dataset:
+        times = xr.date_range(start, end, freq="YS", use_cftime=True, calendar=calendar)
+        data = np.zeros((1, len(times), 2, 2))
+        da = xr.DataArray(
+            data,
+            dims=["ensemble_member", "time", "lat", "lon"],
+            coords={
+                "ensemble_member": [member],
+                "time": times,
+                "lat": [0.0, 1.0],
+                "lon": [0.0, 1.0],
+            },
+        )
+        return xr.Dataset({"tas": da})
+
+    geomip_ds = _make_annual_ds(2020, 2084, "r01")  # numpy datetime64, already proleptic_gregorian
+    esgf_ds = _make_cftime_ds("2015", "2084", "360_day", "r1i1p4f2")
+
+    def _side_effect(key):
+        m = MagicMock()
+        m.to_xarray.return_value = esgf_ds if "esgf" in key else geomip_ds
+        return m
+
+    with patch("srm.pipeline._catalog") as mock_cat:
+        mock_cat.get.side_effect = _side_effect
+        result = pipeline._load_ssp245_bridge()
+
+    # to_proleptic_gregorian converts both to numpy datetime64 — no cftime objects remain.
+    assert isinstance(result.time.values[0], np.datetime64), (
+        f"Expected numpy datetime64, got {type(result.time.values[0])}"
+    )
+    years = sorted(int(y) for y in np.unique(result.time.dt.year.values))
+    assert years[0] == 2015
+    assert 2019 in years
+    assert 2020 in years
