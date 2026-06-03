@@ -315,12 +315,15 @@ class BCSDPipeline:
 
         self._hist_member = config.ensemble_member
         self._ssp245_member = config.ensemble_member
+        self._ssp245_esgf_member: str | None = None
         if config.scenario is not None:
             from srm.lineage import resolve_member_lineage
 
             try:
-                self._hist_member, self._ssp245_member = resolve_member_lineage(
-                    config.gcm, config.scenario, config.ensemble_member, config.variable
+                self._hist_member, self._ssp245_member, self._ssp245_esgf_member = (
+                    resolve_member_lineage(
+                        config.gcm, config.scenario, config.ensemble_member, config.variable
+                    )
                 )
             except KeyError:
                 pass
@@ -679,6 +682,30 @@ class BCSDPipeline:
 
         return output_path
 
+    def _load_ssp245_bridge(self) -> xr.DataArray:
+        """Load the SSP245 bridge timeseries for SAI detrending.
+
+        For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
+        G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
+        When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap before the
+        GeoMIP data begins.
+        """
+        primary_ds = _catalog.get(f"{self.config.gcm}-SSP245-icechunk").to_xarray()
+        primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
+
+        if self._ssp245_esgf_member is None:
+            return primary
+
+        primary_start_year = int(primary.time.dt.year.min())
+        if primary_start_year <= self.config.train_period_end + 1:
+            return primary
+
+        # Gap detected: prepend ESGF data for the missing years before the GeoMIP start.
+        esgf_ds = _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
+        esgf_bridge = esgf_ds[self.config.variable].sel(ensemble_member=self._ssp245_esgf_member)
+        esgf_gap = esgf_bridge.isel(time=(esgf_bridge.time.dt.year < primary_start_year).values)
+        return xr.concat([esgf_gap, primary], dim="time")
+
     def _load_scenario_data(
         self,
     ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None]:
@@ -710,10 +737,7 @@ class BCSDPipeline:
         # SAI scenarios need an SSP245 bridge to fill the gap between historical and SAI start
         ssp_timeseries: xr.DataArray | None = None
         if self.config.is_sai_scenario:
-            ssp_timeseries = get_experiment(
-                gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
-            )
-            ssp_timeseries = ssp_timeseries.sel(ensemble_member=self._ssp245_member)
+            ssp_timeseries = self._load_ssp245_bridge()
             ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
 
         if self.config.subset_bounds:
