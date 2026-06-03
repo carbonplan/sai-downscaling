@@ -125,7 +125,7 @@ _CESM2_G6_SSP245_MEMBERS = ("001", "002", "003", "007", "008", "009")
 
 class TestCheckLineageMemberAvailability:
     def test_skip_no_lineage_registered(self, mock_datasets):
-        # UKESM has no lineage registered
+        # UKESM has no lineage entries registered
         result = DatasetValidator(
             gcm="UKESM", scenario="SSP245"
         ).check_lineage_member_availability()
