@@ -123,6 +123,15 @@ def test_bridge_prepends_esgf_when_gap_detected(tmp_path):
     assert any("esgf" in k for k in calls), "ESGF catalog key must be accessed"
     assert any("esgf" not in k for k in calls), "Primary (GeoMIP) catalog key must be accessed"
 
+    # Provenance attrs
+    assert result.attrs["bridge_type"] == "esgf_geomip_stitch"
+    assert result.attrs["bridge_esgf_member"] == "r1i1p4f2"
+    assert result.attrs["bridge_esgf_years"] == "2015-2019"
+    assert result.attrs["bridge_geomip_member"] == "r01"
+    assert result.attrs["bridge_geomip_years"] == "2020-2084"
+    assert result.attrs["bridge_gcm"] == "MIROC-ES2H"
+    assert result.attrs["bridge_variable"] == "tas"
+
 
 def test_bridge_esgf_uses_correct_member(tmp_path):
     """ESGF bridge selects ssp245_esgf_member (r1i1p4f2), not the GeoMIP member (r01)."""

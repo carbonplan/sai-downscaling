@@ -710,7 +710,37 @@ class BCSDPipeline:
         )
         esgf_bridge = esgf_ds[self.config.variable].sel(ensemble_member=self._ssp245_esgf_member)
         esgf_gap = esgf_bridge.isel(time=(esgf_bridge.time.dt.year < primary_start_year).values)
-        return xr.concat([esgf_gap, primary], dim="time")
+
+        esgf_gap_years = (int(esgf_gap.time.dt.year.min()), int(esgf_gap.time.dt.year.max()))
+        primary_years = (primary_start_year, int(primary.time.dt.year.max()))
+        logger.info(
+            "_load_ssp245_bridge: stitching ESGF %s %d–%d + GeoMIP %s %d–%d",
+            self._ssp245_esgf_member,
+            *esgf_gap_years,
+            self._ssp245_member,
+            *primary_years,
+        )
+
+        # Drop the scalar ensemble_member coord before concat — the two slices carry
+        # different values (r1i1p4f2 vs r01) and xr.concat refuses to merge mismatched
+        # scalar coords. Re-attach the primary member value so the bridge is transparent
+        # to any downstream code that reads ensemble_member.
+        esgf_clean = esgf_gap.drop_vars("ensemble_member", errors="ignore")
+        primary_clean = primary.drop_vars("ensemble_member", errors="ignore")
+        bridge = xr.concat([esgf_clean, primary_clean], dim="time")
+        bridge = bridge.assign_coords(ensemble_member=primary.coords["ensemble_member"])
+        bridge.attrs.update(
+            {
+                "bridge_type": "esgf_geomip_stitch",
+                "bridge_esgf_member": self._ssp245_esgf_member,
+                "bridge_esgf_years": f"{esgf_gap_years[0]}-{esgf_gap_years[1]}",
+                "bridge_geomip_member": self._ssp245_member,
+                "bridge_geomip_years": f"{primary_years[0]}-{primary_years[1]}",
+                "bridge_gcm": self.config.gcm,
+                "bridge_variable": self.config.variable,
+            }
+        )
+        return bridge
 
     def _load_scenario_data(
         self,
