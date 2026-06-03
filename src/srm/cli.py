@@ -851,6 +851,7 @@ def validate(
         BLOCKING_CHECKS,
         GCM_OPTIONS,
         SCENARIO_OPTIONS,
+        XFAIL_CHECKS,
         CheckStatus,
         DatasetValidator,
     )
@@ -869,6 +870,8 @@ def validate(
         CheckStatus.FAIL: "[red]✗[/red]",
         CheckStatus.UNKNOWN: "[yellow]?[/yellow]",
         CheckStatus.SKIP: "-",
+        CheckStatus.XFAIL: "[yellow]x[/yellow]",  # expected failure — not blocking
+        CheckStatus.XPASS: "[cyan]✓?[/cyan]",  # unexpected pass — worth investigating
     }
 
     pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
@@ -968,6 +971,20 @@ def validate(
                     f"[dim]{r.check_id} detail[/dim] for {r.gcm}/{r.scenario}", style="dim"
                 )
                 console.print_json(json.dumps(r.detail))
+
+    xfail_results = [r for r in all_results if r.status == CheckStatus.XFAIL]
+    xpass_results = [r for r in all_results if r.status == CheckStatus.XPASS]
+
+    if xfail_results:
+        logger.warning("--- Expected failures (xfail, non-blocking) ---")
+        for r in xfail_results:
+            reason = XFAIL_CHECKS.get((r.gcm, r.scenario, r.check_id), "")
+            logger.warning("x %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, reason)
+
+    if xpass_results:
+        logger.warning("--- Unexpected passes (xpass) — verify xfail entries are still needed ---")
+        for r in xpass_results:
+            logger.warning("✓? %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, r.message)
 
     if blocking_failures:
         raise typer.Exit(1)
