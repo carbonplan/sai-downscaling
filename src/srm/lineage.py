@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-# Lineage lookup: (gcm, scenario, ensemble_member, variable) -> (historical_member, ssp245_member)
+# Lineage lookup: (gcm, scenario, ensemble_member, variable) -> (historical_member, ssp245_member, ssp245_esgf_member)
 # ssp245_member is None for non-SAI scenarios.
+# ssp245_esgf_member is set when an ESGF SSP245 dataset is needed to fill a gap before the primary
+# SSP245 bridge starts (MIROC G6-1.5K only: GeoMIP SSP245 starts 2020, leaving 2015–2019 gap).
 # Source: srm-provenance.csv parent_experiment_ensemble_ids column,
 # confirmed by emails from Walker Lee (G6→SSP245) and Simone Tilmes (historical "001").
 
 
-def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None]]:
-    table: dict[tuple[str, str, str, str], tuple[str, str | None]] = {}
+def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, str | None]]:
+    table: dict[tuple[str, str, str, str], tuple[str, str | None, str | None]] = {}
 
     def add(
         gcm: str,
@@ -16,9 +18,10 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None]]:
         variables: tuple[str, ...],
         hist: str,
         ssp245: str | None = None,
+        ssp245_esgf: str | None = None,
     ) -> None:
         for var in variables:
-            table[(gcm, scenario, member, var)] = (hist, ssp245)
+            table[(gcm, scenario, member, var)] = (hist, ssp245, ssp245_esgf)
 
     _std = (
         "tas",
@@ -80,7 +83,7 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None]]:
     ]
     for member, hist in _miroc_g6_lineage:
         add("MIROC-ES2H", "SSP245", member, _all, hist)  # not SAI; no bridge
-        add("MIROC-ES2H", "G6-1.5K", member, _all, hist, member)
+        add("MIROC-ES2H", "G6-1.5K", member, _all, hist, member, hist)
 
     return table
 
@@ -93,11 +96,13 @@ def resolve_member_lineage(
     scenario: str,
     ensemble_member: str,
     variable: str,
-) -> tuple[str, str | None]:
-    """Return (historical_member, ssp245_member).
+) -> tuple[str, str | None, str | None]:
+    """Return (historical_member, ssp245_member, ssp245_esgf_member).
 
-    ssp245_member is None for non-SAI scenarios (SSP245 runs do not need a
-    bridge). Raises KeyError if the combination has no registered lineage.
+    ssp245_member is None for non-SAI scenarios.
+    ssp245_esgf_member is set when an ESGF SSP245 dataset is needed to fill
+    a gap before the primary SSP245 bridge starts (MIROC G6-1.5K only).
+    Raises KeyError if the combination has no registered lineage.
     """
     key = (gcm, scenario, ensemble_member, variable)
     if key not in _LINEAGE:
@@ -109,8 +114,10 @@ def resolve_member_lineage(
     return _LINEAGE[key]
 
 
-def get_lineage_entries(gcm: str, scenario: str) -> dict[tuple[str, str], tuple[str, str | None]]:
-    """Return {(member, variable): (historical_member, ssp245_member)} for all registered entries.
+def get_lineage_entries(
+    gcm: str, scenario: str
+) -> dict[tuple[str, str], tuple[str, str | None, str | None]]:
+    """Return {(member, variable): (historical_member, ssp245_member, ssp245_esgf_member)}.
 
     Returns an empty dict if no lineage is registered for the given gcm/scenario.
     """

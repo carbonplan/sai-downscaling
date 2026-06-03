@@ -24,44 +24,44 @@ class TestG6Lineage:
 
     @pytest.mark.parametrize("variable", _STANDARD_VARS)
     def test_g6_member_001_standard_vars(self, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", variable)
+        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", variable)
         assert hist == "r1i1p1f1"
         assert ssp245 == "001"
 
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_g6_member_001_tmax_tmin(self, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", variable)
+        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", variable)
         assert hist == "001"
         assert ssp245 == "009"
 
     @pytest.mark.parametrize("variable", _STANDARD_VARS)
     def test_g6_member_002_standard_vars(self, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
+        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
         assert hist == "r2i1p1f1"
         assert ssp245 == "002"
 
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_g6_member_002_tmax_tmin(self, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
+        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
         assert hist == "001"
         assert ssp245 == "007"
 
     @pytest.mark.parametrize("variable", _STANDARD_VARS)
     def test_g6_member_003_standard_vars(self, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", variable)
+        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", variable)
         assert hist == "r3i1p1f1"
         assert ssp245 == "003"
 
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_g6_member_003_tmax_tmin(self, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", variable)
+        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", variable)
         assert hist == "001"
         assert ssp245 == "008"
 
     def test_g6_ssp245_member_is_not_none(self, subtests):
         for member in ("001", "002", "003"):
             with subtests.test(member=member):
-                _, ssp245 = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", member, "tas")
+                _, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", member, "tas")
                 assert ssp245 is not None
 
 
@@ -90,14 +90,14 @@ class TestSSP245Lineage:
     )
     @pytest.mark.parametrize("variable", _STANDARD_VARS)
     def test_ssp245_standard_vars(self, member, expected_hist, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
+        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
         assert hist == expected_hist
         assert ssp245 is None
 
     @pytest.mark.parametrize("member", ("006", "007", "008", "009", "010"))
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_ssp245_tmax_tmin_members(self, member, variable):
-        hist, ssp245 = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
+        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
         assert hist == "001"
         assert ssp245 is None
 
@@ -105,7 +105,7 @@ class TestSSP245Lineage:
         members = ("001", "002", "003", "004", "005", "006", "007", "008", "009", "010")
         for member in members:
             with subtests.test(member=member):
-                _, ssp245 = resolve_member_lineage("CESM2-WACCM", "SSP245", member, "tas")
+                _, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "SSP245", member, "tas")
                 assert ssp245 is None
 
 
@@ -146,3 +146,46 @@ class TestLineageKeyError:
         assert "badscenar" in msg
         assert "999" in msg
         assert "sfcWind" in msg
+
+
+# ---------------------------------------------------------------------------
+# resolve_member_lineage: MIROC-ES2H G6-1.5K
+# ---------------------------------------------------------------------------
+
+
+class TestMirocLineage:
+    """MIROC-ES2H lineage: 3-tuple with ssp245_esgf_member for G6-1.5K."""
+
+    _MIROC_G6_LINEAGE = [
+        ("r01", "r1i1p4f2"),
+        ("r02", "r2i1p4f2"),
+        ("r03", "r3i1p4f2"),
+        ("r04", "r1i1p4f2"),
+        ("r05", "r2i1p4f2"),
+        ("r06", "r3i1p4f2"),
+        ("r07", "r1i1p4f2"),
+        ("r08", "r2i1p4f2"),
+        ("r09", "r3i1p4f2"),
+        ("r10", "r1i1p4f2"),
+    ]
+
+    @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
+    def test_g6_hist_member(self, member, expected_hist):
+        hist, ssp245, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
+        assert hist == expected_hist
+
+    @pytest.mark.parametrize("member", [m for m, _ in _MIROC_G6_LINEAGE])
+    def test_g6_ssp245_member_equals_geomip_member(self, member):
+        _, ssp245, _ = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
+        assert ssp245 == member
+
+    @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
+    def test_g6_esgf_bridge_equals_hist_member(self, member, expected_hist):
+        _, _, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
+        assert ssp245_esgf == expected_hist
+
+    @pytest.mark.parametrize("member", [m for m, _ in _MIROC_G6_LINEAGE])
+    def test_ssp245_has_no_esgf_bridge(self, member):
+        _, ssp245, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "SSP245", member, "tas")
+        assert ssp245 is None
+        assert ssp245_esgf is None
