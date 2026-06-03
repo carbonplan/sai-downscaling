@@ -37,5 +37,5 @@ version: "v0.6.0run2"
 # version: "v0.6.0.post5"
 # verbose: true                       # Enable verbose logging (default: true)
 # rechunk_workflow: true              # Enable strategic rechunking (default: true)
-apply_ocean_mask: false              # Mask ocean pixels to NaN in final output (default: true)
+apply_ocean_mask: false              # Mask ocean pixels to NaN in final output (default: false)
 save_intermediate: true              # Save intermediate artifacts for debugging (default: false)

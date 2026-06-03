@@ -109,8 +109,8 @@ class BaseCESM_Config(BaseETLConfig):
 
     process_cluster: dict = field(
         default_factory=lambda: {
-            "n_workers": [4, 16],
-            "worker_vm_types": ["r8g.4xlarge"],
+            "n_workers": [6, 16],
+            "worker_vm_types": ["r8g.12xlarge"],
             "scheduler_vm_types": "c8g.xlarge",
         }
     )
@@ -268,7 +268,7 @@ def _finalize_metadata(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
         "experiment_lineage": lineage,
         "ensemble_derivation_logic": derivation_logic,  # ie, did it come from attrs / parsing the filepath.
         "processing_steps": (
-            "time_drop_duplicates, lon_to_180, lat_lon_sort, trim_negative_precip"
+            "time_drop_duplicates, lon_to_180, lat_lon_sort, trim_negative_precip, convert_calendar_to_proleptic_gregorian"
         ),
     }
 
@@ -581,7 +581,7 @@ def process(variable, scenario, coiled, all_variables, subset):
             ds = get_CESM_WACCM_ds(scenario)
             available = [v for v in variables if v in ds]
             ds = ds[available]
-            ds = to_proleptic_gregorian(ds, allow_rechunk=True)
+            ds = to_proleptic_gregorian(ds)
             ds = trim_negative_precipitation(ds)
             ds = lon_to_180(ds, lon_name="lon")
             ds = ds.sortby(["lat", "lon"])
@@ -629,7 +629,10 @@ def process(variable, scenario, coiled, all_variables, subset):
                     subsets = []
                     for cat_key in var_keys:
                         _ds = catalog.get(cat_key).to_xarray()[[cesm_var]]
-                        _ds = _preprocess_cesm(_ds, config, cesm_var, subset=subset)
+                        # _standardize_vars renames cesm_var -> cmip6 var inside
+                        # _preprocess_cesm, so pass the cmip6 name (var) to match
+                        # the cmorization_functions keys ("pr", "hurs").
+                        _ds = _preprocess_cesm(_ds, config, var, subset=subset)
                         subsets.append(_ds)
 
                     ds = (
@@ -641,6 +644,7 @@ def process(variable, scenario, coiled, all_variables, subset):
                         ds = ds.reindex(ensemble_member=config.ensemble_members)
                     if canonical_time is not None and len(ds.time) < len(canonical_time):
                         ds = ds.reindex(time=canonical_time)
+                    ds = to_proleptic_gregorian(ds)
                 ds = _update_attrs(ds, var_specs, config)
 
                 repo, session = init_repo(

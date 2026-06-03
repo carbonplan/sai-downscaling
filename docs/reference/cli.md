@@ -287,5 +287,8 @@ uv run bcsd cache-clear --config-path configs/example.yaml --stage scenarios --y
 uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --yes
 ```
 
-> [!WARNING]
-> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.
+:::{admonition} Environment-scoped clearing
+:class: warning
+
+Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.
+:::
