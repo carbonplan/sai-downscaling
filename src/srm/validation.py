@@ -30,6 +30,17 @@ BLOCKING_CHECKS = {
 WARNING_CHECKS: set[str] = set()
 INFO_CHECKS: set[str] = set()
 
+# (gcm, scenario, check_id) → human-readable reason for the expected failure.
+# A FAIL result for a key present here is downgraded to XFAIL (non-blocking).
+# If the check unexpectedly passes it becomes XPASS (also non-blocking, but flagged).
+XFAIL_CHECKS: dict[tuple[str, str, str], str] = {
+    (
+        "MIROC-ES2H",
+        "SSP245",
+        "temporal_coverage",
+    ): "SSP245 data starts 2020-01-01 instead of 2015-01-01; 1826 time steps missing (upstream data gap, not a pipeline error)",
+}
+
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
@@ -85,6 +96,8 @@ class CheckStatus(enum.StrEnum):
     FAIL = "fail"
     SKIP = "skip"  # not applicable for this (gcm, scenario) pair
     UNKNOWN = "unknown"  # check could not be determined
+    XFAIL = "xfail"  # expected to fail, and did — not blocking
+    XPASS = "xpass"  # expected to fail, but passed — flag for investigation
 
 
 class CheckResult(pydantic.BaseModel):
@@ -540,10 +553,24 @@ class DatasetValidator(pydantic.BaseModel):
     # ── orchestration ────────────────────────────────────────────────────────────
 
     def run_checks(self) -> list[CheckResult]:
-        """Run all applicable checks and return results stamped with ``check_id``."""
+        """Run all applicable checks and return results stamped with ``check_id``.
+
+        Results whose (gcm, scenario, check_id) key appears in :data:`XFAIL_CHECKS` are
+        downgraded from ``FAIL`` → ``XFAIL`` (non-blocking expected failure) or upgraded
+        from ``PASS`` → ``XPASS`` (unexpected pass — worth investigating).
+        """
         results = []
         for check_name in self._CHECKS:
             result = getattr(self, check_name)()
             check_id = check_name.removeprefix("check_")
-            results.append(result.model_copy(update={"check_id": check_id}))
+            result = result.model_copy(update={"check_id": check_id})
+
+            xfail_key = (self.gcm, self.scenario, check_id)
+            if xfail_key in XFAIL_CHECKS:
+                if result.status == CheckStatus.FAIL:
+                    result = result.model_copy(update={"status": CheckStatus.XFAIL})
+                elif result.status == CheckStatus.PASS:
+                    result = result.model_copy(update={"status": CheckStatus.XPASS})
+
+            results.append(result)
         return results
