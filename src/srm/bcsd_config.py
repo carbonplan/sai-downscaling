@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import hashlib
+from importlib.metadata import version as _pkg_version
 from typing import Literal
 
 import pydantic_settings
+from packaging.version import Version as _Version
 from pydantic import BaseModel, Field, computed_field, field_validator
+
+_cache_version = f"v{_Version(_pkg_version('srm')).public}"
+
+MappingType = Literal[
+    "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided"
+]
+DownscalingMethod = Literal["additive", "multiplicative"]
+DownscalingClimMethod = Literal["simple", "fft"]
+DetrendMethod = Literal["additive", "multiplicative"]
+VariableName = Literal["tas", "tasmax", "pr", "rsds", "dtr"]
 
 
 class VariableConfig(BaseModel):
@@ -12,9 +24,10 @@ class VariableConfig(BaseModel):
 
     detrend_data: bool
     do_windowing: bool
-    downscaling_method: Literal["additive", "multiplicative"]
-    downscaling_clim_method: Literal["simple", "fft"]
-    detrend_method: Literal["additive", "multiplicative"] = "additive"
+    running_window_length: int = 31
+    downscaling_method: DownscalingMethod
+    downscaling_clim_method: DownscalingClimMethod
+    detrend_method: DetrendMethod = "additive"
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
@@ -48,6 +61,13 @@ class VariableConfig(BaseModel):
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "simple",
             },
+            "dtr": {
+                "detrend_data": True,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "downscaling_method": "multiplicative",
+                "downscaling_clim_method": "simple",
+            },
         }
 
         if variable not in BCSD_CONFIG:
@@ -57,28 +77,78 @@ class VariableConfig(BaseModel):
 
         return cls(**BCSD_CONFIG[variable])
 
+    def to_path_id(self) -> str:
+        """
+        Short human-readable path segment encoding all VariableConfig fields.
+
+        Used in cache paths to prevent collisions when VariableConfig is overridden.
+
+        Examples
+        --------
+        Default ``tas``:  ``dt1-win1-dsadditive-dscfft-dtmadditive``
+        ``tas`` with ``do_windowing=False``:  ``dt1-win0-dsadditive-dscfft-dtmadditive``
+        """
+        return (
+            f"dt{int(self.detrend_data)}"
+            f"-win{int(self.do_windowing)}"
+            f"-ds{self.downscaling_method}"
+            f"-dsc{self.downscaling_clim_method}"
+            f"-dtm{self.detrend_method}"
+        )
+
+    def to_hash(self, mapping_type: MappingType) -> str:
+        """
+        8-character SHA-256 hash of VariableConfig fields + mapping_type.
+
+        Uses the same stable-string pattern as ``BCSDConfig.config_hash`` so the
+        hash is deterministic across Python versions and process restarts.
+        Scoped to only the parameters that affect bias-correction behaviour,
+        so runs sharing the same VariableConfig share the same cache sub-directory.
+
+        Parameters
+        ----------
+        mapping_type : MappingType
+            Quantile mapping method. See ``MappingType`` for valid values.
+
+        Returns
+        -------
+        str
+            8-character hex string, e.g. ``a3f8b2c1``.
+        """
+        params = {**self.model_dump(), "mapping_type": mapping_type}
+        raw = str(sorted(params.items()))
+        return hashlib.sha256(raw.encode()).hexdigest()[:8]
+
 
 class BCSDConfig(pydantic_settings.BaseSettings):
     """
-    Main configuration for BCSD downscaling pipeline.
+    Run-identity configuration for BCSD downscaling pipeline.
 
-    This config captures all parameters needed to uniquely identify a BCSD run,
-    including model, variable, ensemble member, scenario, time periods, and
-    optional spatial subsetting.
+    Captures the parameters that uniquely identify a BCSD run: model, variable,
+    ensemble member, scenario, time periods, spatial subsetting, and bias-correction
+    method. Operational settings (paths, flags) live in PipelineOptions.
     """
 
     # Model and data identifiers
     gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM', 'MIROC-ES2H', 'UKESM')")
-    variable: Literal["tas", "tasmax", "pr", "rsds"] = Field(
-        ..., description="Variable to downscale"
-    )
+    variable: VariableName = Field(..., description="Variable to downscale")
     ensemble_member: str = Field(..., description="Ensemble member label (e.g. 'r1i1p1f1', '01')")
     scenario: str | None = Field(
         None,
-        description="Scenario name (e.g., 'ssp245', 'G6-1.5K'). None for historical-only runs.",
+        description="Scenario name (e.g., 'SSP245', 'G6-1.5K'). None for historical-only runs.",
     )
 
-    # Time periods
+    @field_validator("scenario", mode="before")
+    @classmethod
+    def normalize_scenario(cls, v: str | None) -> str | None:
+        """Uppercase scenario so 'ssp245' and 'SSP245' are equivalent."""
+        return v.upper() if v is not None else v
+
+    # Time periods.
+    # Ensure that the train period end and start fall between 1950 and 2014
+    # The predict period can be anywhere from 1950 to 2100 because the
+    # gcm simulations we're transforming can exist in that entire range
+
     train_period_start: int = Field(
         1978, ge=1950, le=2014, description="Start year of training period (historical)"
     )
@@ -103,37 +173,16 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         None, description="Spatial bounds as (lat_min, lat_max, lon_min, lon_max). None for global."
     )
 
-    # Cache and output paths
-    cache_dir: str = Field(
-        "s3://carbonplan-scratch/srm/cache/",
-        description="Base directory for cached intermediate artifacts",
-    )
-    output_dir: str = Field(
-        "s3://carbonplan-scratch/srm/outputs/", description="Directory for final downscaled outputs"
-    )
-    environment: str = Field(
-        default="qa",
-        description="Environment name (qa, staging, production). Separates cache/outputs by deployment stage.",
-    )
-    version: str = Field(
-        default="v1",
-        description="Version identifier for cache/output path namespacing (e.g. 'v1', 'v2'). Override with BCSD_VERSION env var.",
+    mapping_type: MappingType = Field(
+        "parametric",
+        description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 
-    model_config = {"env_prefix": "BCSD_"}
+    model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 
     # Variable-specific settings (auto-populated)
     variable_config: VariableConfig | None = Field(
         None, description="Variable-specific BCSD parameters. Auto-populated if None."
-    )
-
-    # Runtime options
-    verbose: bool = Field(True, description="Enable verbose logging")
-    rechunk_workflow: bool = Field(
-        True, description="Enable strategic rechunking between pipeline stages"
-    )
-    mapping_type: Literal["parametric", "nonparametric"] = Field(
-        "parametric", description="Quantile mapping method for bias correction"
     )
 
     def model_post_init(self, __context) -> None:
@@ -236,7 +285,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         return self.variable_config.detrend_data if self.variable_config else False
 
     @computed_field
-    def detrend_method(self) -> str:
+    def detrend_method(self) -> DetrendMethod:
         """Convenience accessor for variable config"""
         return self.variable_config.detrend_method if self.variable_config else "additive"
 
@@ -246,12 +295,17 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         return self.variable_config.do_windowing if self.variable_config else False
 
     @computed_field
-    def downscaling_method(self) -> str:
+    def running_window_length(self) -> int:
+        """Convenience accessor for variable config"""
+        return self.variable_config.running_window_length if self.variable_config else 31
+
+    @computed_field
+    def downscaling_method(self) -> DownscalingMethod:
         """Convenience accessor for variable config"""
         return self.variable_config.downscaling_method if self.variable_config else "additive"
 
     @computed_field
-    def downscaling_clim_method(self) -> str:
+    def downscaling_clim_method(self) -> DownscalingClimMethod:
         """Convenience accessor for variable config"""
         return self.variable_config.downscaling_clim_method if self.variable_config else "fft"
 
@@ -260,30 +314,46 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         """Check if this is an SAI intervention scenario"""
         return self.scenario and ("G6" in self.scenario.upper() or "SAI" in self.scenario.upper())
 
-    def to_legacy_kwargs(self) -> dict:
-        """
-        Convert to kwargs dict for legacy run_bcsd function.
-        Useful for backward compatibility during transition.
-        """
-        kwargs = {
-            "gcm": self.gcm,
-            "var_name": self.variable,
-            "train_period_start": self.train_period_start,
-            "train_period_end": self.train_period_end,
-            "verbose": self.verbose,
-            "rechunk_workflow": self.rechunk_workflow,
-            "subset_bounds": list(self.subset_bounds) if self.subset_bounds else None,
-        }
 
-        if self.scenario:
-            kwargs.update(
-                {
-                    "predict_period_start": self.predict_period_start,
-                    "predict_period_end": self.predict_period_end,
-                }
-            )
+class PipelineOptions(pydantic_settings.BaseSettings):
+    """
+    Operational settings for the BCSD pipeline.
 
-        return kwargs
+    Covers infrastructure (storage paths, environment, version) and runtime
+    flags (verbosity, rechunking, post-processing). These do not affect
+    computation results and are separate from BCSDConfig run identity.
+
+    All fields can be overridden via BCSD_* environment variables.
+    """
+
+    scratch_dir: str = Field(
+        "s3://carbonplan-scratch/srm/cache/",
+        description="Base directory for cached intermediate artifacts",
+    )
+    output_dir: str = Field(
+        "s3://carbonplan-scratch/srm/outputs/", description="Directory for final downscaled outputs"
+    )
+    environment: str = Field(
+        default="qa",
+        description="Environment name (qa, production). Separates cache/outputs by deployment stage.",
+    )
+    version: str = Field(
+        default=_cache_version,
+        description="Version identifier for cache/output path namespacing. Defaults to the installed package version (e.g. '1.0.post3'). Override with BCSD_VERSION env var.",
+    )
+    verbose: bool = Field(True, description="Enable verbose logging")
+    rechunk_workflow: bool = Field(
+        True, description="Enable strategic rechunking between pipeline stages"
+    )
+    apply_ocean_mask: bool = Field(
+        False, description="Mask ocean pixels to NaN in the final scenario output"
+    )
+    save_intermediate: bool = Field(
+        False,
+        description="Save intermediate artifacts (e.g. detrended data, quantile mapping results) to cache for debugging and analysis",
+    )
+
+    model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 
 
 class CacheConfig(BaseModel):
@@ -295,11 +365,10 @@ class CacheConfig(BaseModel):
     force_recompute: bool = Field(
         False, description="Force recomputation even if cached artifacts exist"
     )
-    environment: str = Field(
-        "qa", description="Environment for cache namespace (qa, staging, production)"
-    )
+    environment: str = Field("qa", description="Environment for cache namespace (qa, production)")
     version: str = Field(
-        "v1", description="Version identifier for cache path namespacing (e.g. 'v1', 'v2')"
+        _cache_version,
+        description="Version identifier for cache path namespacing. Defaults to the installed package version.",
     )
     check_integrity: bool = Field(
         True, description="Verify cached artifacts are valid before using"
@@ -389,16 +458,12 @@ scenario: ssp245
 predict_period_start: 2015
 predict_period_end: 2100
 environment: qa
-version: v1
+# version defaults to installed package version; override here if needed
+# version: 1.0.post3
 """
 
 import yaml
 with open("configs/cesm_tas.yaml") as f:
     config_dict = yaml.safe_load(f)
 config = BCSDConfig(**config_dict)
-
-# 6. Convert to legacy format (backward compatibility)
-legacy_kwargs = config.to_legacy_kwargs()
-from srm.run_bcsd import run_bcsd
-result = run_bcsd(**legacy_kwargs)
 '''

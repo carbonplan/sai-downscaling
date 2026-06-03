@@ -21,22 +21,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-
-      - name: aws
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::631969445205:role/github-action-role
-          role-session-name: ocr-etl-role-session
-          aws-region: us-west-2
-
-      - name: install uv 
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-
-      - name: deps
-        run: uv sync --group dev
-
-      - name: run tests
-        run: uv run pytest -n auto -v
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - run: uv run pytest -n 2 -v

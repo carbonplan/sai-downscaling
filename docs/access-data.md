@@ -14,7 +14,7 @@ Dataset Catalog (6 datasets)
 +---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
 | Name                            | Format   | Path                                                                                                   | Expected Chunks                                            |
 +=================================+==========+========================================================================================================+============================================================+
-| CESM2-WACCM-Historical-icechunk | icechunk | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical.icechunk | {'time': 13521, 'lat': 8, 'lon': 16}                       |
+| CESM2-WACCM-historical-icechunk | icechunk | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-Historical.icechunk | {'time': 13521, 'lat': 8, 'lon': 16}                       |
 +---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
 | CESM2-WACCM-G6-1.5K-icechunk    | icechunk | s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k.icechunk       | {'ensemble_member': 1, 'time': 18251, 'lat': 8, 'lon': 16} |
 +---------------------------------+----------+--------------------------------------------------------------------------------------------------------+------------------------------------------------------------+
@@ -33,7 +33,7 @@ Dataset Catalog (6 datasets)
 ```python
 from srm import catalog
 
-cesm_historical = catalog.get("CESM2-WACCM-Historical-icechunk").to_xarray()
+cesm_historical = catalog.get("CESM2-WACCM-historical-icechunk").to_xarray()
 cesm_historical
 ```
 
@@ -46,7 +46,7 @@ import icechunk
 import xarray as xr
 from srm import catalog
 
-ds_meta = catalog.get("CESM2-WACCM-Historical-icechunk")
+ds_meta = catalog.get("CESM2-WACCM-historical-icechunk")
 
 storage = icechunk.s3_storage(bucket=ds_meta.bucket, prefix=ds_meta.prefix, from_env=True)
 repo = icechunk.Repository.open(storage)

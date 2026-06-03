@@ -9,6 +9,7 @@ from icechunk.xarray import to_icechunk
 
 from srm import catalog
 from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
+from srm.input_data.etl_utils import load_dtr_from_store
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
@@ -24,6 +25,7 @@ class ERA5Config:
         "mean_surface_downward_short_wave_radiation_flux",
         "mean_surface_downward_long_wave_radiation_flux",
         "surface_pressure",
+        "hurs",
     ]
     ALL_VARS = MAX_RESAMPLING | MIN_RESAMPLING | MEAN_RESAMPLING
 
@@ -35,6 +37,7 @@ class ERA5Config:
         "mean_surface_downward_short_wave_radiation_flux": "rsds",
         "mean_surface_downward_long_wave_radiation_flux": "rlds",
         "surface_pressure": "ps",
+        "hurs": "hurs",
     }
 
     input_url: str = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
@@ -50,7 +53,7 @@ class ERA5Config:
         + list(get_args(MIN_RESAMPLING))
         + list(get_args(MEAN_RESAMPLING))
     )
-    DERIVED_VARS = ["dtr"]
+    DERIVED_VARS = ["dtr", "hurs"]
 
     def __post_init__(self):
         """Fetch output location from catalog and unpack"""
@@ -80,7 +83,7 @@ def _resample_time(ds, variable):
         raise ValueError(f"Unknown variable: {variable}")
 
 
-def _load_era5(variable, config: ERA5Config):
+def _load_era5(variable, config: ERA5Config) -> xr.Dataset:
     # chunks=None skips using dask.
     # This uses xarray’s internally private lazy indexing classes, but data is eagerly loaded into memory as numpy arrays when accessed.
     # This can be more efficient ... when large arrays are sliced before computation.
@@ -173,18 +176,6 @@ def write_to_icechunk(
     session.commit(commit_message)
 
 
-def _load_dtr_from_store(config: ERA5Config) -> xr.Dataset:
-    storage = icechunk.s3_storage(bucket=config.bucket, prefix=config.prefix, region="us-west-2")
-    repo = icechunk.Repository.open(storage)
-    session = repo.readonly_session("main")
-    ds = xr.open_dataset(session.store, engine="zarr", chunks=config.encoding["shards"])
-    if "tasmax" not in ds or "tasmin" not in ds:
-        raise ValueError("tasmax and tasmin must be processed before dtr")
-    dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")
-    dtr.attrs["units"] = "K"
-    return dtr.to_dataset()
-
-
 def _determine_mode_based_on_ancestry(repo: icechunk.Repository, branch: str = "main") -> str:
     # check the icechunk ancestry to see if data already exists. Change mode to append if so.
     history = list(repo.ancestry(branch=branch))
@@ -218,9 +209,19 @@ def process_era5_pipeline(
                 print(f"processing {var}")
 
             if var == "dtr":
-                ds = _load_dtr_from_store(config=config)
+                ds = load_dtr_from_store(config.bucket, config.prefix, config.encoding["shards"])
             else:
-                ds = _load_era5(variable=var, config=config)
+                if var == "hurs":
+                    import xclim
+
+                    era5_tas = _load_era5(variable="2m_temperature", config=config)
+                    era5_tdps = _load_era5(variable="2m_dewpoint_temperature", config=config)
+                    ds = xclim.convert.relative_humidity_from_dewpoint(
+                        tas=era5_tas["2m_temperature"], tdps=era5_tdps["2m_dewpoint_temperature"]
+                    ).to_dataset(name="hurs")
+
+                else:
+                    ds = _load_era5(variable=var, config=config)
                 ds = _preprocess_era5(ds, config)
 
                 if var == "mean_total_precipitation_rate":

@@ -8,10 +8,11 @@ It automatically detects cached artifacts and submits only necessary tasks.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Literal
 
-from srm.bcsd_config import BCSDConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache
 from srm.pipeline import BCSDPipeline
 
@@ -49,26 +50,28 @@ class BCSDOrchestrator:
         "transform_scenario": ["r8g.24xlarge"],
     }
 
-    def __init__(self):
+    def __init__(self, options: PipelineOptions):
         """
         Initialize orchestrator.
 
-        Note: The cache is created on-demand using cache_dir from the configs
-        to ensure consistency between orchestrator and batch jobs.
+        Parameters
+        ----------
+        options : PipelineOptions
+            Operational settings containing storage paths and runtime flags.
         """
-        self._cache_instances = {}  # Cache instances keyed by (cache_dir, environment)
+        self.options = options
+        self._cache: ArtifactCache | None = None
 
-    def _get_cache(self, config: BCSDConfig) -> ArtifactCache:
-        """Get or create cache instance for config's cache_dir and output_dir."""
-        cache_key = (config.cache_dir, config.output_dir, config.environment, config.version)
-        if cache_key not in self._cache_instances:
-            self._cache_instances[cache_key] = ArtifactCache(
-                base_path=config.cache_dir,
-                environment=config.environment,
-                version=config.version,
-                output_dir=config.output_dir,
+    def _get_cache(self) -> ArtifactCache:
+        """Get or create cache instance from options."""
+        if self._cache is None:
+            self._cache = ArtifactCache(
+                scratch_dir=self.options.scratch_dir,
+                environment=self.options.environment,
+                version=self.options.version,
+                output_dir=self.options.output_dir,
             )
-        return self._cache_instances[cache_key]
+        return self._cache
 
     def submit_stage(
         self,
@@ -99,18 +102,18 @@ class BCSDOrchestrator:
         if not configs:
             return []
 
-        # Get cache instance from first config (all configs should use same cache_dir)
-        cache = self._get_cache(configs[0])
+        cache = self._get_cache()
 
         # Filter out configs that are already cached
         configs_to_run = []
         output_paths = []
 
         for config in configs:
-            output_path = cache.get_output_path(stage, config)
+            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
+            output_path = cache.get_output_path(stage, config, hist_member=hist_member)
 
             if cache.exists(output_path) and not force:
-                if config.verbose:
+                if self.options.verbose:
                     logger.info(f"⊙ Skipping {config.run_id} - output exists: {output_path}")
                 output_paths.append(output_path)
             else:
@@ -184,7 +187,7 @@ class BCSDOrchestrator:
         # Exclude computed fields (run_id, config_hash, detrend_data, etc.) since they
         # are derived values and BCSDConfig does not accept them as constructor inputs.
         computed_fields = set(BCSDConfig.model_computed_fields.keys())
-        cache = self._get_cache(configs[0])
+        cache = self._get_cache()
         command = ["python", "-m", "srm.batch_runner", stage]
 
         remaining = list(configs)
@@ -198,14 +201,27 @@ class BCSDOrchestrator:
                 )
 
             task_var_dicts = [
-                {"CONFIG_JSON": json.dumps(config.model_dump(exclude=computed_fields))}
+                {
+                    "CONFIG_JSON": json.dumps(
+                        {
+                            **config.model_dump(exclude=computed_fields),
+                            "options": self.options.model_dump(),
+                        }
+                    )
+                }
                 for config in remaining
             ]
+
+            gcms = "-".join(sorted({c.gcm for c in remaining}))
+            variables = "-".join(sorted({c.variable for c in remaining}))
+            config_hashes: list[str] = [c.config_hash for c in remaining]
+            batch_hash = hashlib.sha256("".join(sorted(config_hashes)).encode()).hexdigest()[:8]
+            job_name = f"bcsd-{stage}-{gcms}-{variables}-{batch_hash}"
 
             vm_type = self._STAGE_VM_TYPES.get(stage, ["c8g.12xlarge"])
             job_result = coiled.batch.run(
                 command=command,
-                name=f"bcsd-{stage}-{remaining[0].gcm}",
+                name=job_name,
                 vm_type=vm_type,
                 scheduler_vm_type=vm_type,
                 region="us-west-2",
@@ -229,7 +245,15 @@ class BCSDOrchestrator:
             still_failed = [
                 config
                 for config in remaining
-                if not cache.exists(cache.get_output_path(stage, config))
+                if not cache.exists(
+                    cache.get_output_path(
+                        stage,
+                        config,
+                        hist_member=self._resolve_hist_member(config)
+                        if stage == "fit_historical"
+                        else None,
+                    )
+                )
             ]
 
             if not still_failed:
@@ -254,7 +278,16 @@ class BCSDOrchestrator:
         logger.info(f"✓ All {len(configs)} {stage} tasks completed")
 
         # Collect and return all output paths (now guaranteed to exist)
-        return [cache.get_output_path(stage, config) for config in configs]
+        return [
+            cache.get_output_path(
+                stage,
+                config,
+                hist_member=self._resolve_hist_member(config)
+                if stage == "fit_historical"
+                else None,
+            )
+            for config in configs
+        ]
 
     def _run_local(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
         """
@@ -275,7 +308,7 @@ class BCSDOrchestrator:
         completed_paths = []
 
         for config in configs:
-            pipeline = BCSDPipeline(config)
+            pipeline = BCSDPipeline(config, self.options)
 
             if stage == "prepare_observations":
                 path = pipeline.prepare_observations()
@@ -295,7 +328,7 @@ class BCSDOrchestrator:
         configs: list[BCSDConfig],
         force: bool = False,
         use_coiled: bool = True,
-    ) -> list[str]:
+    ) -> dict[str, list[str]]:
         """
         Run all three stages in sequence with automatic dependency management.
 
@@ -315,30 +348,39 @@ class BCSDOrchestrator:
 
         Returns
         -------
-        list[str]
-            Final scenario output paths for all configs
+        dict[str, list[str]]
+            Mapping of stage name to output paths:
+            ``{'prepare_observations': [...], 'fit_historical': [...], 'transform_scenario': [...]}``
         """
         logger.info(f"╔═══ Starting BCSD workflow for {len(configs)} configurations")
 
         # Stage 1: Unique obs regridding tasks
         obs_configs = self._deduplicate_obs_configs(configs)
         logger.info(f"║ Stage 1: prepare_observations ({len(obs_configs)} unique tasks)")
-        self.submit_stage("prepare_observations", obs_configs, force=force, use_coiled=use_coiled)
+        obs_paths = self.submit_stage(
+            "prepare_observations", obs_configs, force=force, use_coiled=use_coiled
+        )
 
         # Stage 2: Unique historical tasks
         hist_configs = self._deduplicate_historical_configs(configs)
         logger.info(f"║ Stage 2: fit_historical ({len(hist_configs)} unique tasks)")
-        self.submit_stage("fit_historical", hist_configs, force=force, use_coiled=use_coiled)
+        hist_paths = self.submit_stage(
+            "fit_historical", hist_configs, force=force, use_coiled=use_coiled
+        )
 
         # Stage 3: All scenario tasks
         logger.info(f"║ Stage 3: transform_scenario ({len(configs)} tasks)")
-        output_paths = self.submit_stage(
+        scenario_paths = self.submit_stage(
             "transform_scenario", configs, force=force, use_coiled=use_coiled
         )
 
         logger.info("╚═══ Workflow complete! ✓")
 
-        return output_paths
+        return {
+            "prepare_observations": obs_paths,
+            "fit_historical": hist_paths,
+            "transform_scenario": scenario_paths,
+        }
 
     def _deduplicate_obs_configs(self, configs: list[BCSDConfig]) -> list[BCSDConfig]:
         """
@@ -367,6 +409,10 @@ class BCSDOrchestrator:
         """
         Extract unique (GCM, variable, ensemble) combinations for historical downscaling.
 
+        Deduplication uses the resolved historical ensemble member so that multiple
+        scenario configs that share the same lineage parent are not submitted as
+        separate historical tasks.
+
         Parameters
         ----------
         configs : list[BCSDConfig]
@@ -380,11 +426,42 @@ class BCSDOrchestrator:
         seen = set()
         unique = []
         for config in configs:
-            key = (config.gcm, config.variable, config.ensemble_member)
+            key = (config.gcm, config.variable, self._resolve_hist_member(config))
             if key not in seen:
                 seen.add(key)
                 unique.append(config)
         return unique
+
+    @staticmethod
+    def _resolve_hist_member(config: BCSDConfig) -> str:
+        """
+        Return the resolved historical ensemble member for a config.
+
+        Mirrors the lineage resolution in ``BCSDPipeline.__init__``: for SAI/SSP245
+        scenarios the raw ``ensemble_member`` may map to a different historical parent
+        member.  Falls back to ``config.ensemble_member`` when no lineage entry exists.
+
+        Parameters
+        ----------
+        config : BCSDConfig
+            Run configuration
+
+        Returns
+        -------
+        str
+            Resolved historical member (e.g. ``"r1i1p1f1"`` for CESM2-WACCM ``"001"``)
+        """
+        if config.scenario is None:
+            return config.ensemble_member
+        try:
+            from srm.lineage import resolve_member_lineage
+
+            hist_member, _ = resolve_member_lineage(
+                config.gcm, config.scenario, config.ensemble_member, config.variable
+            )
+            return hist_member
+        except KeyError:
+            return config.ensemble_member
 
     def get_status(self, configs: list[BCSDConfig]) -> dict[str, dict]:
         """
@@ -409,13 +486,13 @@ class BCSDOrchestrator:
         if not configs:
             return status
 
-        cache = self._get_cache(configs[0])
+        cache = self._get_cache()
 
         # Check obs (deduplicated)
         obs_configs = self._deduplicate_obs_configs(configs)
         status["prepare_observations"]["total"] = len(obs_configs)
         for config in obs_configs:
-            path = cache.get_obs_path(config.gcm, config.variable, config.subset_bounds)
+            path = cache.get_obs_path(config)
             if cache.exists(path):
                 status["prepare_observations"]["cached"] += 1
             else:
@@ -425,9 +502,7 @@ class BCSDOrchestrator:
         hist_configs = self._deduplicate_historical_configs(configs)
         status["fit_historical"]["total"] = len(hist_configs)
         for config in hist_configs:
-            path = cache.get_historical_path(
-                config.gcm, config.variable, config.ensemble_member, config.subset_bounds
-            )
+            path = cache.get_historical_path(config, hist_member=self._resolve_hist_member(config))
             if cache.exists(path):
                 status["fit_historical"]["cached"] += 1
             else:
@@ -437,13 +512,7 @@ class BCSDOrchestrator:
         status["transform_scenario"]["total"] = len(configs)
         for config in configs:
             if config.scenario:
-                path = cache.get_scenario_path(
-                    config.gcm,
-                    config.variable,
-                    config.ensemble_member,
-                    config.scenario,
-                    config.subset_bounds,
-                )
+                path = cache.get_scenario_path(config)
                 if cache.exists(path):
                     status["transform_scenario"]["cached"] += 1
                 else:

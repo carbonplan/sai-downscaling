@@ -1,9 +1,35 @@
 # How to Run a Multi-Model Ensemble
 
-The easiest way to process multiple GCMs, variables, ensemble members, and scenarios is a single `bcsd run-matrix` invocation. The orchestrator automatically deduplicates shared work so each intermediate artifact is computed only once regardless of how many combinations need it.
+There are two ways to run multiple GCMs, variables, ensemble members, and scenarios. The orchestrator automatically deduplicates shared work in both cases, so each intermediate artifact is computed only once regardless of how many combinations need it.
+
+## Option A — Matrix config file (recommended for repeatable runs)
+
+Add list values to any YAML config and run it with `bcsd run`:
+
+```yaml
+# configs/production/cesm2-waccm.yaml
+gcm: "CESM2-WACCM"
+variables: ["tas", "pr"]
+ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
+scenarios: ["SSP245"]
+predict_period_start: 2015
+predict_period_end: 2100
+environment: production
+mapping_type: nonparametric_hybrid
+```
 
 ```bash
-# 3 GCMs × 1 variable × 3 members × 1 scenario = 9 runs
+uv run bcsd run --config-path configs/production/
+```
+
+This is the approach used for QA and production deploys. See the [configuration reference](../reference/configuration.md#matrix-config-format) for full details and restrictions (e.g. `variable_config` and multiple variables).
+
+## Option B — `bcsd run-matrix` CLI (recommended for ad-hoc runs)
+
+Specify each dimension as a repeatable option without needing a config file:
+
+```bash
+# 3 GCMs x 1 variable x 3 members x 1 scenario = 9 runs
 # Stage 1: 3 obs tasks (one per GCM)
 # Stage 2: 9 historical tasks (3 per GCM)
 # Stage 3: 9 scenario tasks
@@ -13,7 +39,7 @@ uv run bcsd run-matrix \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 \
   --predict-period-start 2015 --predict-period-end 2100 \
-  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --scratch-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/" \
   --environment production --version v1 \
   --coiled

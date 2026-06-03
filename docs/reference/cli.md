@@ -20,7 +20,7 @@ uv run bcsd run-matrix [OPTIONS]
 - `--predict-period-end INTEGER`: end year of prediction period (required when `--scenario` is given)
 - `--train-period-start INTEGER`: start year of training period (default: `1978`)
 - `--train-period-end INTEGER`: end year of training period (default: `2014`)
-- `--cache-dir TEXT`: base directory for cached artifacts
+- `--scratch-dir TEXT`: base directory for cached artifacts
 - `--output-dir TEXT`: directory for final outputs
 - `--environment TEXT`: environment (default: `qa`)
 - `--version TEXT`: version identifier (default: `v1`)
@@ -40,7 +40,7 @@ uv run bcsd run-matrix \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario ssp245 --scenario G6-1pt5k \
   --predict-period-start 2015 --predict-period-end 2100 \
-  --cache-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --scratch-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/"
 
 # Preview what would run without executing
@@ -104,11 +104,43 @@ stage 3 (transform_scenario):
 
 ---
 
+## `bcsd validate` — Validate Input Datasets
+
+Validate input datasets against the validation matrix before running the pipeline. Exits with code 1 if any blocking check fails.
+
+```bash
+uv run bcsd validate [OPTIONS]
+```
+
+**Options:**
+
+- `--config-path TEXT / -c TEXT` (repeatable): path to YAML config or directory. Derives the GCMs and scenarios to validate from the loaded configs. Supports the matrix format (list fields).
+- `--gcm TEXT` (repeatable): GCM(s) to validate explicitly. Defaults to all known GCMs when neither `--config-path` nor `--gcm` is given.
+- `--scenario TEXT` (repeatable): scenario(s) to validate explicitly. Defaults to all known scenarios when neither `--config-path` nor `--scenario` is given.
+
+**Examples:**
+
+```bash
+# Validate only the datasets referenced by a config directory (recommended)
+uv run bcsd validate --config-path configs/qa/
+uv run bcsd validate --config-path configs/production/
+
+# Validate a specific GCM/scenario combination
+uv run bcsd validate --gcm CESM2-WACCM --scenario SSP245
+
+# Validate all known datasets
+uv run bcsd validate
+```
+
+When `--config-path` is given, `bcsd validate` extracts the unique GCMs and scenarios from those configs and validates only those combinations. This matches exactly what `bcsd run` will consume.
+
+---
+
 ## `bcsd run` — Execute Pipeline from Config File
 
-Run the BCSD downscaling pipeline for a **single config** or a **directory of pre-existing config files**.
+Run the BCSD downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format) — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination.
 
-> For new multi-run workflows, prefer `bcsd run-matrix` instead.
+> For ad-hoc multi-run workflows from the command line without config files, use `bcsd run-matrix` instead.
 
 ```bash
 uv run bcsd run --config-path PATH [OPTIONS]
@@ -180,9 +212,9 @@ uv run bcsd status --config-path configs/example.yaml --verbose
 #   Version: v1
 #
 # Example Paths:
-#   Obs: s3://.../bcsd-cache/qa/v1/obs/CESM2-WACCM_tas_lat-35.0to-22.0_lon16.0to33.0_obs_regridded.icechunk
-#   Historical: s3://.../outputs/qa/v1/historical/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_historical.icechunk
-#   Scenario: s3://.../outputs/qa/v1/ssp245/CESM2-WACCM_tas_000_lat-35.0to-22.0_lon16.0to33.0_ssp245.icechunk
+#   Obs: s3://.../bcsd-cache/qa/v1/obs/CESM2-WACCM/tas/lat-35.0to-22.0_lon16.0to33.0/obs_regridded.icechunk
+#   Historical: s3://.../outputs/qa/v1/historical/CESM2-WACCM/tas/r1i1p1f1/lat-35.0to-22.0_lon16.0to33.0/{varconfig_hash}/historical.icechunk
+#   Scenario: s3://.../outputs/qa/v1/ssp245/CESM2-WACCM/tas/r1i1p1f1/lat-35.0to-22.0_lon16.0to33.0/{varconfig_hash}/ssp245.icechunk
 #
 # Stage Progress:
 # ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
@@ -206,7 +238,7 @@ uv run bcsd cache-list --config-path PATH [OPTIONS]
 
 **Options:**
 
-- `--config-path TEXT` (required): path to config file or directory (uses cache_dir from config)
+- `--config-path TEXT` (required): path to config file or directory (uses scratch_dir from config)
 - `--stage TEXT`: filter by stage (`obs`/`historical`/`scenarios`)
 - `--gcm TEXT`: filter by GCM model
 - `--variable TEXT`: filter by variable
@@ -214,7 +246,7 @@ uv run bcsd cache-list --config-path PATH [OPTIONS]
 **Examples:**
 
 ```bash
-# List all cached artifacts from config's cache_dir
+# List all cached artifacts from config's scratch_dir
 uv run bcsd cache-list --config-path configs/example.yaml
 
 # List only observation artifacts
@@ -255,5 +287,8 @@ uv run bcsd cache-clear --config-path configs/example.yaml --stage scenarios --y
 uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --yes
 ```
 
-> [!WARNING]
-> Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa or staging.
+:::{admonition} Environment-scoped clearing
+:class: warning
+
+Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.
+:::

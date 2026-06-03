@@ -1,32 +1,113 @@
 import typing
 
-import icechunk
-import icechunk.xarray
 import numpy as np
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 
 from srm import catalog
+from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
 
 
-def subset_space(da: xr.DataArray, coord_bounds_list: list) -> xr.DataArray:
-    [lat_min, lat_max, lon_min, lon_max] = coord_bounds_list
-    da_subset = da.sel(
+def subset_space(
+    da: xr.DataArray,
+    coord_bounds_list: typing.Sequence[float] | None = None,
+    *,
+    lat_bounds: tuple[float, float] | None = None,
+    lon_bounds: tuple[float, float] | None = None,
+) -> xr.DataArray:
+    """
+    Subset a DataArray to a latitude/longitude bounding box.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Input array with ``lat`` and ``lon`` coordinates.
+    coord_bounds_list : sequence[float] | None, optional
+        Legacy positional bounds in the order
+        ``[lat_min, lat_max, lon_min, lon_max]``.
+    lat_bounds : tuple[float, float] | None, optional
+        Latitude bounds as ``(lat_min, lat_max)``.
+    lon_bounds : tuple[float, float] | None, optional
+        Longitude bounds as ``(lon_min, lon_max)``.
+
+    Returns
+    -------
+    xr.DataArray
+        Spatially subsetted array.
+
+    Raises
+    ------
+    ValueError
+        If both legacy and named bounds are provided, required bounds are missing,
+        the legacy bounds are not length 4, or min/max ordering is invalid.
+    """
+    using_legacy_bounds = coord_bounds_list is not None
+    using_named_bounds = lat_bounds is not None or lon_bounds is not None
+
+    if using_legacy_bounds and using_named_bounds:
+        raise ValueError("Provide either coord_bounds_list or lat_bounds/lon_bounds, not both.")
+
+    if using_legacy_bounds:
+        if len(coord_bounds_list) != 4:
+            raise ValueError(
+                "coord_bounds_list must contain four values in order: "
+                "[lat_min, lat_max, lon_min, lon_max]."
+            )
+        lat_min, lat_max, lon_min, lon_max = coord_bounds_list
+        lat_bounds = (lat_min, lat_max)
+        lon_bounds = (lon_min, lon_max)
+    else:
+        if lat_bounds is None or lon_bounds is None:
+            raise ValueError(
+                "Provide both lat_bounds and lon_bounds when coord_bounds_list is not used."
+            )
+
+    lat_min, lat_max = lat_bounds
+    lon_min, lon_max = lon_bounds
+
+    if lat_min >= lat_max:
+        raise ValueError(f"lat_bounds must be (min, max) with min < max, got {lat_bounds}.")
+    if lon_min >= lon_max:
+        raise ValueError(f"lon_bounds must be (min, max) with min < max, got {lon_bounds}.")
+
+    return da.sel(
         lon=slice(lon_min, lon_max),
         lat=slice(lat_min, lat_max),
     )
-    return da_subset
 
 
 _TARGET_CHUNK_BYTES = 100 * 1024 * 1024  # 100 MB
 
 
 def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]) -> xr.DataArray:
+    """
+    Rechunk a gridded DataArray for common BCSD workflow access patterns.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Input array with ``time``, ``lat``, and ``lon`` dimensions.
+    pattern : {"full_space", "full_time"}
+        Target chunk layout:
+        - ``"full_space"``: chunk across time while keeping full lat/lon in each chunk.
+        - ``"full_time"``: keep full time in each chunk while splitting lat/lon chunks.
+
+    Returns
+    -------
+    xr.DataArray
+        Rechunked array. If the current chunking already matches the requested
+        pattern, the input is returned unchanged.
+    """
     if pattern == "full_space":
+        time_chunks = da.chunksizes.get("time", ())
+        # zarr requires last chunk ≤ first; inherited concat chunks can violate this
+        # (e.g. ssp-bridge piece 7305 + g6 piece 18250 after predict-period slice)
+        zarr_valid = len(time_chunks) <= 1 or time_chunks[-1] <= time_chunks[0]
         already_chunked = (
             "time" in da.chunksizes
-            and len(da.chunksizes["time"]) > 1
+            and len(time_chunks) > 1
+            and zarr_valid
             and "lat" in da.chunksizes
             and len(da.chunksizes["lat"]) == 1
             and "lon" in da.chunksizes
@@ -59,15 +140,38 @@ def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]
 
 
 def get_experiment(
-    gcm: str = "CESM2-WACCM",
-    scenario: str = "SSP245",
-    var: str = "tas",
+    gcm: str,
+    scenario: str,
+    var: str,
     coord_bounds_list: list | None = None,
     ensemble_member: str | None = None,
 ):
+    """
+    Load in a GCM simulation.
+
+    Parameters
+    ----------
+    gcm : str
+        Name of the GCM, e.g. "CESM2-WACCM"
+    scenario : str
+        Scenario of experiment, e.g. "SSP245"
+    var : str
+        Variable to load, e.g. "tas"
+
+    Returns
+    -------
+    xr.DataArray
+        Xarray data array for requested simulation
+
+    Raises
+    ------
+    ValueError
+        If invalid ensemble member requested
+
+    """
     cat_name = gcm + "-" + scenario + "-icechunk"
     dataset = catalog.get(cat_name)
-
+    # confirm that the requested ensemble member is available
     if ensemble_member is not None and dataset.ensemble_members is not None:
         if ensemble_member not in dataset.ensemble_members:
             raise ValueError(
@@ -88,6 +192,17 @@ def get_experiment(
     return da
 
 
+def get_historical_experiment(gcm: str, member: str, var: str) -> xr.DataArray:
+    """Load a single historical ensemble member, routing to the correct source dataset.
+    CESM2-WACCM has a two historical dataset options, so we route to the pangeo-prefixed store for r*i*p*f* members,
+    while others use the standard store path."""
+    use_pangeo = gcm == "CESM2-WACCM" and member.startswith("r")
+    key = f"pangeo-{gcm}-historical-icechunk" if use_pangeo else f"{gcm}-historical-icechunk"
+    ds = catalog.get(key).to_xarray()
+    ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
+    return ds[var].sel(ensemble_member=member)
+
+
 def get_obs(var: str = "tas", coord_bounds_list: list | None = None):
     era5 = catalog.get("ERA5").to_xarray()
     era5 = era5.proj.assign_crs(spatial_ref="epsg:4326")
@@ -104,25 +219,72 @@ def calculate_baseline_climatology(
     baseline_period_start: int = 1978,
     baseline_period_end: int = 2014,
 ) -> xr.DataArray:
+    """
+    Compute monthly baseline climatology over a selected time period.
+
+    Parameters
+    ----------
+    da_baseline : xr.DataArray
+        Input time series with a ``time`` coordinate.
+    baseline_period_start : int, default: 1978
+        Inclusive start year for the climatology window.
+    baseline_period_end : int, default: 2014
+        Inclusive end year for the climatology window.
+
+    Returns
+    -------
+    xr.DataArray
+        Monthly climatology with ``month`` coordinate (1-12).
+
+    Notes
+    -----
+    ``groupby(...).mean()`` can promote values (for example ``float32`` to
+    ``float64``). We cast back to the original dtype to keep memory usage and
+    downstream dtype expectations consistent across the workflow.
+    """
     da_baseline = da_baseline.drop_vars("spatial_ref", errors="ignore")
     da_baseline = da_baseline.sel(time=slice(f"{baseline_period_start}", f"{baseline_period_end}"))
     da_baseline_clim = da_baseline.groupby("time.month").mean(dim="time")
 
+    # Keep output dtype stable (mean can upcast float32 -> float64).
     return da_baseline_clim.astype(da_baseline.dtype)
 
 
 def detrend(
     da: xr.DataArray,
     da_baseline_clim: xr.DataArray,
-    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
+    detrend_method: DetrendMethod = "additive",
 ) -> tuple[xr.DataArray, xr.DataArray]:
-    valid_values = ["additive", "multiplicative"]
-    if detrend_method not in valid_values:
-        raise ValueError(
-            f"{detrend_method} is currently not supported. valid values are: {valid_values}"
-        )
+    """
+    Remove a smoothed monthly trend from a daily time series.
+
+    The trend is estimated by:
+    1. computing monthly means,
+    2. applying a 9-year rolling mean within each calendar month, and
+    3. expressing that trend relative to baseline monthly climatology.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Daily (or higher-frequency) input time series with a ``time`` coordinate.
+    da_baseline_clim : xr.DataArray
+        Monthly climatology indexed by ``month`` (1-12), typically from
+        :func:`calculate_baseline_climatology`.
+    detrend_method : {"additive", "multiplicative"}, default: "additive"
+        Trend-removal method:
+        - ``"additive"`` subtracts the trend signal.
+        - ``"multiplicative"`` divides by the trend signal.
+
+    Returns
+    -------
+    tuple[xr.DataArray, xr.DataArray]
+        ``(detrended, trend_on_daily_timestep)`` where the trend has been
+        expanded back to daily resolution and aligned to ``da.time``.
+    """
     # Calculate monthly averages
     da_mon = da.resample(time="1MS").mean("time")
+    # Keep chunks contiguous in time for rolling/groupby operations while
+    # avoiding very small chunks that create excessive Dask task overhead.
     da_mon = da_mon.chunk({"time": 120})
 
     # Group by month
@@ -140,7 +302,12 @@ def detrend(
             lambda x: x / da_baseline_clim.sel(month=x["time.month"][0].item())
         )
 
-    # Project that monthly trend onto the daily timestep
+    # Translate the monthly trend timeseries into a daily timeseries
+    # where every day in that month is the same value. This will produce
+    # jumps from month to month (for example, if January was high but February
+    # was low, it would go from a positive adjustment for january 31 (and entire month before) to a negative
+    #  adjustment for february 1 (and the entire month after). thus, there could be noticeable
+    # artificial discontinuities inserted into the timeseries between 1/31 and 2/1.
     trend_on_daily_timestep = (
         da_mon_trend.resample(time="1D").ffill().reindex(time=da.time).ffill(dim="time")
     ).compute()
@@ -157,8 +324,34 @@ def detrend(
 def retrend(
     bias_corrected_detrended: xr.DataArray,
     trend_on_daily_timestep: xr.DataArray,
-    detrend_method: typing.Literal["additive", "multiplicative"] = "additive",
+    detrend_method: DetrendMethod = "additive",
 ) -> xr.DataArray:
+    """
+    Reincorporate a previously removed trend into a detrended time series.
+
+    Parameters
+    ----------
+    bias_corrected_detrended : xr.DataArray
+        Detrended (and typically bias-corrected) data.
+    trend_on_daily_timestep : xr.DataArray
+        Trend term aligned to the same daily time axis as
+        ``bias_corrected_detrended``.
+    detrend_method : {"additive", "multiplicative"}, default: "additive"
+        Method used during detrending:
+        - ``"additive"`` adds trend back.
+        - ``"multiplicative"`` multiplies trend back.
+
+    Returns
+    -------
+    xr.DataArray
+        Retrended time series on the original scale.
+
+    Raises
+    ------
+    ValueError
+        If ``detrend_method`` is not one of ``"additive"`` or
+        ``"multiplicative"``.
+    """
     valid_values = ["additive", "multiplicative"]
     if detrend_method not in valid_values:
         raise ValueError(
@@ -176,12 +369,39 @@ def retrend(
 def interpolate_fine_to_coarse_grid(
     da_fine_to_coarsen: xr.DataArray, da_coarse_grid: xr.DataArray
 ) -> xr.DataArray:
-    # `.regrid` namespace comes from xarray_regrid; assumes rectilinear, which is same as NCL and good enough for us.
-    # ensure da_coarse_grid consists of only lat/lon coordinates and a single time step (if time coordinate exists) to avoid issues with xarray_regrid
+    """
+    Remap a fine-resolution field onto a coarser target grid.
+
+    Parameters
+    ----------
+    da_fine_to_coarsen : xr.DataArray
+        Fine-resolution data with ``lat``/``lon`` coordinates.
+    da_coarse_grid : xr.DataArray
+        DataArray defining the target coarse grid coordinates.
+
+    Returns
+    -------
+    xr.DataArray
+        Fine data conservatively remapped to the coarse grid, cast back to the
+        input dtype.
+
+    Notes
+    -----
+    Uses conservative remapping via ``xarray_regrid``. Any non-spatial coords
+    (for example ``time``) are dropped from the target grid to avoid ambiguity
+    in regrid operations. We pass ``latitude_coord="lat"`` explicitly so
+    xarray-regrid can apply latitude-aware weighting (accounting for spherical
+    area distortion toward the poles) when building conservative remapping
+    weights.
+    """
+    # `.regrid` namespace is registered by xarray_regrid and assumes a rectilinear grid.
     target_grid = da_coarse_grid.reset_coords(drop=True)
     if "time" in target_grid.coords:
+        # Intentionally use .isel(time=0)`)so
+        # `time` remains a length-1 dimension rather than being dropped to a scalar.
         target_grid = target_grid.isel(time=[0])
-
+    # Explicitly identify the latitude coordinate so conservative weights include
+    # latitude-based area correction.
     da_coarse = da_fine_to_coarsen.regrid.conservative(target_grid, latitude_coord="lat")
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
@@ -189,7 +409,28 @@ def interpolate_fine_to_coarse_grid(
 def interpolate_coarse_to_fine_grid(
     da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray
 ) -> xr.DataArray:
-    # Using slinear instead of linear because linear can produce very small negative numbers even when input dataset is all positive
+    """
+    Interpolate a coarse field onto a finer target grid.
+
+    Parameters
+    ----------
+    da_coarse_to_regrid : xr.DataArray
+        Coarse-resolution input data.
+    da_fine_grid : xr.DataArray
+        DataArray providing target fine-grid ``lat``/``lon`` coordinates.
+
+    Returns
+    -------
+    xr.DataArray
+        Coarse data interpolated to the fine grid, cast back to the input
+        dtype.
+
+    Notes
+    -----
+    Uses ``slinear`` interpolation. This is preferred over ``linear`` here
+    because ``linear`` can introduce tiny negative artifacts for strictly
+    positive variables.
+    """
     coarse_on_fine_grid = da_coarse_to_regrid.interp(
         lon=da_fine_grid["lon"],
         lat=da_fine_grid["lat"],
@@ -221,16 +462,32 @@ def fft_smooth_3harmonics(data):
 
 
 def calculate_doy_means(
-    da: xr.DataArray, clim_method: typing.Literal["simple", "fft"] = "simple"
+    da: xr.DataArray, clim_method: DownscalingClimMethod = "simple"
 ) -> xr.DataArray:
     """
-    Calculate the daily climatology of high-res observations.
+    Compute day-of-year climatology on the fine-resolution observation grid.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Input observation time series with ``time``, ``lat``, and ``lon``.
+    clim_method : {"simple", "fft"}, default: "simple"
+        Climatology smoothing method:
+        - ``"simple"`` returns raw day-of-year means.
+        - ``"fft"`` smooths the day-of-year cycle with mean + first 3 harmonics.
+
+    Returns
+    -------
+    xr.DataArray
+        Day-of-year climatology with dimensions ordered as
+        ``("dayofyear", "lat", "lon")``.
     """
 
     da_xr_doy_mean = da.groupby("time.dayofyear").mean("time")
 
     if clim_method == "simple":
-        doy_means = da_xr_doy_mean
+        return da_xr_doy_mean
+
     elif clim_method == "fft":
         # Apply FFT smoothing along the time dimension
         obs_fine_doy_means_smoothed = xr.apply_ufunc(
@@ -244,27 +501,56 @@ def calculate_doy_means(
         )
 
         # transpose from ["lat", "lon", "dayofyear"] to original order of ["dayofyear", "lat", "lon"]
+        # apply_ufunc moves input_core_dims to the last position, so the output has
+        # dims (lat, lon, dayofyear).  Transpose back to the canonical
+        # (dayofyear, lat, lon) order that matches the simple-path output and
+        # the xarray groupby() convention.
         obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.transpose(
             "dayofyear", "lat", "lon"
         )
 
-        doy_means = obs_fine_doy_means_smoothed
-    return doy_means
+    return obs_fine_doy_means_smoothed
 
 
 def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    method: typing.Literal["additive", "multiplicative"] = "additive",
-    clim_method: typing.Literal["simple", "fft"] = "simple",
+    method: DownscalingMethod = "additive",
+    clim_method: DownscalingClimMethod = "simple",
 ) -> xr.DataArray:
-    valid_clim_methods = ["simple", "fft"]
-    if clim_method not in valid_clim_methods:
-        raise ValueError(
-            f"{method} is currently not supported. valid values are: {valid_clim_methods}"
-        )
+    """
+    Spatially disaggregate bias-corrected coarse data to the fine observation grid.
 
+    Parameters
+    ----------
+    da : xr.DataArray
+        Bias-corrected coarse-resolution simulation to downscale.
+    obs_coarse : xr.DataArray
+        Observations remapped to the same coarse grid as ``da``.
+    obs_fine : xr.DataArray
+        Native fine-resolution observations used to define high-res climatology.
+    method : {"additive", "multiplicative"}, default: "additive"
+        Residual formulation:
+        - ``"additive"`` uses anomalies from coarse climatology.
+        - ``"multiplicative"`` uses ratios to coarse climatology.
+    clim_method : {"simple", "fft"}, default: "simple"
+        Method used to estimate fine-grid day-of-year climatology.
+
+    Returns
+    -------
+    xr.DataArray
+        Downscaled data on the fine ``obs_fine`` grid.
+
+    Notes
+    -----
+    Workflow:
+    1. Compute fine-grid day-of-year climatology.
+    2. Coarsen that climatology to the model grid.
+    3. Compute coarse residuals (difference or ratio).
+    4. Interpolate residuals to fine grid.
+    5. Reapply fine-grid climatology (add or multiply).
+    """
     # Step 1: calculate the daily climatology of high-res observations
     obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
 
@@ -274,86 +560,26 @@ def downscale_from_coarse(
     )
 
     # Step 3: Remove coarsened daily climatology from the bias-corrected fields
-    valid_values = ["additive", "multiplicative"]
-    if method not in valid_values:
-        raise ValueError(f"{method} is currently not supported. valid values are: {valid_values}")
-
     if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
     elif method == "multiplicative":
         residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
 
     # Step 4: Bilinearly interpolate residuals to the high-res grid
+    # this creates a smooth layer of how different the particular simulated february 10 is
+    # from the average february 10.
     residuals_fine = interpolate_coarse_to_fine_grid(
         da_coarse_to_regrid=residuals, da_fine_grid=obs_fine
     )
 
     # Step 5: Return high-res climatology
     # Add or multiply a constant value to the residuals based on DOY
+    # this step adds back in the day-of-year spatial texture saying,
+    # "let's combine (a) how different February 10 is from the typical February 10 at the coarse scale
+    # with the typical spatial structure of February 10"
     if method == "additive":
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
     elif method == "multiplicative":
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
 
     return downscaled
-
-
-def save_data(
-    dict_data: dict,
-    fname_key: str,
-    var_name: str,
-    output_suffix: str = "zarr",
-    s3_bucket: str = "s3://carbonplan-scratch/",
-    prefix: str = "srm-scratch/v0.3_SouthAfrica/",
-    print_fpath: bool = True,
-    chunks: dict = {"time": "100MB", "lat": -1, "lon": -1},
-):
-    s3_path = f"{s3_bucket + prefix}{fname_key}.{output_suffix}"
-
-    if print_fpath:
-        print(f"Saving to {s3_path}")
-
-    dict_dsets = {key: dict_data[key].to_dataset(name=var_name) for key in dict_data}
-    # clear encoding to avoid issues when saving
-    for ds in dict_dsets.values():
-        for var in ds.data_vars:
-            ds[var].encoding = {}
-    datatree = xr.DataTree.from_dict(dict_dsets)
-
-    if output_suffix == "zarr":
-        # instead of chunking here, we could let the user specify chunking earlier?
-        if chunks is not None:
-            datatree = datatree.chunk(chunks)
-        datatree.to_zarr(s3_path, mode="w")
-
-    elif output_suffix == "nc":
-        datatree.to_netcdf(s3_path)
-
-    elif output_suffix == "icechunk":
-        # Option 2: save as icechunk. Example:
-        storage = icechunk.s3_storage(
-            bucket=s3_bucket,
-            prefix=prefix + fname_key + ".icechunk",
-            from_env=True,
-        )
-        repo = icechunk.Repository.create(storage)
-
-        session = repo.writable_session("main")
-
-        icechunk.xarray.to_icechunk(datatree, session)
-        session.commit("write data")
-
-    else:
-        raise ValueError("Invalid output format. Please choose 'zarr' or 'netcdf'.")
-
-
-def get_output_data(
-    fname_key: str,
-    dtree_key: str = "data.zarr/",
-    s3_bucket: str = "s3://carbonplan-scratch/",
-    prefix: str = "srm-scratch/v0.3_SouthAfrica/",
-):
-    dt = xr.open_datatree(s3_bucket + prefix + dtree_key, engine="zarr", chunks={})
-    ds = dt[fname_key]
-
-    return ds

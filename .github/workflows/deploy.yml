@@ -1,0 +1,92 @@
+name: deploy
+
+on:
+    workflow_dispatch:
+        inputs:
+            model:
+                description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm). Leave blank to run all models."
+                required: false
+                default: ""
+                type: string
+            force:
+                description: "Force recompute even if cached"
+                required: false
+                type: boolean
+                default: false
+            version:
+                description: "Override version (e.g. v2). Leave blank to use installed package
+                    version."
+                required: false
+                default: ""
+                type: string
+    release:
+        types:
+            - published
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    id-token: write
+    contents: read
+
+jobs:
+    qa:
+        name: QA run (${{ inputs.model || 'all models' }})
+        timeout-minutes: 120
+        runs-on: ubuntu-latest
+        if: github.event_name == 'workflow_dispatch'
+        environment:
+            name: qa
+        env:
+            QA_CONFIG_PATH: ${{ inputs.model != '' && format('configs/qa/{0}/', inputs.model) || 'configs/qa/' }}
+            FORCE: ${{ inputs.force }}
+            VERSION: ${{ inputs.version }}
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+            - uses: ./.github/actions/setup
+
+            - name: Validate input datasets (QA)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd validate --config-path "$QA_CONFIG_PATH"
+
+            - name: Run BCSD pipeline (QA)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: |
+                  EXTRA_ARGS=""
+                  if [[ "$FORCE" == "true" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --force"
+                  fi
+                  if [[ -n "$VERSION" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --version $VERSION"
+                  fi
+                  uv run bcsd run --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
+
+    production:
+        name: Production run
+        timeout-minutes: 480
+        runs-on: ubuntu-latest
+        if: github.event_name == 'release'
+        environment:
+            name: production
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  ref: ${{ github.event.release.tag_name }}
+            - uses: ./.github/actions/setup
+
+            - name: Validate input datasets (production)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd validate --config-path configs/production/
+
+            - name: Run BCSD pipeline (production)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: |
+                  uv run bcsd run --config-path configs/production/

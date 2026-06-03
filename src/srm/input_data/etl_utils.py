@@ -1,14 +1,12 @@
-# etl_utils.py
+import json
+
 import dask
 import icechunk
 import xarray as xr
-import zarr
 from obspec_utils.registry import ObjectStoreRegistry
 from virtualizarr.parsers import HDFParser
 
-from srm.config import VarSpec, init_repo
-
-ENSEMBLE_MEMBER_MAPPING = {f"{i:03d}": f"r{i}i1p1f1" for i in [1, 2, 3, 4, 5, 7, 8, 9, 10]}
+from srm.config import VarSpec
 
 
 def compute_wind_speed(
@@ -88,6 +86,26 @@ def add_cf_bounds(ds: xr.Dataset, coord_names: list[str] = None) -> xr.Dataset:
     if bounds_vars:
         ds = ds.set_coords(bounds_vars)
 
+    return ds
+
+
+def apply_ensemble_provenance(
+    ds: xr.Dataset,
+    derivation_logic: str,
+    member_provenance: dict | None = None,
+    ensemble_coord: str = "ensemble_member",
+) -> xr.Dataset:
+    """Set ensemble_member provenance on dataset global attrs and ensemble coord attrs."""
+
+    ds.attrs["ensemble_derivation_logic"] = derivation_logic
+    if ensemble_coord in ds.coords:
+        coord_attrs: dict = {
+            "long_name": "Ensemble Member Identifier",
+            "derivation_method": derivation_logic,
+        }
+        if member_provenance is not None:
+            coord_attrs["member_specific_provenance"] = json.dumps(member_provenance)
+        ds[ensemble_coord].attrs.update(coord_attrs)
     return ds
 
 
@@ -181,9 +199,18 @@ def virtualize_and_combine(
     )
 
 
-def remap_ensemble_members(bucket: str, prefix: str, mapping: dict) -> None:
-    repo, session = init_repo(bucket, prefix, readonly=False)
-    root = zarr.open_group(session.store, mode="r+")
-    em_array = root["ensemble_member"]
-    em_array[:] = [mapping.get(v, v) for v in em_array[:]]
-    session.commit("remap ensemble_member coords to CMIP6 ripf labels")
+def load_dtr_from_store(bucket: str, prefix: str, region: str = "us-west-2") -> xr.Dataset:
+    """Load DTR (diurnal temperature range) from an existing icechunk store.
+
+    Computes dtr = tasmax - tasmin. tasmax and tasmin must already be present
+    in the store before calling this.
+    """
+    storage = icechunk.s3_storage(bucket=bucket, prefix=prefix, region=region)
+    repo = icechunk.Repository.open(storage)
+    session = repo.readonly_session("main")
+    ds = xr.open_dataset(session.store, engine="zarr", chunks="auto")
+    if "tasmax" not in ds or "tasmin" not in ds:
+        raise ValueError("tasmax and tasmin must be processed before dtr")
+    dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")
+    dtr.attrs["units"] = "K"
+    return dtr.to_dataset()

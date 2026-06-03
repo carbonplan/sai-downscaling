@@ -30,14 +30,14 @@ def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_nam
         axarr[0, 3].axis("off")
 
     if bias == "absolute":
-        (ds1 - obs).plot(ax=axarr[1, 0])
+        cax2 = (ds1 - obs).plot(ax=axarr[1, 0])
         axarr[1, 0].set_title(f"{ds1_name} minus ERA5")
 
         if ds2 is not None:
-            (ds2 - obs).plot(ax=axarr[1, 1])
+            (ds2 - obs).plot(ax=axarr[1, 1], vmax=cax2.get_clim()[1])
             axarr[1, 1].set_title(f"{ds2_name} minus ERA5")
 
-            (ds2 - ds1).plot(ax=axarr[1, 2])
+            (ds2 - ds1).plot(ax=axarr[1, 2], vmax=cax2.get_clim()[1])
             axarr[1, 2].set_title(f"{ds2_name} minus {ds1_name}")
         else:
             axarr[1, 1].axis("off")
@@ -62,11 +62,7 @@ def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_nam
     plt.tight_layout()
 
 
-def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
-    ds_list = [raw, era5, ds1]
-    if ds2 is not None:
-        ds_list.append(ds2)
-
+def calculate_statistic_to_plot(ds_list, stat, variable):
     if stat == "mean":
         out = [ds[variable].mean(dim="time").compute() for ds in ds_list]
 
@@ -110,13 +106,7 @@ def calculate_statistic_to_plot(raw, era5, ds1, stat, variable, ds2=None):
     else:
         raise ValueError(f"Unknown stat: {stat}")
 
-    if ds2 is None:
-        raw_toplot, era5_toplot, ds1_toplot = out
-        ds2_toplot = None
-    else:
-        raw_toplot, era5_toplot, ds1_toplot, ds2_toplot = out
-
-    return raw_toplot, era5_toplot, ds1_toplot, ds2_toplot
+    return out
 
 
 # 4 subregions to focus on
@@ -176,7 +166,6 @@ def plot_4regions_comparisons(
     raw_sub = get_4_subregions(raw, regions)
     era5_sub = get_4_subregions(era5, regions)
     ds1_sub = get_4_subregions(ds1, regions)
-    ds2_sub = get_4_subregions(ds2, regions) if ds2 is not None else None
 
     region_names = list(regions.keys())
     nrows, ncols = len(region_names), 4
@@ -187,10 +176,11 @@ def plot_4regions_comparisons(
         raw_r = raw_sub[reg]
         era5_r = era5_sub[reg]
         ds1_r = ds1_sub[reg]
-        ds2_r = ds2_sub[reg] if ds2 is not None else None
 
-        raw_toplot, era5_toplot, ds1_toplot, _ = calculate_statistic_to_plot(
-            raw_r, era5_r, ds1_r, stat, variable, ds2=ds2_r
+        raw_toplot, era5_toplot, ds1_toplot = calculate_statistic_to_plot(
+            ds_list=[raw_r, era5_r, ds1_r],
+            stat=stat,
+            variable=variable,
         )
 
         # ERA5 defines clim for the first 3 cols

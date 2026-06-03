@@ -1,47 +1,7 @@
 from __future__ import annotations
 
-import time
-
 import pint_xarray
 import xarray as xr
-
-
-class Timer:
-    """
-    Context manager for timing code blocks with optional verbose output.
-
-    Parameters
-    ----------
-    name : str
-        Descriptive name for the timed operation
-    verbose : bool, default=True
-        If True, prints timing information when exiting the context
-
-    Examples
-    --------
-    >>> with Timer("data loading", verbose=True):
-    ...     data = load_data()
-    data loading: 2.34 seconds
-
-    >>> with Timer("processing", verbose=False):
-    ...     process_data()  # No output
-    """
-
-    def __init__(self, name: str, verbose: bool = True):
-        self.name = name
-        self.verbose = verbose
-        self.start_time: float | None = None
-        self.elapsed: float | None = None
-
-    def __enter__(self):
-        self.start_time = time.time()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.elapsed = time.time() - self.start_time
-        if self.verbose:
-            print(f"{self.name}: {self.elapsed:.2f} seconds")
-        return False  # Don't suppress exceptions
 
 
 def lon_to_180(ds: xr.Dataset, lon_name: str = "lon") -> xr.Dataset:
@@ -95,3 +55,24 @@ def convert_precip_units(da: xr.DataArray) -> xr.DataArray:
     pint_xarray.unit_registry.enable_contexts("hydro")
     result = da.pint.quantify().pint.to("mm/day").pint.dequantify().astype(da.dtype)
     return result
+
+
+def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
+    """Convert any GCM Dataset to proleptic_gregorian via linear interpolation.
+
+    - noleap    : inserts NaN on Feb 29 of each leap year, then linearly interpolates
+    - 360_day   : maps dates by position within the year (align_on='year'), inserts NaN
+                  on ~6 missing days per year, then linearly interpolates
+    - gregorian / standard : type-cast only, no data change
+    """
+    calendar = ds.time.dt.calendar
+    if calendar in ("proleptic_gregorian", "gregorian", "standard"):
+        return ds.convert_calendar("proleptic_gregorian", use_cftime=False)
+    align = "year" if calendar == "360_day" else None
+    return (
+        ds.convert_calendar(
+            "proleptic_gregorian", align_on=align, missing=float("nan"), use_cftime=False
+        )
+        .chunk({"time": -1})
+        .interpolate_na(dim="time")
+    )

@@ -99,14 +99,14 @@ graph TB
 - **stage 1 (prepare_observations)**: runs once per (GCM, variable, spatial_subset) combination
 - **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination
 - **stage 3 (transform_scenario)**: runs for each scenario configuration
-- **green boxes**: cached intermediate artifacts in `cache_dir/{environment}/{version}/`
+- **green boxes**: cached intermediate artifacts in `scratch_dir/{environment}/{version}/`
 - **gold box**: final output in `output_dir/{environment}/{version}/`
 - **dotted arrows**: cache dependencies (automatic validation)
 
 ## Cache Path Structure
 
 ```
-cache_dir/{environment}/{version}/
+scratch_dir/{environment}/{version}/
 ├── obs/
 │   └── {gcm}_{variable}_{subset_id}_obs_regridded.icechunk
 └── historical/
@@ -121,7 +121,7 @@ output_dir/{environment}/{version}/
 
 Where:
 
-- `{environment}`: `qa`, `staging`, or `production`
+- `{environment}`: `qa` or `production`
 - `{version}`: `v1`, `v2`, etc. (default: `v1`)
 - `{subset_id}`: `global` or `lat{min}to{max}_lon{min}to{max}` (e.g., `lat-35.0to-22.0_lon16.0to33.0`)
 - `{ensemble:03d}`: Zero-padded ensemble member (e.g., `000`, `001`)
@@ -197,11 +197,10 @@ VM types are selected per pipeline stage to match resource requirements:
 
 The CLI is built on several key components:
 
-1. **BCSDConfig** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
-   - Pydantic v2 configuration with comprehensive validation
-   - field validators for SAI scenarios, time periods, spatial bounds
-   - computed fields: `run_id`, `config_hash`, `detrend_data`, etc.
-   - environment variable override support via `model_config`
+1. **BCSDConfig** + **PipelineOptions** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
+   - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `mapping_type`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `detrend_data`, etc.
+   - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `version`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`. Does not affect computation results or cache keys.
+   - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 
 2. **ArtifactCache** ([src/srm/cache.py](../../src/srm/cache.py))
    - S3-based cache with fsspec backend
@@ -224,8 +223,9 @@ The CLI is built on several key components:
 
 5. **batch_runner** ([src/srm/batch_runner.py](../../src/srm/batch_runner.py))
    - entry point for Coiled batch jobs
-   - reads serialized config from `CONFIG_JSON` environment variable
-   - creates pipeline and runs requested stage
+   - reads `CONFIG_JSON` environment variable (structure: `{"options": {...PipelineOptions fields...}, ...BCSDConfig fields...}`)
+   - pops the `"options"` key to construct `PipelineOptions`; remaining keys construct `BCSDConfig`
+   - creates `BCSDPipeline(config, options)` and runs the requested stage
    - minimal dependencies for fast VM startup
 
 6. **CLI** ([src/srm/cli.py](../../src/srm/cli.py))
@@ -301,14 +301,14 @@ def _get_subset_id(subset_bounds):
 
 def get_obs_path(gcm, variable, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
-    return f"{cache_dir}/{environment}/{version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
+    return f"{scratch_dir}/{environment}/{version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
 
 def get_historical_path(gcm, variable, ensemble, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
     if output_dir:
         return f"{output_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
     else:
-        return f"{cache_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
+        return f"{scratch_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
 
 def get_scenario_path(gcm, variable, ensemble, scenario, subset_bounds):
     subset_id = _get_subset_id(subset_bounds)
@@ -316,12 +316,12 @@ def get_scenario_path(gcm, variable, ensemble, scenario, subset_bounds):
     if output_dir:
         return f"{output_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
     else:
-        return f"{cache_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
+        return f"{scratch_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
 ```
 
 This ensures:
 
-- **environment isolation**: qa/staging/production never mix
+- **environment isolation**: qa/production never mix
 - **spatial subset separation**: Global vs regional runs have different paths
 - **deterministic lookups**: Same config always produces same path
 - **human-readable**: Paths are self-documenting
