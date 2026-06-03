@@ -499,9 +499,16 @@ class TestTransformScenarioBehavior:
         # detrend is called because tas has detrend_data=True
         assert mock_detrend.call_count >= 1 or pipeline.config.detrend_data
 
-    def test_ocean_mask_applied_when_enabled(self, pipeline_pr):
-        """Ocean mask is applied to scenario output when apply_ocean_mask=True (default)."""
-        p = pipeline_pr
+    def test_ocean_mask_applied_when_enabled(self, pr_config, tmp_path):
+        """Ocean mask is applied to scenario output when apply_ocean_mask=True."""
+        opts = PipelineOptions(
+            scratch_dir=str(tmp_path / "cache"),
+            output_dir=str(tmp_path / "outputs"),
+            verbose=False,
+            rechunk_workflow=False,
+            apply_ocean_mask=True,
+        )
+        p = BCSDPipeline(pr_config, opts)
         _make_icechunk_store(p.cache.obs_path)
         _make_icechunk_store(p.cache.historical_path)
         with _mock_transform_scenario_compute():
@@ -852,7 +859,7 @@ class TestCalculateOutOfRangeMask:
         model_hist = _make_time_series(10.0)
         scenario = _make_time_series(10.0, start_year=2050, end_year=2052)
 
-        result = calculate_out_of_range_mask(
+        result, _, _ = calculate_out_of_range_mask(
             model_hist=model_hist, scenario_detrended=scenario, center_window=31
         )
 
@@ -863,7 +870,7 @@ class TestCalculateOutOfRangeMask:
         model_hist = _make_time_series(10.0)
         scenario = _make_time_series(20.0, start_year=2050, end_year=2052)
 
-        result = calculate_out_of_range_mask(
+        result, _, _ = calculate_out_of_range_mask(
             model_hist=model_hist, scenario_detrended=scenario, center_window=31
         )
 
@@ -874,7 +881,7 @@ class TestCalculateOutOfRangeMask:
         model_hist = _make_time_series(10.0)
         scenario = _make_time_series(0.0, start_year=2050, end_year=2052)
 
-        result = calculate_out_of_range_mask(
+        result, _, _ = calculate_out_of_range_mask(
             model_hist=model_hist, scenario_detrended=scenario, center_window=31
         )
 

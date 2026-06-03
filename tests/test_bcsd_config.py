@@ -219,8 +219,8 @@ class TestBCSDConfigConstruction:
                 cfg = BCSDConfig(gcm=gcm, variable="tas", ensemble_member="r1i1p1f1")
                 assert cfg.gcm == gcm
 
-    def test_apply_ocean_mask_defaults_true(self):
-        assert PipelineOptions().apply_ocean_mask is True
+    def test_apply_ocean_mask_defaults_false(self):
+        assert PipelineOptions().apply_ocean_mask is False
 
     def test_apply_ocean_mask_can_be_disabled(self):
         opts = PipelineOptions(apply_ocean_mask=False)

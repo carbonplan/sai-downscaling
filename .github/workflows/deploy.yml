@@ -3,6 +3,11 @@ name: deploy
 on:
     workflow_dispatch:
         inputs:
+            model:
+                description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm). Leave blank to run all models."
+                required: false
+                default: ""
+                type: string
             force:
                 description: "Force recompute even if cached"
                 required: false
@@ -28,12 +33,16 @@ permissions:
 
 jobs:
     qa:
-        name: QA run
+        name: QA run (${{ inputs.model || 'all models' }})
         timeout-minutes: 120
         runs-on: ubuntu-latest
         if: github.event_name == 'workflow_dispatch'
         environment:
             name: qa
+        env:
+            QA_CONFIG_PATH: ${{ inputs.model != '' && format('configs/qa/{0}/', inputs.model) || 'configs/qa/' }}
+            FORCE: ${{ inputs.force }}
+            VERSION: ${{ inputs.version }}
         steps:
             - uses: actions/checkout@v6
               with:
@@ -43,20 +52,20 @@ jobs:
             - name: Validate input datasets (QA)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate --config-path configs/qa/
+              run: uv run bcsd validate --config-path "$QA_CONFIG_PATH"
 
             - name: Run BCSD pipeline (QA)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
               run: |
                   EXTRA_ARGS=""
-                  if [[ "${{ github.event.inputs.force }}" == "true" ]]; then
+                  if [[ "$FORCE" == "true" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --force"
                   fi
-                  if [[ -n "${{ github.event.inputs.version }}" ]]; then
-                    EXTRA_ARGS="$EXTRA_ARGS --version ${{ github.event.inputs.version }}"
+                  if [[ -n "$VERSION" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --version $VERSION"
                   fi
-                  uv run bcsd run --config-path configs/qa/ $EXTRA_ARGS
+                  uv run bcsd run --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
 
     production:
         name: Production run
