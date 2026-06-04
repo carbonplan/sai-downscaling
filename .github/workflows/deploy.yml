@@ -24,7 +24,7 @@ on:
             - published
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.ref }}
+    group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.model || 'production' }}
     cancel-in-progress: true
 
 permissions:

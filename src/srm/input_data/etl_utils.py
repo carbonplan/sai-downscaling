@@ -31,8 +31,8 @@ def CMORIZE_pr(ds: xr.Dataset, var_name: str) -> xr.Dataset:
 
 
 def CMORIZE_hurs(ds: xr.Dataset, var_name: str) -> xr.Dataset:
-    # convert fraction to %, multiply by 1000
-    ds[var_name] = ds[var_name] * 1000
+    # convert fraction (0-1) to percent (0-100)
+    ds[var_name] = ds[var_name] * 100
     return ds
 
 

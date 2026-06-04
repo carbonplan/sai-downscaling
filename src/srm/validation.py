@@ -276,7 +276,7 @@ class DatasetValidator(pydantic.BaseModel):
 
         hist_members_needed: set[str] = set()
         ssp245_members_needed: set[str] = set()
-        for hist, ssp245 in entries.values():
+        for hist, ssp245, *_ in entries.values():
             hist_members_needed.add(hist)
             if ssp245 is not None:
                 ssp245_members_needed.add(ssp245)

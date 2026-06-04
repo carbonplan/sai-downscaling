@@ -225,20 +225,33 @@ def stitch_historical_scenario(
             )
         # SAI: historical ≤ train_period_end, then SSP from train_period_end+1
         # up to (but not including) the SAI start, then SAI data.
+        # Drop ensemble_member scalar coords before concat — historical and bridge may carry
+        # different member values (e.g. r1i1p4f2 vs r01), which causes MergeError in older xarray.
+        # Re-attach from model_scenario afterward: the stitched array represents the scenario's
+        # timeseries, so model_scenario.ensemble_member is the authoritative identity.
+        scenario_member_coord = model_scenario.coords.get("ensemble_member")
         historical_and_ssp = xr.concat(
             [
-                model_hist.sel(time=model_hist["time.year"] <= train_period_end),
-                ssp_timeseries.sel(time=ssp_timeseries["time.year"] >= train_period_end + 1),
+                model_hist.sel(time=model_hist["time.year"] <= train_period_end).drop_vars(
+                    "ensemble_member", errors="ignore"
+                ),
+                ssp_timeseries.sel(
+                    time=ssp_timeseries["time.year"] >= train_period_end + 1
+                ).drop_vars("ensemble_member", errors="ignore"),
             ],
             dim="time",
         )
         result = xr.concat(
             [
                 historical_and_ssp.sel(time=historical_and_ssp["time.year"] < sai_start_year),
-                model_scenario.sel(time=model_scenario["time.year"] >= sai_start_year),
+                model_scenario.sel(time=model_scenario["time.year"] >= sai_start_year).drop_vars(
+                    "ensemble_member", errors="ignore"
+                ),
             ],
             dim="time",
         )
+        if scenario_member_coord is not None:
+            result = result.assign_coords(ensemble_member=scenario_member_coord)
     else:
         # Non-SAI: historical up to predict_period_start, then scenario.
         result = xr.concat(
@@ -315,12 +328,15 @@ class BCSDPipeline:
 
         self._hist_member = config.ensemble_member
         self._ssp245_member = config.ensemble_member
+        self._ssp245_esgf_member: str | None = None
         if config.scenario is not None:
             from srm.lineage import resolve_member_lineage
 
             try:
-                self._hist_member, self._ssp245_member = resolve_member_lineage(
-                    config.gcm, config.scenario, config.ensemble_member, config.variable
+                self._hist_member, self._ssp245_member, self._ssp245_esgf_member = (
+                    resolve_member_lineage(
+                        config.gcm, config.scenario, config.ensemble_member, config.variable
+                    )
                 )
             except KeyError:
                 pass
@@ -679,6 +695,76 @@ class BCSDPipeline:
 
         return output_path
 
+    def _load_ssp245_bridge(self) -> xr.DataArray:
+        """Load the SSP245 bridge timeseries for SAI detrending.
+
+        For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
+        G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
+        When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap before the
+        GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
+        dataset is converted via to_proleptic_gregorian before concat.
+        """
+        primary_ds = _catalog.get(f"{self.config.gcm}-SSP245-icechunk").to_xarray()
+        primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
+
+        if self._ssp245_esgf_member is None:
+            return primary
+
+        primary_start_year = int(primary.time.dt.year.min())
+        if primary_start_year <= self.config.train_period_end + 1:
+            return primary
+
+        # Gap detected: prepend ESGF data for the missing years before the GeoMIP start.
+        # ESGF may use a different calendar — convert to proleptic_gregorian (primary's calendar).
+        from srm.utils import to_proleptic_gregorian
+
+        esgf_ds = to_proleptic_gregorian(
+            _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
+        )
+        esgf_bridge = esgf_ds[self.config.variable].sel(ensemble_member=self._ssp245_esgf_member)
+        esgf_gap = esgf_bridge.isel(time=(esgf_bridge.time.dt.year < primary_start_year).values)
+
+        if esgf_gap.time.size == 0:
+            logger.warning(
+                "_load_ssp245_bridge: ESGF dataset for %s has no data before year %d; "
+                "returning primary GeoMIP dataset only — 2015–%d gap will remain",
+                self._ssp245_esgf_member,
+                primary_start_year,
+                primary_start_year - 1,
+            )
+            return primary
+
+        esgf_gap_years = (int(esgf_gap.time.dt.year.min()), int(esgf_gap.time.dt.year.max()))
+        primary_years = (primary_start_year, int(primary.time.dt.year.max()))
+        logger.info(
+            "_load_ssp245_bridge: stitching ESGF %s %d–%d + GeoMIP %s %d–%d",
+            self._ssp245_esgf_member,
+            *esgf_gap_years,
+            self._ssp245_member,
+            *primary_years,
+        )
+
+        # Drop the scalar ensemble_member coord before concat — the two slices carry
+        # different values (r1i1p4f2 vs r01) and xr.concat refuses to merge mismatched
+        # scalar coords. Re-attach the primary member value so the bridge is transparent
+        # to any downstream code that reads ensemble_member.
+        esgf_clean = esgf_gap.drop_vars("ensemble_member", errors="ignore")
+        primary_clean = primary.drop_vars("ensemble_member", errors="ignore")
+        bridge = xr.concat([esgf_clean, primary_clean], dim="time")
+        bridge = bridge.assign_coords(ensemble_member=primary.coords["ensemble_member"])
+        bridge.attrs.update(
+            {
+                "bridge_type": "esgf_geomip_stitch",
+                "bridge_esgf_member": self._ssp245_esgf_member,
+                "bridge_esgf_years": f"{esgf_gap_years[0]}-{esgf_gap_years[1]}",
+                "bridge_geomip_member": self._ssp245_member,
+                "bridge_geomip_years": f"{primary_years[0]}-{primary_years[1]}",
+                "bridge_gcm": self.config.gcm,
+                "bridge_variable": self.config.variable,
+            }
+        )
+        return bridge
+
     def _load_scenario_data(
         self,
     ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None]:
@@ -710,10 +796,7 @@ class BCSDPipeline:
         # SAI scenarios need an SSP245 bridge to fill the gap between historical and SAI start
         ssp_timeseries: xr.DataArray | None = None
         if self.config.is_sai_scenario:
-            ssp_timeseries = get_experiment(
-                gcm=self.config.gcm, scenario="SSP245", var=self.config.variable
-            )
-            ssp_timeseries = ssp_timeseries.sel(ensemble_member=self._ssp245_member)
+            ssp_timeseries = self._load_ssp245_bridge()
             ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
 
         if self.config.subset_bounds:
