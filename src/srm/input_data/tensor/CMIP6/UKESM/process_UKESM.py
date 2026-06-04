@@ -495,7 +495,13 @@ def virtualize(scenario, coiled):
 @click.option("--coiled/--local", default=False)
 @click.option("--all-variables", is_flag=True, help="process all expected variables from catalog")
 @click.option("--subset/--no-subset", default=False)
-def process(variable, scenario, coiled, all_variables, subset):
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing variable arrays in-place (r+ mode)",
+)
+def process(variable, scenario, coiled, all_variables, subset, overwrite):
     """Read virtual icechunk stores, postprocess, rechunk, shard and write to icechunk."""
     config = SCENARIO_CONFIG_MAP[scenario]()
 
@@ -549,14 +555,16 @@ def process(variable, scenario, coiled, all_variables, subset):
             ds = _update_attrs(ds, var_specs, config)
 
             repo, session = init_repo(target_cat.bucket, target_cat.prefix, readonly=False)
-            write_mode = determine_write_mode(repo)
+            write_mode = "r+" if overwrite else determine_write_mode(repo)
             encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
             write_dataset_to_icechunk(
                 ds,
                 session,
-                encoding=encoding,
-                shards=config.encoding["shards"],
-                commit_message=f"{scenario}: {var}",
+                encoding=None if overwrite else encoding,
+                shards=None if overwrite else config.encoding["shards"],
+                commit_message=f"{scenario}: {var} (overwrite)"
+                if overwrite
+                else f"{scenario}: {var}",
                 write_mode=write_mode,
             )
     finally:
