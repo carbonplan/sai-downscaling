@@ -15,7 +15,6 @@ from srm import catalog
 from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
-    CMORIZE_hurs,
     CMORIZE_pr,
     apply_ensemble_provenance,
     build_encoding_dict,
@@ -63,7 +62,6 @@ class BaseCESM_Config(BaseETLConfig):
     cmorization_functions: dict = field(
         default_factory=lambda: {
             "pr": CMORIZE_pr,
-            "hurs": CMORIZE_hurs,
         }
     )
 
@@ -566,7 +564,13 @@ def virtualize(scenario, coiled):
 @click.option("--coiled/--local", default=False)
 @click.option("--all-variables", is_flag=True, help="Process all shared variables")
 @click.option("--subset/--no-subset", default=False, help="Subset (G6 only)")
-def process(variable, scenario, coiled, all_variables, subset):
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing variable arrays in-place (r+ mode)",
+)
+def process(variable, scenario, coiled, all_variables, subset, overwrite):
     config = SCENARIO_CONFIG_MAP[scenario]()
     client = (
         setup_cluster(ClusterConfig(**config.process_cluster)) if coiled else setup_local_client()
@@ -653,13 +657,16 @@ def process(variable, scenario, coiled, all_variables, subset):
                 encoding = build_encoding_dict(
                     ds, config.encoding["chunks"], config.encoding["shards"]
                 )
+                write_mode = "r+" if overwrite else determine_write_mode(repo)
                 write_dataset_to_icechunk(
                     ds,
                     session,
-                    encoding=encoding,
-                    shards=config.encoding["shards"],
-                    commit_message=f"{scenario}: {var}",
-                    write_mode=determine_write_mode(repo),
+                    encoding=None if overwrite else encoding,
+                    shards=None if overwrite else config.encoding["shards"],
+                    commit_message=f"{scenario}: {var} (overwrite)"
+                    if overwrite
+                    else f"{scenario}: {var}",
+                    write_mode=write_mode,
                 )
     finally:
         client.shutdown()
