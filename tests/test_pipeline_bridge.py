@@ -201,3 +201,62 @@ def test_bridge_calendar_aligned_to_primary(tmp_path):
     assert years[0] == 2015
     assert 2019 in years
     assert 2020 in years
+
+
+def test_bridge_empty_esgf_gap_returns_primary(tmp_path):
+    """When the ESGF dataset has no data before primary_start_year, return primary with a warning."""
+    config = _make_config()
+    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+
+    # ESGF dataset also starts at 2020 — no data before primary_start_year=2020
+    with patch("srm.pipeline._catalog") as mock_cat:
+        mock_cat.get.side_effect = lambda k: _mock_catalog_get(
+            k, geomip_start=2020, esgf_start=2020
+        )
+        result = pipeline._load_ssp245_bridge()
+
+    assert int(result.time.dt.year.min()) == 2020
+
+
+def _make_da_with_member(start_year: int, end_year: int, member: str) -> xr.DataArray:
+    """Annual DataArray with a scalar ensemble_member coordinate (post-sel shape)."""
+    times = xr.date_range(f"{start_year}", f"{end_year}", freq="YS", use_cftime=False)
+    data = np.zeros((len(times), 2, 2))
+    return xr.DataArray(
+        data,
+        dims=["time", "lat", "lon"],
+        coords={
+            "time": times,
+            "lat": [0.0, 1.0],
+            "lon": [0.0, 1.0],
+            "ensemble_member": member,
+        },
+    )
+
+
+def test_stitch_historical_scenario_mismatched_ensemble_member():
+    """stitch_historical_scenario must not raise MergeError when hist/bridge/scenario
+    carry different ensemble_member scalar coords (the MIROC G6-1.5K case)."""
+    from srm.pipeline import stitch_historical_scenario
+
+    model_hist = _make_da_with_member(1950, 2014, "r1i1p4f2")
+    ssp_bridge = _make_da_with_member(2015, 2034, "r01")
+    model_scenario = _make_da_with_member(2035, 2060, "r01")
+
+    result = stitch_historical_scenario(
+        model_hist=model_hist,
+        model_scenario=model_scenario,
+        train_period_end=2014,
+        predict_period_start=2015,
+        ssp_timeseries=ssp_bridge,
+    )
+
+    years = sorted(int(y) for y in np.unique(result["time.year"].values))
+    assert years[0] == 1950
+    assert years[-1] == 2060
+    # No gap anywhere
+    gaps = [(y1, y2) for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+    assert gaps == [], f"Unexpected gaps: {gaps}"
+    # ensemble_member must be a scalar coord from model_scenario, not a dim
+    assert "ensemble_member" not in result.dims
+    assert result.coords["ensemble_member"].values.item() == "r01"
