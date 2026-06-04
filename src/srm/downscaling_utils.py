@@ -170,6 +170,21 @@ def get_experiment(
 
     """
     cat_name = gcm + "-" + scenario + "-icechunk"
+    # UKESM SSP245/G6-1.5K are split across two stores: hurs/rsds in the primary icechunk store
+    # (ripf members), tas/tasmax/tasmin/pr/dtr in a separate t-pr store (numeric members).
+    if (
+        gcm == "UKESM"
+        and scenario in ("SSP245", "G6-1.5K")
+        and var
+        in {
+            "tas",
+            "tasmax",
+            "tasmin",
+            "pr",
+            "dtr",
+        }
+    ):
+        cat_name = gcm + "-" + scenario + "-t-pr-icechunk"
     dataset = catalog.get(cat_name)
     # confirm that the requested ensemble member is available
     if ensemble_member is not None and dataset.ensemble_members is not None:

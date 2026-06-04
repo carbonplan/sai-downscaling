@@ -704,7 +704,18 @@ class BCSDPipeline:
         GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
         dataset is converted via to_proleptic_gregorian before concat.
         """
-        primary_ds = _catalog.get(f"{self.config.gcm}-SSP245-icechunk").to_xarray()
+        # UKESM SSP245 is split: tas/pr/tasmax/tasmin/dtr live in the t-pr store (numeric members)
+        # while hurs/rsds live in the primary store (ripf members).
+        ssp245_cat_key = f"{self.config.gcm}-SSP245-icechunk"
+        if self.config.gcm == "UKESM" and self.config.variable in {
+            "tas",
+            "tasmax",
+            "tasmin",
+            "pr",
+            "dtr",
+        }:
+            ssp245_cat_key = "UKESM-SSP245-t-pr-icechunk"
+        primary_ds = _catalog.get(ssp245_cat_key).to_xarray()
         primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
 
         if self._ssp245_esgf_member is None:

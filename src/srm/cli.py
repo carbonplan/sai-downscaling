@@ -174,9 +174,11 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
             )
         except KeyError:
             continue
+        # CESM2-WACCM r* historical members live in the pangeo-prefixed store; all other GCMs
+        # (including UKESM) keep r* members in their standard historical store.
         hist_store = (
             f"pangeo-{config.gcm}-historical-icechunk"
-            if hist.startswith("r")
+            if config.gcm == "CESM2-WACCM" and hist.startswith("r")
             else f"{config.gcm}-historical-icechunk"
         )
         known = _members(hist_store)
@@ -184,7 +186,10 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
             errors.append(
                 f"  {config.gcm}/{config.variable}: historical:{hist!r} not in {hist_store}"
             )
+        # UKESM SSP245 is split: numeric members (tas/pr etc.) live in the t-pr store.
         ssp245_store = f"{config.gcm}-SSP245-icechunk"
+        if config.gcm == "UKESM" and ssp245 is not None and not ssp245.startswith("r"):
+            ssp245_store = "UKESM-SSP245-t-pr-icechunk"
         known = _members(ssp245_store)
         if ssp245 is not None and known is not None and ssp245 not in known:
             errors.append(
