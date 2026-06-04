@@ -600,6 +600,86 @@ class BCSDPipeline:
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
+    @staticmethod
+    def _make_config_for_variable(base_config: BCSDConfig, variable: str) -> BCSDConfig:
+        return BCSDConfig(
+            gcm=base_config.gcm,
+            variable=variable,
+            ensemble_member=base_config.ensemble_member,
+            scenario=base_config.scenario,
+            train_period_start=base_config.train_period_start,
+            train_period_end=base_config.train_period_end,
+            predict_period_start=base_config.predict_period_start,
+            predict_period_end=base_config.predict_period_end,
+            subset_bounds=base_config.subset_bounds,
+            mapping_type=base_config.mapping_type,
+        )
+
+    def fit_historical_tasmin(self, force: bool = False) -> str:
+        """
+        Stage 2: Downscale historical period for tasmin. This differs from normal fit_historical
+        because it loads debiased coarse tasmax and dtr to compute debiased coarse tasmin,
+        which is then spatially disaggregated to fine resolution.
+        """
+
+        output_path = self.cache.get_historical_path(self.config, hist_member=self._hist_member)
+
+        if self.cache.exists(output_path) and not force:
+            logger.info("✓ Using cached historical: %s", output_path)
+            return output_path
+
+        logger.info(
+            "Computing historical downscaling for %s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+        )
+
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist = self._load_gcm_obs()
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        dtr_config = self._make_config_for_variable(self.config, "dtr")
+        tasmax_config = self._make_config_for_variable(self.config, "tasmax")
+        debiased_dtr_path = self.cache.get_debiased_historical_path(dtr_config)
+        debiased_tasmax_path = self.cache.get_debiased_historical_path(tasmax_config)
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_path)[tasmax_config.variable]
+        model_hist_debiased = debiased_tasmax - debiased_dtr
+        logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
+
+        if self.options.save_intermediate:
+            t0 = time.perf_counter()
+            debiased_path = self.cache.get_debiased_historical_path(self.config)
+            model_hist_debiased.name = self.config.variable
+            model_hist_debiased.attrs = model_hist.attrs
+            self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
+            logger.info(
+                "✓ Saved debiased historical: %s (%.2fs)", debiased_path, time.perf_counter() - t0
+            )
+
+        t0 = time.perf_counter()
+        model_hist_downscaled = self._apply_spatial_downscaling(
+            model_hist_debiased, obs_coarse, obs_fine
+        )
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        model_hist_downscaled.name = self.config.variable
+        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
+        dataset_attrs = self._build_output_attrs(hist_dataset)
+        self._write_to_icechunk(
+            da=model_hist_downscaled,
+            path=output_path,
+            commit_message="write complete",
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=dataset_attrs,
+        )
+        logger.info("✓ Cached historical: %s (%.2fs)", output_path, time.perf_counter() - t0)
+
+        return output_path
+
     def fit_historical(self, force: bool = False) -> str:
         """
         Stage 2: Downscale historical period.
@@ -1158,8 +1238,16 @@ class BCSDPipeline:
             Path to final scenario stage output artifact.
         """
         self.prepare_observations(force=force)
-        self.fit_historical(force=force)
-        # `transform_scenario` depends on fit_historical only as a completion
-        # gate (artifact existence); it does not read the cached historical
-        # output as data input.
-        return self.transform_scenario(force=force)
+
+        if self.config.variable == "tasmin":
+            self.fit_historical_tasmin(force=force)
+            # `transform_scenario` depends on fit_historical only as a completion
+            # gate (artifact existence); it does not read the cached historical
+            # output as data input.
+            return self.transform_scenario_tasmin(force=force)
+        else:
+            self.fit_historical(force=force)
+            # `transform_scenario` depends on fit_historical only as a completion
+            # gate (artifact existence); it does not read the cached historical
+            # output as data input.
+            return self.transform_scenario(force=force)
