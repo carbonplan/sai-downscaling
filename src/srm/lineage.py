@@ -4,7 +4,7 @@ from __future__ import annotations
 # ssp245_member is None for non-SAI scenarios.
 # ssp245_esgf_member is set when an ESGF SSP245 dataset is needed to fill a gap before the primary
 # SSP245 bridge starts (MIROC G6-1.5K only: GeoMIP SSP245 starts 2020, leaving 2015–2019 gap).
-# Source: srm-provenance.csv parent_experiment_ensemble_ids column,
+# Source: docs/srm-provenance.csv parent_experiment_ensemble_ids column,
 # confirmed by emails from Walker Lee (G6→SSP245) and Simone Tilmes (historical "001").
 
 
@@ -63,6 +63,35 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, s
     add("CESM2-WACCM", "SSP245", "010", _tmx, "001")
 
     _all = _std + _tmx
+
+    # UKESM1-0-LL (code gcm name: "UKESM")
+    # Data arrives in two parallel sets with different member ID formats:
+    #   ripf format (r2/r3/r12i1p1f2): hurs and rsds only — sourced from Matthew Henry (CEDA/Exeter)
+    #   numeric format (001/002/003): tas, tasmax, tasmin, pr, dtr — sourced from NCAR Derecho
+    # Numeric → historical ripf mapping (inferred from G6-1.5K parent chains in docs/srm-provenance.csv;
+    # lineage chain not formally confirmed): 001→r12i1p1f2, 002→r2i1p1f2, 003→r3i1p1f2
+    # G6-1.5K numeric members use numeric SSP245 members as SAI bridge (same ID series).
+    _ukesm_hurs_rsds = ("hurs", "rsds")
+    _ukesm_t_pr = ("tas", "tasmax", "tasmin", "pr", "dtr")
+
+    # SSP245: ripf members carry hurs/rsds (self-consistent, hist=self)
+    for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):
+        add("UKESM", "SSP245", _m, _ukesm_hurs_rsds, _m)
+
+    # SSP245: numeric members carry tas/tasmax/tasmin/pr/dtr (not yet in buckets as of 2026-06)
+    add("UKESM", "SSP245", "001", _ukesm_t_pr, "r12i1p1f2")
+    add("UKESM", "SSP245", "002", _ukesm_t_pr, "r2i1p1f2")
+    add("UKESM", "SSP245", "003", _ukesm_t_pr, "r3i1p1f2")
+
+    # G6-1.5K: ripf members carry hurs/rsds; SSP245 bridge uses same ripf member
+    add("UKESM", "G6-1.5K", "r2i1p1f2", _ukesm_hurs_rsds, "r2i1p1f2", "r2i1p1f2")
+    add("UKESM", "G6-1.5K", "r3i1p1f2", _ukesm_hurs_rsds, "r3i1p1f2", "r3i1p1f2")
+    add("UKESM", "G6-1.5K", "r12i1p1f2", _ukesm_hurs_rsds, "r12i1p1f2", "r12i1p1f2")
+
+    # G6-1.5K: numeric members carry tas/tasmax/tasmin/pr/dtr; SSP245 bridge uses same numeric ID
+    add("UKESM", "G6-1.5K", "001", _ukesm_t_pr, "r12i1p1f2", "001")
+    add("UKESM", "G6-1.5K", "002", _ukesm_t_pr, "r2i1p1f2", "002")
+    add("UKESM", "G6-1.5K", "003", _ukesm_t_pr, "r3i1p1f2", "003")
 
     # MIROC-ES2H GeoMIP runs (r01–r10, abbreviated IDs, not CMIP6 ripf format).
     # SSP245 = paired SSP245-continuation runs (formerly "baseline"); these serve as

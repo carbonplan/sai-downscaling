@@ -12,6 +12,8 @@ from srm.lineage import resolve_member_lineage
 
 _STANDARD_VARS = ("tas", "pr", "rsds", "hurs")
 _TMAX_MIN_VARS = ("tasmax", "tasmin", "dtr")
+_UKESM_HURS_RSDS = ("hurs", "rsds")
+_UKESM_T_PR = ("tas", "tasmax", "tasmin", "pr", "dtr")
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +148,80 @@ class TestLineageKeyError:
         assert "badscenar" in msg
         assert "999" in msg
         assert "sfcWind" in msg
+
+
+# ---------------------------------------------------------------------------
+# resolve_member_lineage: UKESM SSP245
+# ---------------------------------------------------------------------------
+
+
+class TestUKESMSSP245Lineage:
+    """SSP245 lineage: ripf members (hurs/rsds only), numeric members (tas/pr/etc.)."""
+
+    @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
+    @pytest.mark.parametrize("variable", _UKESM_HURS_RSDS)
+    def test_ripf_members_hist_equals_self(self, member, variable):
+        hist, ssp245, *_ = resolve_member_lineage("UKESM", "SSP245", member, variable)
+        assert hist == member
+        assert ssp245 is None
+
+    @pytest.mark.parametrize(
+        ("member", "expected_hist"),
+        [("001", "r12i1p1f2"), ("002", "r2i1p1f2"), ("003", "r3i1p1f2")],
+    )
+    @pytest.mark.parametrize("variable", _UKESM_T_PR)
+    def test_numeric_members_hist_mapping(self, member, expected_hist, variable):
+        hist, ssp245, *_ = resolve_member_lineage("UKESM", "SSP245", member, variable)
+        assert hist == expected_hist
+        assert ssp245 is None
+
+    @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
+    def test_ripf_members_reject_t_pr_vars(self, member):
+        with pytest.raises(KeyError):
+            resolve_member_lineage("UKESM", "SSP245", member, "tas")
+
+    @pytest.mark.parametrize("member", ("001", "002", "003"))
+    def test_numeric_members_reject_hurs_rsds(self, member):
+        with pytest.raises(KeyError):
+            resolve_member_lineage("UKESM", "SSP245", member, "hurs")
+
+
+# ---------------------------------------------------------------------------
+# resolve_member_lineage: UKESM G6-1.5K
+# ---------------------------------------------------------------------------
+
+
+class TestUKESMG6Lineage:
+    """G6-1.5K lineage: ripf members (hurs/rsds, self-bridge), numeric members (tas/pr/etc.)."""
+
+    @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
+    @pytest.mark.parametrize("variable", _UKESM_HURS_RSDS)
+    def test_ripf_members_self_consistent(self, member, variable):
+        hist, ssp245, ssp245_esgf = resolve_member_lineage("UKESM", "G6-1.5K", member, variable)
+        assert hist == member
+        assert ssp245 == member
+        assert ssp245_esgf is None
+
+    @pytest.mark.parametrize(
+        ("member", "expected_hist"),
+        [("001", "r12i1p1f2"), ("002", "r2i1p1f2"), ("003", "r3i1p1f2")],
+    )
+    @pytest.mark.parametrize("variable", _UKESM_T_PR)
+    def test_numeric_members_hist_and_ssp245_bridge(self, member, expected_hist, variable):
+        hist, ssp245, ssp245_esgf = resolve_member_lineage("UKESM", "G6-1.5K", member, variable)
+        assert hist == expected_hist
+        assert ssp245 == member
+        assert ssp245_esgf is None
+
+    @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
+    def test_ripf_members_reject_t_pr_vars(self, member):
+        with pytest.raises(KeyError):
+            resolve_member_lineage("UKESM", "G6-1.5K", member, "tas")
+
+    @pytest.mark.parametrize("member", ("001", "002", "003"))
+    def test_numeric_members_reject_hurs_rsds(self, member):
+        with pytest.raises(KeyError):
+            resolve_member_lineage("UKESM", "G6-1.5K", member, "hurs")
 
 
 # ---------------------------------------------------------------------------
