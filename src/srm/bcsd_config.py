@@ -405,6 +405,21 @@ class RuntimeConfig(BaseModel):
     )
 
 
+def make_config_for_variable(base_config: BCSDConfig, variable: str) -> BCSDConfig:
+    return BCSDConfig(
+        gcm=base_config.gcm,
+        variable=variable,
+        ensemble_member=base_config.ensemble_member,
+        scenario=base_config.scenario,
+        train_period_start=base_config.train_period_start,
+        train_period_end=base_config.train_period_end,
+        predict_period_start=base_config.predict_period_start,
+        predict_period_end=base_config.predict_period_end,
+        subset_bounds=base_config.subset_bounds,
+        mapping_type=base_config.mapping_type,
+    )
+
+
 '''
 Usage Examples:
 

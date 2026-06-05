@@ -24,7 +24,7 @@ from ibicus.debias import QuantileMapping
 from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.bcsd_config import BCSDConfig, PipelineOptions, make_config_for_variable
 from srm.cache import ArtifactCache
 from srm.datasets import BaseDataset, catalog as _catalog
 from srm.downscaling_utils import (
@@ -600,21 +600,6 @@ class BCSDPipeline:
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
-    @staticmethod
-    def _make_config_for_variable(base_config: BCSDConfig, variable: str) -> BCSDConfig:
-        return BCSDConfig(
-            gcm=base_config.gcm,
-            variable=variable,
-            ensemble_member=base_config.ensemble_member,
-            scenario=base_config.scenario,
-            train_period_start=base_config.train_period_start,
-            train_period_end=base_config.train_period_end,
-            predict_period_start=base_config.predict_period_start,
-            predict_period_end=base_config.predict_period_end,
-            subset_bounds=base_config.subset_bounds,
-            mapping_type=base_config.mapping_type,
-        )
-
     def fit_historical_tasmin(self, force: bool = False) -> str:
         """
         Stage 2: Downscale historical period for tasmin. This differs from normal fit_historical
@@ -640,8 +625,8 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        dtr_config = self._make_config_for_variable(self.config, "dtr")
-        tasmax_config = self._make_config_for_variable(self.config, "tasmax")
+        dtr_config = make_config_for_variable(self.config, "dtr")
+        tasmax_config = make_config_for_variable(self.config, "tasmax")
         debiased_dtr_path = self.cache.get_debiased_historical_path(dtr_config)
         debiased_tasmax_path = self.cache.get_debiased_historical_path(tasmax_config)
         debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
@@ -1126,8 +1111,8 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        dtr_config = self._make_config_for_variable(self.config, "dtr")
-        tasmax_config = self._make_config_for_variable(self.config, "tasmax")
+        dtr_config = make_config_for_variable(self.config, "dtr")
+        tasmax_config = make_config_for_variable(self.config, "tasmax")
         debiased_dtr_path = self.cache.get_debiased_retrended_scenario_path(dtr_config)
         debiased_tasmax_path = self.cache.get_debiased_retrended_scenario_path(tasmax_config)
         debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
