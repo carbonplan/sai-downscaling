@@ -1091,7 +1091,13 @@ class BCSDPipeline:
         )
 
     def transform_scenario_tasmin(self, force: bool = False) -> str:
-        """ """
+        """
+        This is a special version of transform_scenario for tasmin.
+        The spatial disaggregation approach is the same as for the normal transform_scenario,
+        but the bias correction step is different: it loads debiased coarse tasmax and dtr,
+        and then computes debiased coarse tasmin by subtracting debiased coarse dtr from debiased coarse tasmax.
+
+        """
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
 
