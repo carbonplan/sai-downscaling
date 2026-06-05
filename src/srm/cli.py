@@ -298,7 +298,7 @@ def configs_from_matrix(
     version: str = "v1",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
-    mapping_type: str = "parametric",
+    mapping_type: str = "nonparametric_hybrid_2sided",
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
@@ -343,7 +343,7 @@ def configs_from_matrix(
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
     mapping_type : str
-        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid)
+        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -526,9 +526,9 @@ def run_matrix(
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
     mapping_type: str = typer.Option(
-        "parametric",
+        "nonparametric_hybrid_2sided",
         "--mapping-type",
-        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid",
+        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     # VariableConfig overrides
