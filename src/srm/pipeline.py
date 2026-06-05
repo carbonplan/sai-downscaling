@@ -1090,6 +1090,84 @@ class BCSDPipeline:
             dims=["time", "lat", "lon"],
         )
 
+    def transform_scenario_tasmin(self, force: bool = False) -> str:
+        """ """
+        if self.config.scenario is None:
+            raise ValueError("scenario must be specified in config for transform_scenario")
+
+        self.cache.validate_dependencies(
+            "transform_scenario", self.config, hist_member=self._hist_member
+        )
+
+        output_path = self.cache.scenario_path
+
+        if self.cache.exists(output_path) and not force:
+            logger.info("✓ Using cached scenario: %s", output_path)
+            return output_path
+
+        logger.info(
+            "Computing scenario downscaling for %s/%s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+            self.config.scenario,
+        )
+
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
+            self._load_scenario_data()
+        )
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        dtr_config = self._make_config_for_variable(self.config, "dtr")
+        tasmax_config = self._make_config_for_variable(self.config, "tasmax")
+        debiased_dtr_path = self.cache.get_debiased_retrended_scenario_path(dtr_config)
+        debiased_tasmax_path = self.cache.get_debiased_retrended_scenario_path(tasmax_config)
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_path)[tasmax_config.variable]
+        scenario_debiased = debiased_tasmax - debiased_dtr
+        logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
+
+        if self.options.save_intermediate:
+            t0 = time.perf_counter()
+            debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
+            scenario_debiased.name = self.config.variable
+            scenario_debiased.attrs = model_scenario.attrs
+            self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+            logger.info(
+                "✓ Saved debiased retrended scenario: %s (%.2fs)",
+                debiased_path,
+                time.perf_counter() - t0,
+            )
+
+        t0 = time.perf_counter()
+        scenario_downscaled = self._apply_spatial_downscaling(
+            scenario_debiased, obs_coarse, obs_fine
+        )
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        if self.options.apply_ocean_mask:
+            scenario_downscaled = scenario_downscaled.where(
+                self._build_ocean_mask(scenario_downscaled)
+            ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
+        scenario_downscaled.name = self.config.variable
+        scenario_dataset = _catalog.datasets.get(
+            f"{self.config.gcm}-{self.config.scenario}-icechunk"
+        )
+        dataset_attrs = self._build_output_attrs(scenario_dataset)
+        self._write_to_icechunk(
+            scenario_downscaled,
+            output_path,
+            "write complete",
+            dataset_attrs=dataset_attrs,
+            encoding=make_encoding(self.config.variable),
+        )
+        logger.info("✓ Saved scenario output: %s (%.2fs)", output_path, time.perf_counter() - t0)
+
+        return output_path
+
     def transform_scenario(self, force: bool = False) -> str:
         """
         Stage 3: Downscale future scenario.
