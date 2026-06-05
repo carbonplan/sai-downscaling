@@ -69,14 +69,14 @@ class VariableConfig(BaseModel):
                 "downscaling_clim_method": "fft",
             },
             "dtr": {
-                "detrend_data": True,
+                "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
             },
             "hurs": {
-                "detrend_data": True,
+                "detrend_data": False,
                 "detrend_method": "additive",
                 "do_windowing": True,
                 "downscaling_method": "additive",
