@@ -14,7 +14,7 @@ VAR_SPATIAL_RANGES: dict[str, dict[str, tuple[float, float]]] = {
     "tasmax": {"min": (100, 400), "max": (100, 400)},
     "pr": {"min": (0, 1e-7), "max": (0.0001, 0.03)},
     "rsds": {"min": (-1, 100), "max": (100, 1000)},
-    "hurs": {"min": (0, 40), "max": (40, 250)},
+    "hurs": {"min": (0, 40), "max": (40, 150)},
     "dtr": {"min": (0, 10), "max": (10, 150)},
 }
 
