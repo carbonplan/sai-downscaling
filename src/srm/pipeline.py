@@ -1082,9 +1082,9 @@ class BCSDPipeline:
             
         # remove any negative values introduced by the bias correction
         if self.config.variable in ["pr", "rsds"]:
-            debiased_np = np.clip(debiased_np, a_min=0)
+            debiased_np = np.clip(debiased_np, min=0)
         elif self.config.variable in ["hurs"]:
-            debiased_np = np.clip(debiased_np, a_min=0, a_max=105)
+            debiased_np = np.clip(debiased_np, min=0, max=105)
 
         return xr.DataArray(
             data=debiased_np,
