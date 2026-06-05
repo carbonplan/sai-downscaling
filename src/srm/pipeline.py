@@ -629,6 +629,21 @@ class BCSDPipeline:
         tasmax_config = make_config_for_variable(self.config, "tasmax")
         debiased_dtr_path = self.cache.get_debiased_historical_path(dtr_config)
         debiased_tasmax_path = self.cache.get_debiased_historical_path(tasmax_config)
+        missing = [
+            (var, path)
+            for var, path in [("dtr", debiased_dtr_path), ("tasmax", debiased_tasmax_path)]
+            if not self.cache.exists(path)
+        ]
+        if missing:
+            missing_vars = " and ".join(v for v, _ in missing)
+            missing_paths = "\n  ".join(f"{v}: {p}" for v, p in missing)
+            raise ValueError(
+                f"fit_historical_tasmin requires debiased historical outputs for dtr and tasmax, "
+                f"but the following are missing: {missing_vars}.\n"
+                f"  {missing_paths}\n"
+                f"Run fit_historical with save_intermediate=True for dtr and tasmax "
+                f"before running fit_historical_tasmin."
+            )
         debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_path)[tasmax_config.variable]
         model_hist_debiased = debiased_tasmax - debiased_dtr
@@ -1115,6 +1130,21 @@ class BCSDPipeline:
         tasmax_config = make_config_for_variable(self.config, "tasmax")
         debiased_dtr_path = self.cache.get_debiased_retrended_scenario_path(dtr_config)
         debiased_tasmax_path = self.cache.get_debiased_retrended_scenario_path(tasmax_config)
+        missing = [
+            (var, path)
+            for var, path in [("dtr", debiased_dtr_path), ("tasmax", debiased_tasmax_path)]
+            if not self.cache.exists(path)
+        ]
+        if missing:
+            missing_vars = " and ".join(v for v, _ in missing)
+            missing_paths = "\n  ".join(f"{v}: {p}" for v, p in missing)
+            raise ValueError(
+                f"transform_scenario_tasmin requires debiased retrended scenario outputs for dtr and tasmax, "
+                f"but the following are missing: {missing_vars}.\n"
+                f"  {missing_paths}\n"
+                f"Run transform_scenario with save_intermediate=True for dtr and tasmax "
+                f"before running transform_scenario_tasmin."
+            )
         debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_path)[tasmax_config.variable]
         scenario_debiased = debiased_tasmax - debiased_dtr
