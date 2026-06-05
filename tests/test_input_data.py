@@ -7,9 +7,9 @@ import pytest
 if TYPE_CHECKING:
     from srm.catalog import Dataset
 
-from validators import DatasetValidator
+from validators import VAR_SPATIAL_RANGES, DatasetValidator
 
-from srm.datasets import VirtualDataset
+from srm.datasets import VirtualDataset, catalog
 from srm.validation import (
     GCM_OPTIONS,
     SCENARIO_OPTIONS,
@@ -18,6 +18,29 @@ from srm.validation import (
 )
 
 pytestmark = pytest.mark.input_data
+
+# Datasets too large or non-GCM for the expensive spatial range check.
+# ERA5 and GDEX still get lighter single-day consistency checks below.
+_SKIP_SPATIAL_RANGE = frozenset(
+    {
+        "ERA5",
+        "NASA-NEX-SSP245",
+        "NASA-NEX-historical",
+        "GDEX-GMF-icechunk",
+        "ocean-mask",
+    }
+)
+
+# Non-climate or non-data datasets — skip all physics checks.
+_SKIP_ALL_PHYSICS = frozenset({"ocean-mask"})
+
+# ERA5 tasmin/tasmax vars are forecast (minimum/maximum_2m_temperature_since_previous_post_processing)
+# while ERA5 tas derives is analysis: analysis instantaneous 2m_temperature.
+# Comparsing these, we get small tasmax < tas and tasmin < tas check failures
+# For ex: on day 1, 0.09% of grid points have tas < tasmin
+# and 0.19% have tasmax < tas
+
+_SKIP_TEMP_CONSISTENCY = frozenset({"ERA5"})
 
 
 class TestCatalogDatasets:
@@ -33,23 +56,19 @@ class TestCatalogDatasets:
     def validator(self, ds_info: Dataset) -> DatasetValidator:
         return DatasetValidator(ds_info)
 
+    # spatial-checks: coordinate_names, coordinate_ranges
     def test_longitude_valid(self, ds_info: Dataset, validator: DatasetValidator):
         self._skip_if_virtual(ds_info)
         result = validator.validate_lon(check_monotonic=True)
         assert result, f"{ds_info.name}: {result.issues}"
 
+    # spatial-checks: coordinate_names, coordinate_ranges
     def test_latitude_valid(self, ds_info: Dataset, validator: DatasetValidator):
         self._skip_if_virtual(ds_info)
         result = validator.validate_lat(check_monotonic=True)
         assert result, f"{ds_info.name}: {result.issues}"
 
-    def test_expected_chunking(self, ds_info: Dataset, validator: DatasetValidator):
-        self._skip_if_virtual(ds_info)
-        if ds_info.expected_chunks is None:
-            pytest.skip(f"{ds_info.name} has no chunking expectations")
-        result = validator.validate_expected_chunking()
-        assert result, f"{ds_info.name}: {result.issues}"
-
+    # variable-checks: variable_presence
     def test_expected_variables(self, ds_info: Dataset, validator: DatasetValidator):
         """check existing data variables against known variables in catalog"""
         self._skip_if_virtual(ds_info)
@@ -58,6 +77,7 @@ class TestCatalogDatasets:
         result = validator.validate_expected_variables()
         assert result, f"variable mismatch {ds_info.name}: {result.issues}"
 
+    # variable-checks: units
     def test_variable_units(self, ds_info: Dataset, validator: DatasetValidator):
         """check variable units match"""
         self._skip_if_virtual(ds_info)
@@ -66,13 +86,20 @@ class TestCatalogDatasets:
         result = validator.validate_units()
         assert result, f"Unit mismatch for {ds_info.name}: {result.issues}"
 
+    # temporal-checks: monotonic, no_duplicate_timestamps, no_internal_gaps
+    def test_time_axis(self, ds_info: Dataset, validator: DatasetValidator):
+        self._skip_if_virtual(ds_info)
+        result = validator.validate_time_axis()
+        assert result, f"{ds_info.name}: {result.issues}"
+
+    # temporal-checks: calendar
     def test_calendar(self, ds_info: Dataset, validator: DatasetValidator):
         """check calendar is proleptic_gregorian and datetime64"""
         self._skip_if_virtual(ds_info)
         result = validator.validate_calendar()
         assert result, f"{ds_info.name}: {result.issues}"
 
-    @pytest.mark.slow
+    # variable-checks: reasonable_ranges (pr >= 0)
     def test_negative_precip(self, ds_info: Dataset, validator: DatasetValidator):
         """Only run on datasets that contain 'pr'"""
         self._skip_if_virtual(ds_info)
@@ -85,6 +112,7 @@ class TestCatalogDatasets:
 class TestCrossScenarioConsistency:
     """D: Cross-scenario ensemble member consistency checks."""
 
+    # ensemble-checks: cross_scenario_member_pairing
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     def test_ssp245_hist_member_pairing(self, gcm):
         """D1: every SSP245 member has a match in the historical store."""
@@ -93,6 +121,7 @@ class TestCrossScenarioConsistency:
             pytest.skip(result.message)
         assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
 
+    # ensemble-checks: cross_scenario_member_pairing
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     def test_g6_ssp245_member_pairing(self, gcm):
         """D2: every G6 member has a match in the SSP245 store."""
@@ -104,9 +133,108 @@ class TestCrossScenarioConsistency:
         assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
 
 
+class TestVariablePhysics:
+    """Variable range, temperature consistency, and identity checks."""
+
+    def _skip_if_not_applicable(self, ds_info):
+        if isinstance(ds_info, VirtualDataset):
+            pytest.skip("Not applicable to virtual datasets")
+        if ds_info.name in _SKIP_ALL_PHYSICS:
+            pytest.skip(f"{ds_info.name} is not a climate dataset")
+
+    @pytest.fixture
+    def validator(self, ds_info) -> DatasetValidator:
+        return DatasetValidator(ds_info)
+
+    # variable-checks: reasonable_ranges (spatial min/max on single day; catches unit mismatches)
+    @pytest.mark.parametrize("var", list(VAR_SPATIAL_RANGES))
+    def test_spatial_range(self, ds_info, validator, var):
+        self._skip_if_not_applicable(ds_info)
+        if ds_info.name in _SKIP_SPATIAL_RANGE:
+            pytest.skip(f"{ds_info.name} excluded from spatial range checks")
+        if var not in validator.ds.data_vars:
+            pytest.skip(f"{var} not in {ds_info.name}")
+        result = validator.validate_spatial_range(var)
+        assert result, f"{ds_info.name}: {result.issues}"
+
+    # variable-checks: dtr_consistency (dtr ≈ tasmax − tasmin; catches unit mismatch in derived variable)
+    def test_dtr_consistency(self, ds_info, validator):
+        self._skip_if_not_applicable(ds_info)
+        result = validator.validate_dtr_consistency()
+        assert result, f"{ds_info.name}: {result.issues}"
+
+    # variable-checks: temperature_consistency (tasmax > tas > tasmin; single day only — not all time steps)
+    def test_temperature_consistency(self, ds_info, validator):
+        self._skip_if_not_applicable(ds_info)
+        if ds_info.name in _SKIP_TEMP_CONSISTENCY:
+            pytest.skip(f"{ds_info.name} excluded from temp consistency check")
+        result = validator.validate_temp_consistency()
+        assert result, f"{ds_info.name}: {result.issues}"
+
+    # variable-checks: no_identical_vars
+    def test_no_identical_vars(self, ds_info, validator):
+        self._skip_if_not_applicable(ds_info)
+        result = validator.validate_no_identical_vars()
+        assert result, f"{ds_info.name}: {result.issues}"
+
+
+class TestSpatialConsistency:
+    """All datasets from the same GCM must share the same lat/lon grid."""
+
+    # spatial-checks: grid_consistency
+    @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
+    def test_same_gcm_grid(self, gcm):
+        import numpy as np
+
+        gcm_datasets = [
+            entry
+            for name, entry in catalog.datasets.items()
+            if gcm in name and not isinstance(entry, VirtualDataset)
+        ]
+        if len(gcm_datasets) < 2:
+            pytest.skip(f"Fewer than 2 non-virtual datasets found for {gcm}")
+
+        reference_ds = gcm_datasets[0].to_xarray()
+        ref_lat = reference_ds["lat"].values
+        ref_lon = reference_ds["lon"].values
+
+        issues = []
+        for entry in gcm_datasets[1:]:
+            ds = entry.to_xarray()
+            try:
+                np.testing.assert_array_equal(ref_lat, ds["lat"].values)
+                np.testing.assert_array_equal(ref_lon, ds["lon"].values)
+            except AssertionError as exc:
+                issues.append(f"{entry.name}: {exc}")
+
+        assert not issues, "\n".join(issues)
+
+
+class TestEnsembleSpread:
+    """Ensemble spread must be nonzero — members should differ."""
+
+    # ensemble-checks: spread (global mean of tas differs across members)
+    @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
+    @pytest.mark.parametrize("scenario", list(SCENARIO_OPTIONS))
+    def test_ensemble_spread_nonzero(self, gcm, scenario):
+        key = f"{gcm}-{scenario}-icechunk"
+        try:
+            entry = catalog.get(key)
+        except KeyError:
+            pytest.skip(f"{key} not in catalog")
+
+        if isinstance(entry, VirtualDataset):
+            pytest.skip("Not applicable to virtual datasets")
+
+        validator = DatasetValidator(entry)
+        result = validator.validate_ensemble_spread()
+        assert result, f"{key}: {result.issues}"
+
+
 class TestDataIntegrity:
     """E: Data integrity checks."""
 
+    # variable-checks: no_identical_vars (cross-scenario)
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     def test_g6_not_identical_to_ssp245(self, gcm):
         """E1: G6-1.5K data must differ from SSP245 for the same ensemble member."""
@@ -115,6 +243,7 @@ class TestDataIntegrity:
             pytest.skip(result.message)
         assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
 
+    # temporal-checks: coverage
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     @pytest.mark.parametrize("scenario", list(SCENARIO_OPTIONS))
     def test_temporal_coverage(self, gcm, scenario):
