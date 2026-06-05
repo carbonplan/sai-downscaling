@@ -15,6 +15,7 @@ from srm import catalog
 from srm.config import init_repo, setup_cluster, setup_local_client
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
+    CMORIZE_hurs,
     apply_ensemble_provenance,
     build_encoding_dict,
     determine_write_mode,
@@ -61,6 +62,9 @@ CMIP6_YEAR_RANGES: dict[str, range] = {
 
 @dataclass
 class BaseMIROC_ES2H_Config(BaseETLConfig):
+    # MIROC SSP245/G6-1.5K/baseline raw hurs is stored as fraction (0-1) despite units='%'
+    # due to a CMOR labeling bug. Historical is correctly in %. Set True to apply ×100.
+    cmorize_hurs: bool = False
     aws_creds: dict = field(default_factory=dict)
 
     virtualize_cluster: dict = field(
@@ -113,14 +117,15 @@ class MIROC_ES2H_Historical_Config(BaseMIROC_CMIP6_Config):
 
 
 @dataclass
-class MIROC_ES2H_SSP245_Config(BaseMIROC_CMIP6_Config):
+class MIROC_ES2H_ESGF_SSP245_Config(BaseMIROC_CMIP6_Config):
     scenario: str = "ssp245"
-    catalog_key: str = "MIROC-ES2H-SSP245-virtual"
-    materialized_key: str = "MIROC-ES2H-SSP245-icechunk"
+    catalog_key: str = "MIROC-ES2H-esgf-SSP245-virtual"
+    materialized_key: str = "MIROC-ES2H-esgf-SSP245-icechunk"
     time_range: str = "2015-2100"
+    cmorize_hurs: bool = True
 
 
-# --- GeoMIP scenarios (G6-1.5K-SAI, baseline) --------------------------------
+# --- GeoMIP scenarios (G6-1.5K-SAI, SSP245/baseline) --------------------------------
 
 
 @dataclass
@@ -151,21 +156,29 @@ class MIROC_ES2H_G6_1p5K_Config(BaseMIROC_GeoMIP_Config):
     geomip_scenario: str = "G6-1.5K-SAI"
     catalog_key: str = "MIROC-ES2H-G6-1.5K-virtual"
     materialized_key: str = "MIROC-ES2H-G6-1.5K-icechunk"
+    cmorize_hurs: bool = True
 
 
 @dataclass
-class MIROC_ES2H_Baseline_Config(BaseMIROC_GeoMIP_Config):
-    scenario: str = "baseline"
+class MIROC_ES2H_SSP245_Config(BaseMIROC_GeoMIP_Config):
+    # GeoMIP baseline run — renamed to SSP245 to match catalog naming convention.
+    # Source files still live under baseline/ in S3, so s3_input_prefix is overridden.
+    scenario: str = "SSP245"
     geomip_scenario: str = "baseline"
-    catalog_key: str = "MIROC-ES2H-baseline-virtual"
-    materialized_key: str = "MIROC-ES2H-baseline-icechunk"
+    catalog_key: str = "MIROC-ES2H-SSP245-virtual"
+    materialized_key: str = "MIROC-ES2H-SSP245-icechunk"
+    cmorize_hurs: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.s3_input_prefix = "input/tensor/MIROC-ES2H/baseline/netcdf"
 
 
 SCENARIO_CONFIG_MAP = {
     "historical": MIROC_ES2H_Historical_Config,
     "ssp245": MIROC_ES2H_SSP245_Config,
+    "esgf-ssp245": MIROC_ES2H_ESGF_SSP245_Config,
     "G6-1.5K": MIROC_ES2H_G6_1p5K_Config,
-    "baseline": MIROC_ES2H_Baseline_Config,
 }
 
 
@@ -362,6 +375,8 @@ def _preprocess_miroc(
     ds = lon_to_180(ds, lon_name="lon")
     ds = ds.sortby(["lat", "lon"])
     ds = trim_negative_precipitation(ds)
+    if config.cmorize_hurs and "hurs" in ds.data_vars:
+        ds = CMORIZE_hurs(ds, "hurs")
     if subset:
         ds = ds.isel(time=slice(0, 365))
     return ds
@@ -529,12 +544,16 @@ def process(variable, scenario, coiled, all_variables, subset, overwrite):
 
             repo, session = init_repo(mat_cat.bucket, mat_cat.prefix, readonly=False)
             write_mode = "r+" if overwrite else determine_write_mode(repo)
-            encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
+            encoding = (
+                None
+                if overwrite
+                else build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
+            )
             write_dataset_to_icechunk(
                 ds,
                 session,
-                encoding=None if overwrite else encoding,
-                shards=None if overwrite else config.encoding["shards"],
+                encoding=encoding,
+                shards=config.encoding["shards"],
                 commit_message=f"{scenario}: {var} (overwrite)"
                 if overwrite
                 else f"{scenario}: {var}",
