@@ -38,7 +38,7 @@ class VariableConfig(BaseModel):
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "simple",
+                "downscaling_clim_method": "fft",
             },
             "tas": {
                 "detrend_data": True,
@@ -62,18 +62,18 @@ class VariableConfig(BaseModel):
                 "downscaling_clim_method": "fft",
             },
             "rsds": {
-                "detrend_data": True,
+                "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "simple",
+                "downscaling_clim_method": "fft",
             },
             "dtr": {
                 "detrend_data": True,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "simple",
+                "downscaling_clim_method": "fft",
             },
             "hurs": {
                 "detrend_data": True,
