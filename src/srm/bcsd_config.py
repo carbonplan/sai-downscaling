@@ -188,7 +188,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     )
 
     mapping_type: MappingType = Field(
-        "parametric",
+        "nonparametric_hybrid_2sided",
         description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 
