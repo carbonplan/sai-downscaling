@@ -1079,7 +1079,7 @@ class BCSDPipeline:
             raise ValueError(
                 "mapping_type must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
-            
+
         # remove any negative values introduced by the bias correction
         if self.config.variable in ["pr", "rsds"]:
             debiased_np = np.clip(debiased_np, min=0)
