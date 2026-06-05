@@ -406,6 +406,12 @@ class RuntimeConfig(BaseModel):
 
 
 def make_config_for_variable(base_config: BCSDConfig, variable: str) -> BCSDConfig:
+    """ 
+    This helper function creates a new BCSDConfig for a different variable, 
+    keeping all other parameters the same. This is useful for grabbing the paths for
+    various intermediate artifacts for a different variable without having to redefine the entire config.
+    The variable-specific parameters will be auto-populated based on the new variable.
+    """
     return BCSDConfig(
         gcm=base_config.gcm,
         variable=variable,
