@@ -78,6 +78,27 @@ class DatasetValidator:
 
         return ValidationResult(len(issues) == 0, issues)
 
+    def _resolve_ensemble_member(self, obj):
+        """
+        Return first ensemble_member slice of where no
+        variable/value is entirely null. Returns None if all members are all-null.
+        """
+        import xarray as xr
+
+        if "ensemble_member" not in getattr(obj, "dims", {}):
+            return obj
+        for i in range(obj.sizes["ensemble_member"]):
+            candidate = obj.isel(ensemble_member=i)
+            if isinstance(candidate, xr.Dataset):
+                if all(
+                    not bool(candidate[v].isnull().all().compute()) for v in candidate.data_vars
+                ):
+                    return candidate
+            else:
+                if not bool(candidate.isnull().all().compute()):
+                    return candidate
+        return None
+
     # spatial-checks: coordinate_names, coordinate_ranges
     def validate_lon(
         self,
@@ -128,6 +149,7 @@ class DatasetValidator:
         return ValidationResult(len(issues) == 0, issues)
 
     # temporal-checks: monotonic, no_duplicate_timestamps, no_internal_gaps
+    # Checks time *values*. Distinct from validate_calendar which checks encoding metadata.
     def validate_time_axis(self) -> ValidationResult:
         import numpy as np
 
@@ -149,6 +171,7 @@ class DatasetValidator:
         return ValidationResult(len(issues) == 0, issues)
 
     # temporal-checks: calendar
+    # Checks time *encoding* (calendar type, dtype). Distinct from validate_time_axis which checks values.
     def validate_calendar(self) -> ValidationResult:
         import numpy as np
 
@@ -186,14 +209,9 @@ class DatasetValidator:
             return ValidationResult(True, [])
 
         da = self.ds[var].isel(time=day_index)
-        if "ensemble_member" in da.dims:
-            for i in range(da.sizes["ensemble_member"]):
-                candidate = da.isel(ensemble_member=i)
-                if not bool(candidate.isnull().all().compute()):
-                    da = candidate
-                    break
-            else:
-                return ValidationResult(True, [])
+        da = self._resolve_ensemble_member(da)
+        if da is None:
+            return ValidationResult(True, [])
         spatial_min = float(da.min().compute())
         spatial_max = float(da.max().compute())
 
@@ -268,15 +286,8 @@ class DatasetValidator:
 
         da_slice = self.ds.isel(time=day_index)
         if "ensemble_member" in da_slice.dims:
-            n = da_slice.sizes["ensemble_member"]
-            for i in range(n):
-                candidate = da_slice.isel(ensemble_member=i)
-                if all(
-                    not bool(candidate[v].isnull().all().compute()) for v in candidate.data_vars
-                ):
-                    da_slice = candidate
-                    break
-            else:
+            da_slice = self._resolve_ensemble_member(da_slice)
+            if da_slice is None:
                 return ValidationResult(True, [])
 
         var_names = list(da_slice.data_vars)
@@ -290,8 +301,10 @@ class DatasetValidator:
                 )
         return ValidationResult(len(issues) == 0, issues)
 
-    # ensemble-checks: spread (global mean of tas differs across members)
+    # ensemble-checks: spread (global mean of tas differs across all member pairs)
     def validate_ensemble_spread(self, var: str = "tas", day_index: int = 0) -> ValidationResult:
+        import itertools
+
         if var not in self.ds:
             return ValidationResult(True, [])
         if "ensemble_member" not in self.ds.dims:
@@ -300,14 +313,15 @@ class DatasetValidator:
             return ValidationResult(True, [])
 
         da = self.ds[var].isel(time=day_index)
-        mean0 = float(da.isel(ensemble_member=0).mean().compute())
-        mean1 = float(da.isel(ensemble_member=1).mean().compute())
+        member_labels = self.ds.ensemble_member.values
+        means = [
+            float(da.isel(ensemble_member=i).mean().compute()) for i in range(len(member_labels))
+        ]
 
-        if mean0 == mean1:
-            m0 = self.ds.ensemble_member.values[0]
-            m1 = self.ds.ensemble_member.values[1]
-            return ValidationResult(
-                False,
-                [f"{var} global mean identical for members {m0} and {m1} (day {day_index})"],
-            )
-        return ValidationResult(True, [])
+        issues = []
+        for i, j in itertools.combinations(range(len(member_labels)), 2):
+            if means[i] == means[j]:
+                issues.append(
+                    f"{var} global mean identical for members {member_labels[i]} and {member_labels[j]} (day {day_index})"
+                )
+        return ValidationResult(len(issues) == 0, issues)
