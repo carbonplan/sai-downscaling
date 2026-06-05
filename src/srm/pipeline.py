@@ -24,7 +24,7 @@ from ibicus.debias import QuantileMapping
 from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions, make_config_for_variable
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache
 from srm.datasets import BaseDataset, catalog as _catalog
 from srm.downscaling_utils import (
@@ -625,8 +625,8 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        dtr_config = make_config_for_variable(self.config, "dtr")
-        tasmax_config = make_config_for_variable(self.config, "tasmax")
+        dtr_config = self.config.make_config_for_variable("dtr")
+        tasmax_config = self.config.make_config_for_variable("tasmax")
         debiased_dtr_path = self.cache.get_debiased_historical_path(dtr_config)
         debiased_tasmax_path = self.cache.get_debiased_historical_path(tasmax_config)
         missing = [
@@ -1126,8 +1126,8 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        dtr_config = make_config_for_variable(self.config, "dtr")
-        tasmax_config = make_config_for_variable(self.config, "tasmax")
+        dtr_config = self.config.make_config_for_variable("dtr")
+        tasmax_config = self.config.make_config_for_variable("tasmax")
         debiased_dtr_path = self.cache.get_debiased_retrended_scenario_path(dtr_config)
         debiased_tasmax_path = self.cache.get_debiased_retrended_scenario_path(tasmax_config)
         missing = [

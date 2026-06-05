@@ -328,6 +328,27 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         """Check if this is an SAI intervention scenario"""
         return self.scenario and ("G6" in self.scenario.upper() or "SAI" in self.scenario.upper())
 
+    def make_config_for_variable(self, variable: str) -> BCSDConfig:
+        """
+        Return a new BCSDConfig for a different variable, keeping all other parameters the same.
+
+        Useful for grabbing paths to intermediate artifacts for a sibling variable (e.g. dtr or
+        tasmax when processing tasmin) without redefining the entire config. Variable-specific
+        parameters are auto-populated based on the new variable.
+        """
+        return BCSDConfig(
+            gcm=self.gcm,
+            variable=variable,
+            ensemble_member=self.ensemble_member,
+            scenario=self.scenario,
+            train_period_start=self.train_period_start,
+            train_period_end=self.train_period_end,
+            predict_period_start=self.predict_period_start,
+            predict_period_end=self.predict_period_end,
+            subset_bounds=self.subset_bounds,
+            mapping_type=self.mapping_type,
+        )
+
 
 class PipelineOptions(pydantic_settings.BaseSettings):
     """
@@ -402,27 +423,6 @@ class RuntimeConfig(BaseModel):
     )
     max_parallel_tasks: int | None = Field(
         None, description="Maximum number of parallel tasks. None for unlimited."
-    )
-
-
-def make_config_for_variable(base_config: BCSDConfig, variable: str) -> BCSDConfig:
-    """ 
-    This helper function creates a new BCSDConfig for a different variable, 
-    keeping all other parameters the same. This is useful for grabbing the paths for
-    various intermediate artifacts for a different variable without having to redefine the entire config.
-    The variable-specific parameters will be auto-populated based on the new variable.
-    """
-    return BCSDConfig(
-        gcm=base_config.gcm,
-        variable=variable,
-        ensemble_member=base_config.ensemble_member,
-        scenario=base_config.scenario,
-        train_period_start=base_config.train_period_start,
-        train_period_end=base_config.train_period_end,
-        predict_period_start=base_config.predict_period_start,
-        predict_period_end=base_config.predict_period_end,
-        subset_bounds=base_config.subset_bounds,
-        mapping_type=base_config.mapping_type,
     )
 
 
