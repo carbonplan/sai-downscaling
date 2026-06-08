@@ -1,8 +1,9 @@
-# BCSD configuration: MIROC-ES2H / tas / G6-1.5K / all members / South Africa (QA)
+# BCSD configuration: MIROC-ES2H / all variables / G6-1.5K / all members / South Africa (QA)
+# All 7 variables available for all members; no CMIP6 tasmax/tasmin bug in MIROC-ES2H.
 
 # === Model and Scenario ===
 gcm: "MIROC-ES2H"
-variables: ["tas"]
+variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
 scenarios: ["G6-1.5K"]
 
