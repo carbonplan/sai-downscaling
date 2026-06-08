@@ -16,7 +16,7 @@ MappingType = Literal[
 DownscalingMethod = Literal["additive", "multiplicative"]
 DownscalingClimMethod = Literal["simple", "fft"]
 DetrendMethod = Literal["additive", "multiplicative"]
-VariableName = Literal["tas", "tasmax", "pr", "rsds", "dtr"]
+VariableName = Literal["tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"]
 
 
 class VariableConfig(BaseModel):
@@ -38,7 +38,7 @@ class VariableConfig(BaseModel):
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "simple",
+                "downscaling_clim_method": "fft",
             },
             "tas": {
                 "detrend_data": True,
@@ -54,19 +54,33 @@ class VariableConfig(BaseModel):
                 "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
             },
-            "rsds": {
+            "tasmin": {
                 "detrend_data": True,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "downscaling_method": "additive",
+                "downscaling_clim_method": "fft",
+            },
+            "rsds": {
+                "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "simple",
+                "downscaling_clim_method": "fft",
             },
             "dtr": {
-                "detrend_data": True,
+                "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "simple",
+                "downscaling_clim_method": "fft",
+            },
+            "hurs": {
+                "detrend_data": False,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "downscaling_method": "additive",
+                "downscaling_clim_method": "fft",
             },
         }
 
@@ -174,7 +188,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     )
 
     mapping_type: MappingType = Field(
-        "parametric",
+        "nonparametric_hybrid_2sided",
         description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 
@@ -313,6 +327,27 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     def is_sai_scenario(self) -> bool:
         """Check if this is an SAI intervention scenario"""
         return self.scenario and ("G6" in self.scenario.upper() or "SAI" in self.scenario.upper())
+
+    def make_config_for_variable(self, variable: str) -> BCSDConfig:
+        """
+        Return a new BCSDConfig for a different variable, keeping all other parameters the same.
+
+        Useful for grabbing paths to intermediate artifacts for a sibling variable (e.g. dtr or
+        tasmax when processing tasmin) without redefining the entire config. Variable-specific
+        parameters are auto-populated based on the new variable.
+        """
+        return BCSDConfig(
+            gcm=self.gcm,
+            variable=variable,
+            ensemble_member=self.ensemble_member,
+            scenario=self.scenario,
+            train_period_start=self.train_period_start,
+            train_period_end=self.train_period_end,
+            predict_period_start=self.predict_period_start,
+            predict_period_end=self.predict_period_end,
+            subset_bounds=self.subset_bounds,
+            mapping_type=self.mapping_type,
+        )
 
 
 class PipelineOptions(pydantic_settings.BaseSettings):

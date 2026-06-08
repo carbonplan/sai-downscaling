@@ -1,10 +1,10 @@
-# BCSD configuration: MIROC-ES2H / tas / baseline / all members / global (production)
+# BCSD configuration: MIROC-ES2H / tas / SSP245 / GeoMIP members / global (production)
 
 # === Model and Scenario ===
 gcm: "MIROC-ES2H"
 variables: ["tas"]
 ensemble_members: ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
-scenarios: ["baseline"]
+scenarios: ["SSP245"]
 
 # === Time Periods ===
 train_period_start: 1978

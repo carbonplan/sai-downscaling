@@ -69,7 +69,7 @@ def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
             continue
         seen.add(key)
         try:
-            hist, ssp245 = resolve_member_lineage(
+            hist, ssp245, *_ = resolve_member_lineage(
                 cfg.gcm, cfg.scenario, cfg.ensemble_member, cfg.variable
             )
         except KeyError:
@@ -86,9 +86,9 @@ def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
 def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
     """Print a per-scenario lineage table for the validate command.
 
-    Deduplicated by (member, hist, ssp245_bridge); variables sharing the same
-    parents are listed together. Skipped when no lineage is registered for
-    the GCM/scenario pair.
+    Deduplicated by (member, hist, ssp245_bridge, ssp245_esgf_bridge); variables
+    sharing the same parents are listed together. Skipped when no lineage is
+    registered for the GCM/scenario pair.
     """
     from srm.lineage import get_lineage_entries
 
@@ -99,7 +99,8 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         if not entries:
             continue
 
-        has_ssp245 = any(ssp is not None for _, ssp in entries.values())
+        has_ssp245 = any(ssp is not None for _, ssp, *_ in entries.values())
+        has_ssp245_esgf = any(esgf is not None for _, _, esgf in entries.values())
 
         tbl = Table(
             title=f"Lineage — {scenario}",
@@ -113,19 +114,23 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         tbl.add_column("→ historical", style="green", justify="right")
         if has_ssp245:
             tbl.add_column("→ SSP245 bridge", style="yellow", justify="right")
+        if has_ssp245_esgf:
+            tbl.add_column("→ SSP245 ESGF bridge", style="magenta", justify="right")
 
-        seen: dict[tuple[str, str, str | None], list[str]] = {}
-        for (member, var), (hist, ssp245) in sorted(entries.items()):
-            key = (member, hist, ssp245)
+        seen: dict[tuple[str, str, str | None, str | None], list[str]] = {}
+        for (member, var), (hist, ssp245, ssp245_esgf) in sorted(entries.items()):
+            key = (member, hist, ssp245, ssp245_esgf)
             if key not in seen:
                 seen[key] = []
             if var not in seen[key]:
                 seen[key].append(var)
 
-        for (member, hist, ssp245), variables in sorted(seen.items()):
+        for (member, hist, ssp245, ssp245_esgf), variables in sorted(seen.items()):
             row = [member, "/".join(sorted(variables)), hist]
             if has_ssp245:
                 row.append(ssp245 or "—")
+            if has_ssp245_esgf:
+                row.append(ssp245_esgf or "—")
             tbl.add_row(*row)
 
         console.print(tbl)
@@ -164,7 +169,7 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
         if config.scenario is None:
             continue
         try:
-            hist, ssp245 = resolve_member_lineage(
+            hist, ssp245, *_ = resolve_member_lineage(
                 config.gcm, config.scenario, config.ensemble_member, config.variable
             )
         except KeyError:
@@ -293,7 +298,7 @@ def configs_from_matrix(
     version: str = "v1",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
-    mapping_type: str = "parametric",
+    mapping_type: str = "nonparametric_hybrid_2sided",
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
@@ -338,7 +343,7 @@ def configs_from_matrix(
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
     mapping_type : str
-        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid)
+        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -521,9 +526,9 @@ def run_matrix(
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
     mapping_type: str = typer.Option(
-        "parametric",
+        "nonparametric_hybrid_2sided",
         "--mapping-type",
-        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid",
+        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     # VariableConfig overrides
@@ -851,6 +856,7 @@ def validate(
         BLOCKING_CHECKS,
         GCM_OPTIONS,
         SCENARIO_OPTIONS,
+        XFAIL_CHECKS,
         CheckStatus,
         DatasetValidator,
     )
@@ -869,6 +875,8 @@ def validate(
         CheckStatus.FAIL: "[red]✗[/red]",
         CheckStatus.UNKNOWN: "[yellow]?[/yellow]",
         CheckStatus.SKIP: "-",
+        CheckStatus.XFAIL: "[yellow]x[/yellow]",  # expected failure — not blocking
+        CheckStatus.XPASS: "[cyan]✓?[/cyan]",  # unexpected pass — worth investigating
     }
 
     pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
@@ -968,6 +976,20 @@ def validate(
                     f"[dim]{r.check_id} detail[/dim] for {r.gcm}/{r.scenario}", style="dim"
                 )
                 console.print_json(json.dumps(r.detail))
+
+    xfail_results = [r for r in all_results if r.status == CheckStatus.XFAIL]
+    xpass_results = [r for r in all_results if r.status == CheckStatus.XPASS]
+
+    if xfail_results:
+        logger.warning("--- Expected failures (xfail, non-blocking) ---")
+        for r in xfail_results:
+            reason = XFAIL_CHECKS.get((r.gcm, r.scenario, r.check_id), "")
+            logger.warning("x %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, reason)
+
+    if xpass_results:
+        logger.warning("--- Unexpected passes (xpass) — verify xfail entries are still needed ---")
+        for r in xpass_results:
+            logger.warning("✓? %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, r.message)
 
     if blocking_failures:
         raise typer.Exit(1)
