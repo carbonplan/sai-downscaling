@@ -1,6 +1,7 @@
 import json
 import logging
 
+import boto3
 import dask
 import icechunk
 import xarray as xr
@@ -15,6 +16,26 @@ from srm.config import VarSpec
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+
+def get_aws_creds() -> dict:
+    """Return AWS credentials and region from the active boto3 session."""
+    sesh = boto3.Session()
+    creds = sesh.get_credentials()
+    return {
+        "region": sesh.region_name,
+        "aws_access_key_id": creds.access_key,
+        "aws_secret_access_key": creds.secret_key,
+    }
+
+
+def make_fixed_ensemble_preprocess(member: str):
+    """Return a preprocess function that stamps a known ensemble member onto every file."""
+
+    def fn(ds: xr.Dataset, url: str | None = None) -> xr.Dataset:  # noqa: ARG001
+        return ds.expand_dims({"ensemble_member": [member]})
+
+    return fn
 
 
 def compute_wind_speed(
@@ -136,6 +157,7 @@ def write_dataset_to_icechunk(
     commit_message: str | None = None,
     write_mode: str = "a",
     repo: icechunk.Repository | None = None,
+    group: str | None = None,
 ):
     """
     Write dataset to icechunk with optional rechunking.
@@ -145,6 +167,8 @@ def write_dataset_to_icechunk(
 
     If repo is provided, old snapshots are expired and garbage collected after
     each commit, keeping storage bounded when variables are rewritten.
+
+    group, if given, writes into a zarr sub-group (e.g. ``"ssp245"``).
     """
     import zarr
     from icechunk.xarray import to_icechunk
@@ -156,11 +180,12 @@ def write_dataset_to_icechunk(
     if write_mode == "a" and encoding:
         # zarr rejects encoding specs for arrays that already exist in append mode;
         # existing arrays keep the encoding they were written with.
-        existing = set(zarr.open_group(session.store).array_keys())
+        target = zarr.open_group(session.store, path=group)
+        existing = set(target.array_keys())
         is_overwrite = bool(set(encoding.keys()) & existing)
         encoding = {k: v for k, v in encoding.items() if k not in existing}
 
-    to_icechunk(ds, session, encoding=encoding, mode=write_mode)
+    to_icechunk(ds, session, encoding=encoding, mode=write_mode, group=group)
 
     if commit_message:
         session.commit(commit_message)
