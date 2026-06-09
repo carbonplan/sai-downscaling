@@ -1,12 +1,20 @@
 import json
+import logging
 
 import dask
 import icechunk
 import xarray as xr
 from obspec_utils.registry import ObjectStoreRegistry
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 from virtualizarr.parsers import HDFParser
 
 from srm.config import VarSpec
+
+logger = logging.getLogger(__name__)
+console = Console()
 
 
 def compute_wind_speed(
@@ -123,25 +131,51 @@ def update_variable_attrs(ds: xr.Dataset, var_specs: dict[str, VarSpec]) -> xr.D
 def write_dataset_to_icechunk(
     ds: xr.Dataset,
     session,
-    encoding: dict = None,
-    shards: dict = None,
-    commit_message: str = None,
+    encoding: dict | None = None,
+    shards: dict | None = None,
+    commit_message: str | None = None,
     write_mode: str = "a",
+    repo: icechunk.Repository | None = None,
 ):
     """
     Write dataset to icechunk with optional rechunking.
 
     For virtual datasets: set encoding=None and shards=None
     For materialized datasets: provide encoding and shards for rechunking
+
+    If repo is provided, old snapshots are expired and garbage collected after
+    each commit, keeping storage bounded when variables are rewritten.
     """
+    import zarr
     from icechunk.xarray import to_icechunk
 
     if shards is not None:
         ds = ds.chunk(shards)
+
+    is_overwrite = False
+    if write_mode == "a" and encoding:
+        # zarr rejects encoding specs for arrays that already exist in append mode;
+        # existing arrays keep the encoding they were written with.
+        existing = set(zarr.open_group(session.store).array_keys())
+        is_overwrite = bool(set(encoding.keys()) & existing)
+        encoding = {k: v for k, v in encoding.items() if k not in existing}
+
     to_icechunk(ds, session, encoding=encoding, mode=write_mode)
 
     if commit_message:
         session.commit(commit_message)
+
+    if repo is not None and commit_message and is_overwrite:
+        console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
+        history = list(repo.ancestry(branch="main"))
+        if len(history) > 2:
+            # keep one rollback point: expire everything older than the second-to-last commit
+            keep_from = history[1].written_at
+            n_expired = len(repo.expire_snapshots(older_than=keep_from))
+            gc_result = repo.garbage_collect(keep_from)
+            logger.info("GC: expired %d snapshots, collected %s", n_expired, gc_result)
+    if repo is not None:
+        console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
 
 
 def virtualize_netcdf(
@@ -196,6 +230,78 @@ def virtualize_and_combine(
         data_vars="minimal",
         compat="override",
         combine_attrs="override",
+    )
+
+
+def _init_repo_from_uri(uri: str):
+    """Open or create an icechunk repository at a local path or ``s3://`` URI.
+
+    Parameters
+    ----------
+    uri : str
+        Either a local filesystem path (e.g. ``/tmp/test``) or an S3 URI
+        of the form ``s3://bucket/prefix``.
+
+    Returns
+    -------
+    tuple[icechunk.Repository, icechunk.Session]
+        The repository and a writable session on ``main``.
+    """
+    if uri.startswith("s3://"):
+        parts = uri[len("s3://") :].split("/", 1)
+        bucket, prefix = parts[0], parts[1] if len(parts) > 1 else ""
+        storage = icechunk.s3_storage(bucket=bucket, prefix=prefix, region="us-west-2")
+    else:
+        storage = icechunk.local_filesystem_storage(uri)
+    repo = icechunk.Repository.open_or_create(storage)
+    return repo, repo.writable_session("main")
+
+
+def _display_dry_run_result(ds: xr.Dataset, variable: str, store: str | None = None) -> None:
+    """Compute a dry-run dataset and render a summary panel to the console.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        The (possibly lazy) dataset to compute and summarise.
+    variable : str
+        Label used in the panel title.
+    store : str or None, optional
+        Destination URI shown in the panel subtitle. When ``None`` the subtitle
+        reads ``(display only, no write)``.
+    """
+    logger.info("Computing sample result for %s...", variable)
+    ds = ds.compute()
+
+    table = Table(show_header=True, header_style="bold green")
+    table.add_column("Variable", style="cyan")
+    table.add_column("Shape")
+    table.add_column("Dims")
+    table.add_column("Units", style="yellow")
+    table.add_column("Min", justify="right", style="blue")
+    table.add_column("Max", justify="right", style="blue")
+
+    for var_name in ds.data_vars:
+        da = ds[var_name]
+        table.add_row(
+            var_name,
+            str(da.shape),
+            " × ".join(da.dims),
+            da.attrs.get("units", "—"),
+            f"{float(da.min()):.4g}",
+            f"{float(da.max()):.4g}",
+        )
+
+    time_start = str(ds.time.values[0])[:10]
+    time_end = str(ds.time.values[-1])[:10]
+    subtitle = f"[dim]→ {store}[/dim]" if store else "[dim](display only, no write)[/dim]"
+    console.print(
+        Panel(
+            table,
+            title=f"[bold green]✓ {variable}[/] | {time_start} → {time_end}",
+            subtitle=subtitle,
+            border_style="green",
+        )
     )
 
 

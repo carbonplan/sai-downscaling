@@ -6,18 +6,17 @@ import xarray as xr
 import zarr
 from rich.console import Console
 from rich.logging import RichHandler
-from rich.panel import Panel
-from rich.table import Table
 
 from srm.config import (
     ClusterConfig,
     VarSpec,
     VarStandards,
-    init_repo,
     setup_cluster,
     setup_local_client,
 )
 from srm.input_data.etl_utils import (
+    _display_dry_run_result,
+    _init_repo_from_uri,
     add_cf_bounds,
     build_encoding_dict,
     determine_write_mode,
@@ -67,8 +66,7 @@ ALL_VARS = list(ERA5_TO_CMIP6.keys())
 CMIP6_TO_ERA5 = {v: k for k, v in ERA5_TO_CMIP6.items()}
 DERIVED_VARS = ["hurs"]
 
-OUTPUT_BUCKET = "carbonplan-srm"
-OUTPUT_PREFIX = "input/tensor/era5.icechunk"
+OUTPUT_URI = "s3://carbonplan-srm/input/tensor/era5.icechunk"
 OUTPUT_CHUNKS: dict[str, int] = {"time": 1, "lat": 721, "lon": 1440}
 OUTPUT_SHARDS: dict[str, int] = {"time": 30, "lat": 721, "lon": 1440}
 
@@ -190,47 +188,19 @@ def resample_to_daily(ds: xr.Dataset, variable: str) -> xr.Dataset:
     return getattr(ds.resample(time="d"), op)()
 
 
-def _display_dry_run_result(ds: xr.Dataset, variable: str) -> None:
-    logger.info("Computing sample result for %s...", variable)
-    ds = ds.compute()
-
-    table = Table(show_header=True, header_style="bold green")
-    table.add_column("Variable", style="cyan")
-    table.add_column("Shape")
-    table.add_column("Dims")
-    table.add_column("Units", style="yellow")
-    table.add_column("Min", justify="right", style="blue")
-    table.add_column("Max", justify="right", style="blue")
-
-    for var_name in ds.data_vars:
-        da = ds[var_name]
-        table.add_row(
-            var_name,
-            str(da.shape),
-            " × ".join(da.dims),
-            da.attrs.get("units", "—"),
-            f"{float(da.min()):.4g}",
-            f"{float(da.max()):.4g}",
-        )
-
-    time_start = str(ds.time.values[0])[:10]
-    time_end = str(ds.time.values[-1])[:10]
-    store = f"s3://{OUTPUT_BUCKET}/{OUTPUT_PREFIX}"
-    console.print(
-        Panel(
-            table,
-            title=f"[bold green]✓ {variable}[/] | {time_start} → {time_end}",
-            subtitle=f"[dim]→ {store}[/dim]",
-            border_style="green",
-        )
-    )
-
-
-def process_era5_var(variable: str, start_year: int, end_year: int, dry_run: bool = False) -> None:
+def process_era5_var(
+    variable: str,
+    start_year: int,
+    end_year: int,
+    output_uri: str = OUTPUT_URI,
+    dry_run: bool = False,
+    dry_run_output: str | None = None,
+    commit_message: str | None = None,
+) -> None:
     """Process a single ERA5 variable and write it to the icechunk store.
 
     Dispatches to the appropriate loader, applies the standard pipe chain of
-    transforms, and writes the result to the icechunk store at ``OUTPUT_PREFIX``.
+    transforms, and writes the result to ``output_uri``.
 
     Parameters
     ----------
@@ -240,9 +210,17 @@ def process_era5_var(variable: str, start_year: int, end_year: int, dry_run: boo
         First year to include.
     end_year : int
         Last year to include.
+    output_uri : str, optional
+        Destination ``s3://`` URI or local path. Defaults to ``OUTPUT_URI``.
     dry_run : bool, optional
         If True, process a small sample (``_DRY_RUN_HOURLY_STEPS`` steps) and
-        display the result instead of writing to the store. Default is False.
+        display the result. If ``dry_run_output`` is also given the sample is written
+        there; otherwise no data are persisted. Default is False.
+    dry_run_output : str or None, optional
+        Local path or ``s3://`` URI to write the dry-run sample to.
+        Ignored when ``dry_run`` is False. Default is None.
+    commit_message : str or None, optional
+        Icechunk commit message. Defaults to the variable name when not set.
     """
     # Resolve CMIP6 name → ERA5 source name for loading and resampling lookups.
     era5_var = CMIP6_TO_ERA5.get(variable, variable)
@@ -279,22 +257,39 @@ def process_era5_var(variable: str, start_year: int, end_year: int, dry_run: boo
         )
 
     if dry_run:
-        _display_dry_run_result(ds, variable)
+        _display_dry_run_result(ds, variable, store=dry_run_output)
+        if dry_run_output is not None:
+            logger.info("Writing dry-run sample for %s to %s", variable, dry_run_output)
+            repo, session = _init_repo_from_uri(dry_run_output)
+            write_mode = determine_write_mode(repo)
+            encoding = build_encoding_dict(ds, OUTPUT_CHUNKS, OUTPUT_SHARDS)
+            write_dataset_to_icechunk(
+                ds,
+                session,
+                encoding=encoding,
+                shards=OUTPUT_SHARDS,
+                commit_message=f"dry-run: {commit_message or variable}",
+                write_mode=write_mode,
+                repo=repo,
+            )
+            logger.info("✓ Dry-run write done: %s → %s", variable, dry_run_output)
+            read_session = repo.readonly_session("main")  # re-open after commit
+            written = xr.open_dataset(read_session.store, engine="zarr", chunks="auto")
+            console.print(written)
         return
 
-    repo, session = init_repo(OUTPUT_BUCKET, OUTPUT_PREFIX, readonly=False)
+    repo, session = _init_repo_from_uri(output_uri)
     write_mode = determine_write_mode(repo)
-    logger.info(
-        "Writing %s to s3://%s/%s (mode=%s)", variable, OUTPUT_BUCKET, OUTPUT_PREFIX, write_mode
-    )
+    logger.info("Writing %s to %s (mode=%s)", variable, output_uri, write_mode)
     encoding = build_encoding_dict(ds, OUTPUT_CHUNKS, OUTPUT_SHARDS)
     write_dataset_to_icechunk(
         ds,
         session,
         encoding=encoding,
         shards=OUTPUT_SHARDS,
-        commit_message=variable,
+        commit_message=commit_message or variable,
         write_mode=write_mode,
+        repo=repo,
     )
     logger.info("✓ Done: %s", variable)
 
@@ -303,8 +298,11 @@ def process_era5_pipeline(
     variables: list[str],
     start_year: int = 1950,
     end_year: int = 2014,
+    output_uri: str = OUTPUT_URI,
     use_coiled: bool = False,
     dry_run: bool = False,
+    dry_run_output: str | None = None,
+    commit_message: str | None = None,
 ) -> None:
     """Run the ERA5 ETL pipeline for one or more variables.
 
@@ -319,16 +317,33 @@ def process_era5_pipeline(
         First year to include. Default is 1950.
     end_year : int, optional
         Last year to include. Default is 2014.
+    output_uri : str, optional
+        Destination ``s3://`` URI or local path. Defaults to ``OUTPUT_URI``.
     use_coiled : bool, optional
         Use a Coiled cluster instead of a local Dask cluster. Default is False.
     dry_run : bool, optional
         If True, run transforms on a small sample and display results without
-        writing or starting a cluster. Default is False.
+        starting a cluster. If ``dry_run_output`` is also given the sample is
+        written there. Default is False.
+    dry_run_output : str or None, optional
+        Local path or ``s3://`` URI to write the dry-run sample to.
+        Ignored when ``dry_run`` is False. Default is None.
+    commit_message : str or None, optional
+        Icechunk commit message. Defaults to the variable name when not set.
     """
     if dry_run:
-        logger.info("Dry run: %d hourly steps per variable, no writes", _DRY_RUN_HOURLY_STEPS)
+        dest = dry_run_output or "(display only, no write)"
+        logger.info("Dry run: %d hourly steps per variable → %s", _DRY_RUN_HOURLY_STEPS, dest)
         for var in variables:
-            process_era5_var(var, start_year, end_year, dry_run=True)
+            process_era5_var(
+                var,
+                start_year,
+                end_year,
+                output_uri=output_uri,
+                dry_run=True,
+                dry_run_output=dry_run_output,
+                commit_message=commit_message,
+            )
         return
 
     cluster_config = ClusterConfig()
@@ -336,7 +351,9 @@ def process_era5_pipeline(
     try:
         for var in variables:
             logger.info("Processing %s", var)
-            process_era5_var(var, start_year, end_year)
+            process_era5_var(
+                var, start_year, end_year, output_uri=output_uri, commit_message=commit_message
+            )
     finally:
         client.shutdown()
 
@@ -352,11 +369,26 @@ def era5(
     ),
     start_year: int = typer.Option(1950, help="First year to include."),
     end_year: int = typer.Option(2014, help="Last year to include."),
+    output: str = typer.Option(OUTPUT_URI, "--output", help="Destination s3:// URI or local path."),
     coiled: bool = typer.Option(False, "--coiled/--local", help="Use Coiled cluster."),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
-        help=f"Run transforms on a {_DRY_RUN_HOURLY_STEPS}-step sample and display results; no writes.",
+        help=f"Run transforms on a {_DRY_RUN_HOURLY_STEPS}-step sample and display results.",
+    ),
+    dry_run_output: str | None = typer.Option(
+        None,
+        "--dry-run-output",
+        help=(
+            "Write the dry-run sample to this location instead of discarding it. "
+            "Accepts a local path (e.g. /tmp/era5_test) or an S3 URI "
+            "(e.g. s3://my-bucket/tmp/era5_test). Only used with --dry-run."
+        ),
+    ),
+    commit_message: str | None = typer.Option(
+        None,
+        "--commit-message",
+        help="Icechunk commit message. Defaults to the variable name when not set.",
     ),
 ) -> None:
     """Process ERA5 variables and write them to the icechunk store."""
@@ -364,8 +396,11 @@ def era5(
         variables=variable,
         start_year=start_year,
         end_year=end_year,
+        output_uri=output,
         use_coiled=coiled,
         dry_run=dry_run,
+        dry_run_output=dry_run_output,
+        commit_message=commit_message,
     )
 
 
