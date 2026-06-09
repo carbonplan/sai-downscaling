@@ -1,10 +1,12 @@
-# BCSD configuration: MIROC-ES2H / tas / G6-1.5K / all members / South Africa (QA)
+# BCSD configuration: CESM2-WACCM / standard variables / SSP245 / all members / South Africa (QA)
+# Standard variables (tas, pr, rsds, hurs) are available for all 10 members.
+# tasmax/tasmin/dtr require the corrected run; see cesm2-waccm-ssp245-tmx-southafrica.yaml.
 
 # === Model and Scenario ===
-gcm: "MIROC-ES2H"
-variables: ["tas"]
-ensemble_members: ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
-scenarios: ["G6-1.5K"]
+gcm: "CESM2-WACCM"
+variables: ["tas", "pr", "rsds", "hurs"]
+ensemble_members: ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"]
+scenarios: ["SSP245"]
 
 # === Time Periods ===
 train_period_start: 1978

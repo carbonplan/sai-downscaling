@@ -184,8 +184,11 @@ class TestMirocLineage:
         _, _, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
         assert ssp245_esgf == expected_hist
 
-    @pytest.mark.parametrize("member", [m for m, _ in _MIROC_G6_LINEAGE])
-    def test_ssp245_has_no_esgf_bridge(self, member):
+    @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
+    def test_ssp245_no_sai_bridge_but_has_esgf_bridge(self, member, expected_hist):
+        # SSP245 is not an SAI scenario so ssp245 (SAI bridge) is None.
+        # ssp245_esgf is set because the GeoMIP SSP245 dataset starts in 2020;
+        # ESGF SSP245 fills the 2015–2019 gap.
         _, ssp245, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "SSP245", member, "tas")
         assert ssp245 is None
-        assert ssp245_esgf is None
+        assert ssp245_esgf == expected_hist
