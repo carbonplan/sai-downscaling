@@ -21,7 +21,6 @@ from srm.input_data.etl_utils import (
     add_cf_bounds,
     build_encoding_dict,
     determine_write_mode,
-    load_dtr_from_store,
     trim_negative_precipitation,
     update_variable_attrs,
     write_dataset_to_icechunk,
@@ -66,10 +65,10 @@ RESAMPLE_OPS = {
 
 ALL_VARS = list(ERA5_TO_CMIP6.keys())
 CMIP6_TO_ERA5 = {v: k for k, v in ERA5_TO_CMIP6.items()}
-DERIVED_VARS = ["dtr", "hurs"]
+DERIVED_VARS = ["hurs"]
 
 OUTPUT_BUCKET = "carbonplan-srm"
-OUTPUT_PREFIX = "input/era5.icechunk"
+OUTPUT_PREFIX = "input/tensor/era5.icechunk"
 OUTPUT_CHUNKS: dict[str, int] = {"time": 1, "lat": 721, "lon": 1440}
 OUTPUT_SHARDS: dict[str, int] = {"time": 30, "lat": 721, "lon": 1440}
 
@@ -236,11 +235,11 @@ def process_era5_var(variable: str, start_year: int, end_year: int, dry_run: boo
     Parameters
     ----------
     variable : str
-        Variable to process as a CMIP6 name (e.g. ``"tas"``, ``"pr"``, ``"dtr"``).
+        Variable to process as a CMIP6 name (e.g. ``"tas"``, ``"pr"``, ``"hurs"``).
     start_year : int
-        First year to include (ignored for ``dtr``).
+        First year to include.
     end_year : int
-        Last year to include (ignored for ``dtr``).
+        Last year to include.
     dry_run : bool, optional
         If True, process a small sample (``_DRY_RUN_HOURLY_STEPS`` steps) and
         display the result instead of writing to the store. Default is False.
@@ -248,12 +247,7 @@ def process_era5_var(variable: str, start_year: int, end_year: int, dry_run: boo
     # Resolve CMIP6 name → ERA5 source name for loading and resampling lookups.
     era5_var = CMIP6_TO_ERA5.get(variable, variable)
 
-    if variable == "dtr":
-        logger.info("Loading dtr from existing store (tasmax - tasmin)")
-        ds = load_dtr_from_store(OUTPUT_BUCKET, OUTPUT_PREFIX)
-        if dry_run:
-            ds = ds.isel(time=slice(0, 5))
-    elif variable == "hurs":
+    if variable == "hurs":
         logger.info(
             "Deriving hurs from 2m_temperature and 2m_dewpoint_temperature (%d–%d)",
             start_year,
@@ -353,7 +347,8 @@ app = typer.Typer()
 @app.command()
 def era5(
     variable: list[str] = typer.Option(
-        ..., help=f"Variable(s) to process (CMIP6 names). Choices: {list(CMIP6_TO_ERA5) + ['dtr']}"
+        ...,
+        help=f"Variable(s) to process (CMIP6 names). Choices: {list(CMIP6_TO_ERA5) + DERIVED_VARS}",
     ),
     start_year: int = typer.Option(1950, help="First year to include."),
     end_year: int = typer.Option(2014, help="Last year to include."),
