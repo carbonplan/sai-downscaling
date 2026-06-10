@@ -314,9 +314,7 @@ class DatasetValidator:
 
         da = self.ds[var].isel(time=day_index)
         member_labels = self.ds.ensemble_member.values
-        means = [
-            float(da.isel(ensemble_member=i).mean().compute()) for i in range(len(member_labels))
-        ]
+        means = da.mean(dim=["lat", "lon"]).compute()  # shape: (ensemble_member,)
 
         issues = []
         for i, j in itertools.combinations(range(len(means)), 2):
