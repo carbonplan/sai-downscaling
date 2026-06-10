@@ -12,6 +12,7 @@ from srm.lineage import resolve_member_lineage
 
 _STANDARD_VARS = ("tas", "pr", "rsds", "hurs")
 _TMAX_MIN_VARS = ("tasmax", "tasmin", "dtr")
+_UKESM_VARS = ("tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr")
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +147,49 @@ class TestLineageKeyError:
         assert "badscenar" in msg
         assert "999" in msg
         assert "sfcWind" in msg
+
+
+# ---------------------------------------------------------------------------
+# resolve_member_lineage: UKESM SSP245
+# ---------------------------------------------------------------------------
+
+
+class TestUKESMSSP245Lineage:
+    """SSP245 lineage: single ripf-keyed store covers all variables, hist=self."""
+
+    @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
+    @pytest.mark.parametrize("variable", _UKESM_VARS)
+    def test_members_hist_equals_self(self, member, variable):
+        hist, ssp245, *_ = resolve_member_lineage("UKESM", "SSP245", member, variable)
+        assert hist == member
+        assert ssp245 is None
+
+    @pytest.mark.parametrize("member", ("001", "002", "003"))
+    def test_legacy_numeric_members_unregistered(self, member):
+        with pytest.raises(KeyError):
+            resolve_member_lineage("UKESM", "SSP245", member, "tas")
+
+
+# ---------------------------------------------------------------------------
+# resolve_member_lineage: UKESM G6-1.5K
+# ---------------------------------------------------------------------------
+
+
+class TestUKESMG6Lineage:
+    """G6-1.5K lineage: single ripf-keyed store covers all variables, hist=self, ssp245_bridge=self."""
+
+    @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
+    @pytest.mark.parametrize("variable", _UKESM_VARS)
+    def test_members_self_consistent(self, member, variable):
+        hist, ssp245, ssp245_esgf = resolve_member_lineage("UKESM", "G6-1.5K", member, variable)
+        assert hist == member
+        assert ssp245 == member
+        assert ssp245_esgf is None
+
+    @pytest.mark.parametrize("member", ("001", "002", "003"))
+    def test_legacy_numeric_members_unregistered(self, member):
+        with pytest.raises(KeyError):
+            resolve_member_lineage("UKESM", "G6-1.5K", member, "tas")
 
 
 # ---------------------------------------------------------------------------

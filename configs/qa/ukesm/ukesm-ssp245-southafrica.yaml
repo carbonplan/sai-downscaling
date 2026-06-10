@@ -1,8 +1,9 @@
-# BCSD configuration: UKESM / tas / SSP245 / all members / South Africa (QA)
+# BCSD configuration: UKESM / all variables / SSP245 / all members / South Africa (QA)
+# All 7 variables available for all members under the consolidated ripf-keyed SSP245 store.
 
 # === Model and Scenario ===
 gcm: "UKESM"
-variables: ["tas"]
+variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["r2i1p1f2", "r3i1p1f2", "r12i1p1f2"]
 scenarios: ["SSP245"]
 
