@@ -104,6 +104,7 @@ def _mock_transform_scenario_compute():
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
+        patch.object(BCSDPipeline, "_apply_bias_correction_scenario", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         mock_qm.from_variable.return_value.apply.return_value = MagicMock()
