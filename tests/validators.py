@@ -319,9 +319,11 @@ class DatasetValidator:
         ]
 
         issues = []
-        for i, j in itertools.combinations(range(len(member_labels)), 2):
-            if means[i] == means[j]:
+        for i, j in itertools.combinations(range(len(means)), 2):
+            if means.values[i] == means.values[j]:
                 issues.append(
-                    f"{var} global mean identical for members {member_labels[i]} and {member_labels[j]} (day {day_index})"
+                    f"{var} global mean identical for members "
+                    f"{means.ensemble_member.values[i]} and {means.ensemble_member.values[j]} "
+                    f"(day {day_index})"
                 )
         return ValidationResult(len(issues) == 0, issues)
