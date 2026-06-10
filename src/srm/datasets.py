@@ -515,19 +515,6 @@ class Catalog:
                     VarStandards.DTR,
                 ],
             ),
-            "UKESM-historical-virtual": VirtualDataset(
-                name="UKESM-historical-virtual",
-                virtual_path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-historical/UKESM-historical-virtual.icechunk",
-                format="icechunk",
-                expected_vars=[
-                    VarStandards.PR,
-                    VarStandards.TAS,
-                    VarStandards.TASMIN,
-                    VarStandards.TASMAX,
-                    VarStandards.HURS,
-                    VarStandards.RSDS,
-                ],
-            ),
             "UKESM-SSP245-icechunk": Dataset(
                 name="UKESM-SSP245-icechunk",
                 path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245/UKESM_SSP245.icechunk",
@@ -542,47 +529,12 @@ class Catalog:
                 ensemble_members=["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"],
                 expected_vars=[
                     VarStandards.HURS,
-                    VarStandards.RSDS,
-                ],
-            ),
-            "UKESM-SSP245-t-pr-icechunk": Dataset(
-                name="UKESM-SSP245-t-pr-icechunk",
-                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245-T-PR/UKESM-SSP245-t-pr.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
-                expected_shards={
-                    "ensemble_member": 1,
-                    "time": 960,
-                    "lat": 144,
-                    "lon": 192,
-                },
-                ensemble_members=["001", "002", "003"],
-                expected_vars=[
                     VarStandards.PR,
+                    VarStandards.RSDS,
                     VarStandards.TAS,
-                    VarStandards.TASMIN,
                     VarStandards.TASMAX,
+                    VarStandards.TASMIN,
                     VarStandards.DTR,
-                ],
-            ),
-            "UKESM-SSP245-virtual": VirtualDataset(
-                name="UKESM-SSP245-virtual",
-                virtual_path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245/UKESM-SSP245-virtual.icechunk",
-                format="icechunk",
-                expected_vars=[
-                    VarStandards.HURS,
-                    VarStandards.RSDS,
-                ],
-            ),
-            "UKESM-SSP245-t-pr-virtual": VirtualDataset(
-                name="UKESM-SSP245-t-pr-virtual",
-                virtual_path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245-T-PR/UKESM-SSP245-t-pr-virtual.icechunk",
-                format="icechunk",
-                expected_vars=[
-                    VarStandards.PR,
-                    VarStandards.TAS,
-                    VarStandards.TASMIN,
-                    VarStandards.TASMAX,
                 ],
             ),
             "UKESM-G6-1.5K-icechunk": Dataset(
@@ -600,6 +552,11 @@ class Catalog:
                 expected_vars=[
                     VarStandards.HURS,
                     VarStandards.RSDS,
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.DTR,
                 ],
             ),
             "UKESM-G6-1.5K-virtual": VirtualDataset(
@@ -609,6 +566,10 @@ class Catalog:
                 expected_vars=[
                     VarStandards.HURS,
                     VarStandards.RSDS,
+                    VarStandards.PR,
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
                 ],
             ),
             "UKESM-G6-1.5K-t-pr-virtual": VirtualDataset(
@@ -620,26 +581,6 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.TASMIN,
                     VarStandards.TASMAX,
-                ],
-            ),
-            "UKESM-G6-1.5K-t-pr-icechunk": Dataset(
-                name="UKESM-G6-1.5K-t-pr-icechunk",
-                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K-T-PR/UKESM-G6-1.5K-t-pr.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
-                expected_shards={
-                    "ensemble_member": 1,
-                    "time": 960,
-                    "lat": 144,
-                    "lon": 192,
-                },
-                ensemble_members=["001", "002", "003"],
-                expected_vars=[
-                    VarStandards.PR,
-                    VarStandards.TAS,
-                    VarStandards.TASMIN,
-                    VarStandards.TASMAX,
-                    VarStandards.DTR,
                 ],
             ),
             "ERA5": Dataset(
