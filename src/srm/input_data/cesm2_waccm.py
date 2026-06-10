@@ -94,6 +94,8 @@ DROP_VARS: list[str] = [
 
 SHARED_VARIABLES: list[str] = ["tas", "rsds", "hurs", "pr", "tasmax", "tasmin"]
 PANGEO_ENSEMBLE_MEMBERS: list[str] = ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
+# r1/r2/r3i1p1f1 have no tasmax/tasmin in any public archive (not in pangeo, CEDA, or NASA NEX)
+PANGEO_VARIABLES: list[str] = ["tas", "rsds", "hurs", "pr"]
 
 VAR_SPECS: dict[str, VarSpec] = {
     f.default.name: f.default for f in dataclasses.fields(VarStandards)
@@ -314,6 +316,121 @@ def _load_ssp245_var(var: str, cesm_var: str, subset: bool = False) -> xr.Datase
     return ds
 
 
+def _load_pangeo_historical_var(var: str, dry_run: bool = False) -> xr.Dataset:
+    """Load and standardize a single Pangeo historical (r1/r2/r3i1p1f1) variable."""
+    logger.info("Loading %s from Pangeo GCS catalog", var)
+    raw = (
+        load_pangeo_cesm([var])
+        .pipe(lon_to_180, lon_name="lon")
+        .sortby(["lat", "lon"])
+        .pipe(trim_negative_precipitation)
+    )
+    return (
+        (raw.isel(time=slice(0, _DRY_RUN_STEPS)) if dry_run else raw)
+        .pipe(to_proleptic_gregorian)
+        .pipe(update_variable_attrs, VAR_SPECS)
+        .pipe(finalize_metadata, "pangeo-historical")
+    )
+
+
+def _build_pangeo_historical_dataset(dry_run: bool = False) -> xr.Dataset:
+    """Load and merge the Pangeo historical variables (tas, rsds, hurs, pr)."""
+    pieces = [_load_pangeo_historical_var(var, dry_run=dry_run) for var in PANGEO_VARIABLES]
+    return xr.merge(pieces, combine_attrs="override")
+
+
+def merge_pangeo_into_historical(
+    output_prefix: str | None = None,
+    dry_run: bool = False,
+    dry_run_output: str | None = None,
+    commit_message: str | None = None,
+) -> None:
+    """Merge Pangeo historical (r1/r2/r3i1p1f1) into the unified ``historical`` group.
+
+    The ``historical`` group already holds ESGF member ``001`` (all 6 variables,
+    1978-2015). r1/r2/r3i1p1f1 cover tas/rsds/hurs/pr only, over 1850-2015. Both
+    datasets are reindexed onto the union of ``ensemble_member`` labels and ``time``
+    steps (NaN-filling members/variables with no data for a given period), combined,
+    and the group is rewritten in full.
+    """
+    group = SCENARIO_TO_GROUP["pangeo-historical"]
+    pangeo_ds = _build_pangeo_historical_dataset(dry_run=dry_run)
+
+    if dry_run:
+        with zarr.config.set({"async.concurrency": 8}):
+            _display_dry_run_result(pangeo_ds, "pangeo-historical", store=dry_run_output)
+            if dry_run_output is not None:
+                logger.info("Writing dry-run sample for pangeo-historical to %s", dry_run_output)
+                repo, session = _init_repo_from_uri(dry_run_output)
+                write_mode = determine_write_mode(repo)
+                encoding = build_encoding_dict(pangeo_ds, OUTPUT_CHUNKS, OUTPUT_SHARDS)
+                write_dataset_to_icechunk(
+                    pangeo_ds,
+                    session,
+                    encoding=encoding,
+                    shards=OUTPUT_SHARDS,
+                    commit_message=f"dry-run: {commit_message or 'pangeo-historical'}",
+                    write_mode=write_mode,
+                    repo=repo,
+                    group=group,
+                )
+                logger.info("✓ Dry-run write done: pangeo-historical → %s", dry_run_output)
+                read_session = repo.readonly_session("main")  # re-open after commit
+                written = xr.open_dataset(
+                    read_session.store, engine="zarr", chunks="auto", group=group
+                )
+                console.print(written)
+        return
+
+    out_prefix = output_prefix or UNIFIED_PREFIX
+    repo, session = init_repo(BUCKET, out_prefix, readonly=False)
+
+    try:
+        existing = xr.open_dataset(
+            repo.readonly_session("main").store,
+            engine="zarr",
+            group=group,
+            chunks="auto",
+            consolidated=False,
+            zarr_format=3,
+        )
+    except (FileNotFoundError, KeyError):
+        existing = None
+
+    if existing is None or existing.sizes.get("ensemble_member", 0) == 0:
+        merged = pangeo_ds
+    else:
+        members = list(
+            dict.fromkeys([*existing.ensemble_member.values, *pangeo_ds.ensemble_member.values])
+        )
+        time_index = existing.indexes["time"].union(pangeo_ds.indexes["time"])
+        existing_r = existing.reindex(ensemble_member=members, time=time_index)
+        pangeo_r = pangeo_ds.reindex(ensemble_member=members, time=time_index)
+        merged = existing_r.combine_first(pangeo_r)
+        merged.attrs = {**existing.attrs, **pangeo_ds.attrs, "scenario": "historical"}
+        merged["ensemble_member"].attrs = {
+            "long_name": "Ensemble Member Identifier",
+            "derivation_method": (
+                "'001': Simone Tilmes corrected ESGF historical run (all variables); "
+                "r1/r2/r3i1p1f1: Pangeo CMIP6 historical (tas/rsds/hurs/pr only)"
+            ),
+        }
+
+    logger.info("Writing merged historical group → s3://%s/%s/%s", BUCKET, out_prefix, group)
+    encoding = build_encoding_dict(merged, OUTPUT_CHUNKS, OUTPUT_SHARDS)
+    write_dataset_to_icechunk(
+        merged,
+        session,
+        encoding=encoding,
+        shards=OUTPUT_SHARDS,
+        commit_message=commit_message or "merge pangeo-historical (r1/r2/r3i1p1f1) into historical",
+        write_mode="w",
+        repo=repo,
+        group=group,
+    )
+    logger.info("✓ Done: pangeo-historical → %s", group)
+
+
 def process_cesm_var(
     var: str,
     scenario: str,
@@ -329,21 +446,7 @@ def process_cesm_var(
     group = SCENARIO_TO_GROUP[scenario]
     cesm_var = CMIP6_TO_CESM.get(var, var)
 
-    if scenario == "pangeo-historical":
-        logger.info("Loading %s from Pangeo GCS catalog", var)
-        raw = (
-            load_pangeo_cesm([var])
-            .pipe(lon_to_180, lon_name="lon")
-            .sortby(["lat", "lon"])
-            .pipe(trim_negative_precipitation)
-        )
-        ds = (
-            (raw.isel(time=slice(0, _DRY_RUN_STEPS)) if dry_run else raw)
-            .pipe(to_proleptic_gregorian)
-            .pipe(update_variable_attrs, VAR_SPECS)
-            .pipe(finalize_metadata, scenario)
-        )
-    elif scenario == "ssp245":
+    if scenario == "ssp245":
         logger.info("Loading %s (%s) from SSP245 virtual stores", var, cesm_var)
         raw = _load_ssp245_var(var, cesm_var, subset).pipe(cmorize_cesm, var)
         ds = (
@@ -430,6 +533,14 @@ def process_cesm_pipeline(
     if dry_run:
         dest = dry_run_output or "(display only, no write)"
         logger.info("Dry run: %d daily steps per variable → %s", _DRY_RUN_STEPS, dest)
+        if scenario == "pangeo-historical":
+            merge_pangeo_into_historical(
+                output_prefix=output_prefix,
+                dry_run=True,
+                dry_run_output=dry_run_output,
+                commit_message=commit_message,
+            )
+            return
         for var in variables:
             process_cesm_var(
                 var,
@@ -444,6 +555,12 @@ def process_cesm_pipeline(
 
     client = setup_cluster(ClusterConfig(**PROCESS_CLUSTER)) if use_coiled else setup_local_client()
     try:
+        if scenario == "pangeo-historical":
+            merge_pangeo_into_historical(
+                output_prefix=output_prefix,
+                commit_message=commit_message,
+            )
+            return
         for var in variables:
             process_cesm_var(
                 var,
@@ -582,7 +699,15 @@ def process(
     ),
 ) -> None:
     """Process CESM2-WACCM variables and write them into the unified per-GCM icechunk store."""
-    variables = SHARED_VARIABLES if (all_variables or not variable) else list(variable)
+    if scenario == "pangeo-historical":
+        if variable and not all_variables and set(variable) - set(PANGEO_VARIABLES):
+            raise typer.BadParameter(
+                f"pangeo-historical only provides {PANGEO_VARIABLES} "
+                "(r1/r2/r3i1p1f1 have no tasmax/tasmin in any public archive)."
+            )
+        variables = PANGEO_VARIABLES
+    else:
+        variables = SHARED_VARIABLES if (all_variables or not variable) else list(variable)
     process_cesm_pipeline(
         variables=variables,
         scenario=scenario,

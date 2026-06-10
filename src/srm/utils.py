@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 import pint_xarray
 import xarray as xr
 
@@ -65,10 +67,18 @@ def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
                   on ~6 missing days per year, then linearly interpolates
     - gregorian / standard : type-cast only, no data change
     """
+    # Drop time/lat/lon bounds vars: their cftime dtype combined with chunking only the
+    # "time" dim triggers an xarray bug (zip() length mismatch in `_get_chunk`), and
+    # they aren't needed downstream.
+    bnds_vars = [
+        v for v in list(ds.data_vars) + list(ds.coords) if str(v).endswith(("_bnds", "_bounds"))
+    ]
+    ds = ds.drop_vars(bnds_vars, errors="ignore")
+
     calendar = ds.time.dt.calendar
     if calendar in ("proleptic_gregorian", "gregorian", "standard"):
         return ds.convert_calendar("proleptic_gregorian", use_cftime=False)
-    align = "year" if calendar == "360_day" else None
+    align: Literal["year"] | None = "year" if calendar == "360_day" else None
     return (
         ds.convert_calendar(
             "proleptic_gregorian", align_on=align, missing=float("nan"), use_cftime=False
