@@ -86,3 +86,5 @@ def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
         .chunk({"time": -1})
         .interpolate_na(dim="time")
     )
+    # enforce numpy datetime64, not some mixed float/cftime
+    return ds.assign_coords(time=ds.time.values)
