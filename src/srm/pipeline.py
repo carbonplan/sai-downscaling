@@ -600,6 +600,86 @@ class BCSDPipeline:
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
+    def fit_historical_tasmin(self, force: bool = False) -> str:
+        """
+        Stage 2: Downscale historical period for tasmin. This differs from normal fit_historical
+        because it loads debiased coarse tasmax and dtr to compute debiased coarse tasmin,
+        which is then spatially disaggregated to fine resolution.
+        """
+
+        output_path = self.cache.get_historical_path(self.config, hist_member=self._hist_member)
+
+        if self.cache.exists(output_path) and not force:
+            logger.info("✓ Using cached historical: %s", output_path)
+            return output_path
+
+        logger.info(
+            "Computing historical downscaling for %s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+        )
+
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist = self._load_gcm_obs()
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        dtr_config = self.config.make_config_for_variable("dtr")
+        tasmax_config = self.config.make_config_for_variable("tasmax")
+        debiased_dtr_path = self.cache.get_debiased_historical_path(dtr_config)
+        debiased_tasmax_path = self.cache.get_debiased_historical_path(tasmax_config)
+        missing = [
+            (var, path)
+            for var, path in [("dtr", debiased_dtr_path), ("tasmax", debiased_tasmax_path)]
+            if not self.cache.exists(path)
+        ]
+        if missing:
+            missing_vars = " and ".join(v for v, _ in missing)
+            missing_paths = "\n  ".join(f"{v}: {p}" for v, p in missing)
+            raise ValueError(
+                f"fit_historical_tasmin requires debiased historical outputs for dtr and tasmax, "
+                f"but the following are missing: {missing_vars}.\n"
+                f"  {missing_paths}\n"
+                f"Run fit_historical with save_intermediate=True for dtr and tasmax "
+                f"before running fit_historical_tasmin."
+            )
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_path)[tasmax_config.variable]
+        model_hist_debiased = debiased_tasmax - debiased_dtr
+        logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
+
+        if self.options.save_intermediate:
+            t0 = time.perf_counter()
+            debiased_path = self.cache.get_debiased_historical_path(self.config)
+            model_hist_debiased.name = self.config.variable
+            model_hist_debiased.attrs = model_hist.attrs
+            self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
+            logger.info(
+                "✓ Saved debiased historical: %s (%.2fs)", debiased_path, time.perf_counter() - t0
+            )
+
+        t0 = time.perf_counter()
+        model_hist_downscaled = self._apply_spatial_downscaling(
+            model_hist_debiased, obs_coarse, obs_fine
+        )
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        model_hist_downscaled.name = self.config.variable
+        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
+        dataset_attrs = self._build_output_attrs(hist_dataset)
+        self._write_to_icechunk(
+            da=model_hist_downscaled,
+            path=output_path,
+            commit_message="write complete",
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=dataset_attrs,
+        )
+        logger.info("✓ Cached historical: %s (%.2fs)", output_path, time.perf_counter() - t0)
+
+        return output_path
+
     def fit_historical(self, force: bool = False) -> str:
         """
         Stage 2: Downscale historical period.
@@ -803,6 +883,40 @@ class BCSDPipeline:
         )
         model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
         model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
+
+        # Non-SAI scenarios whose primary dataset starts after predict_period_start
+        # (e.g. MIROC-ES2H GeoMIP SSP245 starts 2020) need ESGF data prepended to close the gap.
+        if not self.config.is_sai_scenario and self._ssp245_esgf_member is not None:
+            scenario_start_year = int(model_scenario.time.dt.year.min())
+            if scenario_start_year > self.config.predict_period_start:
+                from srm.utils import to_proleptic_gregorian
+
+                esgf_ds = to_proleptic_gregorian(
+                    _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
+                )
+                esgf_data = esgf_ds[self.config.variable].sel(
+                    ensemble_member=self._ssp245_esgf_member
+                )
+                esgf_pre = esgf_data.isel(
+                    time=(
+                        (esgf_data.time.dt.year >= self.config.predict_period_start)
+                        & (esgf_data.time.dt.year < scenario_start_year)
+                    ).values
+                )
+                logger.info(
+                    "Non-SAI scenario starts at %d; prepending ESGF SSP245 %s for %d–%d",
+                    scenario_start_year,
+                    self._ssp245_esgf_member,
+                    int(esgf_pre.time.dt.year.min()),
+                    int(esgf_pre.time.dt.year.max()),
+                )
+                esgf_pre = esgf_pre.drop_vars("ensemble_member", errors="ignore")
+                scenario_clean = model_scenario.drop_vars("ensemble_member", errors="ignore")
+                model_scenario = xr.concat([esgf_pre, scenario_clean], dim="time")
+                model_scenario = model_scenario.assign_coords(
+                    ensemble_member=self.config.ensemble_member
+                )
+                model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
         # SAI scenarios need an SSP245 bridge to fill the gap between historical and SAI start
         ssp_timeseries: xr.DataArray | None = None
@@ -1011,6 +1125,12 @@ class BCSDPipeline:
                 "mapping_type must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
 
+        # remove any negative values introduced by the bias correction
+        if self.config.variable in ["pr", "rsds"]:
+            debiased_np = np.clip(debiased_np, min=0)
+        elif self.config.variable in ["hurs"]:
+            debiased_np = np.clip(debiased_np, min=0, max=105)
+
         return xr.DataArray(
             data=debiased_np,
             coords={
@@ -1020,6 +1140,105 @@ class BCSDPipeline:
             },
             dims=["time", "lat", "lon"],
         )
+
+    def transform_scenario_tasmin(self, force: bool = False) -> str:
+        """
+        This is a special version of transform_scenario for tasmin.
+        The spatial disaggregation approach is the same as for the normal transform_scenario,
+        but the bias correction step is different: it loads debiased coarse tasmax and dtr,
+        and then computes debiased coarse tasmin by subtracting debiased coarse dtr from debiased coarse tasmax.
+
+        """
+        if self.config.scenario is None:
+            raise ValueError("scenario must be specified in config for transform_scenario")
+
+        self.cache.validate_dependencies(
+            "transform_scenario", self.config, hist_member=self._hist_member
+        )
+
+        output_path = self.cache.scenario_path
+
+        if self.cache.exists(output_path) and not force:
+            logger.info("✓ Using cached scenario: %s", output_path)
+            return output_path
+
+        logger.info(
+            "Computing scenario downscaling for %s/%s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+            self.config.scenario,
+        )
+
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
+            self._load_scenario_data()
+        )
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        dtr_config = self.config.make_config_for_variable("dtr")
+        tasmax_config = self.config.make_config_for_variable("tasmax")
+        debiased_dtr_path = self.cache.get_debiased_retrended_scenario_path(dtr_config)
+        debiased_tasmax_path = self.cache.get_debiased_retrended_scenario_path(tasmax_config)
+        missing = [
+            (var, path)
+            for var, path in [("dtr", debiased_dtr_path), ("tasmax", debiased_tasmax_path)]
+            if not self.cache.exists(path)
+        ]
+        if missing:
+            missing_vars = " and ".join(v for v, _ in missing)
+            missing_paths = "\n  ".join(f"{v}: {p}" for v, p in missing)
+            raise ValueError(
+                f"transform_scenario_tasmin requires debiased retrended scenario outputs for dtr and tasmax, "
+                f"but the following are missing: {missing_vars}.\n"
+                f"  {missing_paths}\n"
+                f"Run transform_scenario with save_intermediate=True for dtr and tasmax "
+                f"before running transform_scenario_tasmin."
+            )
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_path)[tasmax_config.variable]
+        scenario_debiased = debiased_tasmax - debiased_dtr
+        logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
+
+        if self.options.save_intermediate:
+            t0 = time.perf_counter()
+            debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
+            scenario_debiased.name = self.config.variable
+            scenario_debiased.attrs = model_scenario.attrs
+            self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+            logger.info(
+                "✓ Saved debiased retrended scenario: %s (%.2fs)",
+                debiased_path,
+                time.perf_counter() - t0,
+            )
+
+        t0 = time.perf_counter()
+        scenario_downscaled = self._apply_spatial_downscaling(
+            scenario_debiased, obs_coarse, obs_fine
+        )
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        if self.options.apply_ocean_mask:
+            scenario_downscaled = scenario_downscaled.where(
+                self._build_ocean_mask(scenario_downscaled)
+            ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
+        scenario_downscaled.name = self.config.variable
+        scenario_dataset = _catalog.datasets.get(
+            f"{self.config.gcm}-{self.config.scenario}-icechunk"
+        )
+        dataset_attrs = self._build_output_attrs(scenario_dataset)
+        self._write_to_icechunk(
+            scenario_downscaled,
+            output_path,
+            "write complete",
+            dataset_attrs=dataset_attrs,
+            encoding=make_encoding(self.config.variable),
+        )
+        logger.info("✓ Saved scenario output: %s (%.2fs)", output_path, time.perf_counter() - t0)
+
+        return output_path
 
     def transform_scenario(self, force: bool = False) -> str:
         """
@@ -1169,8 +1388,16 @@ class BCSDPipeline:
             Path to final scenario stage output artifact.
         """
         self.prepare_observations(force=force)
-        self.fit_historical(force=force)
-        # `transform_scenario` depends on fit_historical only as a completion
-        # gate (artifact existence); it does not read the cached historical
-        # output as data input.
-        return self.transform_scenario(force=force)
+
+        if self.config.variable == "tasmin":
+            self.fit_historical_tasmin(force=force)
+            # `transform_scenario` depends on fit_historical only as a completion
+            # gate (artifact existence); it does not read the cached historical
+            # output as data input.
+            return self.transform_scenario_tasmin(force=force)
+        else:
+            self.fit_historical(force=force)
+            # `transform_scenario` depends on fit_historical only as a completion
+            # gate (artifact existence); it does not read the cached historical
+            # output as data input.
+            return self.transform_scenario(force=force)

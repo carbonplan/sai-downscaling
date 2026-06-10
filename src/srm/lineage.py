@@ -111,7 +111,8 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, s
         ("r10", "r1i1p4f2"),
     ]
     for member, hist in _miroc_g6_lineage:
-        add("MIROC-ES2H", "SSP245", member, _all, hist)  # not SAI; no bridge
+        # GeoMIP SSP245 ("baseline") starts 2020; ESGF SSP245 (hist-format member IDs) fills 2015–2019.
+        add("MIROC-ES2H", "SSP245", member, _all, hist, ssp245_esgf=hist)
         add("MIROC-ES2H", "G6-1.5K", member, _all, hist, member, hist)
 
     return table

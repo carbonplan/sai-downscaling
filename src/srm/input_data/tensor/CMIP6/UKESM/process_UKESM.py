@@ -1,22 +1,21 @@
+# COILED vm-type r8g.4xlarge
+# COILED region us-west-2
+
+import logging
 import subprocess
 from dataclasses import dataclass, field
 
-import boto3
 import click
+import dask
 import icechunk
 import obstore as obs
 import xarray as xr
 import zarr
-from obspec_utils.registry import ObjectStoreRegistry
+from obspec_utils.readers import EagerStoreReader
 from obstore.store import from_url
-from virtualizarr.parsers import HDFParser
 
 from srm import catalog
-from srm.config import (
-    init_repo,
-    setup_cluster,
-    setup_local_client,
-)
+from srm.config import init_repo
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
     apply_ensemble_provenance,
@@ -26,127 +25,103 @@ from srm.input_data.etl_utils import (
     load_dtr_from_store,
     trim_negative_precipitation,
     update_variable_attrs,
-    virtualize_and_combine,
     write_dataset_to_icechunk,
 )
 from srm.utils import lon_to_180, to_proleptic_gregorian
 
 zarr.config.set({"async.concurrency": 128})
+dask.config.set(scheduler="threads")
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+log = logging.getLogger(__name__)
 
 
 T_PR_VARS = ["pr", "tas", "tasmin", "tasmax"]
-
-VAR_PREFIX_MAP = {
-    "pr": "PRECT",
-    "tas": "T",
-    "tasmin": "T",
-    "tasmax": "T",
-}
-
-# Maps raw variable names in G6-1.5K-SAI T files to CF standard names
-T_VAR_MAP = {
-    "temp": "tasmax",
-    "temp_1": "tasmin",
-    "temp_2": "tas",
-}
 
 
 @dataclass
 class BaseUKESM_Config(BaseETLConfig):
     s3_input_prefix: str = ""
     ensemble_members: list = field(default_factory=lambda: ["001", "002", "003"])
-    drop_variables: list = field(
-        default_factory=lambda: ["time_bnds", "lat_bnds", "lon_bnds", "height"]
-    )
-    aws_creds: dict = field(default_factory=dict)
-
-    virtualize_cluster: dict = field(
-        default_factory=lambda: {
-            "n_workers": [4, 24],
-            "worker_vm_types": ["r8g.8xlarge"],
-            "scheduler_vm_types": "c8g.2xlarge",
-        }
-    )
-
-    process_cluster: dict = field(
-        default_factory=lambda: {
-            "n_workers": [4, 16],
-            "worker_vm_types": ["r8g.4xlarge"],
-            "scheduler_vm_types": "c8g.xlarge",
-        }
-    )
-
-    def __post_init__(self):
-        sesh = boto3.Session()
-        creds = sesh.get_credentials()
-        self.aws_creds = {
-            "aws_access_key_id": creds.access_key,
-            "aws_secret_access_key": creds.secret_key,
-        }
 
 
 @dataclass
 class UKESM_SSP245_Config(BaseUKESM_Config):
     scenario: str = "SSP245"
-    catalog_key: str = "UKESM-SSP245-virtual"
-    t_pr_catalog_key: str = "UKESM-SSP245-t-pr-virtual"
     materialized_key: str = "UKESM-SSP245-icechunk"
-    t_pr_materialized_key: str = "UKESM-SSP245-t-pr-icechunk"
     s3_input_prefix: str = "input/tensor/UKESM/transfer/SSP2-4.5/"
-
-
-@dataclass
-class UKESM_SSP245_T_PR_Config(BaseUKESM_Config):
-    scenario: str = "SSP245"
-    catalog_key: str = "UKESM-SSP245-t-pr-virtual"
-    materialized_key: str = "UKESM-SSP245-t-pr-icechunk"
-    # rechunked NetCDF4 output prefix
-    s3_input_prefix: str = "input/tensor/UKESM/netcdf/ssp245"
-    # raw source prefix for NetCDF3 files to be prepared
-    s3_raw_prefix: str = "input/tensor/UKESM/SSP245_transfer_from_NCAR"
+    time_range: str = "2015-2099"
+    t_pr_input_prefix: str = "input/tensor/UKESM/UKESM_SSP245_T_PR_NETCDF/UKESM_SSP245_T_PR"
+    ensemble_members: list = field(default_factory=lambda: ["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"])
+    # r2 member has tas/tasmin/tasmax combined in one file
+    t_pr_var_lookup: dict = field(
+        default_factory=lambda: {
+            "pr": ["pr_day_"],
+            "tas": ["tas_day_", "tas_mean_min_max_day_"],
+            "tasmin": ["tasmin_day_", "tas_mean_min_max_day_"],
+            "tasmax": ["tasmax_day_", "tas_mean_min_max_day_"],
+        }
+    )
+    # r2i1p1f1 (UKESM1-1-LL) uses legacy UM variable names instead of CMIP6 standard
+    t_pr_var_rename: dict = field(
+        default_factory=lambda: {
+            "precipitation_flux": "pr",
+            "air_temperature": "tas",
+        }
+    )
 
 
 @dataclass
 class UKESM_G6_1p5K_Config(BaseUKESM_Config):
     scenario: str = "G6-1.5K"
-    catalog_key: str = "UKESM-G6-1.5K-virtual"
-    t_pr_catalog_key: str = "UKESM-G6-1.5K-t-pr-virtual"
     materialized_key: str = "UKESM-G6-1.5K-icechunk"
-    t_pr_materialized_key: str = "UKESM-G6-1.5K-t-pr-icechunk"
     s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K"
-
-
-@dataclass
-class UKESM_G6_1p5K_T_PR_Config(BaseUKESM_Config):
-    scenario: str = "G6-1.5K"
-    catalog_key: str = "UKESM-G6-1.5K-t-pr-virtual"
-    materialized_key: str = "UKESM-G6-1.5K-t-pr-icechunk"
-    s3_input_prefix: str = "input/tensor/UKESM/G6-1.5K/netcdf"
-    # raw source prefix for NetCDF3 files to be prepared
-    s3_raw_prefix: str = "input/tensor/UKESM/netcdf_G6-1.5K-SAI"
+    t_pr_input_prefix: str = "input/tensor/UKESM/UKESM_G6-1.5K_T_PR_NETCDF/UKESM_G6-1.5K_T_PR"
+    ensemble_members: list = field(default_factory=lambda: ["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"])
+    # tas_day files contain tas, tasmin, and tasmax
+    t_pr_var_lookup: dict = field(
+        default_factory=lambda: {
+            "pr": ["pr_day_"],
+            "tas": ["tas_day_"],
+            "tasmin": ["tas_day_"],
+            "tasmax": ["tas_day_"],
+        }
+    )
+    # file variable name → CMOR name mapping
+    # air_temperature cell_methods: max=tasmax, min=tasmin, mean=tas
+    t_pr_var_rename: dict = field(
+        default_factory=lambda: {
+            "precipitation_flux": "pr",
+            "air_temperature": "tasmax",
+            "air_temperature_0": "tasmin",
+            "air_temperature_1": "tas",
+        }
+    )
+    # T_PR files span 2015-2100; clip to match hurs/rsds time range
+    time_range: str = "2035-2084"
+    # UM suite ID → CMIP6 ripf mapping for t-pr files
+    t_pr_member_rename: dict = field(
+        default_factory=lambda: {
+            "u-dp583": "r2i1p1f2",
+            "u-dp690": "r3i1p1f2",
+            "u-dp691": "r12i1p1f2",
+        }
+    )
 
 
 @dataclass
 class UKESM_Historical_Config(BaseUKESM_Config):
     scenario: str = "historical"
     materialized_key: str = "UKESM-historical-icechunk"
-    catalog_key: str = "UKESM-historical-virtual"
     s3_input_prefix: str = "input/tensor/UKESM/netcdf/historical"
     source_base_url: str = (
         "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/MOHC/UKESM1-0-LL/historical"
     )
-    drop_variables: list = field(
-        default_factory=lambda: [
-            "time_bnds",
-            "lat_bnds",
-            "lon_bnds",
-            "height",
-            "lat_bounds",
-            "lon_bounds",
-            "time_bounds",
-        ]
-    )
-
     ensemble_members: list = field(
         default_factory=lambda: [
             "r2i1p1f2",
@@ -155,24 +130,12 @@ class UKESM_Historical_Config(BaseUKESM_Config):
         ]
     )
 
-    process_cluster: dict = field(
-        default_factory=lambda: {
-            "n_workers": [4, 16],
-            "worker_vm_types": ["r8g.4xlarge"],
-            "scheduler_vm_types": "c8g.8xlarge",
-        }
-    )
-
 
 SCENARIO_CONFIG_MAP = {
     "SSP245": UKESM_SSP245_Config,
-    "SSP245-t-pr": UKESM_SSP245_T_PR_Config,
     "G6-1.5K": UKESM_G6_1p5K_Config,
-    "G6-1.5K-t-pr": UKESM_G6_1p5K_T_PR_Config,
     "historical": UKESM_Historical_Config,
 }
-
-T_PR_SCENARIOS = {UKESM_SSP245_T_PR_Config, UKESM_G6_1p5K_T_PR_Config}
 
 
 def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Config) -> None:
@@ -228,56 +191,49 @@ def _fetch_ukesm_historical(variables: list[str], config: UKESM_Historical_Confi
     subprocess.run(command)
 
 
-def _get_netcdf_urls(config: BaseUKESM_Config, variables: list[str]) -> list[str]:
-    store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
-    stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
-    netcdf_list = list(stream["objects"]["path"].to_numpy())
-    filtered_urls = [
-        f"s3://{config.s3_bucket}/{path}"
-        for path in netcdf_list
-        if path.endswith(".nc")
-        and any(f"{var}_".lower() in path.lower() for var in variables)
-        and (not config.ensemble_members or any(f"_{m}_" in path for m in config.ensemble_members))
-    ]
-    return filtered_urls
+def _get_netcdf_urls(config: BaseUKESM_Config, variable: str) -> list[tuple[str, str]]:
+    """Return (member_id, s3_path) pairs for one variable."""
+    store = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
 
-
-def _get_netcdf_urls_t_pr(config: BaseUKESM_Config, variables: list[str]) -> list[str]:
-    store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
-    urls = []
-
-    for var in variables:
-        prefix_dir = VAR_PREFIX_MAP[var]
-        prefix = f"{config.s3_input_prefix}/{prefix_dir}"
-        stream = obs.list_with_delimiter(store, prefix=prefix, return_arrow=True)
+    if variable in T_PR_VARS and hasattr(config, "t_pr_input_prefix"):
+        lookup = getattr(config, "t_pr_var_lookup", {})
+        fname_prefixes = lookup.get(variable, [f"{variable}_day_"])
+        stream = obs.list_with_delimiter(store, prefix=config.t_pr_input_prefix, return_arrow=True)
         paths = list(stream["objects"]["path"].to_numpy())
-        urls.extend(
-            f"s3://{config.s3_bucket}/{path}"
-            for path in paths
-            if path.endswith(".nc") and f"_{var}_" in path and "_rechunked.nc" in path
-        )
-    return urls
+        result = []
+        for path in paths:
+            fname = path.split("/")[-1]
+            if not (fname.endswith(".nc") and any(fname.startswith(p) for p in fname_prefixes)):
+                continue
+            member = (
+                fname.split("_gn_")[0].split("_")[-1]
+                if "_gn_" in fname
+                else fname.split(".nc")[0].split("_")[-2]
+            )
+            result.append((member, path))
+        return result
+
+    stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
+    paths = list(stream["objects"]["path"].to_numpy())
+    result = []
+    for path in paths:
+        if not path.endswith(".nc"):
+            continue
+        if f"{variable}_".lower() not in path.lower():
+            continue
+        if config.ensemble_members and not any(f"_{m}_" in path for m in config.ensemble_members):
+            continue
+        try:
+            member = path.split(".nc")[0].split("_gn")[0].split("_")[-1]
+        except IndexError:
+            member = "unknown"
+        result.append((member, path))
+    return result
 
 
-def _preprocess_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    if url is None:
-        raise ValueError("url parameter is required to determine ensemble member")
-    ensemble = url.split(".nc")[0].split("_gn")[0].split("_")[-1]
-    ds = ds.expand_dims({"ensemble_member": [ensemble]})
-    return ds
-
-
-def _preprocess_ensemble_t_pr(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """Extract ensemble member from filename pattern: PREFIX_001_var_rechunked.nc.
-
-    Raw positional ID (e.g. '001'). update coord values
-    """
-    if url is None:
-        raise ValueError("url parameter is required to determine ensemble member")
-    filename = url.split("/")[-1]
-    member_idx = filename.split("_")[1]
-    ds = ds.expand_dims({"ensemble_member": [member_idx]})
-    return ds
+def _open_netcdf_from_s3(store, path: str) -> xr.Dataset:
+    reader = EagerStoreReader(store, path)
+    return xr.open_dataset(reader, engine="h5netcdf", chunks="auto")
 
 
 def _preprocess_ukesm(
@@ -286,16 +242,34 @@ def _preprocess_ukesm(
     subset: bool = False,
 ) -> xr.Dataset:
     if subset:
-        ds = ds.isel(time=slice(0, 365))
+        ds = ds.isel(time=slice(0, 360))
 
+    # Keep only standard spatial/temporal coords; drop everything else before calendar
+    # conversion to avoid auxiliary object-dtype coords (e.g. forecast_reference_time)
+    # getting float NaN mixed in during convert_calendar, which breaks CF encoding at write
+    keep_coords = set(ds.dims) | {"lat", "lon", "latitude", "longitude", "time"}
+    ds = ds.drop_vars([c for c in ds.coords if c not in keep_coords], errors="ignore")
+    # Drop data vars that use a bnds dimension (time_bnds, forecast_period_bnds, etc.)
+    # chunk({"time": -1}) in to_proleptic_gregorian fails on multi-dim bnds variables
+    bnds_data_vars = [v for v in ds.data_vars if any("bnds" in d for d in ds[v].dims)]
+    if bnds_data_vars:
+        ds = ds.drop_vars(bnds_data_vars)
     if not isinstance(config, UKESM_Historical_Config):
         ds = ds.drop_duplicates(dim="time", keep="first")
     ds = to_proleptic_gregorian(ds)
     ds = ds.drop_encoding()
+    # CMORize: rename latitude/longitude → lat/lon if needed
+    rename_map = {
+        k: v
+        for k, v in [("latitude", "lat"), ("longitude", "lon")]
+        if k in ds.dims and v not in ds.dims
+    }
+    if rename_map:
+        ds = ds.rename(rename_map)
     ds = lon_to_180(ds, lon_name="lon")
     ds = ds.sortby(["lat", "lon"])
 
-    if isinstance(config, UKESM_Historical_Config) and hasattr(config, "time_range"):
+    if hasattr(config, "time_range"):
         start_year, end_year = config.time_range.split("-")
         ds = ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
 
@@ -303,21 +277,26 @@ def _preprocess_ukesm(
     return ds
 
 
-def _derivation_logic(config: BaseUKESM_Config) -> str:
-    """For documenting how we get the ensemble_member, ie from attrs or filepath."""
-
-    if type(config) in T_PR_SCENARIOS:
+def _derivation_logic(config: BaseUKESM_Config, variable: str = None) -> str:
+    if variable in T_PR_VARS and hasattr(config, "t_pr_input_prefix"):
+        member_rename = getattr(config, "t_pr_member_rename", {})
+        if member_rename:
+            mapping_str = ", ".join(f"{k}->{v}" for k, v in member_rename.items())
+            return (
+                f"UM suite IDs extracted from filename and remapped to CMIP6 ripf: {mapping_str}. "
+                "Source files are private T/PR NetCDFs."
+            )
         return (
             "Extracted from filename position index: filename.split('_')[1] "
-            "(e.g. '001'). Positional ID stored under 'ensemble_member' dim in separate "
-            "T/PR icechunk store. Source files are private T/PR NetCDFs; CMIP6 ripf "
-            "mapping unconfirmed. Update coord values once mapping confirmed "
-            "(001->r12i1p1f2, 002->r2i1p1f2, 003->r3i1p1f2)."
+            "(e.g. '001'). Positional ID stored under 'ensemble_member' dim. "
+            "Source files are private T/PR NetCDFs."
         )
-    return "Extracted from CMIP6 filename: url.split('.nc')[0].split('_gn')[0].split('_')[-1]. "
+    return "Extracted from CMIP6 filename: path.split('.nc')[0].split('_gn')[0].split('_')[-1]. "
 
 
-def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> xr.Dataset:
+def _update_attrs(
+    ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config, variable: str = None
+) -> xr.Dataset:
     ds = update_variable_attrs(ds, var_specs)
     ds.attrs.update(
         {
@@ -326,79 +305,116 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseUKESM_Config) -> 
             "Conventions": "CF-1.8",
         }
     )
-    return apply_ensemble_provenance(ds, _derivation_logic(config))
+    return apply_ensemble_provenance(ds, _derivation_logic(config, variable))
 
 
-# ~128MB/chunk for float32 at 144x192
-_DISK_CHUNKS = {"time": 1095, "lat": 144, "lon": 192}
+def _process_single_variable(
+    config: BaseUKESM_Config,
+    variable: str,
+    repo: icechunk.Repository,
+    var_specs: dict,
+    overwrite: bool,
+    subset: bool,
+) -> None:
+    log.info("variable=%s start", variable)
 
+    var_in_store = False
+    try:
+        session = repo.readonly_session("main")
+        existing = xr.open_dataset(session.store, engine="zarr", decode_times=False)
+        var_in_store = variable in existing.data_vars
+    except Exception:
+        pass
 
-def _disk_chunk_encoding(ds: xr.Dataset) -> dict:
-    """h5netcdf chunksizes per var, ordered by dims, ~128MB per chunk."""
-    return {
-        name: {"chunksizes": tuple(_DISK_CHUNKS[d] for d in da.dims)}
-        for name, da in ds.data_vars.items()
-    }
+    if not overwrite and var_in_store:
+        log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
+        return
 
+    if variable.lower() == "dtr":
+        log.info("variable=%s deriving dtr from icechunk store", variable)
+        mat_cat = catalog.get(config.materialized_key)
+        ds = load_dtr_from_store(mat_cat.bucket, mat_cat.prefix)
+    else:
+        obstore_inst = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
+        url_pairs = _get_netcdf_urls(config, variable)
+        if not url_pairs:
+            log.warning("variable=%s no files found, skipping", variable)
+            return
+        log.info("variable=%s found %d files", variable, len(url_pairs))
+        for member, path in url_pairs:
+            log.info("  member=%s path=%s", member, path)
 
-def _prepare_single_member(member: str, config: BaseUKESM_Config) -> None:
-    """Convert one member's raw t-pr NetCDF3 files to rechunked NetCDF4 on S3.
+        member_paths: dict[str, list[str]] = {}
+        for member, path in url_pairs:
+            member_paths.setdefault(member, []).append(path)
 
-    Pulls the NetCDF3 to local disk via fsspec simplecache. opens with scipy, normalizes dims/vars, loads to memory, writes NetCDF4
-    PRECT: squeeze surface, rename precip->pr, t->time, latitude/longitude->lat/lon.
-    T: squeeze ht, rename t->time, latitude/longitude->lat/lon, split
-    temp/temp_1/temp_2 -> tasmax/tasmin/tas (one file per var).
-    """
-    import tempfile
-    from pathlib import Path
+        member_rename = getattr(config, "t_pr_member_rename", {})
+        if member_rename:
+            member_paths = {member_rename.get(m, m): paths for m, paths in member_paths.items()}
 
-    import fsspec
+        member_datasets = []
+        for member, paths in sorted(member_paths.items()):
+            log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
+            time_slices = [_open_netcdf_from_s3(obstore_inst, p) for p in sorted(paths)]
+            member_ds = (
+                xr.concat(time_slices, dim="time", data_vars="minimal")
+                if len(time_slices) > 1
+                else time_slices[0]
+            )
+            member_ds = _preprocess_ukesm(member_ds, config, subset=subset)
+            member_ds = member_ds.expand_dims({"ensemble_member": [member]})
+            member_datasets.append(member_ds)
+            log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
 
-    write_store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
-    cache_kw = {"simplecache": {"cache_storage": "/tmp/fsspec_cache"}}
-    print(member)
+        ds = xr.concat(member_datasets, dim="ensemble_member")
+        var_rename = getattr(config, "t_pr_var_rename", {})
+        if var_rename:
+            ds = ds.rename({k: v for k, v in var_rename.items() if k in ds and v not in ds})
+        if variable in ds:
+            ds = ds[[variable]]
+        log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
 
-    # --- PRECT -> pr ---
-    # Read eagerly (.load) while the simplecache file exists
-    fpath = f"s3://{config.s3_bucket}/{config.s3_raw_prefix}/PRECT/PRECT_{member}.nc"
-    cache = fsspec.open_local(f"simplecache::{fpath}", **cache_kw)
-    ds = (
-        xr.open_dataset(cache, engine="scipy")
-        .squeeze("surface")
-        .drop_vars("surface")
-        .rename({"t": "time", "latitude": "lat", "longitude": "lon", "precip": "pr"})
-        .drop_encoding()
-        .load()
+    ds = _update_attrs(ds, var_specs, config, variable)
+
+    session = repo.writable_session("main")
+    if overwrite and var_in_store:
+        write_mode = "r+"
+    elif overwrite and not var_in_store:
+        write_mode = "a"
+    else:
+        write_mode = determine_write_mode(repo)
+    encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
+    log.info("variable=%s writing to icechunk write_mode=%s", variable, write_mode)
+    write_dataset_to_icechunk(
+        ds,
+        session,
+        encoding=None if overwrite else encoding,
+        shards=None if overwrite else config.encoding["shards"],
+        commit_message=f"{config.scenario}: {variable}" + (" (overwrite)" if overwrite else ""),
+        write_mode=write_mode,
     )
-    with tempfile.NamedTemporaryFile(suffix=".nc") as tmp:
-        ds.to_netcdf(tmp.name, engine="h5netcdf", encoding=_disk_chunk_encoding(ds))
-        out = f"{config.s3_input_prefix}/PRECT/PRECT_{member}_pr_rechunked.nc"
-        print(f"uploading s3://{config.s3_bucket}/{out}")
-        obs.put(write_store, out, Path(tmp.name).read_bytes())
+    log.info("variable=%s done", variable)
 
-    # --- T -> tasmax/tasmin/tas (split) ---
-    fpath = f"s3://{config.s3_bucket}/{config.s3_raw_prefix}/T/T_{member}.nc"
-    cache = fsspec.open_local(f"simplecache::{fpath}", **cache_kw)
-    ds = (
-        xr.open_dataset(cache, engine="scipy")
-        .squeeze("ht")
-        .drop_vars("ht")
-        .rename({"t": "time", "latitude": "lat", "longitude": "lon", **T_VAR_MAP})
-        .drop_encoding()
-        .load()
+
+def _run_process(
+    config: BaseUKESM_Config,
+    variables: list[str],
+    overwrite: bool,
+    subset: bool,
+) -> None:
+    log.info(
+        "scenario=%s variables=%s overwrite=%s subset=%s",
+        config.scenario,
+        variables,
+        overwrite,
+        subset,
     )
-    for cf_var in T_VAR_MAP.values():
-        sub = ds[[cf_var]]
-        with tempfile.NamedTemporaryFile(suffix=".nc") as tmp:
-            sub.to_netcdf(tmp.name, engine="h5netcdf", encoding=_disk_chunk_encoding(sub))
-            out = f"{config.s3_input_prefix}/T/T_{member}_{cf_var}_rechunked.nc"
-            print(f"uploading s3://{config.s3_bucket}/{out}")
-            obs.put(write_store, out, Path(tmp.name).read_bytes())
-
-
-def _prepare_t_pr(config: BaseUKESM_Config) -> None:
-    for member in config.ensemble_members:
-        _prepare_single_member(member, config)
+    mat_cat = catalog.get(config.materialized_key)
+    var_specs = get_var_specs(mat_cat)
+    repo, _ = init_repo(mat_cat.bucket, mat_cat.prefix, readonly=False)
+    for var in variables:
+        _process_single_variable(config, var, repo, var_specs, overwrite, subset)
+    log.info("scenario=%s all variables complete", config.scenario)
 
 
 @click.group()
@@ -428,72 +444,9 @@ def fetch(variable, scenario):
 
 
 @click.command()
+@click.option("--variable", multiple=True, help="Specific variable(s) to process")
 @click.option("--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True)
-@click.option("--coiled/--local", default=False)
-def virtualize(scenario, coiled):
-    """Virtualize netcdf files into virtual icechunk dataset"""
-    config = SCENARIO_CONFIG_MAP[scenario]()
-    virt_cat = catalog.get(config.catalog_key)
-    variables = [var.name for var in virt_cat.expected_vars]
-
-    if coiled:
-        from srm.config import ClusterConfig
-
-        client = setup_cluster(ClusterConfig(**config.virtualize_cluster))
-    else:
-        client = setup_local_client()
-
-    is_t_pr = type(config) in T_PR_SCENARIOS
-
-    try:
-        base_store = from_url(f"s3://{config.s3_bucket}", region="us-west-2", **config.aws_creds)
-        registry = ObjectStoreRegistry({f"s3://{config.s3_bucket}": base_store})
-
-        if is_t_pr:
-            parser = HDFParser()
-            netcdf_urls = _get_netcdf_urls_t_pr(config, variables)
-            preprocess_fn = _preprocess_ensemble_t_pr
-            loadable_variables = ["lat", "lon", "time"]
-        else:
-            parser = HDFParser(drop_variables=config.drop_variables)
-            netcdf_urls = _get_netcdf_urls(config, variables)
-            preprocess_fn = _preprocess_ensemble
-            loadable_variables = ["lat", "lon", "time"]
-
-        combined_ds = virtualize_and_combine(
-            urls=netcdf_urls,
-            registry=registry,
-            parser=parser,
-            loadable_variables=loadable_variables,
-            preprocess_fn=preprocess_fn,
-        )
-
-        repo_config = icechunk.RepositoryConfig.default()
-        repo_config.set_virtual_chunk_container(
-            icechunk.VirtualChunkContainer(
-                f"s3://{config.s3_bucket}/", store=icechunk.s3_store(region="us-west-2")
-            )
-        )
-
-        storage = icechunk.s3_storage(
-            bucket=virt_cat.bucket, prefix=virt_cat.prefix, region="us-west-2"
-        )
-        repo = icechunk.Repository.open_or_create(storage, repo_config)
-        session = repo.writable_session("main")
-
-        combined_ds.vz.to_icechunk(session.store)
-        session.commit(f"{scenario}: virtualized variables {variables}")
-        repo.save_config()
-
-    finally:
-        client.shutdown()
-
-
-@click.command()
-@click.option("--variable", multiple=True, help="Specific variables to process")
-@click.option("--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True)
-@click.option("--coiled/--local", default=False)
-@click.option("--all-variables", is_flag=True, help="process all expected variables from catalog")
+@click.option("--all-variables", is_flag=True, help="Process all expected variables from catalog")
 @click.option("--subset/--no-subset", default=False)
 @click.option(
     "--overwrite",
@@ -501,107 +454,23 @@ def virtualize(scenario, coiled):
     default=False,
     help="Overwrite existing variable arrays in-place (r+ mode)",
 )
-def process(variable, scenario, coiled, all_variables, subset, overwrite):
-    """Read virtual icechunk stores, postprocess, rechunk, shard and write to icechunk."""
+def process(variable, scenario, all_variables, subset, overwrite):
+    """Open NetCDF files from S3, concat, rechunk, and write to icechunk. One variable at a time."""
     config = SCENARIO_CONFIG_MAP[scenario]()
 
-    if coiled:
-        from srm.config import ClusterConfig
-
-        client = setup_cluster(ClusterConfig(**config.process_cluster))
-
-    mat_cat = catalog.get(config.materialized_key)
-    t_pr_mat_key = getattr(config, "t_pr_materialized_key", None)
-    t_pr_mat_cat = catalog.get(t_pr_mat_key) if t_pr_mat_key else None
-
-    var_specs = get_var_specs(mat_cat)
-    if t_pr_mat_cat:
-        var_specs.update(get_var_specs(t_pr_mat_cat))
-
     if all_variables:
+        mat_cat = catalog.get(config.materialized_key)
         variables = [var.name for var in mat_cat.expected_vars]
-        if t_pr_mat_cat:
-            t_pr_expected = [var.name for var in t_pr_mat_cat.expected_vars]
-            variables = variables + [v for v in t_pr_expected if v not in variables]
     elif variable:
         variables = list(variable)
     else:
         raise click.UsageError("Must specify either --variable or --all-variables")
 
-    try:
-        t_pr_key = getattr(config, "t_pr_catalog_key", None)
-
-        for var in variables:
-            use_t_pr_store = t_pr_mat_cat and (var in T_PR_VARS or var.lower() == "dtr")
-            target_cat = t_pr_mat_cat if use_t_pr_store else mat_cat
-
-            if var.lower() == "dtr":
-                ds = load_dtr_from_store(target_cat.bucket, target_cat.prefix)
-            else:
-                source_key = t_pr_key if (var in T_PR_VARS and t_pr_key) else config.catalog_key
-                ds = catalog.get(source_key).to_xarray()[[var]]
-                if config.ensemble_members and "ensemble_member" in ds.dims:
-                    available = [
-                        m
-                        for m in config.ensemble_members
-                        if m in ds.coords["ensemble_member"].values
-                    ]
-                    missing = set(config.ensemble_members) - set(available)
-                    if missing:
-                        print(f"WARNING: ensemble members not in virtual store: {sorted(missing)}")
-                    ds = ds.sel(ensemble_member=available)
-                ds = _preprocess_ukesm(ds, config, subset=subset)
-
-            ds = _update_attrs(ds, var_specs, config)
-
-            repo, session = init_repo(target_cat.bucket, target_cat.prefix, readonly=False)
-            write_mode = "r+" if overwrite else determine_write_mode(repo)
-            encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
-            write_dataset_to_icechunk(
-                ds,
-                session,
-                encoding=None if overwrite else encoding,
-                shards=None if overwrite else config.encoding["shards"],
-                commit_message=f"{scenario}: {var} (overwrite)"
-                if overwrite
-                else f"{scenario}: {var}",
-                write_mode=write_mode,
-            )
-    finally:
-        if coiled:
-            client.shutdown()
-
-
-@click.command()
-@click.option("--scenario", type=click.Choice(["G6-1.5K-t-pr", "SSP245-t-pr"]), required=True)
-@click.option(
-    "--member", multiple=True, help="Limit to specific ensemble members (e.g. --member 001)"
-)
-@click.option("--coiled/--local", default=False)
-def prepare(scenario, member, coiled):
-    """Convert raw t-pr NetCDF3 files to rechunked NetCDF4 on S3."""
-    config = SCENARIO_CONFIG_MAP[scenario]()
-    if member:
-        config.ensemble_members = list(member)
-
-    if coiled:
-        import coiled
-
-        remote_fn = coiled.function(
-            vm_type="r8g.4xlarge",
-            region="us-west-2",
-            disk_size=200,
-            tags={"Project": "SRM"},
-        )(_prepare_single_member)
-        list(remote_fn.map(config.ensemble_members, [config] * len(config.ensemble_members)))
-    else:
-        _prepare_t_pr(config)
+    _run_process(config, variables, overwrite, subset)
 
 
 cli.add_command(fetch)
-cli.add_command(virtualize)
 cli.add_command(process)
-cli.add_command(prepare)
 
 if __name__ == "__main__":
     cli()
