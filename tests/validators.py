@@ -73,7 +73,7 @@ class DatasetValidator:
             )
 
         if check_monotonic:
-            if not (coord.diff(coord_name) > 0).all().item():
+            if not self.ds.indexes[cf_key].is_monotonic_increasing:
                 issues.append(f"{expected_name} is not monotonically increasing")
 
         return ValidationResult(len(issues) == 0, issues)
@@ -160,11 +160,10 @@ class DatasetValidator:
         if len(time_vals) < 2:
             return ValidationResult(True, [])
 
-        diffs = np.diff(time_vals).astype("timedelta64[D]").astype(int)
         issues = []
-        n_dups = int((diffs <= 0).sum())
-        if n_dups > 0:
-            issues.append(f"{n_dups} non-monotonic or duplicate time step(s)")
+        if not self.ds.indexes["time"].is_monotonic_increasing:
+            issues.append("time axis is not monotonically increasing")
+        diffs = np.diff(time_vals).astype("timedelta64[D]").astype(int)
         n_gaps = int((diffs > 1).sum())
         if n_gaps > 0:
             issues.append(f"{n_gaps} internal gap(s) > 1 day in time axis")
@@ -313,7 +312,6 @@ class DatasetValidator:
             return ValidationResult(True, [])
 
         da = self.ds[var].isel(time=day_index)
-        member_labels = self.ds.ensemble_member.values
         means = da.mean(dim=["lat", "lon"]).compute()  # shape: (ensemble_member,)
 
         issues = []
