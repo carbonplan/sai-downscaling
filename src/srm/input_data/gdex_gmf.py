@@ -18,6 +18,7 @@ from srm.input_data.etl_utils import (
     build_encoding_dict,
     console,
     determine_write_mode,
+    run_with_cluster_retry,
     setup_logging,
     update_variable_attrs,
     virtualize_and_combine,
@@ -61,6 +62,10 @@ PROCESS_CLUSTER: dict = {
     "worker_vm_types": ["c8g.2xlarge"],
     "scheduler_vm_types": "c8g.xlarge",
 }
+
+# Retries if the cluster connection is lost mid-computation (e.g. spot
+# reclamation), recreating the cluster between attempts.
+MAX_VAR_RETRIES = 3
 
 # 365 daily steps = one calendar year; enough to verify the full transform chain
 _DRY_RUN_STEPS = 365
@@ -384,17 +389,21 @@ def process(
         )
         return
 
-    client = setup_cluster(ClusterConfig(**PROCESS_CLUSTER)) if coiled else setup_local_client()
-    try:
-        process_gdex(
+    def _make_client():
+        return setup_cluster(ClusterConfig(**PROCESS_CLUSTER)) if coiled else setup_local_client()
+
+    run_with_cluster_retry(
+        _make_client,
+        lambda _: process_gdex(
             start_year=start_year,
             end_year=end_year,
             use_virtual=use_virtual,
             output_uri=output,
             commit_message=commit_message,
-        )
-    finally:
-        client.shutdown()
+        ),
+        ["gdex"],
+        max_retries=MAX_VAR_RETRIES,
+    )
 
 
 if __name__ == "__main__":

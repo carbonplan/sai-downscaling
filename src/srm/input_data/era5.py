@@ -19,6 +19,7 @@ from srm.input_data.etl_utils import (
     build_encoding_dict,
     console,
     determine_write_mode,
+    run_with_cluster_retry,
     setup_logging,
     trim_negative_precipitation,
     update_variable_attrs,
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 INPUT_URL = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
 INPUT_CHUNKING = {"time": 24, "latitude": 721, "longitude": 1440}
+
+# Retries for a single variable if the cluster connection is lost mid-computation
+# (e.g. spot reclamation), recreating the cluster between attempts.
+MAX_VAR_RETRIES = 3
 
 ERA5_TO_CMIP6 = {
     "mean_total_precipitation_rate": "pr",
@@ -339,16 +344,16 @@ def process_era5_pipeline(
             )
         return
 
-    cluster_config = ClusterConfig()
-    client = setup_cluster(cluster_config) if use_coiled else setup_local_client()
-    try:
-        for var in variables:
-            logger.info("Processing %s", var)
-            process_era5_var(
-                var, start_year, end_year, output_uri=output_uri, commit_message=commit_message
-            )
-    finally:
-        client.shutdown()
+    def _make_client():
+        return setup_cluster(ClusterConfig()) if use_coiled else setup_local_client()
+
+    def _process_one(var: str) -> None:
+        logger.info("Processing %s", var)
+        process_era5_var(
+            var, start_year, end_year, output_uri=output_uri, commit_message=commit_message
+        )
+
+    run_with_cluster_retry(_make_client, _process_one, variables, max_retries=MAX_VAR_RETRIES)
 
 
 app = typer.Typer()

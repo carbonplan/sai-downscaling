@@ -28,6 +28,7 @@ from srm.input_data.etl_utils import (
     console,
     determine_write_mode,
     get_aws_creds,
+    run_with_cluster_retry,
     setup_logging,
     trim_negative_precipitation,
     update_variable_attrs,
@@ -159,6 +160,10 @@ PROCESS_CLUSTER: dict = {
     "worker_vm_types": ["r8g.4xlarge"],
     "scheduler_vm_types": "c8g.xlarge",
 }
+
+# Retries for a single variable if the cluster connection is lost mid-computation
+# (e.g. spot reclamation), recreating the cluster between attempts.
+MAX_VAR_RETRIES = 3
 
 # 360 daily steps ~= one calendar year; used for --subset and dry runs
 _SUBSET_TIME_STEPS = 360
@@ -453,19 +458,22 @@ def process_ukesm_pipeline(
             )
         return
 
-    client = setup_cluster(ClusterConfig(**PROCESS_CLUSTER)) if use_coiled else setup_local_client()
-    try:
-        for var in variables:
-            process_ukesm_var(
-                var,
-                scenario,
-                output_prefix=output_prefix,
-                subset=subset,
-                overwrite=overwrite,
-                commit_message=commit_message,
-            )
-    finally:
-        client.shutdown()
+    def _make_client():
+        return (
+            setup_cluster(ClusterConfig(**PROCESS_CLUSTER)) if use_coiled else setup_local_client()
+        )
+
+    def _process_one(var: str) -> None:
+        process_ukesm_var(
+            var,
+            scenario,
+            output_prefix=output_prefix,
+            subset=subset,
+            overwrite=overwrite,
+            commit_message=commit_message,
+        )
+
+    run_with_cluster_retry(_make_client, _process_one, variables, max_retries=MAX_VAR_RETRIES)
 
 
 # --- Fetch helpers ---

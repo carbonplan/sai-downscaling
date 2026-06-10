@@ -1,5 +1,8 @@
 import json
 import logging
+from collections.abc import Callable, Iterable
+from concurrent.futures import CancelledError
+from typing import Any
 
 import boto3
 import dask
@@ -38,6 +41,51 @@ def get_aws_creds() -> dict:
         "aws_access_key_id": creds.access_key,
         "aws_secret_access_key": creds.secret_key,
     }
+
+
+def run_with_cluster_retry[T](
+    make_client: Callable[[], Any],
+    process_one: Callable[[T], None],
+    items: Iterable[T],
+    *,
+    max_retries: int = 3,
+    log: logging.Logger | None = None,
+) -> None:
+    """Call ``process_one`` for each item, recreating the cluster on connection loss.
+
+    If the dask scheduler connection is lost mid-computation (e.g. a spot
+    instance reclaim), ``CancelledError`` propagates from ``process_one``.
+    On that error the cluster is recreated via ``make_client`` and the same
+    item is retried, up to ``max_retries`` attempts.
+    """
+    log = log or logger
+    client = make_client()
+    try:
+        for item in items:
+            for attempt in range(1, max_retries + 1):
+                try:
+                    process_one(item)
+                    break
+                except CancelledError:
+                    if attempt == max_retries:
+                        raise
+                    log.warning(
+                        "%s attempt=%d/%d: cluster connection lost, "
+                        "recreating cluster and retrying",
+                        item,
+                        attempt,
+                        max_retries,
+                    )
+                    try:
+                        client.shutdown()
+                    except OSError:
+                        pass
+                    client = make_client()
+    finally:
+        try:
+            client.shutdown()
+        except OSError:
+            pass
 
 
 def make_fixed_ensemble_preprocess(member: str):
