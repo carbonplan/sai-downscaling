@@ -72,5 +72,6 @@ how-to/compare-outputs-across-versions
 how-to/run-multi-model-ensemble
 how-to/deploy
 how-to/regenerate-input-data
+how-to/validate-input-data-stores
 how-to/ensemble-member-lineage
 ```
