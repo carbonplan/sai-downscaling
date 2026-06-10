@@ -49,10 +49,9 @@
     srm = { workspace = true, editable = true }
 
 [tool.pytest.ini_options]
-    addopts = "-m 'not slow and not input_data' -ra --cov-report=term-missing --cov-report=xml --cov=src/srm "
+    addopts = "-m 'not input_data' -ra --cov-report=term-missing --cov-report=xml --cov=src/srm "
     markers = [
-        "input_data: marks tests that validate external input datasets",
-        "slow: marks tests as slow/expensive (run with 'pytest -m slow')",
+        "input_data: marks tests that validate external input datasets (run with 'pytest -m input_data')",
     ]
 
 [dependency-groups]
