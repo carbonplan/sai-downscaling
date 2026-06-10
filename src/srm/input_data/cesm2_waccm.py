@@ -306,9 +306,13 @@ def _load_ssp245_var(var: str, cesm_var: str, subset: bool = False) -> xr.Datase
     ds = xr.concat(subsets, dim="ensemble_member", join="outer") if len(subsets) > 1 else subsets[0]
     ds = ds.reindex(ensemble_member=ENSEMBLE_MEMBERS["ssp245"])
 
-    # Member 006 ends one day short of 001-005/007-010; fill with NaN via reindex
-    ref_time = load_cesm_virtual(cesm_var, virtual_keys[-1])["time"]
-    if len(ds.time) < len(ref_time):
+    # tasmax/tasmin (members 006-010 only) end in 2069/2070, one day short of each
+    # other, while tas/pr/rsds/hurs cover the full 2015-2101 period for all members.
+    # Reindex onto that full period (from TREFHT/ssp245_5, which establishes the
+    # unified store's 'time' coordinate) so every variable shares the same 'time'
+    # dimension, NaN-filling years beyond a variable's actual coverage.
+    ref_time = load_cesm_virtual("TREFHT", "ssp245_5").pipe(preprocess_cesm)["time"]
+    if not ds.indexes["time"].equals(ref_time.to_index()):
         ds = ds.reindex(time=ref_time)
 
     if subset:
