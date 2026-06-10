@@ -124,13 +124,22 @@ _CESM2_G6_SSP245_MEMBERS = ("001", "002", "003", "007", "008", "009")
 
 
 class TestCheckLineageMemberAvailability:
-    def test_skip_no_lineage_registered(self, mock_datasets):
-        # UKESM has no lineage entries registered
+    def test_fail_ukesm_historical_store_missing(self, mock_datasets):
+        # UKESM SSP245 is self-referential lineage (hist=self); historical store absent
         result = DatasetValidator(
             gcm="UKESM", scenario="SSP245"
         ).check_lineage_member_availability()
-        assert result.status == CheckStatus.SKIP
-        assert "No lineage registered" in result.message
+        assert result.status == CheckStatus.FAIL
+        assert "not found" in result.message
+
+    def test_pass_ukesm_ssp245_all_hist_present(self, mock_datasets):
+        mock_datasets["UKESM-historical-icechunk"] = _catalog_entry(
+            _ds_with_members("r2i1p1f2", "r3i1p1f2", "r12i1p1f2")
+        )
+        result = DatasetValidator(
+            gcm="UKESM", scenario="SSP245"
+        ).check_lineage_member_availability()
+        assert result.status == CheckStatus.PASS
 
     def test_skip_historical_scenario(self, mock_datasets):
         # No lineage entries for any historical scenario
