@@ -74,7 +74,7 @@ NETCDF_PREFIX: dict[str, str] = {
 }
 
 # Unified per-GCM store — all scenarios as zarr groups, written by `process`
-UNIFIED_PREFIX = "input/tensor/miroc-es2h.icechunk"
+UNIFIED_PREFIX = "input/processed/miroc-es2h.icechunk"
 
 SCENARIO_TO_GROUP: dict[str, str] = {
     "historical": "historical",
