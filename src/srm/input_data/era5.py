@@ -4,8 +4,6 @@ import logging
 import typer
 import xarray as xr
 import zarr
-from rich.console import Console
-from rich.logging import RichHandler
 
 from srm.config import (
     ClusterConfig,
@@ -19,7 +17,9 @@ from srm.input_data.etl_utils import (
     _init_repo_from_uri,
     add_cf_bounds,
     build_encoding_dict,
+    console,
     determine_write_mode,
+    setup_logging,
     trim_negative_precipitation,
     update_variable_attrs,
     write_dataset_to_icechunk,
@@ -27,14 +27,7 @@ from srm.input_data.etl_utils import (
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
-
-console = Console()
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_path=False, rich_tracebacks=True)],
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 INPUT_URL = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"

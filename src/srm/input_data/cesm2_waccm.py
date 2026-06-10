@@ -8,8 +8,6 @@ import xarray as xr
 import zarr
 from obspec_utils.registry import ObjectStoreRegistry
 from obstore.store import from_url
-from rich.console import Console
-from rich.logging import RichHandler
 from virtualizarr.parsers import HDFParser
 
 from srm.config import (
@@ -26,9 +24,11 @@ from srm.input_data.etl_utils import (
     _init_repo_from_uri,
     apply_ensemble_provenance,
     build_encoding_dict,
+    console,
     determine_write_mode,
     get_aws_creds,
     make_fixed_ensemble_preprocess,
+    setup_logging,
     trim_negative_precipitation,
     update_variable_attrs,
     virtualize_and_combine,
@@ -37,14 +37,7 @@ from srm.input_data.etl_utils import (
 from srm.utils import lon_to_180, to_proleptic_gregorian
 
 zarr.config.set({"async.concurrency": 128})
-
-console = Console()
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_path=False, rich_tracebacks=True)],
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # --- Variable mappings ---
