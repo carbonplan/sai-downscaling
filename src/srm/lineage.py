@@ -65,33 +65,13 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, s
     _all = _std + _tmx
 
     # UKESM1-0-LL (code gcm name: "UKESM")
-    # Data arrives in two parallel sets with different member ID formats:
-    #   ripf format (r2/r3/r12i1p1f2): hurs and rsds only — sourced from Matthew Henry (CEDA/Exeter)
-    #   numeric format (001/002/003): tas, tasmax, tasmin, pr, dtr — sourced from NCAR Derecho
-    # Numeric → historical ripf mapping (inferred from G6-1.5K parent chains in docs/srm-provenance.csv;
-    # lineage chain not formally confirmed): 001→r12i1p1f2, 002→r2i1p1f2, 003→r3i1p1f2
-    # G6-1.5K numeric members use numeric SSP245 members as SAI bridge (same ID series).
-    _ukesm_hurs_rsds = ("hurs", "rsds")
-    _ukesm_t_pr = ("tas", "tasmax", "tasmin", "pr", "dtr")
-
-    # SSP245: ripf members carry hurs/rsds (self-consistent, hist=self)
+    # As of #355, SSP245 and G6-1.5K are each consolidated into a single icechunk
+    # store keyed by ripf members (r2/r3/r12i1p1f2) covering all variables, matching
+    # the historical store's member IDs. Lineage is therefore self-referential:
+    # hist=self for both scenarios, ssp245_bridge=self for the G6-1.5K SAI bridge.
     for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):
-        add("UKESM", "SSP245", _m, _ukesm_hurs_rsds, _m)
-
-    # SSP245: numeric members carry tas/tasmax/tasmin/pr/dtr (not yet in buckets as of 2026-06)
-    add("UKESM", "SSP245", "001", _ukesm_t_pr, "r12i1p1f2")
-    add("UKESM", "SSP245", "002", _ukesm_t_pr, "r2i1p1f2")
-    add("UKESM", "SSP245", "003", _ukesm_t_pr, "r3i1p1f2")
-
-    # G6-1.5K: ripf members carry hurs/rsds; SSP245 bridge uses same ripf member
-    add("UKESM", "G6-1.5K", "r2i1p1f2", _ukesm_hurs_rsds, "r2i1p1f2", "r2i1p1f2")
-    add("UKESM", "G6-1.5K", "r3i1p1f2", _ukesm_hurs_rsds, "r3i1p1f2", "r3i1p1f2")
-    add("UKESM", "G6-1.5K", "r12i1p1f2", _ukesm_hurs_rsds, "r12i1p1f2", "r12i1p1f2")
-
-    # G6-1.5K: numeric members carry tas/tasmax/tasmin/pr/dtr; SSP245 bridge uses same numeric ID
-    add("UKESM", "G6-1.5K", "001", _ukesm_t_pr, "r12i1p1f2", "001")
-    add("UKESM", "G6-1.5K", "002", _ukesm_t_pr, "r2i1p1f2", "002")
-    add("UKESM", "G6-1.5K", "003", _ukesm_t_pr, "r3i1p1f2", "003")
+        add("UKESM", "SSP245", _m, _all, _m)
+        add("UKESM", "G6-1.5K", _m, _all, _m, _m)
 
     # MIROC-ES2H GeoMIP runs (r01–r10, abbreviated IDs, not CMIP6 ripf format).
     # SSP245 = paired SSP245-continuation runs (formerly "baseline"); these serve as
