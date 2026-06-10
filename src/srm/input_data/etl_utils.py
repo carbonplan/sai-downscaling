@@ -7,6 +7,7 @@ import icechunk
 import xarray as xr
 from obspec_utils.registry import ObjectStoreRegistry
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -16,6 +17,16 @@ from srm.config import VarSpec
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+
+def setup_logging() -> None:
+    """Configure root logger with a Rich handler backed by the shared console."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=console, show_path=False, rich_tracebacks=True)],
+    )
 
 
 def get_aws_creds() -> dict:

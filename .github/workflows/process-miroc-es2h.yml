@@ -1,0 +1,125 @@
+name: process MIROC-ES2H input data
+
+on:
+    workflow_dispatch:
+        inputs:
+            command:
+                description: "Command to run"
+                required: true
+                type: choice
+                options:
+                    - process
+                    - virtualize
+                    - fetch
+            scenario:
+                description: >
+                    Scenario name.
+                    process/virtualize/fetch: historical, esgf-ssp245, ssp245, G6-1.5K |
+                    Note: ssp245 (GeoMIP baseline) auto-fills 2015–2019 gap from esgf-ssp245.
+                required: true
+                type: choice
+                options:
+                    - historical
+                    - esgf-ssp245
+                    - ssp245
+                    - G6-1.5K
+            variables:
+                description: >
+                    Comma-separated CMIP6 variable names, or "all".
+                    Valid values: tas, tasmin, tasmax, pr, rsds, hurs.
+                    Only used when command=process or command=fetch.
+                required: false
+                type: string
+                default: "all"
+            overwrite:
+                description: "Overwrite existing variable arrays in-place (r+ mode). Only used when command=process."
+                required: false
+                type: boolean
+                default: false
+            subset:
+                description: "Subset time to first year. Only used when command=process."
+                required: false
+                type: boolean
+                default: false
+            dry_run:
+                description: "Run transforms on a 365-step sample and display results without writing to S3. Only used when command=process."
+                required: false
+                type: boolean
+                default: false
+            commit_message:
+                description: "Icechunk commit message (defaults to '{group}: {variable}'). Only used when command=process."
+                required: false
+                type: string
+                default: ""
+            s3_cleanup_path:
+                description: "S3 prefix to delete before running (e.g. s3://carbonplan-srm/input/tensor/miroc-es2h.icechunk/). Leave empty to skip."
+                required: false
+                type: string
+                default: ""
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    id-token: write
+    contents: read
+
+jobs:
+    run:
+        name: "MIROC-ES2H / ${{ inputs.scenario }} / ${{ inputs.command }}"
+        runs-on: ubuntu-latest
+        timeout-minutes: 480
+        steps:
+            - uses: actions/checkout@v6
+            - uses: ./.github/actions/setup
+
+            - name: Clean S3 icechunk store
+              if: inputs.s3_cleanup_path != ''
+              env:
+                  S3_CLEANUP_PATH: ${{ inputs.s3_cleanup_path }}
+              run: aws s3 rm "$S3_CLEANUP_PATH" --recursive
+
+            - name: "${{ inputs.command }} MIROC-ES2H / ${{ inputs.scenario }}"
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+                  COMMAND: ${{ inputs.command }}
+                  SCENARIO: ${{ inputs.scenario }}
+                  VARIABLES: ${{ inputs.variables }}
+                  OVERWRITE: ${{ inputs.overwrite }}
+                  SUBSET: ${{ inputs.subset }}
+                  DRY_RUN: ${{ inputs.dry_run }}
+                  COMMIT_MESSAGE: ${{ inputs.commit_message }}
+              run: |
+                  CMD=(uv run python src/srm/input_data/miroc.py "$COMMAND" --scenario "$SCENARIO")
+
+                  if [[ "$COMMAND" == "process" ]]; then
+                    CMD+=(--coiled)
+                    if [[ "$VARIABLES" == "all" ]]; then
+                      CMD+=(--all-variables)
+                    else
+                      IFS=',' read -ra VAR_LIST <<< "$VARIABLES"
+                      for var in "${VAR_LIST[@]}"; do
+                        CMD+=(--variable "$(echo "$var" | xargs)")
+                      done
+                    fi
+                    [[ "$OVERWRITE" == "true" ]] && CMD+=(--overwrite)
+                    [[ "$SUBSET" == "true" ]] && CMD+=(--subset)
+                    [[ "$DRY_RUN" == "true" ]] && CMD+=(--dry-run)
+                    [[ -n "$COMMIT_MESSAGE" ]] && CMD+=(--commit-message "$COMMIT_MESSAGE")
+                  fi
+
+                  if [[ "$COMMAND" == "virtualize" ]]; then
+                    CMD+=(--coiled)
+                  fi
+
+                  if [[ "$COMMAND" == "fetch" ]]; then
+                    if [[ "$VARIABLES" != "all" ]]; then
+                      IFS=',' read -ra VAR_LIST <<< "$VARIABLES"
+                      for var in "${VAR_LIST[@]}"; do
+                        CMD+=(--variable "$(echo "$var" | xargs)")
+                      done
+                    fi
+                  fi
+
+                  "${CMD[@]}"
