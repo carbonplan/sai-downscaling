@@ -48,7 +48,7 @@ BUCKET = "carbonplan-srm"
 VIRTUAL_PREFIX = "input/tensor/NCAR/GDEX-GMF-virtual.icechunk"
 
 # Materialized output — written by `process`
-OUTPUT_URI = f"s3://{BUCKET}/input/tensor/gdex-gmf.icechunk"
+OUTPUT_URI = f"s3://{BUCKET}/input/processed/gdex-gmf.icechunk"
 OUTPUT_CHUNKS: dict[str, int] = {"time": 1, "lat": 720, "lon": 1440}
 OUTPUT_SHARDS: dict[str, int] = {"time": 30, "lat": 720, "lon": 1440}
 

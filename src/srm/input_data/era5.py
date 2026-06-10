@@ -64,7 +64,7 @@ ALL_VARS = list(ERA5_TO_CMIP6.keys())
 CMIP6_TO_ERA5 = {v: k for k, v in ERA5_TO_CMIP6.items()}
 DERIVED_VARS = ["hurs"]
 
-OUTPUT_URI = "s3://carbonplan-srm/input/tensor/era5.icechunk"
+OUTPUT_URI = "s3://carbonplan-srm/input/processed/era5.icechunk"
 OUTPUT_CHUNKS: dict[str, int] = {"time": 1, "lat": 721, "lon": 1440}
 OUTPUT_SHARDS: dict[str, int] = {"time": 30, "lat": 721, "lon": 1440}
 
