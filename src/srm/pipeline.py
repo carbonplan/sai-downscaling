@@ -784,7 +784,8 @@ class BCSDPipeline:
         GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
         dataset is converted via to_proleptic_gregorian before concat.
         """
-        primary_ds = _catalog.get(f"{self.config.gcm}-SSP245-icechunk").to_xarray()
+        ssp245_cat_key = f"{self.config.gcm}-SSP245-icechunk"
+        primary_ds = _catalog.get(ssp245_cat_key).to_xarray()
         primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
 
         if self._ssp245_esgf_member is None:
