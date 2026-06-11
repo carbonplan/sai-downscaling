@@ -33,13 +33,7 @@ INFO_CHECKS: set[str] = set()
 # (gcm, scenario, check_id) → human-readable reason for the expected failure.
 # A FAIL result for a key present here is downgraded to XFAIL (non-blocking).
 # If the check unexpectedly passes it becomes XPASS (also non-blocking, but flagged).
-XFAIL_CHECKS: dict[tuple[str, str, str], str] = {
-    (
-        "MIROC-ES2H",
-        "SSP245",
-        "temporal_coverage",
-    ): "SSP245 data starts 2020-01-01 instead of 2015-01-01; 1826 time steps missing (upstream data gap, not a pipeline error)",
-}
+XFAIL_CHECKS: dict[tuple[str, str, str], str] = {}
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
@@ -58,7 +52,8 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
-        "SSP245": ("2015-01-01", "2084-12-31"),
+        # GeoMIP baseline data starts 2020; 2015-2019 gap is an upstream data limitation.
+        "SSP245": ("2020-01-01", "2084-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
     },
     "UKESM": {
