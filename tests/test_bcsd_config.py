@@ -94,14 +94,14 @@ class TestVariableConfig:
             "detrend_method": "multiplicative",
             "do_windowing": True,
             "downscaling_method": "multiplicative",
-            "downscaling_clim_method": "simple",
+            "downscaling_clim_method": "fft",
         },
         "rsds": {
-            "detrend_data": True,
+            "detrend_data": False,
             "detrend_method": "multiplicative",
             "do_windowing": True,
             "downscaling_method": "multiplicative",
-            "downscaling_clim_method": "simple",
+            "downscaling_clim_method": "fft",
         },
     }
 
