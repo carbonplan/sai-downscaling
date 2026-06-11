@@ -309,7 +309,7 @@ def detrend(
     #  adjustment for february 1 (and the entire month after). thus, there could be noticeable
     # artificial discontinuities inserted into the timeseries between 1/31 and 2/1.
     # resample("1D") anchors at midnight; MIROC use noon timestamps.
-    # Floor da.time to midnight for reindex, then restore original coords to fix nan issue in #316
+    # Floor da.time to midnight for reindex, then restore original coords to fix nan issue in #361
     da_time_midnight = da.time.values.astype("datetime64[D]").astype("datetime64[ns]")
     trend_on_daily_timestep = (
         da_mon_trend.resample(time="1D")
