@@ -67,11 +67,20 @@ class UKESM_SSP245_Config(BaseUKESM_Config):
             "tasmax": ["tasmax_day_", "tas_mean_min_max_day_"],
         }
     )
-    # r2i1p1f1 (UKESM1-1-LL) uses legacy UM variable names instead of CMIP6 standard
+    # r2i1p1f1 (UKESM1-1-LL) uses legacy UM variable names instead of CMIP6 standard;
+    # air_temperature cell_methods: max=tasmax, min=tasmin, mean=tas (same as G6-1.5K)
     t_pr_var_rename: dict = field(
         default_factory=lambda: {
             "precipitation_flux": "pr",
-            "air_temperature": "tas",
+            "air_temperature": "tasmax",
+            "air_temperature_0": "tasmin",
+            "air_temperature_1": "tas",
+        }
+    )
+    # pr file uses r2i1p1f1 label (UKESM1-1-LL); remap to match catalog member ID
+    t_pr_member_rename: dict = field(
+        default_factory=lambda: {
+            "r2i1p1f1": "r2i1p1f2",
         }
     )
 
@@ -362,14 +371,18 @@ def _process_single_variable(
                 else time_slices[0]
             )
             member_ds = _preprocess_ukesm(member_ds, config, subset=subset)
+            # Rename per-member before concat so members with mixed naming conventions
+            # (e.g. UM legacy names vs CMIP6 standard) align on the same variable names.
+            var_rename = getattr(config, "t_pr_var_rename", {})
+            if var_rename:
+                member_ds = member_ds.rename(
+                    {k: v for k, v in var_rename.items() if k in member_ds}
+                )
             member_ds = member_ds.expand_dims({"ensemble_member": [member]})
             member_datasets.append(member_ds)
             log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
 
         ds = xr.concat(member_datasets, dim="ensemble_member")
-        var_rename = getattr(config, "t_pr_var_rename", {})
-        if var_rename:
-            ds = ds.rename({k: v for k, v in var_rename.items() if k in ds and v not in ds})
         if variable in ds:
             ds = ds[[variable]]
         log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
