@@ -784,7 +784,8 @@ class BCSDPipeline:
         GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
         dataset is converted via to_proleptic_gregorian before concat.
         """
-        primary_ds = _catalog.get(f"{self.config.gcm}-SSP245-icechunk").to_xarray()
+        ssp245_cat_key = f"{self.config.gcm}-SSP245-icechunk"
+        primary_ds = _catalog.get(ssp245_cat_key).to_xarray()
         primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
 
         if self._ssp245_esgf_member is None:
@@ -872,6 +873,40 @@ class BCSDPipeline:
         )
         model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
         model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
+
+        # Non-SAI scenarios whose primary dataset starts after predict_period_start
+        # (e.g. MIROC-ES2H GeoMIP SSP245 starts 2020) need ESGF data prepended to close the gap.
+        if not self.config.is_sai_scenario and self._ssp245_esgf_member is not None:
+            scenario_start_year = int(model_scenario.time.dt.year.min())
+            if scenario_start_year > self.config.predict_period_start:
+                from srm.utils import to_proleptic_gregorian
+
+                esgf_ds = to_proleptic_gregorian(
+                    _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
+                )
+                esgf_data = esgf_ds[self.config.variable].sel(
+                    ensemble_member=self._ssp245_esgf_member
+                )
+                esgf_pre = esgf_data.isel(
+                    time=(
+                        (esgf_data.time.dt.year >= self.config.predict_period_start)
+                        & (esgf_data.time.dt.year < scenario_start_year)
+                    ).values
+                )
+                logger.info(
+                    "Non-SAI scenario starts at %d; prepending ESGF SSP245 %s for %d–%d",
+                    scenario_start_year,
+                    self._ssp245_esgf_member,
+                    int(esgf_pre.time.dt.year.min()),
+                    int(esgf_pre.time.dt.year.max()),
+                )
+                esgf_pre = esgf_pre.drop_vars("ensemble_member", errors="ignore")
+                scenario_clean = model_scenario.drop_vars("ensemble_member", errors="ignore")
+                model_scenario = xr.concat([esgf_pre, scenario_clean], dim="time")
+                model_scenario = model_scenario.assign_coords(
+                    ensemble_member=self.config.ensemble_member
+                )
+                model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
         # SAI scenarios need an SSP245 bridge to fill the gap between historical and SAI start
         ssp_timeseries: xr.DataArray | None = None

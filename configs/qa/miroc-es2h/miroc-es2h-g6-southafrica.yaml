@@ -1,10 +1,11 @@
-# BCSD configuration: MIROC-ES2H / tas / SSP245 / GeoMIP members / global (production)
+# BCSD configuration: MIROC-ES2H / all variables / G6-1.5K / all members / South Africa (QA)
+# All 7 variables available for all members; no CMIP6 tasmax/tasmin bug in MIROC-ES2H.
 
 # === Model and Scenario ===
 gcm: "MIROC-ES2H"
-variables: ["tas"]
+variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
-scenarios: ["SSP245"]
+scenarios: ["G6-1.5K"]
 
 # === Time Periods ===
 train_period_start: 1978
@@ -12,11 +13,14 @@ train_period_end: 2014
 predict_period_start: 2015
 predict_period_end: 2100
 
+# === Spatial Subsetting ===
+# South Africa region: [lat_min, lat_max, lon_min, lon_max]
+subset_bounds: [-35, -22, 16, 33]
+
 # === Storage ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
-output_dir: "s3://carbonplan-srm/output"
-environment: "production"
-# version intentionally unset — derived from the installed package version at runtime
+output_dir: "s3://carbonplan-scratch/srm/output"
+environment: "qa"
 
 # === Bias Correction ===
 mapping_type: "nonparametric_hybrid"

@@ -1,12 +1,12 @@
-# BCSD configuration: UKESM (QA)
-#
-# Equivalent CLI command:
-#   uv run bcsd run --config-path configs/qa/
+# BCSD configuration: MIROC-ES2H / all variables / SSP245 / GeoMIP members / South Africa (QA)
+# All 7 variables available for all members; no CMIP6 tasmax/tasmin bug in MIROC-ES2H.
+# SSP245 here is the GeoMIP paired SSP245-continuation run; ESGF SSP245 fills the 2015-2019 gap
+# (GeoMIP SSP245 starts 2020). Both bridges are handled automatically via lineage.py.
 
 # === Model and Scenario ===
-gcm: "UKESM"
-variables: ["tas"]
-ensemble_members: ["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"]
+gcm: "MIROC-ES2H"
+variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+ensemble_members: ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
@@ -23,8 +23,6 @@ subset_bounds: [-35, -22, 16, 33]
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
-# version defaults to the installed package version. Override to pin a specific cache namespace.
-# version: "v0.6.0.post5"
 
 # === Bias Correction ===
 mapping_type: "nonparametric_hybrid"

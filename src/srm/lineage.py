@@ -4,7 +4,7 @@ from __future__ import annotations
 # ssp245_member is None for non-SAI scenarios.
 # ssp245_esgf_member is set when an ESGF SSP245 dataset is needed to fill a gap before the primary
 # SSP245 bridge starts (MIROC G6-1.5K only: GeoMIP SSP245 starts 2020, leaving 2015–2019 gap).
-# Source: srm-provenance.csv parent_experiment_ensemble_ids column,
+# Source: docs/srm-provenance.csv parent_experiment_ensemble_ids column,
 # confirmed by emails from Walker Lee (G6→SSP245) and Simone Tilmes (historical "001").
 
 
@@ -64,6 +64,15 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, s
 
     _all = _std + _tmx
 
+    # UKESM1-0-LL (code gcm name: "UKESM")
+    # As of #355, SSP245 and G6-1.5K are each consolidated into a single icechunk
+    # store keyed by ripf members (r2/r3/r12i1p1f2) covering all variables, matching
+    # the historical store's member IDs. Lineage is therefore self-referential:
+    # hist=self for both scenarios, ssp245_bridge=self for the G6-1.5K SAI bridge.
+    for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):
+        add("UKESM", "SSP245", _m, _all, _m)
+        add("UKESM", "G6-1.5K", _m, _all, _m, _m)
+
     # MIROC-ES2H GeoMIP runs (r01–r10, abbreviated IDs, not CMIP6 ripf format).
     # SSP245 = paired SSP245-continuation runs (formerly "baseline"); these serve as
     # both the G6-1.5K bridge and the standalone SSP245 output product.
@@ -82,7 +91,8 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, s
         ("r10", "r1i1p4f2"),
     ]
     for member, hist in _miroc_g6_lineage:
-        add("MIROC-ES2H", "SSP245", member, _all, hist)  # not SAI; no bridge
+        # GeoMIP SSP245 ("baseline") starts 2020; ESGF SSP245 (hist-format member IDs) fills 2015–2019.
+        add("MIROC-ES2H", "SSP245", member, _all, hist, ssp245_esgf=hist)
         add("MIROC-ES2H", "G6-1.5K", member, _all, hist, member, hist)
 
     return table
