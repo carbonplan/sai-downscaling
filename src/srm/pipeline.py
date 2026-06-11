@@ -591,12 +591,16 @@ class BCSDPipeline:
         obs_fine: xr.DataArray,
     ) -> xr.DataArray:
         """Spatially disaggregate coarse debiased data to fine resolution."""
+
+        # We don't want negative values for any of the variables we are downscaling (tas, tasmin, tasmax, rsds, hurs, pr)
+
         downscaled = downscale_from_coarse(
             da=debiased,
             obs_coarse=obs_coarse.as_numpy(),
             obs_fine=obs_fine.as_numpy(),
             method=self.config.downscaling_method,
             clim_method=self.config.downscaling_clim_method,
+            allow_negative_values=False,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 

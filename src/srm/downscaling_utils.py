@@ -462,7 +462,9 @@ def fft_smooth_3harmonics(data):
 
 
 def calculate_doy_means(
-    da: xr.DataArray, clim_method: DownscalingClimMethod = "simple"
+    da: xr.DataArray,
+    clim_method: DownscalingClimMethod = "simple",
+    allow_negative_values: bool = True,
 ) -> xr.DataArray:
     """
     Compute day-of-year climatology on the fine-resolution observation grid.
@@ -475,6 +477,8 @@ def calculate_doy_means(
         Climatology smoothing method:
         - ``"simple"`` returns raw day-of-year means.
         - ``"fft"`` smooths the day-of-year cycle with mean + first 3 harmonics.
+    allow_negative_values : bool, default: True
+        Whether to allow negative values in the output.
 
     Returns
     -------
@@ -509,6 +513,13 @@ def calculate_doy_means(
             "dayofyear", "lat", "lon"
         )
 
+        # It is possible for the FFT smoothing to introduce small negative artifacts for variables that are strictly positive (e.g., precipitation)
+        # If allow_negative_values is False, we set any negative values to zero here.
+        if not allow_negative_values:
+            obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.where(
+                obs_fine_doy_means_smoothed >= 0, 0
+            )
+
     return obs_fine_doy_means_smoothed
 
 
@@ -518,6 +529,7 @@ def downscale_from_coarse(
     obs_fine: xr.DataArray,
     method: DownscalingMethod = "additive",
     clim_method: DownscalingClimMethod = "simple",
+    allow_negative_values: bool = True,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
@@ -552,7 +564,9 @@ def downscale_from_coarse(
     5. Reapply fine-grid climatology (add or multiply).
     """
     # Step 1: calculate the daily climatology of high-res observations
-    obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
+    obs_fine_doy_means = calculate_doy_means(
+        obs_fine, clim_method=clim_method, allow_negative_values=allow_negative_values
+    )
 
     # Step 2: Aggregate daily climatology to the low-resolution grid of the GCM being processed
     obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
