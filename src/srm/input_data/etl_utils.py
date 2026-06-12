@@ -132,7 +132,23 @@ def trim_negative_precipitation(ds: xr.Dataset) -> xr.Dataset:
     return ds
 
 
-def determine_write_mode(repo: icechunk.Repository, branch: str = "main") -> str:
+def determine_write_mode(
+    repo: icechunk.Repository, branch: str = "main", group: str | None = None
+) -> str:
+    """Pick "w" for a fresh target, "a" otherwise.
+
+    With group: "w" only when the group does not exist yet (never "w" on an
+    existing group — that would clobber it while sibling groups share the repo).
+    """
+    if group is not None:
+        import zarr
+
+        session = repo.readonly_session(branch)
+        try:
+            zarr.open_group(session.store, path=group, mode="r")
+            return "a"
+        except (FileNotFoundError, KeyError):
+            return "w"
     history = list(repo.ancestry(branch=branch))
     if len(history) <= 1:
         return "w"
@@ -249,7 +265,21 @@ def write_dataset_to_icechunk(
     to_icechunk(ds, session, encoding=encoding, mode=write_mode, group=group)
 
     if commit_message:
-        session.commit(commit_message)
+        # Concurrent jobs (e.g. coiled batch, one per scenario) writing disjoint
+        # groups/arrays to the same repo race on commit; rebase resolves
+        # non-overlapping changes. True overlaps raise after max_commit_attempts.
+        max_commit_attempts = 5
+        for attempt in range(1, max_commit_attempts + 1):
+            try:
+                session.commit(commit_message)
+                break
+            except icechunk.ConflictError:
+                if attempt == max_commit_attempts:
+                    raise
+                logger.info(
+                    "commit conflict (attempt %d/%d), rebasing", attempt, max_commit_attempts
+                )
+                session.rebase(icechunk.ConflictDetector())
 
     if repo is not None and commit_message and is_overwrite:
         console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
@@ -270,10 +300,10 @@ def open_netcdf_from_s3(store, path: str, drop_variables: list[str] | None = Non
     return xr.open_dataset(reader, engine="h5netcdf", chunks="auto", drop_variables=drop_variables)
 
 
-def variable_in_store(repo: icechunk.Repository, variable: str) -> bool:
+def variable_in_store(repo: icechunk.Repository, variable: str, group: str | None = None) -> bool:
     try:
         session = repo.readonly_session("main")
-        existing = xr.open_dataset(session.store, engine="zarr", decode_times=False)
+        existing = xr.open_dataset(session.store, engine="zarr", group=group, decode_times=False)
         return variable in existing.data_vars
     except Exception:
         return False
@@ -306,11 +336,13 @@ def write_variable_to_icechunk(
     shards: dict,
     overwrite: bool,
     var_in_store: bool,
+    group: str | None = None,
 ) -> None:
     """Write one variable to icechunk with shared overwrite semantics.
 
     overwrite + existing variable -> in-place r+ update (no encoding change);
     otherwise append/write with fresh chunk/shard encoding.
+    group, if given, targets a zarr sub-group within the repo (e.g. ``"ssp245"``).
     """
     session = repo.writable_session("main")
     if overwrite and var_in_store:
@@ -318,9 +350,11 @@ def write_variable_to_icechunk(
     elif overwrite:
         write_mode = "a"
     else:
-        write_mode = determine_write_mode(repo)
+        write_mode = determine_write_mode(repo, group=group)
     encoding = build_encoding_dict(ds, chunks, shards)
-    logger.info("variable=%s writing to icechunk write_mode=%s", variable, write_mode)
+    logger.info(
+        "variable=%s group=%s writing to icechunk write_mode=%s", variable, group, write_mode
+    )
     write_dataset_to_icechunk(
         ds,
         session,
@@ -328,6 +362,7 @@ def write_variable_to_icechunk(
         shards=shards,
         commit_message=f"{scenario}: {variable}" + (" (overwrite)" if overwrite else ""),
         write_mode=write_mode,
+        group=group,
     )
 
 

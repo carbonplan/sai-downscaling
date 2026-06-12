@@ -21,7 +21,6 @@ from srm.input_data.etl_utils import (
     apply_ensemble_provenance,
     get_var_specs,
     group_paths_by_member,
-    load_dtr_from_store,
     open_netcdf_from_s3,
     resolve_variables,
     trim_negative_precipitation,
@@ -71,12 +70,33 @@ CMIP6_YEAR_RANGES: dict[str, range] = {
     "ssp245": range(2015, 2101),
 }
 
+# Unified per-GCM store: all scenarios live as zarr groups in one icechunk repo.
+UNIFIED_KEY = "MIROC-ES2H-unified-icechunk"
+
+# GeoMIP SSP245 (baseline) starts 2020; ESGF SSP245 fills the 2015-2019 gap.
+# Maps each GeoMIP member to its ESGF counterpart.
+_SSP245_ESGF_MEMBER: dict[str, str] = {
+    "r01": "r1i1p4f2",
+    "r02": "r2i1p4f2",
+    "r03": "r3i1p4f2",
+    "r04": "r1i1p4f2",
+    "r05": "r2i1p4f2",
+    "r06": "r3i1p4f2",
+    "r07": "r1i1p4f2",
+    "r08": "r2i1p4f2",
+    "r09": "r3i1p4f2",
+    "r10": "r1i1p4f2",
+}
+
 
 @dataclass
 class BaseMIROC_ES2H_Config(BaseETLConfig):
     # MIROC SSP245/G6-1.5K/baseline raw hurs is stored as fraction (0-1) despite units='%'
     # due to a CMOR labeling bug. Historical is correctly in %. Set True to apply ×100.
     cmorize_hurs: bool = False
+    materialized_key: str = UNIFIED_KEY
+    # zarr group within the unified store
+    group: str = ""
 
 
 # --- CMIP6 scenarios (historical, ssp245) -----------------------------------
@@ -96,14 +116,14 @@ class BaseMIROC_CMIP6_Config(BaseMIROC_ES2H_Config):
 @dataclass
 class MIROC_ES2H_Historical_Config(BaseMIROC_CMIP6_Config):
     scenario: str = "historical"
-    materialized_key: str = "MIROC-ES2H-historical-icechunk"
+    group: str = "historical"
     time_range: str = "1850-2014"
 
 
 @dataclass
 class MIROC_ES2H_ESGF_SSP245_Config(BaseMIROC_CMIP6_Config):
     scenario: str = "ssp245"
-    materialized_key: str = "MIROC-ES2H-esgf-SSP245-icechunk"
+    group: str = "esgf_ssp245"
     time_range: str = "2015-2100"
 
 
@@ -134,8 +154,8 @@ class BaseMIROC_GeoMIP_Config(BaseMIROC_ES2H_Config):
 @dataclass
 class MIROC_ES2H_G6_1p5K_Config(BaseMIROC_GeoMIP_Config):
     scenario: str = "G6-1.5K"
+    group: str = "g6_1p5k"
     geomip_scenario: str = "G6-1.5K-SAI"
-    materialized_key: str = "MIROC-ES2H-G6-1.5K-icechunk"
     cmorize_hurs: bool = True
 
 
@@ -144,8 +164,8 @@ class MIROC_ES2H_SSP245_Config(BaseMIROC_GeoMIP_Config):
     # GeoMIP baseline run — renamed to SSP245 to match catalog naming convention.
     # Source files still live under baseline/ in S3, so s3_input_prefix is overridden.
     scenario: str = "SSP245"
+    group: str = "ssp245"
     geomip_scenario: str = "baseline"
-    materialized_key: str = "MIROC-ES2H-SSP245-icechunk"
     cmorize_hurs: bool = True
 
     def __post_init__(self):
@@ -377,6 +397,43 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseMIROC_ES2H_Config
     return apply_ensemble_provenance(ds, _derivation_logic(config))
 
 
+def _stitch_esgf_gap(geomip: xr.Dataset, variable: str, repo: icechunk.Repository) -> xr.Dataset:
+    """Prepend ESGF SSP245 2015-2019 to the GeoMIP baseline run (which starts 2020).
+
+    Reads the bridge from the unified store's ``esgf_ssp245`` group; each GeoMIP
+    member gets its ESGF counterpart via _SSP245_ESGF_MEMBER. Requires
+    --scenario esgf-ssp245 to have been processed first.
+    """
+    session = repo.readonly_session("main")
+    try:
+        esgf = xr.open_dataset(session.store, engine="zarr", group="esgf_ssp245", chunks="auto")[
+            [variable]
+        ]
+    except (FileNotFoundError, KeyError) as err:
+        raise RuntimeError(
+            f"esgf_ssp245 group missing variable '{variable}' in the unified store; "
+            "run --scenario esgf-ssp245 before --scenario ssp245 (gap-fill dependency)"
+        ) from err
+
+    bridge = esgf.sel(time=slice("2015", "2019"))
+    gap_pieces = [
+        bridge.sel(ensemble_member=[_SSP245_ESGF_MEMBER[m]]).assign_coords(ensemble_member=[m])
+        for m in geomip.ensemble_member.values
+    ]
+    gap_ds = xr.concat(gap_pieces, dim="ensemble_member")
+    combined = xr.concat([gap_ds, geomip], dim="time")
+    combined.attrs.update(
+        {
+            "gap_fill_source": "esgf_ssp245 group (MIROC-ES2H ESGF SSP245)",
+            "gap_fill_period": "2015-2019",
+            "gap_fill_member_map": ", ".join(
+                f"{m}->{e}" for m, e in sorted(_SSP245_ESGF_MEMBER.items())
+            ),
+        }
+    )
+    return combined
+
+
 def _process_single_variable(
     config: BaseMIROC_ES2H_Config,
     variable: str,
@@ -385,44 +442,43 @@ def _process_single_variable(
     overwrite: bool,
     subset: bool,
 ) -> None:
-    log.info("variable=%s start", variable)
+    log.info("variable=%s group=%s start", variable, config.group)
 
-    var_in_store = variable_in_store(repo, variable)
+    var_in_store = variable_in_store(repo, variable, group=config.group)
     if not overwrite and var_in_store:
         log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
         return
 
-    if variable.lower() == "dtr":
-        log.info("variable=%s deriving dtr from icechunk store", variable)
-        mat_cat = catalog.get(config.materialized_key)
-        ds = load_dtr_from_store(mat_cat.bucket, mat_cat.prefix)
-    else:
-        obstore_inst = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
-        url_pairs = _get_netcdf_urls(config, variable)
-        if not url_pairs:
-            log.warning("variable=%s no files found, skipping", variable)
-            return
-        log.info("variable=%s found %d files", variable, len(url_pairs))
+    obstore_inst = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
+    url_pairs = _get_netcdf_urls(config, variable)
+    if not url_pairs:
+        log.warning("variable=%s no files found, skipping", variable)
+        return
+    log.info("variable=%s found %d files", variable, len(url_pairs))
 
-        member_paths = group_paths_by_member(url_pairs)
+    member_paths = group_paths_by_member(url_pairs)
 
-        member_datasets = []
-        for member, paths in sorted(member_paths.items()):
-            log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
-            time_slices = [open_netcdf_from_s3(obstore_inst, p) for p in sorted(paths)]
-            member_ds = (
-                xr.concat(time_slices, dim="time", data_vars="minimal")
-                if len(time_slices) > 1
-                else time_slices[0]
-            )
-            member_ds = _preprocess_miroc(member_ds, config, subset=subset)
-            member_ds = member_ds.expand_dims({"ensemble_member": [member]})
-            member_datasets.append(member_ds)
-            log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
+    member_datasets = []
+    for member, paths in sorted(member_paths.items()):
+        log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
+        time_slices = [open_netcdf_from_s3(obstore_inst, p) for p in sorted(paths)]
+        member_ds = (
+            xr.concat(time_slices, dim="time", data_vars="minimal")
+            if len(time_slices) > 1
+            else time_slices[0]
+        )
+        member_ds = _preprocess_miroc(member_ds, config, subset=subset)
+        member_ds = member_ds.expand_dims({"ensemble_member": [member]})
+        member_datasets.append(member_ds)
+        log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
 
-        ds = xr.concat(member_datasets, dim="ensemble_member")
-        ds = ds[[variable]]
-        log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
+    ds = xr.concat(member_datasets, dim="ensemble_member")
+    ds = ds[[variable]]
+    log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
+
+    if config.group == "ssp245":
+        ds = _stitch_esgf_gap(ds, variable, repo)
+        log.info("variable=%s gap-filled 2015-2019 from esgf_ssp245", variable)
 
     ds = _update_attrs(ds, var_specs, config)
 
@@ -435,6 +491,7 @@ def _process_single_variable(
         shards=config.encoding["shards"],
         overwrite=overwrite,
         var_in_store=var_in_store,
+        group=config.group,
     )
     log.info("variable=%s done", variable)
 
@@ -444,17 +501,19 @@ def _run_process(
     variables: list[str],
     overwrite: bool,
     subset: bool,
+    store_prefix: str | None = None,
 ) -> None:
     log.info(
-        "scenario=%s variables=%s overwrite=%s subset=%s",
+        "scenario=%s group=%s variables=%s overwrite=%s subset=%s",
         config.scenario,
+        config.group,
         variables,
         overwrite,
         subset,
     )
     mat_cat = catalog.get(config.materialized_key)
     var_specs = get_var_specs(mat_cat)
-    repo, _ = init_repo(mat_cat.bucket, mat_cat.prefix, readonly=False)
+    repo, _ = init_repo(mat_cat.bucket, store_prefix or mat_cat.prefix, readonly=False)
     for var in variables:
         _process_single_variable(config, var, repo, var_specs, overwrite, subset)
     log.info("scenario=%s all variables complete", config.scenario)
@@ -493,7 +552,13 @@ def fetch(variable, scenario):
 
 @click.command()
 @click.option("--variable", multiple=True, help="Specific variable(s) to process")
-@click.option("--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True)
+@click.option(
+    "--scenario",
+    multiple=True,
+    type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())),
+    required=True,
+    help="Scenario(s) to process; repeat to run several sequentially in order given",
+)
 @click.option("--all-variables", is_flag=True, help="Process all expected variables from catalog")
 @click.option("--subset/--no-subset", default=False)
 @click.option(
@@ -502,11 +567,24 @@ def fetch(variable, scenario):
     default=False,
     help="Overwrite existing variable arrays in-place (r+ mode)",
 )
-def process(variable, scenario, all_variables, subset, overwrite):
-    """Open NetCDF files from S3, concat, rechunk, and write to icechunk. One variable at a time."""
-    config = SCENARIO_CONFIG_MAP[scenario]()
-    variables = resolve_variables(variable, all_variables, catalog.get(config.materialized_key))
-    _run_process(config, variables, overwrite, subset)
+@click.option(
+    "--store-prefix",
+    default=None,
+    help="Override the unified store prefix (e.g. a dev path for test runs)",
+)
+def process(variable, scenario, all_variables, subset, overwrite, store_prefix):
+    """Open NetCDF files from S3, concat, rechunk, and write to the unified per-GCM
+    icechunk store under each scenario's zarr group. One variable at a time.
+
+    Ordering: esgf-ssp245 must complete before ssp245 (the ssp245 group
+    gap-fills 2015-2019 from the esgf_ssp245 group); list them in that order.
+    """
+    for scen in scenario:
+        config = SCENARIO_CONFIG_MAP[scen]()
+        variables = resolve_variables(
+            variable, all_variables, catalog.get(config.materialized_key)
+        )
+        _run_process(config, variables, overwrite, subset, store_prefix=store_prefix)
 
 
 cli.add_command(fetch)

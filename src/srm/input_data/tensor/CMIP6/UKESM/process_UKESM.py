@@ -20,7 +20,6 @@ from srm.input_data.etl_utils import (
     apply_ensemble_provenance,
     get_var_specs,
     group_paths_by_member,
-    load_dtr_from_store,
     open_netcdf_from_s3,
     resolve_variables,
     trim_negative_precipitation,
@@ -44,17 +43,23 @@ log = logging.getLogger(__name__)
 
 T_PR_VARS = ["pr", "tas", "tasmin", "tasmax"]
 
+# Unified per-GCM store: all scenarios live as zarr groups in one icechunk repo.
+UNIFIED_KEY = "UKESM-unified-icechunk"
+
 
 @dataclass
 class BaseUKESM_Config(BaseETLConfig):
     s3_input_prefix: str = ""
     ensemble_members: list = field(default_factory=lambda: ["001", "002", "003"])
+    materialized_key: str = UNIFIED_KEY
+    # zarr group within the unified store
+    group: str = ""
 
 
 @dataclass
 class UKESM_SSP245_Config(BaseUKESM_Config):
     scenario: str = "SSP245"
-    materialized_key: str = "UKESM-SSP245-icechunk"
+    group: str = "ssp245"
     s3_input_prefix: str = "input/tensor/UKESM/transfer/SSP2-4.5/"
     time_range: str = "2015-2099"
     t_pr_input_prefix: str = "input/tensor/UKESM/UKESM_SSP245_T_PR_NETCDF/UKESM_SSP245_T_PR"
@@ -89,7 +94,7 @@ class UKESM_SSP245_Config(BaseUKESM_Config):
 @dataclass
 class UKESM_G6_1p5K_Config(BaseUKESM_Config):
     scenario: str = "G6-1.5K"
-    materialized_key: str = "UKESM-G6-1.5K-icechunk"
+    group: str = "g6_1p5k"
     s3_input_prefix: str = "input/tensor/UKESM/transfer/G6-1.5K"
     t_pr_input_prefix: str = "input/tensor/UKESM/UKESM_G6-1.5K_T_PR_NETCDF/UKESM_G6-1.5K_T_PR"
     ensemble_members: list = field(default_factory=lambda: ["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"])
@@ -127,7 +132,7 @@ class UKESM_G6_1p5K_Config(BaseUKESM_Config):
 @dataclass
 class UKESM_Historical_Config(BaseUKESM_Config):
     scenario: str = "historical"
-    materialized_key: str = "UKESM-historical-icechunk"
+    group: str = "historical"
     s3_input_prefix: str = "input/tensor/UKESM/netcdf/historical"
     source_base_url: str = (
         "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/MOHC/UKESM1-0-LL/historical"
@@ -321,58 +326,51 @@ def _process_single_variable(
     overwrite: bool,
     subset: bool,
 ) -> None:
-    log.info("variable=%s start", variable)
+    log.info("variable=%s group=%s start", variable, config.group)
 
-    var_in_store = variable_in_store(repo, variable)
+    var_in_store = variable_in_store(repo, variable, group=config.group)
     if not overwrite and var_in_store:
         log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
         return
 
-    if variable.lower() == "dtr":
-        log.info("variable=%s deriving dtr from icechunk store", variable)
-        mat_cat = catalog.get(config.materialized_key)
-        ds = load_dtr_from_store(mat_cat.bucket, mat_cat.prefix)
-    else:
-        obstore_inst = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
-        url_pairs = _get_netcdf_urls(config, variable)
-        if not url_pairs:
-            log.warning("variable=%s no files found, skipping", variable)
-            return
-        log.info("variable=%s found %d files", variable, len(url_pairs))
-        for member, path in url_pairs:
-            log.info("  member=%s path=%s", member, path)
+    obstore_inst = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
+    url_pairs = _get_netcdf_urls(config, variable)
+    if not url_pairs:
+        log.warning("variable=%s no files found, skipping", variable)
+        return
+    log.info("variable=%s found %d files", variable, len(url_pairs))
+    for member, path in url_pairs:
+        log.info("  member=%s path=%s", member, path)
 
-        member_paths = group_paths_by_member(url_pairs)
+    member_paths = group_paths_by_member(url_pairs)
 
-        member_rename = getattr(config, "t_pr_member_rename", {})
-        if member_rename:
-            member_paths = {member_rename.get(m, m): paths for m, paths in member_paths.items()}
+    member_rename = getattr(config, "t_pr_member_rename", {})
+    if member_rename:
+        member_paths = {member_rename.get(m, m): paths for m, paths in member_paths.items()}
 
-        member_datasets = []
-        for member, paths in sorted(member_paths.items()):
-            log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
-            time_slices = [open_netcdf_from_s3(obstore_inst, p) for p in sorted(paths)]
-            member_ds = (
-                xr.concat(time_slices, dim="time", data_vars="minimal")
-                if len(time_slices) > 1
-                else time_slices[0]
-            )
-            member_ds = _preprocess_ukesm(member_ds, config, subset=subset)
-            # Rename per-member before concat so members with mixed naming conventions
-            # (e.g. UM legacy names vs CMIP6 standard) align on the same variable names.
-            var_rename = getattr(config, "t_pr_var_rename", {})
-            if var_rename:
-                member_ds = member_ds.rename(
-                    {k: v for k, v in var_rename.items() if k in member_ds}
-                )
-            member_ds = member_ds.expand_dims({"ensemble_member": [member]})
-            member_datasets.append(member_ds)
-            log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
+    member_datasets = []
+    for member, paths in sorted(member_paths.items()):
+        log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
+        time_slices = [open_netcdf_from_s3(obstore_inst, p) for p in sorted(paths)]
+        member_ds = (
+            xr.concat(time_slices, dim="time", data_vars="minimal")
+            if len(time_slices) > 1
+            else time_slices[0]
+        )
+        member_ds = _preprocess_ukesm(member_ds, config, subset=subset)
+        # Rename per-member before concat so members with mixed naming conventions
+        # (e.g. UM legacy names vs CMIP6 standard) align on the same variable names.
+        var_rename = getattr(config, "t_pr_var_rename", {})
+        if var_rename:
+            member_ds = member_ds.rename({k: v for k, v in var_rename.items() if k in member_ds})
+        member_ds = member_ds.expand_dims({"ensemble_member": [member]})
+        member_datasets.append(member_ds)
+        log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
 
-        ds = xr.concat(member_datasets, dim="ensemble_member")
-        if variable in ds:
-            ds = ds[[variable]]
-        log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
+    ds = xr.concat(member_datasets, dim="ensemble_member")
+    if variable in ds:
+        ds = ds[[variable]]
+    log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
 
     ds = _update_attrs(ds, var_specs, config, variable)
 
@@ -385,6 +383,7 @@ def _process_single_variable(
         shards=config.encoding["shards"],
         overwrite=overwrite,
         var_in_store=var_in_store,
+        group=config.group,
     )
     log.info("variable=%s done", variable)
 
@@ -394,17 +393,19 @@ def _run_process(
     variables: list[str],
     overwrite: bool,
     subset: bool,
+    store_prefix: str | None = None,
 ) -> None:
     log.info(
-        "scenario=%s variables=%s overwrite=%s subset=%s",
+        "scenario=%s group=%s variables=%s overwrite=%s subset=%s",
         config.scenario,
+        config.group,
         variables,
         overwrite,
         subset,
     )
     mat_cat = catalog.get(config.materialized_key)
     var_specs = get_var_specs(mat_cat)
-    repo, _ = init_repo(mat_cat.bucket, mat_cat.prefix, readonly=False)
+    repo, _ = init_repo(mat_cat.bucket, store_prefix or mat_cat.prefix, readonly=False)
     for var in variables:
         _process_single_variable(config, var, repo, var_specs, overwrite, subset)
     log.info("scenario=%s all variables complete", config.scenario)
@@ -438,7 +439,13 @@ def fetch(variable, scenario):
 
 @click.command()
 @click.option("--variable", multiple=True, help="Specific variable(s) to process")
-@click.option("--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True)
+@click.option(
+    "--scenario",
+    multiple=True,
+    type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())),
+    required=True,
+    help="Scenario(s) to process; repeat to run several sequentially in order given",
+)
 @click.option("--all-variables", is_flag=True, help="Process all expected variables from catalog")
 @click.option("--subset/--no-subset", default=False)
 @click.option(
@@ -447,11 +454,20 @@ def fetch(variable, scenario):
     default=False,
     help="Overwrite existing variable arrays in-place (r+ mode)",
 )
-def process(variable, scenario, all_variables, subset, overwrite):
-    """Open NetCDF files from S3, concat, rechunk, and write to icechunk. One variable at a time."""
-    config = SCENARIO_CONFIG_MAP[scenario]()
-    variables = resolve_variables(variable, all_variables, catalog.get(config.materialized_key))
-    _run_process(config, variables, overwrite, subset)
+@click.option(
+    "--store-prefix",
+    default=None,
+    help="Override the unified store prefix (e.g. a dev path for test runs)",
+)
+def process(variable, scenario, all_variables, subset, overwrite, store_prefix):
+    """Open NetCDF files from S3, concat, rechunk, and write to the unified per-GCM
+    icechunk store under each scenario's zarr group. One variable at a time."""
+    for scen in scenario:
+        config = SCENARIO_CONFIG_MAP[scen]()
+        variables = resolve_variables(
+            variable, all_variables, catalog.get(config.materialized_key)
+        )
+        _run_process(config, variables, overwrite, subset, store_prefix=store_prefix)
 
 
 cli.add_command(fetch)

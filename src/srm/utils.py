@@ -88,3 +88,12 @@ def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
     )
     # enforce numpy datetime64, not some mixed float/cftime
     return ds.assign_coords(time=ds.time.values)
+
+
+def get_variable(ds: xr.Dataset, variable: str) -> xr.DataArray:
+    """Return a variable from ds, deriving dtr = tasmax - tasmin when not stored."""
+    if variable == "dtr" and "dtr" not in ds:
+        dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")
+        dtr.attrs.update({"units": "K", "long_name": "Diurnal Temperature Range"})
+        return dtr
+    return ds[variable]

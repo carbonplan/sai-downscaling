@@ -60,7 +60,7 @@ jobs:
               run: |
                   case "$GCM" in
                     "CESM2-WACCM")
-                      SCRIPT="src/srm/input_data/tensor/CMIP6/CESM2-WACCM/process-CESM2-WACCM.py"
+                      SCRIPT="src/srm/input_data/tensor/CMIP6/CESM2-WACCM/process_CESM2_WACCM.py"
                       FLAGS="--all-variables"
                       ;;
                     "MIROC-ES2H")

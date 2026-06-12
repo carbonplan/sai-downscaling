@@ -21,10 +21,8 @@ from srm.input_data.etl_utils import (
     CMORIZE_pr,
     apply_ensemble_provenance,
     build_encoding_dict,
-    determine_write_mode,
     get_var_specs,
     group_paths_by_member,
-    load_dtr_from_store,
     open_netcdf_from_s3,
     resolve_variables,
     trim_negative_precipitation,
@@ -47,8 +45,17 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-SHARED_VARIABLES = ["tas", "rsds", "hurs", "pr", "tasmax", "tasmin", "dtr"]
+SHARED_VARIABLES = ["tas", "rsds", "hurs", "pr", "tasmax", "tasmin"]
 SHARED_ENSEMBLE_MEMBERS = ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
+
+# Unified per-GCM store: all scenarios live as zarr groups in one icechunk repo.
+UNIFIED_KEY = "CESM2-WACCM-unified-icechunk"
+SCENARIO_TO_GROUP: dict[str, str] = {
+    "historical": "historical",
+    "pangeo-historical": "historical",
+    "SSP245": "ssp245",
+    "G6-1.5K": "g6_1p5k",
+}
 
 # CESM case names embed the member as a 3-digit segment, e.g.
 # b.e21.BWSSP245cmip6.f09_g17.CMIP6-SSP2-4.5-WACCM.001.cam.h1....nc
@@ -58,6 +65,12 @@ MEMBER_PATTERN = re.compile(r"\.(\d{3})\.cam\.")
 @dataclass
 class BaseCESM_Config(BaseETLConfig):
     has_ensemble: bool = True
+    materialized_key: str = UNIFIED_KEY
+
+    @property
+    def group(self) -> str:
+        return SCENARIO_TO_GROUP[self.scenario]
+
     CESM_WACCM_VARIABLE_MAPPING: dict = field(
         default_factory=lambda: {
             "FSDS": "rsds",
@@ -122,13 +135,11 @@ class BaseCESM_Config(BaseETLConfig):
 @dataclass
 class Pangeo_CESM_Historical_Config(BaseCESM_Config):
     scenario: str = "pangeo-historical"
-    materialized_key: str = "pangeo-CESM2-WACCM-historical-dev-icechunk"
 
 
 @dataclass
 class CESM_Historical_Config(BaseCESM_Config):
     scenario: str = "historical"
-    materialized_key: str = "CESM2-WACCM-historical-dev-icechunk"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-Historical/netcdf"
     # NOTE:  email confirmation that this ensemble member maps to 001
     ensemble_members: list = field(default_factory=lambda: ["001"])
@@ -137,7 +148,6 @@ class CESM_Historical_Config(BaseCESM_Config):
 @dataclass
 class CESM_SSP245_Config(BaseCESM_Config):
     scenario: str = "SSP245"
-    materialized_key: str = "CESM2-WACCM-SSP245-dev-icechunk"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-SSP245/netcdf"
     ensemble_members: list = field(
         default_factory=lambda: [
@@ -158,7 +168,6 @@ class CESM_SSP245_Config(BaseCESM_Config):
 @dataclass
 class CESM_G6_1_5K_Config(BaseCESM_Config):
     scenario: str = "G6-1.5K"
-    materialized_key: str = "CESM2-WACCM-G6-1.5K-dev-icechunk"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-G6-1.5K/netcdf"
     ensemble_members: list = field(default_factory=lambda: ["001", "002", "003"])
 
@@ -363,59 +372,54 @@ def _process_single_variable(
     overwrite: bool,
     subset: bool,
 ) -> None:
-    log.info("variable=%s start", variable)
+    group = config.group
+    log.info("variable=%s group=%s start", variable, group)
 
-    var_in_store = variable_in_store(repo, variable)
+    var_in_store = variable_in_store(repo, variable, group=group)
     if not overwrite and var_in_store:
         log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
         return
 
-    if variable.lower() == "dtr":
-        # dtr derived from tasmax/tasmin already written to the store
-        log.info("variable=%s deriving dtr from icechunk store", variable)
-        mat_cat = catalog.get(config.materialized_key)
-        ds = load_dtr_from_store(mat_cat.bucket, mat_cat.prefix)
-    else:
-        obstore_inst = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
-        url_pairs = _get_netcdf_urls(config, variable)
-        if not url_pairs:
-            log.warning("variable=%s no files found, skipping", variable)
-            return
-        log.info("variable=%s found %d files", variable, len(url_pairs))
+    obstore_inst = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
+    url_pairs = _get_netcdf_urls(config, variable)
+    if not url_pairs:
+        log.warning("variable=%s no files found, skipping", variable)
+        return
+    log.info("variable=%s found %d files", variable, len(url_pairs))
 
-        member_paths = group_paths_by_member(url_pairs)
+    member_paths = group_paths_by_member(url_pairs)
 
-        member_datasets = []
-        member_manifest = {}
-        for member, paths in sorted(member_paths.items()):
-            log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
-            time_slices = [
-                open_netcdf_from_s3(obstore_inst, p, config.drop_variables) for p in sorted(paths)
-            ]
-            member_manifest[member] = _capture_provenance(time_slices[0], paths[0])
-            member_ds = (
-                xr.concat(time_slices, dim="time", data_vars="minimal")
-                if len(time_slices) > 1
-                else time_slices[0]
-            )
-            member_ds = _preprocess_cesm(member_ds, config, variable, subset=subset)
-            member_ds = member_ds.expand_dims({"ensemble_member": [member]})
-            member_datasets.append(member_ds)
-            log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
-
-        # join="outer" unions time axes: SSP245 member 006 ends one day short
-        # of 007-010 and gets NaN for the missing final day
-        ds = (
-            xr.concat(member_datasets, dim="ensemble_member", join="outer")
-            if len(member_datasets) > 1
-            else member_datasets[0]
+    member_datasets = []
+    member_manifest = {}
+    for member, paths in sorted(member_paths.items()):
+        log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
+        time_slices = [
+            open_netcdf_from_s3(obstore_inst, p, config.drop_variables) for p in sorted(paths)
+        ]
+        member_manifest[member] = _capture_provenance(time_slices[0], paths[0])
+        member_ds = (
+            xr.concat(time_slices, dim="time", data_vars="minimal")
+            if len(time_slices) > 1
+            else time_slices[0]
         )
-        ds = ds[[variable]]
-        # reindex to full member list; fills any missing members with NaN
-        if config.ensemble_members and "ensemble_member" in ds.dims:
-            ds = ds.reindex(ensemble_member=config.ensemble_members)
-        ds.ensemble_member.attrs["member_specific_provenance"] = json.dumps(member_manifest)
-        log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
+        member_ds = _preprocess_cesm(member_ds, config, variable, subset=subset)
+        member_ds = member_ds.expand_dims({"ensemble_member": [member]})
+        member_datasets.append(member_ds)
+        log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
+
+    # join="outer" unions time axes: SSP245 member 006 ends one day short
+    # of 007-010 and gets NaN for the missing final day
+    ds = (
+        xr.concat(member_datasets, dim="ensemble_member", join="outer")
+        if len(member_datasets) > 1
+        else member_datasets[0]
+    )
+    ds = ds[[variable]]
+    # reindex to full member list; fills any missing members with NaN
+    if config.ensemble_members and "ensemble_member" in ds.dims:
+        ds = ds.reindex(ensemble_member=config.ensemble_members)
+    ds.ensemble_member.attrs["member_specific_provenance"] = json.dumps(member_manifest)
+    log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
 
     ds = _update_attrs(ds, var_specs, config)
 
@@ -428,6 +432,7 @@ def _process_single_variable(
         shards=config.encoding["shards"],
         overwrite=overwrite,
         var_in_store=var_in_store,
+        group=group,
     )
     log.info("variable=%s done", variable)
 
@@ -437,26 +442,37 @@ def _run_process(
     variables: list[str],
     overwrite: bool,
     subset: bool,
+    store_prefix: str | None = None,
 ) -> None:
     log.info(
-        "scenario=%s variables=%s overwrite=%s subset=%s",
+        "scenario=%s group=%s variables=%s overwrite=%s subset=%s",
         config.scenario,
+        config.group,
         variables,
         overwrite,
         subset,
     )
     mat_cat = catalog.get(config.materialized_key)
     var_specs = get_var_specs(mat_cat)
-    repo, _ = init_repo(mat_cat.bucket, mat_cat.prefix, readonly=False)
+    repo, _ = init_repo(mat_cat.bucket, store_prefix or mat_cat.prefix, readonly=False)
     for var in variables:
         _process_single_variable(config, var, repo, var_specs, overwrite, subset)
     log.info("scenario=%s all variables complete", config.scenario)
 
 
-def _run_pangeo_process(config: BaseCESM_Config, variables: list[str]) -> None:
-    """Pangeo Zarr to Icechunk bulk write."""
+def _run_pangeo_process(
+    config: BaseCESM_Config, variables: list[str], store_prefix: str | None = None
+) -> None:
+    """Merge Pangeo historical members (r1/r2/r3i1p1f1) into the ``historical`` group.
+
+    The group must already hold NCAR/ESGF member "001" (written by
+    ``--scenario historical``). Both datasets are reindexed onto the union of
+    ensemble members and time steps (NaN-filling variables a member lacks,
+    e.g. tasmax/tasmin for the Pangeo members) and the group is rewritten.
+    """
     mat_cat = catalog.get(config.materialized_key)
     var_specs = get_var_specs(mat_cat)
+    group = config.group
 
     ds = get_CESM_WACCM_ds(config.scenario)
     available = [v for v in variables if v in ds]
@@ -467,15 +483,40 @@ def _run_pangeo_process(config: BaseCESM_Config, variables: list[str]) -> None:
     ds = ds.sortby(["lat", "lon"])
     ds = _update_attrs(ds, var_specs, config)
 
-    repo, session = init_repo(mat_cat.bucket, mat_cat.prefix, readonly=False)
-    encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
+    repo, session = init_repo(mat_cat.bucket, store_prefix or mat_cat.prefix, readonly=False)
+    try:
+        existing = xr.open_dataset(
+            repo.readonly_session("main").store, engine="zarr", group=group, chunks="auto"
+        )
+    except (FileNotFoundError, KeyError) as err:
+        raise RuntimeError(
+            f"group '{group}' not found in unified store; run --scenario historical "
+            "(member 001) before --scenario pangeo-historical"
+        ) from err
+
+    members = list(dict.fromkeys([*existing.ensemble_member.values, *ds.ensemble_member.values]))
+    time_index = existing.indexes["time"].union(ds.indexes["time"])
+    merged = existing.reindex(ensemble_member=members, time=time_index).combine_first(
+        ds.reindex(ensemble_member=members, time=time_index)
+    )
+    merged.attrs = {**existing.attrs, **ds.attrs, "scenario": "historical"}
+    merged["ensemble_member"].attrs = {
+        "long_name": "Ensemble Member Identifier",
+        "derivation_method": (
+            "'001': corrected NCAR/ESGF historical run (all variables); "
+            "r1/r2/r3i1p1f1: Pangeo CMIP6 historical (NaN where a variable is missing)"
+        ),
+    }
+
+    encoding = build_encoding_dict(merged, config.encoding["chunks"], config.encoding["shards"])
     write_dataset_to_icechunk(
-        ds,
+        merged,
         session,
         encoding=encoding,
         shards=config.encoding["shards"],
-        commit_message=f"{config.scenario}: Bulk write of {available}",
-        write_mode=determine_write_mode(repo),
+        commit_message=f"historical: merge pangeo members {SHARED_ENSEMBLE_MEMBERS}",
+        write_mode="w",
+        group=group,
     )
 
 
@@ -489,7 +530,13 @@ def cli():
 
 @click.command()
 @click.option("--variable", multiple=True, help="Specific variable(s) to process")
-@click.option("--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True)
+@click.option(
+    "--scenario",
+    multiple=True,
+    type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())),
+    required=True,
+    help="Scenario(s) to process; repeat to run several sequentially in order given",
+)
 @click.option("--all-variables", is_flag=True, help="Process all expected variables from catalog")
 @click.option("--subset/--no-subset", default=False)
 @click.option(
@@ -498,15 +545,27 @@ def cli():
     default=False,
     help="Overwrite existing variable arrays in-place (r+ mode)",
 )
-def process(variable, scenario, all_variables, subset, overwrite):
-    """Open NetCDF files from S3, concat, rechunk, and write to icechunk. One variable at a time."""
-    config = SCENARIO_CONFIG_MAP[scenario]()
-    variables = resolve_variables(variable, all_variables, catalog.get(config.materialized_key))
+@click.option(
+    "--store-prefix",
+    default=None,
+    help="Override the unified store prefix (e.g. a dev path for test runs)",
+)
+def process(variable, scenario, all_variables, subset, overwrite, store_prefix):
+    """Open NetCDF files from S3, concat, rechunk, and write to the unified per-GCM
+    icechunk store under each scenario's zarr group. One variable at a time.
 
-    if _is_pangeo_scenario(scenario):
-        _run_pangeo_process(config, variables)
-    else:
-        _run_process(config, variables, overwrite, subset)
+    Ordering: historical must complete before pangeo-historical (which merges
+    Pangeo members into the historical group); list them in that order.
+    """
+    for scen in scenario:
+        config = SCENARIO_CONFIG_MAP[scen]()
+        variables = resolve_variables(
+            variable, all_variables, catalog.get(config.materialized_key)
+        )
+        if _is_pangeo_scenario(scen):
+            _run_pangeo_process(config, variables, store_prefix=store_prefix)
+        else:
+            _run_process(config, variables, overwrite, subset, store_prefix=store_prefix)
 
 
 cli.add_command(process)
