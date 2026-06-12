@@ -887,3 +887,27 @@ class TestCalculateOutOfRangeMask:
         )
 
         assert result.all(), "Expected all True (out of range), but got some False"
+
+    def test_above_range_sets_high_mask_not_low(self):
+        """Values above historical max must set out_of_range_high, not out_of_range_low"""
+        model_hist = _make_time_series(10.0)
+        scenario = _make_time_series(20.0, start_year=2050, end_year=2052)
+
+        _, low, high = calculate_out_of_range_mask(
+            model_hist=model_hist, scenario_detrended=scenario, center_window=31
+        )
+
+        assert high.all(), "Expected out_of_range_high all True for above-max values"
+        assert not low.any(), "Expected out_of_range_low all False for above-max values"
+
+    def test_below_range_sets_low_mask_not_high(self):
+        """Values below historical min must set out_of_range_low, not out_of_range_high."""
+        model_hist = _make_time_series(10.0)
+        scenario = _make_time_series(0.0, start_year=2050, end_year=2052)
+
+        _, low, high = calculate_out_of_range_mask(
+            model_hist=model_hist, scenario_detrended=scenario, center_window=31
+        )
+
+        assert low.all(), "Expected out_of_range_low all True for below-min values"
+        assert not high.any(), "Expected out_of_range_high all False for below-min values"
