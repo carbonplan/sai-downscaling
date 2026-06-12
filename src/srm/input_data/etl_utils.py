@@ -14,17 +14,6 @@ from srm.config import VarSpec
 logger = logging.getLogger(__name__)
 
 
-def compute_wind_speed(
-    ds_u: xr.Dataset, ds_v: xr.Dataset, u_var_name: str, v_var_name: str
-) -> xr.Dataset:
-    import xclim
-
-    winds = xclim.indicators.convert.wind_speed_from_vector(
-        uas=ds_u[u_var_name], vas=ds_v[v_var_name]
-    )
-    return xr.merge(winds)[["sfcWind"]]
-
-
 def get_var_specs(catalog_entry) -> dict[str, VarSpec]:
     return {var.name: var for var in catalog_entry.expected_vars}
 
@@ -210,7 +199,7 @@ def write_variable_to_icechunk(
         ds,
         session,
         encoding=None if overwrite else encoding,
-        shards=None if overwrite else shards,
+        shards=shards,
         commit_message=f"{scenario}: {variable}" + (" (overwrite)" if overwrite else ""),
         write_mode=write_mode,
     )

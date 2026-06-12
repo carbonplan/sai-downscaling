@@ -130,7 +130,6 @@ class CESM_Historical_Config(BaseCESM_Config):
     scenario: str = "historical"
     materialized_key: str = "CESM2-WACCM-historical-dev-icechunk"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-Historical/netcdf"
-    has_ensemble: bool = True
     # NOTE:  email confirmation that this ensemble member maps to 001
     ensemble_members: list = field(default_factory=lambda: ["001"])
 
@@ -140,7 +139,6 @@ class CESM_SSP245_Config(BaseCESM_Config):
     scenario: str = "SSP245"
     materialized_key: str = "CESM2-WACCM-SSP245-dev-icechunk"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-SSP245/netcdf"
-    has_ensemble: bool = True
     ensemble_members: list = field(
         default_factory=lambda: [
             "001",
@@ -155,9 +153,6 @@ class CESM_SSP245_Config(BaseCESM_Config):
             "010",
         ]
     )
-    # tasmax/tasmin only provided for members 006-010; the file listing yields
-    # no files for 001-005, and reindexing to ensemble_members fills them with NaN
-    variables_6_10_only: list = field(default_factory=lambda: ["tasmax", "tasmin"])
 
 
 @dataclass
@@ -376,7 +371,7 @@ def _process_single_variable(
         return
 
     if variable.lower() == "dtr":
-        # tasmax/tasmin only exist for members 006-010 in SSP245; dtr inherits that partial coverage
+        # dtr derived from tasmax/tasmin already written to the store
         log.info("variable=%s deriving dtr from icechunk store", variable)
         mat_cat = catalog.get(config.materialized_key)
         ds = load_dtr_from_store(mat_cat.bucket, mat_cat.prefix)
@@ -416,7 +411,7 @@ def _process_single_variable(
             else member_datasets[0]
         )
         ds = ds[[variable]]
-        # NaN-fill members with no files on disk (tasmax/tasmin for SSP245 001-005)
+        # reindex to full member list; fills any missing members with NaN
         if config.ensemble_members and "ensemble_member" in ds.dims:
             ds = ds.reindex(ensemble_member=config.ensemble_members)
         ds.ensemble_member.attrs["member_specific_provenance"] = json.dumps(member_manifest)

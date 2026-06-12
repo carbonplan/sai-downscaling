@@ -96,16 +96,15 @@ class BaseMIROC_CMIP6_Config(BaseMIROC_ES2H_Config):
 @dataclass
 class MIROC_ES2H_Historical_Config(BaseMIROC_CMIP6_Config):
     scenario: str = "historical"
-    materialized_key: str = "MIROC-ES2H-historical-dev-icechunk"
+    materialized_key: str = "MIROC-ES2H-historical-icechunk"
     time_range: str = "1850-2014"
 
 
 @dataclass
 class MIROC_ES2H_ESGF_SSP245_Config(BaseMIROC_CMIP6_Config):
     scenario: str = "ssp245"
-    materialized_key: str = "MIROC-ES2H-esgf-SSP245-dev-icechunk"
+    materialized_key: str = "MIROC-ES2H-esgf-SSP245-icechunk"
     time_range: str = "2015-2100"
-    cmorize_hurs: bool = True
 
 
 # --- GeoMIP scenarios (G6-1.5K-SAI, SSP245/baseline) --------------------------------
@@ -136,7 +135,7 @@ class BaseMIROC_GeoMIP_Config(BaseMIROC_ES2H_Config):
 class MIROC_ES2H_G6_1p5K_Config(BaseMIROC_GeoMIP_Config):
     scenario: str = "G6-1.5K"
     geomip_scenario: str = "G6-1.5K-SAI"
-    materialized_key: str = "MIROC-ES2H-G6-1.5K-dev-icechunk"
+    materialized_key: str = "MIROC-ES2H-G6-1.5K-icechunk"
     cmorize_hurs: bool = True
 
 
@@ -146,7 +145,7 @@ class MIROC_ES2H_SSP245_Config(BaseMIROC_GeoMIP_Config):
     # Source files still live under baseline/ in S3, so s3_input_prefix is overridden.
     scenario: str = "SSP245"
     geomip_scenario: str = "baseline"
-    materialized_key: str = "MIROC-ES2H-SSP245-dev-icechunk"
+    materialized_key: str = "MIROC-ES2H-SSP245-icechunk"
     cmorize_hurs: bool = True
 
     def __post_init__(self):
