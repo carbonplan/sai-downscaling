@@ -11,7 +11,6 @@ import icechunk
 import obstore as obs
 import xarray as xr
 import zarr
-from obspec_utils.readers import EagerStoreReader
 from obstore.store import from_url
 
 from srm import catalog
@@ -19,13 +18,15 @@ from srm.config import init_repo
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
     apply_ensemble_provenance,
-    build_encoding_dict,
-    determine_write_mode,
     get_var_specs,
+    group_paths_by_member,
     load_dtr_from_store,
+    open_netcdf_from_s3,
+    resolve_variables,
     trim_negative_precipitation,
     update_variable_attrs,
-    write_dataset_to_icechunk,
+    variable_in_store,
+    write_variable_to_icechunk,
 )
 from srm.utils import lon_to_180, to_proleptic_gregorian
 
@@ -240,11 +241,6 @@ def _get_netcdf_urls(config: BaseUKESM_Config, variable: str) -> list[tuple[str,
     return result
 
 
-def _open_netcdf_from_s3(store, path: str) -> xr.Dataset:
-    reader = EagerStoreReader(store, path)
-    return xr.open_dataset(reader, engine="h5netcdf", chunks="auto")
-
-
 def _preprocess_ukesm(
     ds: xr.Dataset,
     config: BaseUKESM_Config,
@@ -327,14 +323,7 @@ def _process_single_variable(
 ) -> None:
     log.info("variable=%s start", variable)
 
-    var_in_store = False
-    try:
-        session = repo.readonly_session("main")
-        existing = xr.open_dataset(session.store, engine="zarr", decode_times=False)
-        var_in_store = variable in existing.data_vars
-    except Exception:
-        pass
-
+    var_in_store = variable_in_store(repo, variable)
     if not overwrite and var_in_store:
         log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
         return
@@ -353,9 +342,7 @@ def _process_single_variable(
         for member, path in url_pairs:
             log.info("  member=%s path=%s", member, path)
 
-        member_paths: dict[str, list[str]] = {}
-        for member, path in url_pairs:
-            member_paths.setdefault(member, []).append(path)
+        member_paths = group_paths_by_member(url_pairs)
 
         member_rename = getattr(config, "t_pr_member_rename", {})
         if member_rename:
@@ -364,7 +351,7 @@ def _process_single_variable(
         member_datasets = []
         for member, paths in sorted(member_paths.items()):
             log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
-            time_slices = [_open_netcdf_from_s3(obstore_inst, p) for p in sorted(paths)]
+            time_slices = [open_netcdf_from_s3(obstore_inst, p) for p in sorted(paths)]
             member_ds = (
                 xr.concat(time_slices, dim="time", data_vars="minimal")
                 if len(time_slices) > 1
@@ -389,22 +376,15 @@ def _process_single_variable(
 
     ds = _update_attrs(ds, var_specs, config, variable)
 
-    session = repo.writable_session("main")
-    if overwrite and var_in_store:
-        write_mode = "r+"
-    elif overwrite and not var_in_store:
-        write_mode = "a"
-    else:
-        write_mode = determine_write_mode(repo)
-    encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
-    log.info("variable=%s writing to icechunk write_mode=%s", variable, write_mode)
-    write_dataset_to_icechunk(
+    write_variable_to_icechunk(
         ds,
-        session,
-        encoding=None if overwrite else encoding,
-        shards=None if overwrite else config.encoding["shards"],
-        commit_message=f"{config.scenario}: {variable}" + (" (overwrite)" if overwrite else ""),
-        write_mode=write_mode,
+        repo,
+        variable=variable,
+        scenario=config.scenario,
+        chunks=config.encoding["chunks"],
+        shards=config.encoding["shards"],
+        overwrite=overwrite,
+        var_in_store=var_in_store,
     )
     log.info("variable=%s done", variable)
 
@@ -470,15 +450,7 @@ def fetch(variable, scenario):
 def process(variable, scenario, all_variables, subset, overwrite):
     """Open NetCDF files from S3, concat, rechunk, and write to icechunk. One variable at a time."""
     config = SCENARIO_CONFIG_MAP[scenario]()
-
-    if all_variables:
-        mat_cat = catalog.get(config.materialized_key)
-        variables = [var.name for var in mat_cat.expected_vars]
-    elif variable:
-        variables = list(variable)
-    else:
-        raise click.UsageError("Must specify either --variable or --all-variables")
-
+    variables = resolve_variables(variable, all_variables, catalog.get(config.materialized_key))
     _run_process(config, variables, overwrite, subset)
 
 
