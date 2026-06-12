@@ -1,34 +1,46 @@
+# COILED vm-type r8g.4xlarge
+# COILED region us-west-2
+
+import logging
 import subprocess
 from dataclasses import dataclass, field
 
-import boto3
 import click
+import dask
 import icechunk
 import obstore as obs
 import xarray as xr
 import zarr
-from obspec_utils.registry import ObjectStoreRegistry
 from obstore.store import from_url
-from virtualizarr.parsers import HDFParser
 
 from srm import catalog
-from srm.config import init_repo, setup_cluster, setup_local_client
+from srm.config import init_repo
 from srm.input_data.etl_config import BaseETLConfig
 from srm.input_data.etl_utils import (
     CMORIZE_hurs,
     apply_ensemble_provenance,
-    build_encoding_dict,
-    determine_write_mode,
     get_var_specs,
+    group_paths_by_member,
     load_dtr_from_store,
+    open_netcdf_from_s3,
+    resolve_variables,
     trim_negative_precipitation,
     update_variable_attrs,
-    virtualize_and_combine,
-    write_dataset_to_icechunk,
+    variable_in_store,
+    write_variable_to_icechunk,
 )
 from srm.utils import lon_to_180, to_proleptic_gregorian
 
 zarr.config.set({"async.concurrency": 128})
+dask.config.set(scheduler="threads")
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+log = logging.getLogger(__name__)
 
 
 CMIP6_SOURCE_BASE_URL = "https://www.jamstec.go.jp/swpub/public/CMIP6/MIROC-ES2H"
@@ -65,32 +77,6 @@ class BaseMIROC_ES2H_Config(BaseETLConfig):
     # MIROC SSP245/G6-1.5K/baseline raw hurs is stored as fraction (0-1) despite units='%'
     # due to a CMOR labeling bug. Historical is correctly in %. Set True to apply ×100.
     cmorize_hurs: bool = False
-    aws_creds: dict = field(default_factory=dict)
-
-    virtualize_cluster: dict = field(
-        default_factory=lambda: {
-            "n_workers": [4, 24],
-            "worker_vm_types": ["r8g.8xlarge"],
-            "scheduler_vm_types": "c8g.2xlarge",
-        }
-    )
-    process_cluster: dict = field(
-        default_factory=lambda: {
-            "n_workers": [4, 16],
-            "worker_vm_types": ["r8g.4xlarge"],
-            "scheduler_vm_types": "c8g.xlarge",
-        }
-    )
-
-    def __post_init__(self):
-        sesh = boto3.Session()
-        creds = sesh.get_credentials()
-        region = sesh.region_name or "us-west-2"
-        self.aws_creds = {
-            "aws_access_key_id": creds.access_key,
-            "aws_secret_access_key": creds.secret_key,
-            "aws_region": region,
-        }
 
 
 # --- CMIP6 scenarios (historical, ssp245) -----------------------------------
@@ -104,23 +90,20 @@ class BaseMIROC_CMIP6_Config(BaseMIROC_ES2H_Config):
     ensemble_members: list = field(default_factory=lambda: list(CMIP6_ENSEMBLE_MEMBERS))
 
     def __post_init__(self):
-        super().__post_init__()
         self.s3_input_prefix = f"input/tensor/MIROC-ES2H/{self.scenario}/netcdf"
 
 
 @dataclass
 class MIROC_ES2H_Historical_Config(BaseMIROC_CMIP6_Config):
     scenario: str = "historical"
-    catalog_key: str = "MIROC-ES2H-historical-virtual"
-    materialized_key: str = "MIROC-ES2H-historical-icechunk"
+    materialized_key: str = "MIROC-ES2H-historical-dev-icechunk"
     time_range: str = "1850-2014"
 
 
 @dataclass
 class MIROC_ES2H_ESGF_SSP245_Config(BaseMIROC_CMIP6_Config):
     scenario: str = "ssp245"
-    catalog_key: str = "MIROC-ES2H-esgf-SSP245-virtual"
-    materialized_key: str = "MIROC-ES2H-esgf-SSP245-icechunk"
+    materialized_key: str = "MIROC-ES2H-esgf-SSP245-dev-icechunk"
     time_range: str = "2015-2100"
     cmorize_hurs: bool = True
 
@@ -142,7 +125,6 @@ class BaseMIROC_GeoMIP_Config(BaseMIROC_ES2H_Config):
     ensemble_members: list = field(default_factory=lambda: list(GEOMIP_ENSEMBLE_MEMBERS))
 
     def __post_init__(self):
-        super().__post_init__()
         self.s3_input_prefix = f"input/tensor/MIROC-ES2H/{self.scenario}/netcdf"
 
     @property
@@ -154,8 +136,7 @@ class BaseMIROC_GeoMIP_Config(BaseMIROC_ES2H_Config):
 class MIROC_ES2H_G6_1p5K_Config(BaseMIROC_GeoMIP_Config):
     scenario: str = "G6-1.5K"
     geomip_scenario: str = "G6-1.5K-SAI"
-    catalog_key: str = "MIROC-ES2H-G6-1.5K-virtual"
-    materialized_key: str = "MIROC-ES2H-G6-1.5K-icechunk"
+    materialized_key: str = "MIROC-ES2H-G6-1.5K-dev-icechunk"
     cmorize_hurs: bool = True
 
 
@@ -165,12 +146,10 @@ class MIROC_ES2H_SSP245_Config(BaseMIROC_GeoMIP_Config):
     # Source files still live under baseline/ in S3, so s3_input_prefix is overridden.
     scenario: str = "SSP245"
     geomip_scenario: str = "baseline"
-    catalog_key: str = "MIROC-ES2H-SSP245-virtual"
-    materialized_key: str = "MIROC-ES2H-SSP245-icechunk"
+    materialized_key: str = "MIROC-ES2H-SSP245-dev-icechunk"
     cmorize_hurs: bool = True
 
     def __post_init__(self):
-        super().__post_init__()
         self.s3_input_prefix = "input/tensor/MIROC-ES2H/baseline/netcdf"
 
 
@@ -180,6 +159,11 @@ SCENARIO_CONFIG_MAP = {
     "esgf-ssp245": MIROC_ES2H_ESGF_SSP245_Config,
     "G6-1.5K": MIROC_ES2H_G6_1p5K_Config,
 }
+
+
+# ---------------------------------------------------------------------------
+# Fetch helpers
+# ---------------------------------------------------------------------------
 
 
 def _build_cmip6_urls(variables: list[str], config: BaseMIROC_CMIP6_Config) -> list[str]:
@@ -224,7 +208,7 @@ def _filter_existing_urls(urls: list[str], config: BaseMIROC_ES2H_Config) -> lis
     """
     store = from_url(
         f"s3://{config.s3_bucket}/{config.s3_input_prefix}/",
-        **config.aws_creds,
+        region="us-west-2",
     )
 
     existing_names: set[str] = set()
@@ -317,58 +301,45 @@ def _fetch_geomip_netcdfs(variables: list[str], config: BaseMIROC_GeoMIP_Config)
 
 
 # ---------------------------------------------------------------------------
-# Virtualize helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_cmip6_netcdf_urls(variables: list[str], config: BaseMIROC_CMIP6_Config) -> list[str]:
-    """List CMIP6 NetCDF files from S3, filtered by variable."""
-    store = from_url(f"s3://{config.s3_bucket}", **config.aws_creds)
-    stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
-    all_paths = list(stream["objects"]["path"].to_numpy())
-    return [
-        f"s3://{config.s3_bucket}/{path}"
-        for path in sorted(all_paths)
-        if path.endswith(".nc")
-        and any(path.split("/")[-1].startswith(f"{var}_") for var in variables)
-    ]
-
-
-def _get_geomip_netcdf_urls(variables: list[str], config: BaseMIROC_GeoMIP_Config) -> list[str]:
-    """Construct GeoMIP NetCDF S3 URLs from known filename pattern."""
-    return [
-        f"s3://{config.s3_bucket}/{config.s3_input_prefix}/{var}_{config.geomip_scenario}_{ens}.nc"
-        for var in variables
-        for ens in config.ensemble_members
-    ]
-
-
-def _preprocess_cmip6_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """Extract CMIP6 ensemble member (e.g. r1i1p4f2) from URL and add as dimension."""
-    if url is None:
-        raise ValueError("url parameter is required to determine ensemble member")
-    ensemble = url.split(".nc")[0].split("_gn")[0].split("_")[-1]
-    ds = ds.expand_dims({"ensemble_member": [ensemble]})
-    return ds
-
-
-def _preprocess_geomip_ensemble(ds: xr.Dataset, url: str = None) -> xr.Dataset:
-    """Extract GeoMIP (g6-1.5k) ensemble member suffix from URL filename and add as dimension."""
-    if url is None:
-        raise ValueError("url parameter is required to determine ensemble member")
-    ensemble = url.split(".nc")[0].split("_")[-1]  # e.g. "r01"
-    ds = ds.expand_dims({"ensemble_member": [ensemble]})
-    return ds
-
-
-# ---------------------------------------------------------------------------
 # Process helpers
 # ---------------------------------------------------------------------------
+
+
+def _get_netcdf_urls(config: BaseMIROC_ES2H_Config, variable: str) -> list[tuple[str, str]]:
+    """Return (member_id, s3_path) pairs for one variable."""
+    store = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
+    stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
+    paths = list(stream["objects"]["path"].to_numpy())
+
+    is_cmip6 = isinstance(config, BaseMIROC_CMIP6_Config)
+    result = []
+    for path in sorted(paths):
+        fname = path.split("/")[-1]
+        if not (fname.endswith(".nc") and fname.startswith(f"{variable}_")):
+            continue
+        if is_cmip6:
+            # {var}_day_MIROC-ES2H_{scenario}_{ens}_gn_{trange}.nc
+            member = fname.split(".nc")[0].split("_gn")[0].split("_")[-1]
+        else:
+            # {var}_{geomip_scenario}_{rXX}.nc
+            member = fname.split(".nc")[0].split("_")[-1]
+        if config.ensemble_members and member not in config.ensemble_members:
+            continue
+        result.append((member, path))
+    return result
 
 
 def _preprocess_miroc(
     ds: xr.Dataset, config: BaseMIROC_ES2H_Config, subset: bool = False
 ) -> xr.Dataset:
+    # Keep only standard spatial/temporal coords and drop bnds variables
+    # (time_bnds etc.) before calendar conversion; chunk({"time": -1}) in
+    # to_proleptic_gregorian fails on multi-dim bnds variables
+    keep_coords = set(ds.dims) | {"lat", "lon", "time"}
+    ds = ds.drop_vars([c for c in ds.coords if c not in keep_coords], errors="ignore")
+    bnds_data_vars = [v for v in ds.data_vars if any("bnds" in d for d in ds[v].dims)]
+    if bnds_data_vars:
+        ds = ds.drop_vars(bnds_data_vars)
     ds = ds.drop_duplicates(dim="time", keep="first")
     ds = to_proleptic_gregorian(ds)
     ds = ds.drop_encoding()
@@ -407,6 +378,89 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseMIROC_ES2H_Config
     return apply_ensemble_provenance(ds, _derivation_logic(config))
 
 
+def _process_single_variable(
+    config: BaseMIROC_ES2H_Config,
+    variable: str,
+    repo: icechunk.Repository,
+    var_specs: dict,
+    overwrite: bool,
+    subset: bool,
+) -> None:
+    log.info("variable=%s start", variable)
+
+    var_in_store = variable_in_store(repo, variable)
+    if not overwrite and var_in_store:
+        log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
+        return
+
+    if variable.lower() == "dtr":
+        log.info("variable=%s deriving dtr from icechunk store", variable)
+        mat_cat = catalog.get(config.materialized_key)
+        ds = load_dtr_from_store(mat_cat.bucket, mat_cat.prefix)
+    else:
+        obstore_inst = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
+        url_pairs = _get_netcdf_urls(config, variable)
+        if not url_pairs:
+            log.warning("variable=%s no files found, skipping", variable)
+            return
+        log.info("variable=%s found %d files", variable, len(url_pairs))
+
+        member_paths = group_paths_by_member(url_pairs)
+
+        member_datasets = []
+        for member, paths in sorted(member_paths.items()):
+            log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
+            time_slices = [open_netcdf_from_s3(obstore_inst, p) for p in sorted(paths)]
+            member_ds = (
+                xr.concat(time_slices, dim="time", data_vars="minimal")
+                if len(time_slices) > 1
+                else time_slices[0]
+            )
+            member_ds = _preprocess_miroc(member_ds, config, subset=subset)
+            member_ds = member_ds.expand_dims({"ensemble_member": [member]})
+            member_datasets.append(member_ds)
+            log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
+
+        ds = xr.concat(member_datasets, dim="ensemble_member")
+        ds = ds[[variable]]
+        log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
+
+    ds = _update_attrs(ds, var_specs, config)
+
+    write_variable_to_icechunk(
+        ds,
+        repo,
+        variable=variable,
+        scenario=config.scenario,
+        chunks=config.encoding["chunks"],
+        shards=config.encoding["shards"],
+        overwrite=overwrite,
+        var_in_store=var_in_store,
+    )
+    log.info("variable=%s done", variable)
+
+
+def _run_process(
+    config: BaseMIROC_ES2H_Config,
+    variables: list[str],
+    overwrite: bool,
+    subset: bool,
+) -> None:
+    log.info(
+        "scenario=%s variables=%s overwrite=%s subset=%s",
+        config.scenario,
+        variables,
+        overwrite,
+        subset,
+    )
+    mat_cat = catalog.get(config.materialized_key)
+    var_specs = get_var_specs(mat_cat)
+    repo, _ = init_repo(mat_cat.bucket, mat_cat.prefix, readonly=False)
+    for var in variables:
+        _process_single_variable(config, var, repo, var_specs, overwrite, subset)
+    log.info("scenario=%s all variables complete", config.scenario)
+
+
 # ---------------------------------------------------------------------------
 # Click commands
 # ---------------------------------------------------------------------------
@@ -439,71 +493,8 @@ def fetch(variable, scenario):
 
 
 @click.command()
+@click.option("--variable", multiple=True, help="Specific variable(s) to process")
 @click.option("--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True)
-@click.option("--coiled/--local", default=False)
-def virtualize(scenario, coiled):
-    """Virtualize NetCDF files on S3 into a virtual icechunk store."""
-    from obspec_utils.readers import BufferedStoreReader
-    from obspec_utils.wrappers import CachingReadableStore, SplittingReadableStore
-
-    config = SCENARIO_CONFIG_MAP[scenario]()
-    virt_cat = catalog.get(config.catalog_key)
-    variables = [var.name for var in virt_cat.expected_vars]
-
-    if coiled:
-        from srm.config import ClusterConfig
-
-        client = setup_cluster(ClusterConfig(**config.virtualize_cluster))
-    else:
-        client = setup_local_client()
-
-    try:
-        base_store = from_url(f"s3://{config.s3_bucket}", **config.aws_creds)
-        registry = ObjectStoreRegistry(
-            {f"s3://{config.s3_bucket}": CachingReadableStore(SplittingReadableStore(base_store))}
-        )
-        parser = HDFParser(reader_factory=BufferedStoreReader)
-
-        if isinstance(config, BaseMIROC_CMIP6_Config):
-            netcdf_urls = _get_cmip6_netcdf_urls(variables, config)
-            preprocess_fn = _preprocess_cmip6_ensemble
-        else:
-            netcdf_urls = _get_geomip_netcdf_urls(variables, config)
-            preprocess_fn = _preprocess_geomip_ensemble
-        combined_ds = virtualize_and_combine(
-            urls=netcdf_urls,
-            registry=registry,
-            parser=parser,
-            loadable_variables=["lat", "lon", "time", "time_bnds", "lat_bnds", "lon_bnds"],
-            preprocess_fn=preprocess_fn,
-        )
-
-        repo_config = icechunk.RepositoryConfig.default()
-        repo_config.set_virtual_chunk_container(
-            icechunk.VirtualChunkContainer(
-                f"s3://{config.s3_bucket}/",
-                store=icechunk.s3_store(region="us-west-2"),
-            )
-        )
-
-        storage = icechunk.s3_storage(
-            bucket=virt_cat.bucket, prefix=virt_cat.prefix, region="us-west-2"
-        )
-        repo = icechunk.Repository.open_or_create(storage, repo_config)
-        session = repo.writable_session("main")
-
-        combined_ds.vz.to_icechunk(session.store)
-        session.commit(f"{scenario}: virtualized variables {variables}")
-        repo.save_config()
-
-    finally:
-        client.shutdown()
-
-
-@click.command()
-@click.option("--variable", multiple=True, help="Specific variables to process")
-@click.option("--scenario", type=click.Choice(list(SCENARIO_CONFIG_MAP.keys())), required=True)
-@click.option("--coiled/--local", default=False)
 @click.option("--all-variables", is_flag=True, help="Process all expected variables from catalog")
 @click.option("--subset/--no-subset", default=False)
 @click.option(
@@ -512,60 +503,14 @@ def virtualize(scenario, coiled):
     default=False,
     help="Overwrite existing variable arrays in-place (r+ mode)",
 )
-def process(variable, scenario, coiled, all_variables, subset, overwrite):
-    """Read virtual icechunk store, postprocess, rechunk/shard and write to icechunk."""
+def process(variable, scenario, all_variables, subset, overwrite):
+    """Open NetCDF files from S3, concat, rechunk, and write to icechunk. One variable at a time."""
     config = SCENARIO_CONFIG_MAP[scenario]()
-
-    if coiled:
-        from srm.config import ClusterConfig
-
-        client = setup_cluster(ClusterConfig(**config.process_cluster))
-    else:
-        client = setup_local_client()
-
-    mat_cat = catalog.get(config.materialized_key)
-    var_specs = get_var_specs(mat_cat)
-
-    if all_variables:
-        variables = [var.name for var in mat_cat.expected_vars]
-    elif variable:
-        variables = list(variable)
-    else:
-        raise click.UsageError("Must specify either --variable or --all-variables")
-
-    try:
-        for var in variables:
-            if var.lower() == "dtr":
-                ds = load_dtr_from_store(mat_cat.bucket, mat_cat.prefix, config.encoding["shards"])
-            else:
-                ds = catalog.get(config.catalog_key).to_xarray()[[var]]
-                ds = _preprocess_miroc(ds, config, subset=subset)
-            ds = _update_attrs(ds, var_specs, config)
-
-            repo, session = init_repo(mat_cat.bucket, mat_cat.prefix, readonly=False)
-            write_mode = "r+" if overwrite else determine_write_mode(repo)
-            encoding = (
-                None
-                if overwrite
-                else build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
-            )
-            write_dataset_to_icechunk(
-                ds,
-                session,
-                encoding=encoding,
-                shards=config.encoding["shards"],
-                commit_message=f"{scenario}: {var} (overwrite)"
-                if overwrite
-                else f"{scenario}: {var}",
-                write_mode=write_mode,
-            )
-
-    finally:
-        client.shutdown()
+    variables = resolve_variables(variable, all_variables, catalog.get(config.materialized_key))
+    _run_process(config, variables, overwrite, subset)
 
 
 cli.add_command(fetch)
-cli.add_command(virtualize)
 cli.add_command(process)
 
 if __name__ == "__main__":

@@ -1,12 +1,17 @@
 import json
+import logging
 
+import click
 import dask
 import icechunk
 import xarray as xr
+from obspec_utils.readers import EagerStoreReader
 from obspec_utils.registry import ObjectStoreRegistry
 from virtualizarr.parsers import HDFParser
 
 from srm.config import VarSpec
+
+logger = logging.getLogger(__name__)
 
 
 def compute_wind_speed(
@@ -142,6 +147,73 @@ def write_dataset_to_icechunk(
 
     if commit_message:
         session.commit(commit_message)
+
+
+def open_netcdf_from_s3(store, path: str, drop_variables: list[str] | None = None) -> xr.Dataset:
+    """Open a NetCDF file on S3 by reading it fully into memory."""
+    reader = EagerStoreReader(store, path)
+    return xr.open_dataset(reader, engine="h5netcdf", chunks="auto", drop_variables=drop_variables)
+
+
+def variable_in_store(repo: icechunk.Repository, variable: str) -> bool:
+    try:
+        session = repo.readonly_session("main")
+        existing = xr.open_dataset(session.store, engine="zarr", decode_times=False)
+        return variable in existing.data_vars
+    except Exception:
+        return False
+
+
+def group_paths_by_member(pairs: list[tuple[str, str]]) -> dict[str, list[str]]:
+    """Group (member_id, path) pairs into {member_id: [paths]}."""
+    member_paths: dict[str, list[str]] = {}
+    for member, path in pairs:
+        member_paths.setdefault(member, []).append(path)
+    return member_paths
+
+
+def resolve_variables(variable: tuple[str, ...], all_variables: bool, catalog_entry) -> list[str]:
+    """Resolve --variable/--all-variables CLI options against a catalog entry."""
+    if all_variables:
+        return [var.name for var in catalog_entry.expected_vars]
+    if variable:
+        return list(variable)
+    raise click.UsageError("Must specify either --variable or --all-variables")
+
+
+def write_variable_to_icechunk(
+    ds: xr.Dataset,
+    repo: icechunk.Repository,
+    *,
+    variable: str,
+    scenario: str,
+    chunks: dict,
+    shards: dict,
+    overwrite: bool,
+    var_in_store: bool,
+) -> None:
+    """Write one variable to icechunk with shared overwrite semantics.
+
+    overwrite + existing variable -> in-place r+ update (no encoding change);
+    otherwise append/write with fresh chunk/shard encoding.
+    """
+    session = repo.writable_session("main")
+    if overwrite and var_in_store:
+        write_mode = "r+"
+    elif overwrite:
+        write_mode = "a"
+    else:
+        write_mode = determine_write_mode(repo)
+    encoding = build_encoding_dict(ds, chunks, shards)
+    logger.info("variable=%s writing to icechunk write_mode=%s", variable, write_mode)
+    write_dataset_to_icechunk(
+        ds,
+        session,
+        encoding=None if overwrite else encoding,
+        shards=None if overwrite else shards,
+        commit_message=f"{scenario}: {variable}" + (" (overwrite)" if overwrite else ""),
+        write_mode=write_mode,
+    )
 
 
 def virtualize_netcdf(
