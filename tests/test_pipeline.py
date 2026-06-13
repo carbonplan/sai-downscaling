@@ -914,6 +914,7 @@ class TestCalculateOutOfRangeMask:
         assert low.all(), "Expected out_of_range_low all True for below-min values"
         assert not high.any(), "Expected out_of_range_high all False for below-min values"
 
+
 class TestMakeDebiaser:
     """Tests that _make_debiaser forwards mapping_type to QuantileMapping."""
 
