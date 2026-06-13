@@ -123,8 +123,8 @@ def calculate_out_of_range_mask(
 
     doy = scenario_detrended["time.dayofyear"]
 
-    out_of_range_low = scenario_detrended > rolling_doy_max.sel(dayofyear=doy)
-    out_of_range_high = scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
+    out_of_range_low = scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
+    out_of_range_high = scenario_detrended > rolling_doy_max.sel(dayofyear=doy)
 
     out_of_range = out_of_range_low | out_of_range_high
 
