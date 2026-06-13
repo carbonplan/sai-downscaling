@@ -1,4 +1,4 @@
-# COILED vm-type r8g.8xlarge
+# COILED vm-type r8g.16xlarge
 # COILED region us-west-2
 
 import json
