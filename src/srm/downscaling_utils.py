@@ -308,8 +308,15 @@ def detrend(
     # was low, it would go from a positive adjustment for january 31 (and entire month before) to a negative
     #  adjustment for february 1 (and the entire month after). thus, there could be noticeable
     # artificial discontinuities inserted into the timeseries between 1/31 and 2/1.
+    # resample("1D") anchors at midnight; MIROC use noon timestamps.
+    # Floor da.time to midnight for reindex, then restore original coords to fix nan issue in #361
+    da_time_midnight = da.time.values.astype("datetime64[D]").astype("datetime64[ns]")
     trend_on_daily_timestep = (
-        da_mon_trend.resample(time="1D").ffill().reindex(time=da.time).ffill(dim="time")
+        da_mon_trend.resample(time="1D")
+        .ffill()
+        .reindex(time=da_time_midnight)
+        .ffill(dim="time")
+        .assign_coords(time=da.time)
     ).compute()
 
     # Calculate detrended timeseries

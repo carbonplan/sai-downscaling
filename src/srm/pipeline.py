@@ -399,6 +399,10 @@ class BCSDPipeline:
         ds = da.to_dataset()
         if dataset_attrs is not None:
             ds.attrs = dataset_attrs
+        # fix incompatable dask chunk sizes in encoding
+        for coord in list(ds.coords):
+            ds[coord].encoding.pop("chunks", None)
+            ds[coord].encoding.pop("shards", None)
         to_icechunk(ds, session, mode="w", encoding=encoding or {})
         return session.commit(commit_message, rebase_with=icechunk.ConflictDetector())
 
