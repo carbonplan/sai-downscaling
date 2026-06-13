@@ -21,12 +21,14 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.stats
 import xarray as xr
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
+    _make_debiaser,
     calculate_out_of_range_mask,
     stitch_historical_scenario,
 )
@@ -911,3 +913,46 @@ class TestCalculateOutOfRangeMask:
 
         assert low.all(), "Expected out_of_range_low all True for below-min values"
         assert not high.any(), "Expected out_of_range_high all False for below-min values"
+
+class TestMakeDebiaser:
+    """Tests that _make_debiaser forwards mapping_type to QuantileMapping."""
+
+    def test_parametric_mapping_type_forwarded(self):
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(variable="tas", mapping_type="parametric")
+            assert mock_qm.call_args.kwargs["mapping_type"] == "parametric"
+
+    def test_nonparametric_mapping_type_forwarded(self):
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(variable="tas", mapping_type="nonparametric")
+            assert mock_qm.call_args.kwargs["mapping_type"] == "nonparametric"
+
+    def test_2sided_pr_low_tail_uses_parametric_with_weibull(self):
+        """PR low-tail debiaser must use mapping_type='parametric' and weibull_min distribution."""
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(
+                variable="pr",
+                distribution=scipy.stats.weibull_min,
+                mapping_type="parametric",
+            )
+            call_kwargs = mock_qm.call_args.kwargs
+            assert call_kwargs["mapping_type"] == "parametric"
+            assert call_kwargs["distribution"] is scipy.stats.weibull_min
+
+    def test_2sided_pr_high_tail_uses_parametric_with_gumbel(self):
+        """PR high-tail debiaser must use mapping_type='parametric' and gumbel_r distribution."""
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(
+                variable="pr",
+                distribution=scipy.stats.gumbel_r,
+                mapping_type="parametric",
+            )
+            call_kwargs = mock_qm.call_args.kwargs
+            assert call_kwargs["mapping_type"] == "parametric"
+            assert call_kwargs["distribution"] is scipy.stats.gumbel_r
+
+    def test_tas_no_explicit_distribution_uses_norm(self):
+        """tas without explicit distribution defaults to scipy.stats.norm."""
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(variable="tas", mapping_type="parametric")
+            assert mock_qm.call_args.kwargs["distribution"] is scipy.stats.norm
