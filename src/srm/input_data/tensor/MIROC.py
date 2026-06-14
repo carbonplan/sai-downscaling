@@ -70,7 +70,6 @@ CMIP6_YEAR_RANGES: dict[str, range] = {
     "ssp245": range(2015, 2101),
 }
 
-# Unified per-GCM store: all scenarios live as zarr groups in one icechunk repo.
 UNIFIED_KEY = "MIROC-ES2H-unified-icechunk"
 
 # GeoMIP SSP245 (baseline) starts 2020; ESGF SSP245 fills the 2015-2019 gap.
@@ -95,7 +94,6 @@ class BaseMIROC_ES2H_Config(BaseETLConfig):
     # due to a CMOR labeling bug. Historical is correctly in %. Set True to apply ×100.
     cmorize_hurs: bool = False
     materialized_key: str = UNIFIED_KEY
-    # zarr group within the unified store
     group: str = ""
 
 
@@ -581,9 +579,7 @@ def process(variable, scenario, all_variables, subset, overwrite, store_prefix):
     """
     for scen in scenario:
         config = SCENARIO_CONFIG_MAP[scen]()
-        variables = resolve_variables(
-            variable, all_variables, catalog.get(config.materialized_key)
-        )
+        variables = resolve_variables(variable, all_variables, catalog.get(config.materialized_key))
         _run_process(config, variables, overwrite, subset, store_prefix=store_prefix)
 
 

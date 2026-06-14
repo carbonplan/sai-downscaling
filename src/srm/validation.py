@@ -42,18 +42,17 @@ SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
 # CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
 # as the first day of the month following the final data month.
-# The standard CESM2-WACCM historical store only covers 1978–2015; the full 1850–2014 CMIP6
-# range lives in the pangeo-prefixed store (see _PANGEO_HISTORICAL_TIME_BOUNDS below).
+# Unified per-GCM stores: historical group spans the full CMIP6 range (1850–2015 for CESM2).
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     "CESM2-WACCM": {
-        "historical": ("1978-01-01", "2015-01-16"),
+        "historical": ("1850-01-01", "2015-01-16"),
         "SSP245": ("2015-01-01", "2101-01-01"),
         "G6-1.5K": ("2035-01-01", "2085-01-01"),
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
-        # GeoMIP baseline data starts 2020; 2015-2019 gap is an upstream data limitation.
-        "SSP245": ("2020-01-01", "2084-12-31"),
+        # ESGF 2015-2019 gap is stitched at ingest; unified ssp245 group covers 2015 onward.
+        "SSP245": ("2015-01-01", "2084-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
     },
     "UKESM": {
@@ -63,10 +62,10 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     },
 }
 
-# Expected bounds for pangeo-prefixed historical stores (full CMIP6 1850–2014 period).
-# CESM2-WACCM first-of-next-month convention: last time step is 2015-01-01.
-_PANGEO_HISTORICAL_TIME_BOUNDS: dict[str, tuple[str, str]] = {
-    "CESM2-WACCM": ("1850-01-01", "2015-01-01"),
+_SCENARIO_TO_GROUP: dict[str, str] = {
+    "historical": "historical",
+    "SSP245": "ssp245",
+    "G6-1.5K": "g6_1p5k",
 }
 
 
@@ -181,7 +180,7 @@ class DatasetValidator(pydantic.BaseModel):
         )
 
     def _open_dataset(
-        self, key: str, *, on_missing: CheckStatus = CheckStatus.FAIL
+        self, key: str, *, on_missing: CheckStatus = CheckStatus.FAIL, group: str | None = None
     ) -> tuple[xr.Dataset | None, CheckResult | None]:
         """
         Catalog lookup + ``to_xarray()`` with unified error handling.
@@ -191,27 +190,28 @@ class DatasetValidator(pydantic.BaseModel):
         the catalog (typically ``SKIP`` for optional datasets, ``FAIL`` for required ones).
         Load errors always produce a ``FAIL`` result regardless of ``on_missing``.
         """
-        if key in self._load_errors:
-            msg, tb = self._load_errors[key]
+        cache_key = f"{key}@{group}" if group else key
+        if cache_key in self._load_errors:
+            msg, tb = self._load_errors[cache_key]
             return None, self._result(CheckStatus.FAIL, msg, {"traceback": tb})
 
-        if key not in self._dataset_cache:
+        if cache_key not in self._dataset_cache:
             catalog_ds = catalog.datasets.get(key)
             if catalog_ds is None:
-                self._dataset_cache[key] = None
+                self._dataset_cache[cache_key] = None
             else:
                 try:
-                    self._dataset_cache[key] = catalog_ds.to_xarray()
+                    self._dataset_cache[cache_key] = catalog_ds.to_xarray(group=group)
                 except Exception as exc:
                     tb = traceback.format_exc()
-                    self._load_errors[key] = (f"Failed to load dataset {key}: {exc}", tb)
+                    self._load_errors[cache_key] = (f"Failed to load dataset {key}: {exc}", tb)
                     return None, self._result(
                         CheckStatus.FAIL,
                         f"Failed to load dataset {key}: {exc}",
                         {"traceback": tb},
                     )
 
-        ds = self._dataset_cache[key]
+        ds = self._dataset_cache[cache_key]
         if ds is None:
             detail = (
                 {"available_keys": sorted(catalog.datasets.keys())}
@@ -227,8 +227,9 @@ class DatasetValidator(pydantic.BaseModel):
         """
         Check that the ensemble member dimension is present and correctly named in the dataset.
         """
-        key = f"{self.gcm}-{self.scenario}-icechunk"
-        ds, err = self._open_dataset(key, on_missing=CheckStatus.FAIL)
+        key = f"{self.gcm}-unified-icechunk"
+        group = _SCENARIO_TO_GROUP[self.scenario]
+        ds, err = self._open_dataset(key, on_missing=CheckStatus.FAIL, group=group)
         if err is not None:
             return err
         assert ds is not None
@@ -276,60 +277,29 @@ class DatasetValidator(pydantic.BaseModel):
             if ssp245 is not None:
                 ssp245_members_needed.add(ssp245)
 
-        # Route historical members: only GCMs that have a pangeo-prefixed store use it.
-        # CESM2-WACCM r1i1p1f1 (public CMIP6) → pangeo store; MIROC r1i1p4f2 (JAMSTEC,
-        # non-standard p4f2 tag) has no pangeo mirror and uses the standard store.
-        has_pangeo = f"pangeo-{self.gcm}-historical-icechunk" in catalog.datasets
-        standard_hist_needed = (
-            hist_members_needed
-            if not has_pangeo
-            else {m for m in hist_members_needed if not m.startswith("r")}
-        )
-        pangeo_hist_needed = (
-            set() if not has_pangeo else {m for m in hist_members_needed if m.startswith("r")}
-        )
-
         issues: list[str] = []
         detail: dict = {}
-        missing_hist: list[str] = []
 
-        if standard_hist_needed:
+        unified_key = f"{self.gcm}-unified-icechunk"
+
+        if hist_members_needed:
             hist_ds, err = self._open_dataset(
-                f"{self.gcm}-historical-icechunk", on_missing=CheckStatus.FAIL
+                unified_key, on_missing=CheckStatus.FAIL, group="historical"
             )
             if err is not None:
                 return err
             assert hist_ds is not None
             hist_available = set(_get_ensemble_members(hist_ds) or [])
-            detail["historical_needed"] = sorted(standard_hist_needed)
+            detail["historical_needed"] = sorted(hist_members_needed)
             detail["historical_available"] = sorted(hist_available)
-            missing = sorted(standard_hist_needed - hist_available)
-            if missing:
-                missing_hist.extend(missing)
-                detail["missing_historical"] = missing
-
-        if pangeo_hist_needed:
-            pangeo_ds, err = self._open_dataset(
-                f"pangeo-{self.gcm}-historical-icechunk", on_missing=CheckStatus.FAIL
-            )
-            if err is not None:
-                return err
-            assert pangeo_ds is not None
-            pangeo_available = set(_get_ensemble_members(pangeo_ds) or [])
-            detail["pangeo_historical_needed"] = sorted(pangeo_hist_needed)
-            detail["pangeo_historical_available"] = sorted(pangeo_available)
-            missing = sorted(pangeo_hist_needed - pangeo_available)
-            if missing:
-                missing_hist.extend(missing)
-                detail["missing_pangeo_historical"] = missing
-
-        if missing_hist:
-            issues.append(f"{len(missing_hist)} resolved historical member(s) missing")
-            detail["missing_historical_combined"] = sorted(missing_hist)
+            missing_hist = sorted(hist_members_needed - hist_available)
+            if missing_hist:
+                issues.append(f"{len(missing_hist)} resolved historical member(s) missing")
+                detail["missing_historical"] = missing_hist
 
         if ssp245_members_needed:
             ssp245_ds, err = self._open_dataset(
-                f"{self.gcm}-SSP245-icechunk", on_missing=CheckStatus.FAIL
+                unified_key, on_missing=CheckStatus.FAIL, group="ssp245"
             )
             if err is not None:
                 return err
@@ -345,16 +315,11 @@ class DatasetValidator(pydantic.BaseModel):
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
 
-        hist_labels = []
-        if standard_hist_needed:
-            hist_labels.append("historical")
-        if pangeo_hist_needed:
-            hist_labels.append(f"pangeo-{self.gcm}-historical")
-        store_labels = ", ".join(hist_labels) + (" and SSP245" if ssp245_members_needed else "")
+        store_labels = "historical" + (" and ssp245" if ssp245_members_needed else "")
         return self._result(
             CheckStatus.PASS,
             f"All {len(entries)} lineage entries resolve to available members "
-            f"in {store_labels} store(s).",
+            f"in {store_labels} group(s) of {unified_key}.",
             detail,
         )
 
@@ -370,15 +335,16 @@ class DatasetValidator(pydantic.BaseModel):
         if self.scenario != "G6-1.5K":
             return self._result(CheckStatus.SKIP, "Only applicable to G6-1.5K scenario.")
 
-        g6_key = f"{self.gcm}-G6-1.5K-icechunk"
-        ssp245_key = f"{self.gcm}-SSP245-icechunk"
+        unified_key = f"{self.gcm}-unified-icechunk"
 
-        g6_ds, err = self._open_dataset(g6_key, on_missing=CheckStatus.SKIP)
+        g6_ds, err = self._open_dataset(unified_key, on_missing=CheckStatus.SKIP, group="g6_1p5k")
         if err is not None:
             return err
         assert g6_ds is not None
 
-        ssp245_ds, err = self._open_dataset(ssp245_key, on_missing=CheckStatus.SKIP)
+        ssp245_ds, err = self._open_dataset(
+            unified_key, on_missing=CheckStatus.SKIP, group="ssp245"
+        )
         if err is not None:
             return err
         assert ssp245_ds is not None
@@ -500,11 +466,11 @@ class DatasetValidator(pydantic.BaseModel):
         E2: Time axis must be gapless with correct first and last dates.
 
         Bounds are looked up per GCM from ``_SCENARIO_TIME_BOUNDS`` (explicit observed date
-        strings). For historical scenarios, also checks the pangeo-prefixed store when
-        bounds are registered in ``_PANGEO_HISTORICAL_TIME_BOUNDS``.
+        strings). The unified per-GCM store is opened with the appropriate scenario group.
         """
-        key = f"{self.gcm}-{self.scenario}-icechunk"
-        ds, err = self._open_dataset(key, on_missing=CheckStatus.SKIP)
+        key = f"{self.gcm}-unified-icechunk"
+        group = _SCENARIO_TO_GROUP[self.scenario]
+        ds, err = self._open_dataset(key, on_missing=CheckStatus.SKIP, group=group)
         if err is not None:
             return err
         assert ds is not None
@@ -521,19 +487,6 @@ class DatasetValidator(pydantic.BaseModel):
         expected_start, expected_end = gcm_bounds[self.scenario]
 
         issues, detail = self._check_store_temporal(ds, expected_start, expected_end)
-
-        # For historical scenarios, also check the pangeo-prefixed store.
-        if self.scenario == "historical" and self.gcm in _PANGEO_HISTORICAL_TIME_BOUNDS:
-            pangeo_key = f"pangeo-{self.gcm}-historical-icechunk"
-            pangeo_ds, pangeo_err = self._open_dataset(pangeo_key, on_missing=CheckStatus.SKIP)
-            if pangeo_err is not None and pangeo_err.status == CheckStatus.FAIL:
-                issues.append(f"pangeo-historical store failed to load: {pangeo_err.message}")
-                detail["pangeo_load_error"] = pangeo_err.detail.get("traceback", "")
-            elif pangeo_ds is not None and "time" in pangeo_ds.dims:
-                p_start, p_end = _PANGEO_HISTORICAL_TIME_BOUNDS[self.gcm]
-                p_issues, p_detail = self._check_store_temporal(pangeo_ds, p_start, p_end)
-                issues.extend(f"pangeo-historical: {i}" for i in p_issues)
-                detail.update({f"pangeo_{k}": v for k, v in p_detail.items()})
 
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)

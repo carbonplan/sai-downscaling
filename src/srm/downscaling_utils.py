@@ -139,6 +139,13 @@ def rechunk(da: xr.DataArray, pattern: typing.Literal["full_space", "full_time"]
     return da
 
 
+_SCENARIO_TO_GROUP: dict[str, str] = {
+    "historical": "historical",
+    "SSP245": "ssp245",
+    "G6-1.5K": "g6_1p5k",
+}
+
+
 def get_experiment(
     gcm: str,
     scenario: str,
@@ -146,43 +153,19 @@ def get_experiment(
     coord_bounds_list: list | None = None,
     ensemble_member: str | None = None,
 ):
-    """
-    Load in a GCM simulation.
-
-    Parameters
-    ----------
-    gcm : str
-        Name of the GCM, e.g. "CESM2-WACCM"
-    scenario : str
-        Scenario of experiment, e.g. "SSP245"
-    var : str
-        Variable to load, e.g. "tas"
-
-    Returns
-    -------
-    xr.DataArray
-        Xarray data array for requested simulation
-
-    Raises
-    ------
-    ValueError
-        If invalid ensemble member requested
-
-    """
-    cat_name = gcm + "-" + scenario + "-icechunk"
+    """Load a GCM simulation from the unified per-GCM icechunk store."""
+    cat_name = f"{gcm}-unified-icechunk"
+    group = _SCENARIO_TO_GROUP[scenario]
     dataset = catalog.get(cat_name)
-    # confirm that the requested ensemble member is available
     if ensemble_member is not None and dataset.ensemble_members is not None:
         if ensemble_member not in dataset.ensemble_members:
             raise ValueError(
-                f"Invalid ensemble_member '{ensemble_member}' for '{cat_name}'. "
+                f"Invalid ensemble_member '{ensemble_member}' for '{cat_name}/{group}'. "
                 f"Valid options: {dataset.ensemble_members}"
             )
 
-    ds_scenario = dataset.to_xarray()
-
+    ds_scenario = dataset.to_xarray(group=group)
     ds_scenario = ds_scenario.proj.assign_crs(spatial_ref="epsg:4326")
-
     da = ds_scenario[var]
 
     if coord_bounds_list is not None:
@@ -190,17 +173,6 @@ def get_experiment(
         da = subset_space(da, coord_bounds_list)
 
     return da
-
-
-def get_historical_experiment(gcm: str, member: str, var: str) -> xr.DataArray:
-    """Load a single historical ensemble member, routing to the correct source dataset.
-    CESM2-WACCM has a two historical dataset options, so we route to the pangeo-prefixed store for r*i*p*f* members,
-    while others use the standard store path."""
-    use_pangeo = gcm == "CESM2-WACCM" and member.startswith("r")
-    key = f"pangeo-{gcm}-historical-icechunk" if use_pangeo else f"{gcm}-historical-icechunk"
-    ds = catalog.get(key).to_xarray()
-    ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
-    return ds[var].sel(ensemble_member=member)
 
 
 def get_obs(var: str = "tas", coord_bounds_list: list | None = None):

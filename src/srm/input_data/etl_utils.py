@@ -9,7 +9,7 @@ import click
 import dask
 import icechunk
 import xarray as xr
-from obspec_utils.readers import EagerStoreReader
+from obspec_utils.readers import BlockStoreReader
 from obspec_utils.registry import ObjectStoreRegistry
 from rich.console import Console
 from rich.logging import RichHandler
@@ -295,8 +295,8 @@ def write_dataset_to_icechunk(
 
 
 def open_netcdf_from_s3(store, path: str, drop_variables: list[str] | None = None) -> xr.Dataset:
-    """Open a NetCDF file on S3 by reading it fully into memory."""
-    reader = EagerStoreReader(store, path)
+    """Open a NetCDF file on S3 via a block-cached reader (64 × 4 MB LRU, no full-file load)."""
+    reader = BlockStoreReader(store, path, block_size=4_194_304)
     return xr.open_dataset(reader, engine="h5netcdf", chunks="auto", drop_variables=drop_variables)
 
 
@@ -491,22 +491,3 @@ def _display_dry_run_result(ds: xr.Dataset, variable: str, store: str | None = N
             border_style="green",
         )
     )
-
-
-def load_dtr_from_store(
-    bucket: str, prefix: str, region: str = "us-west-2", group: str | None = None
-) -> xr.Dataset:
-    """Load DTR (diurnal temperature range) from an existing icechunk store.
-
-    Computes dtr = tasmax - tasmin. tasmax and tasmin must already be present
-    in the store (optionally within ``group``) before calling this.
-    """
-    storage = icechunk.s3_storage(bucket=bucket, prefix=prefix, region=region)
-    repo = icechunk.Repository.open(storage)
-    session = repo.readonly_session("main")
-    ds = xr.open_dataset(session.store, engine="zarr", group=group, chunks="auto")
-    if "tasmax" not in ds or "tasmin" not in ds:
-        raise ValueError("tasmax and tasmin must be processed before dtr")
-    dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")
-    dtr.attrs["units"] = "K"
-    return dtr.to_dataset()

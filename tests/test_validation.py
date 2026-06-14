@@ -31,6 +31,13 @@ def _failing_entry(msg: str = "S3 error") -> MagicMock:
     return entry
 
 
+def _grouped_catalog_entry(groups: dict[str, xr.Dataset]) -> MagicMock:
+    """Return a mock catalog entry whose to_xarray(group=X) returns groups.get(X)."""
+    entry = MagicMock()
+    entry.to_xarray.side_effect = lambda **kw: groups.get(kw.get("group"))
+    return entry
+
+
 def _ds_with_members(*members: str) -> xr.Dataset:
     """Minimal xr.Dataset with an ensemble_member dimension."""
     n = len(members)
@@ -95,12 +102,12 @@ class TestDatasetValidatorConstruction:
 
 class TestCheckEnsembleMemberDim:
     def test_pass(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_with_members("r1i1p1f1"))
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(_ds_with_members("r1i1p1f1"))
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_ensemble_member_dim()
         assert result.status == CheckStatus.PASS
 
     def test_fail_missing_dim(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_no_members())
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(_ds_no_members())
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_ensemble_member_dim()
         assert result.status == CheckStatus.FAIL
         assert "missing" in result.message
@@ -111,7 +118,7 @@ class TestCheckEnsembleMemberDim:
         assert "not found" in result.message
 
     def test_fail_load_error(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _failing_entry()
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _failing_entry()
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_ensemble_member_dim()
         assert result.status == CheckStatus.FAIL
         assert "traceback" in result.detail
@@ -133,7 +140,7 @@ class TestCheckLineageMemberAvailability:
         assert "not found" in result.message
 
     def test_pass_ukesm_ssp245_all_hist_present(self, mock_datasets):
-        mock_datasets["UKESM-historical-icechunk"] = _catalog_entry(
+        mock_datasets["UKESM-unified-icechunk"] = _catalog_entry(
             _ds_with_members("r2i1p1f2", "r3i1p1f2", "r12i1p1f2")
         )
         result = DatasetValidator(
@@ -156,9 +163,8 @@ class TestCheckLineageMemberAvailability:
         assert "not found" in result.message
 
     def test_pass_ssp245_all_hist_present(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members("001"))
-        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(
+            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001")
         )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="SSP245"
@@ -167,10 +173,9 @@ class TestCheckLineageMemberAvailability:
         assert "historical" in result.message
 
     def test_fail_ssp245_hist_member_missing(self, mock_datasets):
-        # Missing "001" from standard store — needed for tasmax/tasmin members 007-010
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members())
-        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
+        # Missing "001" from unified store — needed for tasmax/tasmin members 007-010
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(
+            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")  # "001" absent
         )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="SSP245"
@@ -179,27 +184,21 @@ class TestCheckLineageMemberAvailability:
         assert "001" in result.detail["missing_historical"]
 
     def test_pass_g6_all_members_present(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members("001"))
-        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
-        )
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(
-            _ds_with_members(*_CESM2_G6_SSP245_MEMBERS)
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(
+            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001", *_CESM2_G6_SSP245_MEMBERS)
         )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.PASS
-        assert "SSP245" in result.message
+        assert "ssp245" in result.message
 
     def test_fail_g6_ssp245_bridge_member_missing(self, mock_datasets):
         # Missing SSP245 "009" — bridge for G6 member 001 tasmax/tasmin
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members("001"))
-        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
-        )
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(
-            _ds_with_members("001", "002", "003", "007", "008")  # 009 missing
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(
+            _ds_with_members(
+                "r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001", "002", "003", "007", "008"
+            )  # 009 missing
         )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
@@ -208,11 +207,7 @@ class TestCheckLineageMemberAvailability:
         assert "009" in result.detail["missing_ssp245"]
 
     def test_fail_g6_ssp245_store_missing(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(_ds_with_members("001"))
-        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
-        )
-        # SSP245 store absent
+        # Unified store absent — hist group not found → FAIL
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
         ).check_lineage_member_availability()
@@ -251,15 +246,16 @@ class TestCheckG6NotIdenticalToSsp245:
         assert result.status == CheckStatus.SKIP
 
     def test_skip_ssp245_missing(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(_ds_with_data(1.0))
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _grouped_catalog_entry(
+            {"g6_1p5k": _ds_with_data(1.0)}
+        )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.SKIP
 
     def test_fail_load_g6(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _failing_entry()
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_with_data(1.0))
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _failing_entry()
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
@@ -267,16 +263,19 @@ class TestCheckG6NotIdenticalToSsp245:
         assert "traceback" in result.detail
 
     def test_pass_data_differs(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(_ds_with_data(1.0))
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_with_data(2.0))
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _grouped_catalog_entry(
+            {"g6_1p5k": _ds_with_data(1.0), "ssp245": _ds_with_data(2.0)}
+        )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.PASS
 
     def test_fail_data_identical(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(_ds_with_data(1.0))
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(_ds_with_data(1.0))
+        identical_ds = _ds_with_data(1.0)
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _grouped_catalog_entry(
+            {"g6_1p5k": identical_ds, "ssp245": identical_ds}
+        )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
@@ -284,11 +283,8 @@ class TestCheckG6NotIdenticalToSsp245:
         assert "identical" in result.message.lower()
 
     def test_skip_no_shared_members(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(
-            _ds_with_data(1.0, "r1i1p1f1")
-        )
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(
-            _ds_with_data(1.0, "r2i1p1f1")
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _grouped_catalog_entry(
+            {"g6_1p5k": _ds_with_data(1.0, "r1i1p1f1"), "ssp245": _ds_with_data(1.0, "r2i1p1f1")}
         )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
@@ -299,8 +295,9 @@ class TestCheckG6NotIdenticalToSsp245:
     def test_skip_no_common_vars(self, mock_datasets):
         g6_ds = xr.Dataset({"tas": (["time"], np.zeros(3))}, coords={"time": range(3)})
         ssp245_ds = xr.Dataset({"pr": (["time"], np.zeros(3))}, coords={"time": range(3)})
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(g6_ds)
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(ssp245_ds)
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _grouped_catalog_entry(
+            {"g6_1p5k": g6_ds, "ssp245": ssp245_ds}
+        )
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
@@ -318,18 +315,18 @@ class TestCheckTemporalCoverage:
 
     def test_skip_no_time_dim(self, mock_datasets):
         ds = xr.Dataset({"tas": (["lat"], np.zeros(3))}, coords={"lat": range(3)})
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(ds)
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.SKIP
 
     def test_fail_load_error(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _failing_entry()
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _failing_entry()
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
 
     def test_pass_correct_ssp245_coverage(self, mock_datasets):
         ds = _ds_with_time("2015-01-01", "2101-01-01")
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(ds)
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
         assert result.detail["actual_start"] == "2015-01-01"
@@ -337,59 +334,48 @@ class TestCheckTemporalCoverage:
 
     def test_fail_wrong_start_date(self, mock_datasets):
         ds = _ds_with_time("2016-01-01", "2100-12-31")
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(ds)
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
         assert "start date" in result.message
 
     def test_fail_wrong_end_date(self, mock_datasets):
         ds = _ds_with_time("2015-01-01", "2099-12-31")
-        mock_datasets["CESM2-WACCM-SSP245-icechunk"] = _catalog_entry(ds)
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
         assert "end date" in result.message
 
     def test_pass_correct_g6_coverage(self, mock_datasets):
         ds = _ds_with_time("2035-01-01", "2085-01-01")
-        mock_datasets["CESM2-WACCM-G6-1.5K-icechunk"] = _catalog_entry(ds)
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="G6-1.5K").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
 
     def test_pass_correct_historical_coverage(self, mock_datasets):
-        ds = _ds_with_time("1978-01-01", "2015-01-16")
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(ds)
+        ds = _ds_with_time("1850-01-01", "2015-01-16")
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"
         ).check_temporal_coverage()
         assert result.status == CheckStatus.PASS
 
     def test_pass_historical_with_pangeo_coverage(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_time("1978-01-01", "2015-01-16")
-        )
-        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_time("1850-01-01", "2015-01-01")
-        )
+        ds = _ds_with_time("1850-01-01", "2015-01-16")
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"
         ).check_temporal_coverage()
         assert result.status == CheckStatus.PASS
-        assert "pangeo_actual_start" in result.detail
-        assert result.detail["pangeo_actual_start"] == "1850-01-01"
-        assert result.detail["pangeo_actual_end"] == "2015-01-01"
 
     def test_fail_historical_pangeo_wrong_end(self, mock_datasets):
-        mock_datasets["CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_time("1978-01-01", "2015-01-16")
-        )
-        mock_datasets["pangeo-CESM2-WACCM-historical-icechunk"] = _catalog_entry(
-            _ds_with_time("1850-01-01", "2014-12-31")  # wrong end for CESM2-WACCM
-        )
+        ds = _ds_with_time("1850-01-01", "2014-12-31")  # wrong end date
+        mock_datasets["CESM2-WACCM-unified-icechunk"] = _catalog_entry(ds)
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"
         ).check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
-        assert "pangeo-historical" in result.message
+        assert "end date" in result.message
 
 
 # ── validate() ───────────────────────────────────────────────────────────────

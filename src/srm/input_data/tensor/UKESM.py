@@ -43,7 +43,6 @@ log = logging.getLogger(__name__)
 
 T_PR_VARS = ["pr", "tas", "tasmin", "tasmax"]
 
-# Unified per-GCM store: all scenarios live as zarr groups in one icechunk repo.
 UNIFIED_KEY = "UKESM-unified-icechunk"
 
 
@@ -52,7 +51,6 @@ class BaseUKESM_Config(BaseETLConfig):
     s3_input_prefix: str = ""
     ensemble_members: list = field(default_factory=lambda: ["001", "002", "003"])
     materialized_key: str = UNIFIED_KEY
-    # zarr group within the unified store
     group: str = ""
 
 
@@ -464,9 +462,7 @@ def process(variable, scenario, all_variables, subset, overwrite, store_prefix):
     icechunk store under each scenario's zarr group. One variable at a time."""
     for scen in scenario:
         config = SCENARIO_CONFIG_MAP[scen]()
-        variables = resolve_variables(
-            variable, all_variables, catalog.get(config.materialized_key)
-        )
+        variables = resolve_variables(variable, all_variables, catalog.get(config.materialized_key))
         _run_process(config, variables, overwrite, subset, store_prefix=store_prefix)
 
 

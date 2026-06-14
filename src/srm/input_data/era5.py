@@ -49,7 +49,6 @@ ERA5_TO_CMIP6 = {
     "hurs": "hurs",
 }
 
-# Maps each ERA5 source variable to its daily resampling operation
 RESAMPLE_OPS = {
     "maximum_2m_temperature_since_previous_post_processing": "max",
     "minimum_2m_temperature_since_previous_post_processing": "min",

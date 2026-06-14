@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock, patch
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -10,7 +8,6 @@ from srm.downscaling_utils import (
     calculate_baseline_climatology,
     detrend,
     fft_smooth_3harmonics,
-    get_historical_experiment,
     rechunk,
     retrend,
     subset_space,
@@ -472,34 +469,3 @@ def test_fft_smooth_3harmonics_attenuates_high_frequency_content():
     data[0] = 1.0
     result = fft_smooth_3harmonics(data)
     assert np.sqrt(np.mean(result**2)) < np.sqrt(np.mean(data**2))
-
-
-@pytest.mark.parametrize(
-    "gcm, member, expected_key",
-    [
-        # CESM2-WACCM with CMIP6-style label -> pangeo store
-        ("CESM2-WACCM", "r1i1p1f1", "pangeo-CESM2-WACCM-historical-icechunk"),
-        # CESM2-WACCM with numeric label -> standard store
-        ("CESM2-WACCM", "1", "CESM2-WACCM-historical-icechunk"),
-        # MIROC-ES2H with CMIP6-style label -> standard store (not pangeo; only CESM2-WACCM has pangeo store)
-        ("MIROC-ES2H", "r1i1p1f1", "MIROC-ES2H-historical-icechunk"),
-        # Other GCM with CMIP6-style label -> standard store (not pangeo)
-        ("UKESM1-0-LL", "r1i1p1f2", "UKESM1-0-LL-historical-icechunk"),
-    ],
-)
-def test_get_historical_experiment_routing(gcm: str, member: str, expected_key: str):
-    mock_da = MagicMock(spec=xr.DataArray)
-    mock_da.__getitem__ = lambda self, key: mock_da
-    mock_da.sel.return_value = mock_da
-
-    mock_ds = MagicMock()
-    mock_ds.__getitem__ = lambda self, key: mock_da
-    mock_ds.proj.assign_crs.return_value = mock_ds
-
-    mock_catalog_entry = MagicMock()
-    mock_catalog_entry.to_xarray.return_value = mock_ds
-
-    with patch("srm.downscaling_utils.catalog") as mock_catalog:
-        mock_catalog.get.return_value = mock_catalog_entry
-        get_historical_experiment(gcm, member, "tas")
-        mock_catalog.get.assert_called_once_with(expected_key)

@@ -1,4 +1,4 @@
-# COILED vm-type r8g.16xlarge
+# COILED vm-type r8g.24xlarge
 # COILED region us-west-2
 
 import json
@@ -48,7 +48,6 @@ log = logging.getLogger(__name__)
 SHARED_VARIABLES = ["tas", "rsds", "hurs", "pr", "tasmax", "tasmin"]
 SHARED_ENSEMBLE_MEMBERS = ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
 
-# Unified per-GCM store: all scenarios live as zarr groups in one icechunk repo.
 UNIFIED_KEY = "CESM2-WACCM-unified-icechunk"
 SCENARIO_TO_GROUP: dict[str, str] = {
     "historical": "historical",
@@ -61,6 +60,56 @@ SCENARIO_TO_GROUP: dict[str, str] = {
 # b.e21.BWSSP245cmip6.f09_g17.CMIP6-SSP2-4.5-WACCM.001.cam.h1....nc
 MEMBER_PATTERN = re.compile(r"\.(\d{3})\.cam\.")
 
+CESM_WACCM_VARIABLE_MAPPING: dict[str, str] = {
+    "FSDS": "rsds",
+    "TREFHT": "tas",
+    "TREFHTMX": "tasmax",
+    "TREFHTMN": "tasmin",
+    "RHREFHT": "hurs",
+    "PRECT": "pr",
+}
+
+CESM_UNIT_MAPPING: dict[str, str] = {
+    "pr": "kg m-2 s-1",
+    "tas": "K",
+    "tasmax": "K",
+    "tasmin": "K",
+    "hurs": "%",
+    "rsds": "W m-2",
+}
+
+CMORIZATION_FUNCTIONS: dict = {"pr": CMORIZE_pr}
+
+CESM_DROP_VARIABLES: list[str] = [
+    "gw",
+    "hyam",
+    "hybm",
+    "P0",
+    "hyai",
+    "hybi",
+    "ndbase",
+    "nsbase",
+    "nbdate",
+    "nbsec",
+    "mdt",
+    "date",
+    "datesec",
+    "time_bnds",
+    "date_written",
+    "time_written",
+    "ndcur",
+    "nscur",
+    "co2vmr",
+    "ch4vmr",
+    "n2ovmr",
+    "f11vmr",
+    "f12vmr",
+    "sol_tsi",
+    "nsteph",
+    "ilev",
+    "lev",
+]
+
 
 @dataclass
 class BaseCESM_Config(BaseETLConfig):
@@ -70,66 +119,6 @@ class BaseCESM_Config(BaseETLConfig):
     @property
     def group(self) -> str:
         return SCENARIO_TO_GROUP[self.scenario]
-
-    CESM_WACCM_VARIABLE_MAPPING: dict = field(
-        default_factory=lambda: {
-            "FSDS": "rsds",
-            "TREFHT": "tas",
-            "TREFHTMX": "tasmax",
-            "TREFHTMN": "tasmin",
-            "RHREFHT": "hurs",
-            "PRECT": "pr",
-        }
-    )
-
-    CESM_UNIT_MAPPING: dict = field(
-        default_factory=lambda: {
-            "pr": "kg m-2 s-1",
-            "tas": "K",
-            "tasmax": "K",
-            "tasmin": "K",
-            "hurs": "%",
-            "rsds": "W m-2",
-        }
-    )
-
-    cmorization_functions: dict = field(
-        default_factory=lambda: {
-            "pr": CMORIZE_pr,
-        }
-    )
-
-    drop_variables: list = field(
-        default_factory=lambda: [
-            "gw",
-            "hyam",
-            "hybm",
-            "P0",
-            "hyai",
-            "hybi",
-            "ndbase",
-            "nsbase",
-            "nbdate",
-            "nbsec",
-            "mdt",
-            "date",
-            "datesec",
-            "time_bnds",
-            "date_written",
-            "time_written",
-            "ndcur",
-            "nscur",
-            "co2vmr",
-            "ch4vmr",
-            "n2ovmr",
-            "f11vmr",
-            "f12vmr",
-            "sol_tsi",
-            "nsteph",
-            "ilev",
-            "lev",
-        ]
-    )
 
 
 @dataclass
@@ -179,8 +168,6 @@ SCENARIO_CONFIG_MAP = {
     "G6-1.5K": CESM_G6_1_5K_Config,
 }
 
-# --- PROVENANCE HELPERS ---
-
 
 def _capture_provenance(ds: xr.Dataset, url: str) -> dict:
     """Extracts identification markers and records exactly which keys were found."""
@@ -225,7 +212,7 @@ def _finalize_metadata(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
         ),
     }
 
-    if any(v in config.cmorization_functions for v in ds.data_vars):
+    if any(v in CMORIZATION_FUNCTIONS for v in ds.data_vars):
         etl_attrs["processing_steps"] += ", cmorization_unit_conversion"
 
     ds.attrs.update(etl_attrs)
@@ -286,11 +273,8 @@ def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:
     return combined
 
 
-# --- PROCESS HELPERS ---
-
-
-def _get_cesm_var_from_cmip6(cmip6_var: str, config: BaseCESM_Config) -> str:
-    reverse_mapping = {v: k for k, v in config.CESM_WACCM_VARIABLE_MAPPING.items()}
+def _get_cesm_var_from_cmip6(cmip6_var: str) -> str:
+    reverse_mapping = {v: k for k, v in CESM_WACCM_VARIABLE_MAPPING.items()}
     return reverse_mapping.get(cmip6_var, cmip6_var)
 
 
@@ -309,7 +293,7 @@ def _get_netcdf_urls(config: BaseCESM_Config, variable: str) -> list[tuple[str, 
     store = from_url(f"s3://{config.s3_bucket}", region="us-west-2")
     stream = obs.list_with_delimiter(store, prefix=config.s3_input_prefix, return_arrow=True)
     paths = list(stream["objects"]["path"].to_numpy())
-    cesm_var = _get_cesm_var_from_cmip6(variable, config)
+    cesm_var = _get_cesm_var_from_cmip6(variable)
 
     result = []
     for path in sorted(paths):
@@ -322,8 +306,8 @@ def _get_netcdf_urls(config: BaseCESM_Config, variable: str) -> list[tuple[str, 
     return result
 
 
-def _standardize_vars(ds: xr.Dataset, config: BaseCESM_Config) -> xr.Dataset:
-    for var, cmip6_var in config.CESM_WACCM_VARIABLE_MAPPING.items():
+def _standardize_vars(ds: xr.Dataset) -> xr.Dataset:
+    for var, cmip6_var in CESM_WACCM_VARIABLE_MAPPING.items():
         if var in ds.data_vars:
             ds = ds.rename({var: cmip6_var})
     return ds
@@ -343,11 +327,11 @@ def _preprocess_cesm(
     ds = ds.drop_encoding()
     ds = lon_to_180(ds, lon_name="lon")
     ds = ds.sortby(["lat", "lon"])
-    ds = _standardize_vars(ds, config)
+    ds = _standardize_vars(ds)
     ds = trim_negative_precipitation(ds)
 
-    if var in config.cmorization_functions:
-        ds = config.cmorization_functions[var](ds, var)
+    if var in CMORIZATION_FUNCTIONS:
+        ds = CMORIZATION_FUNCTIONS[var](ds, var)
 
     if subset:
         ds = ds.isel(time=slice(0, 365))
@@ -356,8 +340,8 @@ def _preprocess_cesm(
 
 def _update_attrs(ds: xr.Dataset, var_specs: dict, config: BaseCESM_Config) -> xr.Dataset:
     for var_name in ds.data_vars:
-        if var_name in config.CESM_UNIT_MAPPING:
-            ds[var_name].attrs["units"] = config.CESM_UNIT_MAPPING[var_name]
+        if var_name in CESM_UNIT_MAPPING:
+            ds[var_name].attrs["units"] = CESM_UNIT_MAPPING[var_name]
 
     ds = update_variable_attrs(ds, var_specs)
     ds = _finalize_metadata(ds, config)
@@ -394,7 +378,7 @@ def _process_single_variable(
     for member, paths in sorted(member_paths.items()):
         log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
         time_slices = [
-            open_netcdf_from_s3(obstore_inst, p, config.drop_variables) for p in sorted(paths)
+            open_netcdf_from_s3(obstore_inst, p, CESM_DROP_VARIABLES) for p in sorted(paths)
         ]
         member_manifest[member] = _capture_provenance(time_slices[0], paths[0])
         member_ds = (
@@ -520,9 +504,6 @@ def _run_pangeo_process(
     )
 
 
-# --- CLI ---
-
-
 @click.group()
 def cli():
     pass
@@ -559,9 +540,7 @@ def process(variable, scenario, all_variables, subset, overwrite, store_prefix):
     """
     for scen in scenario:
         config = SCENARIO_CONFIG_MAP[scen]()
-        variables = resolve_variables(
-            variable, all_variables, catalog.get(config.materialized_key)
-        )
+        variables = resolve_variables(variable, all_variables, catalog.get(config.materialized_key))
         if _is_pangeo_scenario(scen):
             _run_pangeo_process(config, variables, store_prefix=store_prefix)
         else:
