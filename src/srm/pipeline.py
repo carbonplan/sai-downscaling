@@ -123,8 +123,8 @@ def calculate_out_of_range_mask(
 
     doy = scenario_detrended["time.dayofyear"]
 
-    out_of_range_low = scenario_detrended > rolling_doy_max.sel(dayofyear=doy)
-    out_of_range_high = scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
+    out_of_range_low = scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
+    out_of_range_high = scenario_detrended > rolling_doy_max.sel(dayofyear=doy)
 
     out_of_range = out_of_range_low | out_of_range_high
 
@@ -1091,12 +1091,12 @@ class BCSDPipeline:
                 low_dist = scipy.stats.weibull_min
                 high_dist = scipy.stats.gumbel_r
 
-                parametric_low_np = _make_debiaser(distribution=low_dist, **common_kwargs).apply(
-                    **apply_kwargs
-                )
-                parametric_high_np = _make_debiaser(distribution=high_dist, **common_kwargs).apply(
-                    **apply_kwargs
-                )
+                parametric_low_np = _make_debiaser(
+                    distribution=low_dist, mapping_type="parametric", **common_kwargs
+                ).apply(**apply_kwargs)
+                parametric_high_np = _make_debiaser(
+                    distribution=high_dist, mapping_type="parametric", **common_kwargs
+                ).apply(**apply_kwargs)
             else:
                 # Unless explicitly specified, use the same parametric debiaser for both tails even if calling "nonparametric_hybrid_2sided"
                 parametric_low_np = _make_debiaser(

@@ -21,12 +21,14 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.stats
 import xarray as xr
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
+    _make_debiaser,
     calculate_out_of_range_mask,
     stitch_historical_scenario,
 )
@@ -887,3 +889,71 @@ class TestCalculateOutOfRangeMask:
         )
 
         assert result.all(), "Expected all True (out of range), but got some False"
+
+    def test_above_range_sets_high_mask_not_low(self):
+        """Values above historical max must set out_of_range_high, not out_of_range_low"""
+        model_hist = _make_time_series(10.0)
+        scenario = _make_time_series(20.0, start_year=2050, end_year=2052)
+
+        _, low, high = calculate_out_of_range_mask(
+            model_hist=model_hist, scenario_detrended=scenario, center_window=31
+        )
+
+        assert high.all(), "Expected out_of_range_high all True for above-max values"
+        assert not low.any(), "Expected out_of_range_low all False for above-max values"
+
+    def test_below_range_sets_low_mask_not_high(self):
+        """Values below historical min must set out_of_range_low, not out_of_range_high."""
+        model_hist = _make_time_series(10.0)
+        scenario = _make_time_series(0.0, start_year=2050, end_year=2052)
+
+        _, low, high = calculate_out_of_range_mask(
+            model_hist=model_hist, scenario_detrended=scenario, center_window=31
+        )
+
+        assert low.all(), "Expected out_of_range_low all True for below-min values"
+        assert not high.any(), "Expected out_of_range_high all False for below-min values"
+
+
+class TestMakeDebiaser:
+    """Tests that _make_debiaser forwards mapping_type to QuantileMapping."""
+
+    def test_parametric_mapping_type_forwarded(self):
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(variable="tas", mapping_type="parametric")
+            assert mock_qm.call_args.kwargs["mapping_type"] == "parametric"
+
+    def test_nonparametric_mapping_type_forwarded(self):
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(variable="tas", mapping_type="nonparametric")
+            assert mock_qm.call_args.kwargs["mapping_type"] == "nonparametric"
+
+    def test_2sided_pr_low_tail_uses_parametric_with_weibull(self):
+        """PR low-tail debiaser must use mapping_type='parametric' and weibull_min distribution."""
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(
+                variable="pr",
+                distribution=scipy.stats.weibull_min,
+                mapping_type="parametric",
+            )
+            call_kwargs = mock_qm.call_args.kwargs
+            assert call_kwargs["mapping_type"] == "parametric"
+            assert call_kwargs["distribution"] is scipy.stats.weibull_min
+
+    def test_2sided_pr_high_tail_uses_parametric_with_gumbel(self):
+        """PR high-tail debiaser must use mapping_type='parametric' and gumbel_r distribution."""
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(
+                variable="pr",
+                distribution=scipy.stats.gumbel_r,
+                mapping_type="parametric",
+            )
+            call_kwargs = mock_qm.call_args.kwargs
+            assert call_kwargs["mapping_type"] == "parametric"
+            assert call_kwargs["distribution"] is scipy.stats.gumbel_r
+
+    def test_tas_no_explicit_distribution_uses_norm(self):
+        """tas without explicit distribution defaults to scipy.stats.norm."""
+        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+            _make_debiaser(variable="tas", mapping_type="parametric")
+            assert mock_qm.call_args.kwargs["distribution"] is scipy.stats.norm
