@@ -337,12 +337,14 @@ def write_variable_to_icechunk(
     overwrite: bool,
     var_in_store: bool,
     group: str | None = None,
+    commit_message: str | None = None,
 ) -> None:
     """Write one variable to icechunk with shared overwrite semantics.
 
     overwrite + existing variable -> in-place r+ update (no encoding change);
     otherwise append/write with fresh chunk/shard encoding.
     group, if given, targets a zarr sub-group within the repo (e.g. ``"ssp245"``).
+    commit_message, if given, overrides the default ``"{scenario}: {variable}"`` message.
     """
     session = repo.writable_session("main")
     if overwrite and var_in_store:
@@ -360,8 +362,10 @@ def write_variable_to_icechunk(
         session,
         encoding=None if overwrite else encoding,
         shards=shards,
-        commit_message=f"{scenario}: {variable}" + (" (overwrite)" if overwrite else ""),
+        commit_message=commit_message
+        or (f"{scenario}: {variable}" + (" (overwrite)" if overwrite else "")),
         write_mode=write_mode,
+        repo=repo,
         group=group,
     )
 
