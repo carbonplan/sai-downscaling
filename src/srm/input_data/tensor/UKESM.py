@@ -1,5 +1,6 @@
 # COILED vm-type r8g.4xlarge
 # COILED region us-west-2
+# COILED tag project=SRM
 
 import dataclasses
 import logging

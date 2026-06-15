@@ -14,11 +14,11 @@ on:
                     - NASA-NEX
             scenario:
                 description: >
-                    Scenario name. Valid values —
-                    CESM2-WACCM: historical ssp245 G6-1.5K |
-                    MIROC-ES2H: historical ssp245 G6-1.5K |
-                    UKESM: historical SSP245 SSP245-t-pr G6-1.5K G6-1.5K-t-pr |
-                    NASA-NEX: historical SSP245
+                    Scenario(s) to process (comma-separated). Valid values —
+                    CESM2-WACCM: historical,ssp245,G6-1.5K |
+                    MIROC-ES2H: historical,esgf-ssp245,ssp245,G6-1.5K |
+                    UKESM: historical,SSP245,G6-1.5K |
+                    NASA-NEX: historical,SSP245
                 required: true
                 type: string
             s3_cleanup_path:
@@ -61,22 +61,33 @@ jobs:
                   case "$GCM" in
                     "CESM2-WACCM")
                       SCRIPT="src/srm/input_data/tensor/CESM2_WACCM.py"
+                      SUBCOMMAND=""
                       FLAGS="--all-variables"
                       ;;
                     "MIROC-ES2H")
                       SCRIPT="src/srm/input_data/tensor/MIROC.py"
+                      SUBCOMMAND="process"
                       FLAGS="--all-variables"
                       ;;
                     "UKESM")
                       SCRIPT="src/srm/input_data/tensor/UKESM.py"
+                      SUBCOMMAND="process"
                       FLAGS="--all-variables"
                       ;;
                     "NASA-NEX")
                       SCRIPT="src/srm/input_data/tensor/NASA_NEX.py"
+                      SUBCOMMAND=""
                       FLAGS=""
                       ;;
                   esac
-                  uv run "$SCRIPT" process $FLAGS --coiled --scenario "$SCENARIO" $EXTRA_FLAGS
+
+                  SCENARIO_FLAGS=()
+                  IFS=',' read -ra SCENARIOS <<< "$SCENARIO"
+                  for s in "${SCENARIOS[@]}"; do
+                    SCENARIO_FLAGS+=(--scenario "$(echo "$s" | xargs)")
+                  done
+
+                  uv run coiled batch run -- python "$SCRIPT" $SUBCOMMAND $FLAGS "${SCENARIO_FLAGS[@]}" $EXTRA_FLAGS
 
             - name: Write job summary
               if: success()

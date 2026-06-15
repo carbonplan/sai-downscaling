@@ -1,5 +1,6 @@
 # COILED vm-type r8g.24xlarge
 # COILED region us-west-2
+# COILED tag project=SRM
 
 import dataclasses
 import json

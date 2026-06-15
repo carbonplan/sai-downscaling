@@ -1,5 +1,6 @@
 # COILED vm-type r8g.4xlarge
 # COILED region us-west-2
+# COILED tag project=SRM
 
 """ETL script for creating virtual zarr stores of a subset of the NASA-NEX dataset, specifically:
 CESM2-WACCM, [historical, SSP245], r3i1p1f1, tas.

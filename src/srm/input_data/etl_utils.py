@@ -37,12 +37,15 @@ def setup_logging() -> None:
 def get_aws_creds() -> dict:
     """Return AWS credentials and region from the active boto3 session."""
     sesh = boto3.Session()
-    creds = sesh.get_credentials()
-    return {
+    creds = sesh.get_credentials().get_frozen_credentials()
+    result = {
         "region": sesh.region_name,
         "aws_access_key_id": creds.access_key,
         "aws_secret_access_key": creds.secret_key,
     }
+    if creds.token:
+        result["aws_session_token"] = creds.token
+    return result
 
 
 def run_with_cluster_retry[T](
