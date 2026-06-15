@@ -199,7 +199,7 @@ The CLI is built on several key components:
 
 1. **BCSDConfig** + **PipelineOptions** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
    - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `mapping_type`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `detrend_data`, etc.
-   - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `version`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`. Does not affect computation results or cache keys.
+   - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `version`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`, `clip_values`, `clip_bounds`. 
    - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 
 2. **ArtifactCache** ([src/srm/cache.py](../../src/srm/cache.py))

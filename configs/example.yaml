@@ -39,3 +39,4 @@ version: "v0.6.0run2"
 # rechunk_workflow: true              # Enable strategic rechunking (default: true)
 apply_ocean_mask: false              # Mask ocean pixels to NaN in final output (default: false)
 save_intermediate: true              # Save intermediate artifacts for debugging (default: false)
+clip_values: true                    # Apply post-bias-correction clipping (default: true). Set false to quantify clipping impact.

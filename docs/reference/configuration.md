@@ -79,6 +79,7 @@ verbose: true                          # Enable verbose logging (default: true)
 rechunk_workflow: true                 # Enable strategic rechunking between stages (default: true)
 apply_ocean_mask: true                 # Mask ocean pixels to NaN in final output (default: true)
 save_intermediate: false               # Save intermediate artifacts for debugging (default: false)
+clip_values: true                      # Clip values in post-bias-correction (default: true). Per-variable ranges can be set in bcsd_config.py
 ```
 
 All `PipelineOptions` fields are optional — defaults are suitable for most runs. Override `scratch_dir` and `output_dir` to point at your own storage.

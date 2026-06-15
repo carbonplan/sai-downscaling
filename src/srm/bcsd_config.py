@@ -350,6 +350,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         )
 
 
+class VariableClipBounds(BaseModel):
+    min: float | None = None
+    max: float | None = None
+
+
 class PipelineOptions(pydantic_settings.BaseSettings):
     """
     Operational settings for the BCSD pipeline.
@@ -386,6 +391,18 @@ class PipelineOptions(pydantic_settings.BaseSettings):
     save_intermediate: bool = Field(
         False,
         description="Save intermediate artifacts (e.g. detrended data, quantile mapping results) to cache for debugging and analysis",
+    )
+    clip_values: bool = Field(
+        True,
+        description="Apply post-bias-correction clipping",
+    )
+    clip_bounds: dict[str, VariableClipBounds] = Field(
+        default={
+            "pr": VariableClipBounds(min=0.0),
+            "rsds": VariableClipBounds(min=0.0),
+            "hurs": VariableClipBounds(min=0.0, max=105.0),
+        },
+        description="Per-variable clip bounds applied when clip_values=True.",
     )
 
     model_config = {"env_prefix": "BCSD_", "extra": "ignore"}

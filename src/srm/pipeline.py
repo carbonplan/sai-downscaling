@@ -1119,11 +1119,11 @@ class BCSDPipeline:
                 "mapping_type must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
 
-        # remove any negative values introduced by the bias correction
-        if self.config.variable in ["pr", "rsds"]:
-            debiased_np = np.clip(debiased_np, min=0)
-        elif self.config.variable in ["hurs"]:
-            debiased_np = np.clip(debiased_np, min=0, max=105)
+        if self.options.clip_values:
+            var = self.config.variable
+            if var in self.options.clip_bounds:
+                bounds = self.options.clip_bounds[var]
+                debiased_np = np.clip(debiased_np, a_min=bounds.min, a_max=bounds.max)
 
         return xr.DataArray(
             data=debiased_np,
