@@ -1,5 +1,7 @@
 import pytest
 
+from srm.datasets import Datatree
+
 
 def test_catalog(ds_info):
     """
@@ -7,8 +9,9 @@ def test_catalog(ds_info):
     """
     if "-dev-" in ds_info.name:
         pytest.skip("dev store not yet written to S3")
-    group = "historical" if "-unified-" in ds_info.name else None
-    ds = ds_info.to_xarray(group=group)
-    # is there a better way in XRT to check the data exists?
-
+    result = ds_info.to_xarray()
+    if isinstance(ds_info, Datatree):
+        ds = result["historical"].ds
+    else:
+        ds = result
     assert len(ds) > 0, f"dataset {ds_info.name} appears empty"
