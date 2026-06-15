@@ -1,8 +1,11 @@
-from dataclasses import dataclass, field
-from typing import Any
+# COILED vm-type r8g.4xlarge
+# COILED region us-west-2
 
-import click
+import logging
+
+import dask
 import icechunk
+import typer
 import xarray as xr
 import zarr
 from obspec_utils.readers import BlockStoreReader
@@ -10,55 +13,40 @@ from obspec_utils.registry import ObjectStoreRegistry
 from obstore.store import from_url
 from virtualizarr.parsers import HDFParser
 
-from srm import catalog
-from srm.config import ClusterConfig, init_repo, setup_cluster, setup_local_client
+from srm.config import init_repo
 from srm.input_data.etl_utils import (
     add_cf_bounds,
     build_encoding_dict,
     determine_write_mode,
+    setup_logging,
     virtualize_and_combine,
     write_dataset_to_icechunk,
 )
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
+dask.config.set(scheduler="threads")
+
+setup_logging()
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
 OSDF_BASE = "https://osdf-director.osg-htc.org"
 OSDF_PATH_PREFIX = "/ncar/gdex/d314000/0.25deg/3hrly"
 GDEX_0P25_YEARS = range(1948, 2011)
 
-
 VIRTUAL_S3_PATH = "s3://carbonplan-srm/input/tensor/NCAR/GDEX-GMF-virtual.icechunk"
-MATERIALIZED_CATALOG_KEY = "GDEX-GMF-icechunk"
 
+OUTPUT_BUCKET = "carbonplan-srm"
+OUTPUT_PREFIX = "input/processed/gdex-gmf.icechunk"
+OUTPUT_CHUNKS: dict[str, int] = {"time": 1, "lat": 720, "lon": 1440}
+OUTPUT_SHARDS: dict[str, int] = {"time": 30, "lat": 720, "lon": 1440}
 
-@dataclass
-class GDEXConfig:
-    start_year: int = 1950
-    end_year: int = 2008
-
-    virtualize_cluster: dict = field(
-        default_factory=lambda: {
-            "n_workers": [2, 36],
-            "worker_vm_types": ["c8g.2xlarge"],
-            "scheduler_vm_types": "c8g.xlarge",
-        }
-    )
-    process_cluster: dict = field(
-        default_factory=lambda: {
-            "n_workers": [2, 36],
-            "worker_vm_types": ["c8g.2xlarge"],
-            "scheduler_vm_types": "c8g.xlarge",
-        }
-    )
-
-    def __post_init__(self):
-        mat_cat = catalog.get(MATERIALIZED_CATALOG_KEY)
-        self.bucket = mat_cat.bucket
-        self.prefix = mat_cat.prefix
-        self.encoding = {
-            "chunks": mat_cat.expected_chunks,
-            "shards": mat_cat.expected_shards,
-        }
+DEFAULT_START_YEAR = 1950
+DEFAULT_END_YEAR = 2008
 
 
 def make_osdf_urls(
@@ -70,7 +58,7 @@ def make_osdf_urls(
     ]
 
 
-def _open_virtual_store(readonly: bool = True) -> tuple[icechunk.Repository, Any]:
+def _open_virtual_store(readonly: bool = True) -> tuple[icechunk.Repository, icechunk.Session]:
     from cloudpathlib import CloudPath
 
     p = CloudPath(VIRTUAL_S3_PATH)
@@ -101,12 +89,12 @@ def _preprocess_gdex(ds: xr.Dataset, start_year: int, end_year: int) -> xr.Datas
     return ds.drop_encoding()
 
 
-def _update_attrs(ds: xr.Dataset, config: GDEXConfig) -> xr.Dataset:
+def _update_attrs(ds: xr.Dataset, start_year: int, end_year: int) -> xr.Dataset:
     ds = add_cf_bounds(ds)
     ds.attrs.update(
         {
-            "valid_time_start": f"{config.start_year}-01-01",
-            "valid_time_stop": f"{config.end_year}-12-31",
+            "valid_time_start": f"{start_year}-01-01",
+            "valid_time_stop": f"{end_year}-12-31",
             "source": "Princeton Global Forcing (Sheffield et al. 2006), 0.25deg 3-hourly resampled to daily",
             "url": "https://gdex.ucar.edu/datasets/d314000/",
         }
@@ -116,170 +104,133 @@ def _update_attrs(ds: xr.Dataset, config: GDEXConfig) -> xr.Dataset:
 
 def virtualize_pipeline(
     years: range | list[int] = GDEX_0P25_YEARS,
-    use_coiled: bool = False,
-    verbose: bool = True,
 ) -> None:
-    client = (
-        setup_cluster(ClusterConfig(**GDEXConfig().virtualize_cluster))
-        if use_coiled
-        else setup_local_client()
+    osdf_store = from_url(OSDF_BASE)
+    registry = ObjectStoreRegistry({OSDF_BASE: osdf_store})
+    parser = HDFParser()
+
+    urls = make_osdf_urls(years=years)
+    log.info("virtualizing %d files (tas × %d years)", len(urls), len(list(years)))
+
+    virt_ds = virtualize_and_combine(
+        urls=urls,
+        registry=registry,
+        parser=parser,
+        loadable_variables=["lat", "lon", "time"],
     )
 
-    try:
-        osdf_store = from_url(OSDF_BASE)
-        registry = ObjectStoreRegistry({OSDF_BASE: osdf_store})
-        parser = HDFParser()
-
-        urls = make_osdf_urls(years=years)
-        if verbose:
-            print(f"virtualizing {len(urls)} files (tas × {len(list(years))} years)")
-
-        virt_ds = virtualize_and_combine(
-            urls=urls,
-            registry=registry,
-            parser=parser,
-            loadable_variables=["lat", "lon", "time"],
-        )
-
-        _, session = _open_virtual_store(readonly=False)
-        virt_ds.vz.to_icechunk(session.store)
-        session.commit("GDEX: virtualized 0.25deg 3 hourly (1948-2010)")
-
-        if verbose:
-            print(f"written to {VIRTUAL_S3_PATH}")
-    finally:
-        client.shutdown()
+    _, session = _open_virtual_store(readonly=False)
+    virt_ds.vz.to_icechunk(session.store)
+    session.commit("GDEX: virtualized 0.25deg 3 hourly (1948-2010)")
+    log.info("written to %s", VIRTUAL_S3_PATH)
 
 
-def _open_year(store: Any, year: int) -> xr.Dataset:
+def _open_year(store: object, year: int) -> xr.Dataset:
     url = make_osdf_urls(years=[year])[0]
     path = url.removeprefix(OSDF_BASE)
     return xr.open_dataset(BlockStoreReader(store, path), engine="h5netcdf", chunks="auto")
 
 
 def process_pipeline(
-    start_year: int = 1950,
-    end_year: int = 2008,
+    start_year: int = DEFAULT_START_YEAR,
+    end_year: int = DEFAULT_END_YEAR,
     use_virtual: bool = False,
-    use_coiled: bool = False,
-    verbose: bool = True,
 ) -> None:
     from icechunk.xarray import to_icechunk
 
-    config = GDEXConfig(start_year=start_year, end_year=end_year)
-    client = (
-        setup_cluster(ClusterConfig(**config.process_cluster))
-        if use_coiled
-        else setup_local_client()
-    )
+    repo, session = init_repo(OUTPUT_BUCKET, OUTPUT_PREFIX, readonly=False)
+    write_mode = determine_write_mode(repo)
 
-    try:
-        repo, session = init_repo(config.bucket, config.prefix, readonly=False)
-        write_mode = determine_write_mode(repo)
+    if use_virtual:
+        log.info("processing tas from virtual icechunk")
+        _, virt_session = _open_virtual_store(readonly=True)
+        ds = xr.open_dataset(
+            virt_session.store,
+            engine="zarr",
+            consolidated=False,
+            zarr_format=3,
+            chunks="auto",
+        )[["tas"]]
+        ds = ds.resample(time="D").mean()
+        ds = _preprocess_gdex(ds, start_year, end_year)
+        ds = _update_attrs(ds, start_year, end_year)
+        encoding = build_encoding_dict(ds, OUTPUT_CHUNKS, OUTPUT_SHARDS)
+        write_dataset_to_icechunk(
+            ds,
+            session,
+            encoding=encoding,
+            shards=OUTPUT_SHARDS,
+            commit_message="GDEX: tas",
+            write_mode=write_mode,
+        )
+    else:
+        # resume: find last committed year from store history
+        commits = [c.message for c in repo.ancestry(branch="main")]
+        year_commits = [c for c in commits if c.startswith("GDEX: tas ")]
+        resume_year = int(year_commits[0].split()[-1]) + 1 if year_commits else start_year
+        if resume_year > start_year:
+            log.info("resuming from %d (last committed: %d)", resume_year, resume_year - 1)
 
-        if use_virtual:
-            if verbose:
-                print("processing tas from virtual icechunk")
-            _, virt_session = _open_virtual_store(readonly=True)
-            ds = xr.open_dataset(
-                virt_session.store,
-                engine="zarr",
-                consolidated=False,
-                zarr_format=3,
-                chunks="auto",
-            )[["tas"]]
-            ds = ds.resample(time="D").mean()
-            ds = _preprocess_gdex(ds, start_year, end_year)
-            ds = _update_attrs(ds, config)
-            encoding = build_encoding_dict(ds, config.encoding["chunks"], config.encoding["shards"])
-            write_dataset_to_icechunk(
-                ds,
-                session,
-                encoding=encoding,
-                shards=config.encoding["shards"],
-                commit_message="GDEX: tas",
-                write_mode=write_mode,
-            )
-        else:
-            # resume: find last committed year from store history
-            commits = [c.message for c in repo.ancestry(branch="main")]
-            year_commits = [c for c in commits if c.startswith("GDEX: tas ")]
-            resume_year = int(year_commits[0].split()[-1]) + 1 if year_commits else start_year
-            if resume_year > start_year and verbose:
-                print(f"resuming from {resume_year} (last committed: {resume_year - 1})")
+        store = from_url(OSDF_BASE)
+        encoding = None
+        for year in range(resume_year, end_year + 1):
+            log.info("processing tas %d", year)
 
-            store = from_url(OSDF_BASE)
-            encoding = None
-            for year in range(resume_year, end_year + 1):
-                if verbose:
-                    print(f"processing tas {year}")
+            for attempt in range(3):
+                try:
+                    ds = _open_year(store, year)[["tas"]]
+                    ds = ds.resample(time="D").mean()
+                    ds = _preprocess_gdex(ds, year, year)
 
-                for attempt in range(3):
-                    try:
-                        ds = _open_year(store, year)[["tas"]]
-                        ds = ds.resample(time="D").mean()
-                        ds = _preprocess_gdex(ds, year, year)
+                    if write_mode == "w" and year == resume_year:
+                        ds = _update_attrs(ds, start_year, end_year)
+                        encoding = build_encoding_dict(ds, OUTPUT_CHUNKS, OUTPUT_SHARDS)
+                        write_dataset_to_icechunk(
+                            ds,
+                            session,
+                            encoding=encoding,
+                            shards=OUTPUT_SHARDS,
+                            commit_message=f"GDEX: tas {year}",
+                            write_mode=write_mode,
+                        )
+                    else:
+                        ds = add_cf_bounds(ds, coord_names=["time"])
+                        ds = ds.chunk(OUTPUT_SHARDS)
+                        to_icechunk(ds, session, append_dim="time", align_chunks=True)
+                        session.commit(f"GDEX: tas {year}")
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        raise
+                    log.warning("attempt %d failed for %d: %s, retrying", attempt + 1, year, e)
+                    session = repo.writable_session("main")
 
-                        if write_mode == "w" and year == resume_year:
-                            ds = _update_attrs(ds, config)
-                            encoding = build_encoding_dict(
-                                ds, config.encoding["chunks"], config.encoding["shards"]
-                            )
-                            write_dataset_to_icechunk(
-                                ds,
-                                session,
-                                encoding=encoding,
-                                shards=config.encoding["shards"],
-                                commit_message=f"GDEX: tas {year}",
-                                write_mode=write_mode,
-                            )
-                        else:
-                            ds = add_cf_bounds(ds, coord_names=["time"])
-                            ds = ds.chunk(config.encoding["shards"])
-                            to_icechunk(ds, session, append_dim="time", align_chunks=True)
-                            session.commit(f"GDEX: tas {year}")
-                        break
-                    except Exception as e:
-                        if attempt == 2:
-                            raise
-                        if verbose:
-                            print(f"attempt {attempt + 1} failed for {year}: {e}, retrying")
-                        session = repo.writable_session("main")
-
-                session = repo.writable_session("main")
-    finally:
-        client.shutdown()
+            session = repo.writable_session("main")
 
 
-@click.group()
-def cli():
-    pass
+app = typer.Typer()
 
 
-@cli.command()
-@click.option("--start-year", type=int, default=min(GDEX_0P25_YEARS))
-@click.option("--end-year", type=int, default=max(GDEX_0P25_YEARS))
-@click.option("--coiled/--local", default=False)
-def virtualize(start_year, end_year, coiled):
+@app.command()
+def virtualize(
+    start_year: int = typer.Option(min(GDEX_0P25_YEARS), "--start-year"),
+    end_year: int = typer.Option(max(GDEX_0P25_YEARS), "--end-year"),
+) -> None:
     """Virtualize GDEX 0.25deg NetCDF3 files into icechunk via OSDF."""
-    virtualize_pipeline(years=range(start_year, end_year + 1), use_coiled=coiled, verbose=True)
+    virtualize_pipeline(years=range(start_year, end_year + 1))
 
 
-@cli.command()
-@click.option("--start-year", type=int, default=1950)
-@click.option("--end-year", type=int, default=2008)
-@click.option("--use-virtual/--direct", default=False)
-@click.option("--coiled/--local", default=False)
-def process(start_year, end_year, use_virtual, coiled):
+@app.command()
+def process(
+    start_year: int = typer.Option(DEFAULT_START_YEAR, "--start-year"),
+    end_year: int = typer.Option(DEFAULT_END_YEAR, "--end-year"),
+    use_virtual: bool = typer.Option(
+        False, "--use-virtual/--direct", help="Read from virtual icechunk instead of direct OSDF"
+    ),
+) -> None:
     """Materialize GDEX tas from virtual icechunk (or direct OSDF HTTP) to icechunk."""
-    process_pipeline(
-        start_year=start_year,
-        end_year=end_year,
-        use_virtual=use_virtual,
-        use_coiled=coiled,
-        verbose=True,
-    )
+    process_pipeline(start_year=start_year, end_year=end_year, use_virtual=use_virtual)
 
 
 if __name__ == "__main__":
-    cli()
+    app()
