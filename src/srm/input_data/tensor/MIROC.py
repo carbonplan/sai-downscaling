@@ -122,7 +122,7 @@ class MIROC_ES2H_Historical_Config(BaseMIROC_CMIP6_Config):
 class MIROC_ES2H_ESGF_SSP245_Config(BaseMIROC_CMIP6_Config):
     scenario: str = "ssp245"
     group: str = "esgf_ssp245"
-    time_range: str = "2015-2100"
+    time_range: str = "2015-2099"
 
 
 # --- GeoMIP scenarios (G6-1.5K-SAI, SSP245/baseline) --------------------------------
@@ -365,6 +365,11 @@ def _preprocess_miroc(
     ds = trim_negative_precipitation(ds)
     if config.cmorize_hurs and "hurs" in ds.data_vars:
         ds = CMORIZE_hurs(ds, "hurs")
+
+    if hasattr(config, "time_range"):
+        start_year, end_year = config.time_range.split("-")
+        ds = ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
+
     if subset:
         ds = ds.isel(time=slice(0, 365))
     return ds

@@ -137,6 +137,27 @@ class Dataset(BaseDataset):
 
 
 @dataclass(kw_only=True)
+class Datatree(Dataset):
+    format: typing.Literal["icechunk"] = "icechunk"
+
+    def to_xarray(self) -> xr.DataTree:
+        import icechunk
+        import xarray as xr
+
+        config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 128))
+        storage = icechunk.s3_storage(bucket=self.bucket, prefix=self.prefix, from_env=True)
+        repo = icechunk.Repository.open(storage, config=config)
+        session = repo.readonly_session("main")
+        return xr.open_datatree(
+            session.store,
+            engine="zarr",
+            chunks="auto",
+            consolidated=False,
+            zarr_format=3,
+        )
+
+
+@dataclass(kw_only=True)
 class VectorDataset(BaseCatalogEntry):
     """A vector dataset stored as a GeoParquet file (S3 or local)."""
 
@@ -200,10 +221,9 @@ class Catalog:
             # Unified per-GCM stores: scenarios live as zarr groups
             # (historical / ssp245 / g6_1p5k, plus esgf_ssp245 for MIROC).
             # dtr is not stored; derive it via srm.utils.get_variable.
-            "CESM2-WACCM-unified-icechunk": Dataset(
+            "CESM2-WACCM-unified-icechunk": Datatree(
                 name="CESM2-WACCM-unified-icechunk",
                 path="s3://carbonplan-srm/input/tensor/cesm2_waccm.icechunk",
-                format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
                 expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
                 ensemble_members=[
@@ -223,10 +243,9 @@ class Catalog:
                 ],
                 expected_vars=self.standard_vars,
             ),
-            "MIROC-ES2H-unified-icechunk": Dataset(
+            "MIROC-ES2H-unified-icechunk": Datatree(
                 name="MIROC-ES2H-unified-icechunk",
                 path="s3://carbonplan-srm/input/tensor/miroc_es2h.icechunk",
-                format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
                 expected_shards={"ensemble_member": 1, "time": 960, "lat": 128, "lon": 256},
                 ensemble_members=[
@@ -246,10 +265,9 @@ class Catalog:
                 ],
                 expected_vars=self.standard_vars,
             ),
-            "UKESM-unified-icechunk": Dataset(
+            "UKESM-unified-icechunk": Datatree(
                 name="UKESM-unified-icechunk",
                 path="s3://carbonplan-srm/input/tensor/ukesm.icechunk",
-                format="icechunk",
                 expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
                 expected_shards={"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192},
                 ensemble_members=["r2i1p1f2", "r3i1p1f2", "r12i1p1f2"],

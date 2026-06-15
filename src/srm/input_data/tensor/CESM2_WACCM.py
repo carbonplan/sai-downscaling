@@ -138,6 +138,7 @@ class CESM_Historical_Config(BaseCESM_Config):
 class CESM_SSP245_Config(BaseCESM_Config):
     scenario: str = "SSP245"
     s3_input_prefix: str = "input/tensor/CESM2/CESM2-WACCM-SSP245/netcdf"
+    time_range: str = "2015-2099"
     ensemble_members: list = field(
         default_factory=lambda: [
             "001",
@@ -332,6 +333,10 @@ def _preprocess_cesm(
 
     if var in CMORIZATION_FUNCTIONS:
         ds = CMORIZATION_FUNCTIONS[var](ds, var)
+
+    if hasattr(config, "time_range"):
+        start_year, end_year = config.time_range.split("-")
+        ds = ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
 
     if subset:
         ds = ds.isel(time=slice(0, 365))

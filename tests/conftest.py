@@ -3,7 +3,7 @@ import pytest
 import xarray as xr
 
 from srm import catalog
-from srm.datasets import BaseDataset
+from srm.datasets import BaseDataset, VirtualDataset
 
 
 @pytest.fixture(scope="session")
@@ -13,7 +13,11 @@ def dataset_catalog():
 
 
 @pytest.fixture(
-    params=[ds for ds in catalog.datasets.values() if isinstance(ds, BaseDataset)],
+    params=[
+        ds
+        for ds in catalog.datasets.values()
+        if isinstance(ds, BaseDataset) and not isinstance(ds, VirtualDataset)
+    ],
     ids=lambda ds: ds.name,
 )
 def ds_info(request):

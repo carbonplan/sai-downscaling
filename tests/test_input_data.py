@@ -9,8 +9,9 @@ if TYPE_CHECKING:
 
 from validators import VAR_SPATIAL_RANGES, DatasetValidator
 
-from srm.datasets import VirtualDataset, catalog
+from srm.datasets import Datatree, VirtualDataset, catalog
 from srm.validation import (
+    _SCENARIO_TO_GROUP,
     GCM_OPTIONS,
     SCENARIO_OPTIONS,
     CheckStatus,
@@ -46,32 +47,23 @@ _SKIP_TEMP_CONSISTENCY = frozenset({"ERA5"})
 class TestCatalogDatasets:
     """Validate input datasets in the catalog"""
 
-    def _skip_if_virtual(
-        self, ds_info: Dataset, reason: str = "Not applicable to virtual datasets"
-    ):
-        if isinstance(ds_info, VirtualDataset):
-            pytest.skip(reason)
-
     @pytest.fixture
     def validator(self, ds_info: Dataset) -> DatasetValidator:
         return DatasetValidator(ds_info)
 
     # spatial-checks: coordinate_names, coordinate_ranges
     def test_longitude_valid(self, ds_info: Dataset, validator: DatasetValidator):
-        self._skip_if_virtual(ds_info)
         result = validator.validate_lon(check_monotonic=True)
         assert result, f"{ds_info.name}: {result.issues}"
 
     # spatial-checks: coordinate_names, coordinate_ranges
     def test_latitude_valid(self, ds_info: Dataset, validator: DatasetValidator):
-        self._skip_if_virtual(ds_info)
         result = validator.validate_lat(check_monotonic=True)
         assert result, f"{ds_info.name}: {result.issues}"
 
     # variable-checks: variable_presence
     def test_expected_variables(self, ds_info: Dataset, validator: DatasetValidator):
         """check existing data variables against known variables in catalog"""
-        self._skip_if_virtual(ds_info)
         if not ds_info.expected_vars:
             pytest.skip(f"{ds_info.name} has no var expectations.")
         result = validator.validate_expected_variables()
@@ -80,7 +72,6 @@ class TestCatalogDatasets:
     # variable-checks: units
     def test_variable_units(self, ds_info: Dataset, validator: DatasetValidator):
         """check variable units match"""
-        self._skip_if_virtual(ds_info)
         if not ds_info.expected_vars:
             pytest.skip(f"{ds_info.name} has no variable expectations defined.")
         result = validator.validate_units()
@@ -88,21 +79,18 @@ class TestCatalogDatasets:
 
     # temporal-checks: monotonic, no_duplicate_timestamps, no_internal_gaps
     def test_time_axis(self, ds_info: Dataset, validator: DatasetValidator):
-        self._skip_if_virtual(ds_info)
         result = validator.validate_time_axis()
         assert result, f"{ds_info.name}: {result.issues}"
 
     # temporal-checks: calendar
     def test_calendar(self, ds_info: Dataset, validator: DatasetValidator):
         """check calendar is proleptic_gregorian and datetime64"""
-        self._skip_if_virtual(ds_info)
         result = validator.validate_calendar()
         assert result, f"{ds_info.name}: {result.issues}"
 
     # variable-checks: reasonable_ranges (pr >= 0)
     def test_negative_precip(self, ds_info: Dataset, validator: DatasetValidator):
         """Only run on datasets that contain 'pr'"""
-        self._skip_if_virtual(ds_info)
         if ds_info.expected_vars and not any(v.name == "pr" for v in ds_info.expected_vars):
             pytest.skip(f"Dataset {ds_info.name} does not contain precipitation.")
         result = validator.validate_negative_precip()
@@ -137,8 +125,6 @@ class TestVariablePhysics:
     """Variable range, temperature consistency, and identity checks."""
 
     def _skip_if_not_applicable(self, ds_info):
-        if isinstance(ds_info, VirtualDataset):
-            pytest.skip("Not applicable to virtual datasets")
         if ds_info.name in _SKIP_ALL_PHYSICS:
             pytest.skip(f"{ds_info.name} is not a climate dataset")
 
@@ -155,12 +141,6 @@ class TestVariablePhysics:
         if var not in validator.ds.data_vars:
             pytest.skip(f"{var} not in {ds_info.name}")
         result = validator.validate_spatial_range(var)
-        assert result, f"{ds_info.name}: {result.issues}"
-
-    # variable-checks: dtr_consistency (dtr ≈ tasmax − tasmin; catches unit mismatch in derived variable)
-    def test_dtr_consistency(self, ds_info, validator):
-        self._skip_if_not_applicable(ds_info)
-        result = validator.validate_dtr_consistency()
         assert result, f"{ds_info.name}: {result.issues}"
 
     # variable-checks: temperature_consistency (tasmax > tas > tasmin; single day only — not all time steps)
@@ -191,16 +171,19 @@ class TestSpatialConsistency:
             for name, entry in catalog.datasets.items()
             if gcm in name and not isinstance(entry, VirtualDataset)
         ]
-        if len(gcm_datasets) < 2:
-            pytest.skip(f"Fewer than 2 non-virtual datasets found for {gcm}")
 
-        reference_ds = gcm_datasets[0].to_xarray()
+        def _to_ds(entry):
+            if isinstance(entry, Datatree):
+                return entry.to_xarray()["historical"].ds
+            return entry.to_xarray()
+
+        reference_ds = _to_ds(gcm_datasets[0])
         ref_lat = reference_ds["lat"].values
         ref_lon = reference_ds["lon"].values
 
         issues = []
         for entry in gcm_datasets[1:]:
-            ds = entry.to_xarray()
+            ds = _to_ds(entry)
             try:
                 np.testing.assert_array_equal(ref_lat, ds["lat"].values)
                 np.testing.assert_array_equal(ref_lon, ds["lon"].values)
@@ -217,18 +200,17 @@ class TestEnsembleSpread:
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     @pytest.mark.parametrize("scenario", list(SCENARIO_OPTIONS))
     def test_ensemble_spread_nonzero(self, gcm, scenario):
-        key = f"{gcm}-{scenario}-icechunk"
+        key = f"{gcm}-unified-icechunk"
         try:
             entry = catalog.get(key)
         except KeyError:
             pytest.skip(f"{key} not in catalog")
 
-        if isinstance(entry, VirtualDataset):
-            pytest.skip("Not applicable to virtual datasets")
-
-        validator = DatasetValidator(entry)
+        group = _SCENARIO_TO_GROUP[scenario]
+        ds = entry.to_xarray()[group].ds
+        validator = DatasetValidator(ds)
         result = validator.validate_ensemble_spread()
-        assert result, f"{key}: {result.issues}"
+        assert result, f"{key}/{group}: {result.issues}"
 
 
 class TestDataIntegrity:

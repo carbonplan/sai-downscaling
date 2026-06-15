@@ -16,7 +16,7 @@ from typing import ClassVar
 import pydantic
 import xarray as xr
 
-from srm.datasets import catalog
+from srm.datasets import Datatree, catalog
 
 # Blocking: crash or silent wrong output — abort the pipeline run.
 # Warning:  wrong data ingested — emit a warning but continue.
@@ -46,7 +46,7 @@ SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     "CESM2-WACCM": {
         "historical": ("1850-01-01", "2015-01-16"),
-        "SSP245": ("2015-01-01", "2101-01-01"),
+        "SSP245": ("2015-01-01", "2099-12-31"),
         "G6-1.5K": ("2035-01-01", "2085-01-01"),
     },
     "MIROC-ES2H": {
@@ -201,7 +201,11 @@ class DatasetValidator(pydantic.BaseModel):
                 self._dataset_cache[cache_key] = None
             else:
                 try:
-                    self._dataset_cache[cache_key] = catalog_ds.to_xarray(group=group)
+                    if isinstance(catalog_ds, Datatree):
+                        dt = catalog_ds.to_xarray()
+                        self._dataset_cache[cache_key] = dt[group].ds if group else dt
+                    else:
+                        self._dataset_cache[cache_key] = catalog_ds.to_xarray(group=group)
                 except Exception as exc:
                     tb = traceback.format_exc()
                     self._load_errors[cache_key] = (f"Failed to load dataset {key}: {exc}", tb)
