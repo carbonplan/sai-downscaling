@@ -14,7 +14,7 @@ predict_period_start: 2015
 predict_period_end: 2100
 
 scratch_dir: "s3://carbonplan-srm/output/qa/bcsd-cache"
-output_dir: "s3://carbonplan-srm/srm/output"
+output_dir: "s3://carbonplan-srm/output"
 environment: "qa"
 mapping_type: "nonparametric_hybrid"
 verbose: true
