@@ -60,22 +60,22 @@ jobs:
               run: |
                   case "$GCM" in
                     "CESM2-WACCM")
-                      SCRIPT="src/srm/input_data/tensor/CESM2_WACCM.py"
+                      SCRIPT="src/srm/input_data/cesm2_waccm.py"
                       SUBCOMMAND=""
                       FLAGS="--all-variables"
                       ;;
                     "MIROC-ES2H")
-                      SCRIPT="src/srm/input_data/tensor/MIROC.py"
+                      SCRIPT="src/srm/input_data/miroc.py"
                       SUBCOMMAND="process"
                       FLAGS="--all-variables"
                       ;;
                     "UKESM")
-                      SCRIPT="src/srm/input_data/tensor/UKESM.py"
+                      SCRIPT="src/srm/input_data/ukesm.py"
                       SUBCOMMAND="process"
                       FLAGS="--all-variables"
                       ;;
                     "NASA-NEX")
-                      SCRIPT="src/srm/input_data/tensor/NASA_NEX.py"
+                      SCRIPT="src/srm/input_data/nasa_nex.py"
                       SUBCOMMAND=""
                       FLAGS=""
                       ;;
