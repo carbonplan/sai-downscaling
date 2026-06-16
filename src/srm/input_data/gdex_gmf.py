@@ -1,6 +1,11 @@
+# COILED vm-type r8g.4xlarge
+# COILED region us-west-2
+# COILED tag project=SRM
+
 import dataclasses
 import logging
 
+import dask
 import icechunk
 import typer
 import xarray as xr
@@ -10,7 +15,7 @@ from obspec_utils.registry import ObjectStoreRegistry
 from obstore.store import from_url
 from virtualizarr.parsers import HDFParser
 
-from srm.config import ClusterConfig, VarSpec, VarStandards, setup_cluster, setup_local_client
+from srm.config import VarSpec, VarStandards
 from srm.input_data.etl_utils import (
     _display_dry_run_result,
     _init_repo_from_uri,
@@ -18,7 +23,6 @@ from srm.input_data.etl_utils import (
     build_encoding_dict,
     console,
     determine_write_mode,
-    run_with_cluster_retry,
     setup_logging,
     update_variable_attrs,
     virtualize_and_combine,
@@ -27,8 +31,10 @@ from srm.input_data.etl_utils import (
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
+dask.config.set(scheduler="threads")
+
 setup_logging()
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 # --- Source ---
 
@@ -51,21 +57,6 @@ VIRTUAL_PREFIX = "input/tensor/NCAR/GDEX-GMF-virtual.icechunk"
 OUTPUT_URI = f"s3://{BUCKET}/input/processed/gdex-gmf.icechunk"
 OUTPUT_CHUNKS: dict[str, int] = {"time": 1, "lat": 720, "lon": 1440}
 OUTPUT_SHARDS: dict[str, int] = {"time": 30, "lat": 720, "lon": 1440}
-
-VIRTUALIZE_CLUSTER: dict = {
-    "n_workers": [2, 36],
-    "worker_vm_types": ["c8g.2xlarge"],
-    "scheduler_vm_types": "c8g.xlarge",
-}
-PROCESS_CLUSTER: dict = {
-    "n_workers": [2, 36],
-    "worker_vm_types": ["c8g.2xlarge"],
-    "scheduler_vm_types": "c8g.xlarge",
-}
-
-# Retries if the cluster connection is lost mid-computation (e.g. spot
-# reclamation), recreating the cluster between attempts.
-MAX_VAR_RETRIES = 3
 
 # 365 daily steps = one calendar year; enough to verify the full transform chain
 _DRY_RUN_STEPS = 365
@@ -170,7 +161,7 @@ def process_gdex(
         ``"GDEX: tas {year}"`` per year in direct mode) when not set.
     """
     if use_virtual:
-        logger.info("Loading tas from virtual icechunk (%d-%d)", start_year, end_year)
+        log.info("Loading tas from virtual icechunk (%d-%d)", start_year, end_year)
         raw = load_gdex_virtual().resample(time="D").mean()
         raw = raw.sel(time=slice(str(start_year), str(end_year)))
         if dry_run:
@@ -185,7 +176,7 @@ def process_gdex(
         if dry_run:
             _display_dry_run_result(ds, "tas", store=dry_run_output)
             if dry_run_output is not None:
-                logger.info("Writing dry-run sample for tas to %s", dry_run_output)
+                log.info("Writing dry-run sample for tas to %s", dry_run_output)
                 repo, session = _init_repo_from_uri(dry_run_output)
                 write_mode = determine_write_mode(repo)
                 encoding = build_encoding_dict(ds, OUTPUT_CHUNKS, OUTPUT_SHARDS)
@@ -198,15 +189,15 @@ def process_gdex(
                     write_mode=write_mode,
                     repo=repo,
                 )
-                logger.info("✓ Dry-run write done: tas → %s", dry_run_output)
-                read_session = repo.readonly_session("main")  # re-open after commit
+                log.info("dry-run write done: tas -> %s", dry_run_output)
+                read_session = repo.readonly_session("main")
                 written = xr.open_dataset(read_session.store, engine="zarr", chunks="auto")
                 console.print(written)
             return
 
         repo, session = _init_repo_from_uri(output_uri)
         write_mode = determine_write_mode(repo)
-        logger.info("Writing tas to %s (mode=%s)", output_uri, write_mode)
+        log.info("Writing tas to %s (mode=%s)", output_uri, write_mode)
         encoding = build_encoding_dict(ds, OUTPUT_CHUNKS, OUTPUT_SHARDS)
         write_dataset_to_icechunk(
             ds,
@@ -217,7 +208,7 @@ def process_gdex(
             write_mode=write_mode,
             repo=repo,
         )
-        logger.info("✓ Done: tas")
+        log.info("Done: tas")
         return
 
     # --- Direct mode: stream per-year NetCDF files from OSDF, resuming from history ---
@@ -238,7 +229,7 @@ def process_gdex(
         )
         _display_dry_run_result(ds, "tas", store=dry_run_output)
         if dry_run_output is not None:
-            logger.info("Writing dry-run sample for tas to %s", dry_run_output)
+            log.info("Writing dry-run sample for tas to %s", dry_run_output)
             dr_repo, dr_session = _init_repo_from_uri(dry_run_output)
             dr_write_mode = determine_write_mode(dr_repo)
             encoding = build_encoding_dict(ds, OUTPUT_CHUNKS, OUTPUT_SHARDS)
@@ -251,8 +242,8 @@ def process_gdex(
                 write_mode=dr_write_mode,
                 repo=dr_repo,
             )
-            logger.info("✓ Dry-run write done: tas → %s", dry_run_output)
-            read_session = dr_repo.readonly_session("main")  # re-open after commit
+            log.info("dry-run write done: tas -> %s", dry_run_output)
+            read_session = dr_repo.readonly_session("main")
             written = xr.open_dataset(read_session.store, engine="zarr", chunks="auto")
             console.print(written)
         return
@@ -261,11 +252,11 @@ def process_gdex(
     year_commits = [c for c in commits if c.startswith("GDEX: tas ")]
     resume_year = int(year_commits[0].split()[-1]) + 1 if year_commits else start_year
     if resume_year > start_year:
-        logger.info("resuming from %d (last committed: %d)", resume_year, resume_year - 1)
+        log.info("resuming from %d (last committed: %d)", resume_year, resume_year - 1)
 
     encoding = None
     for year in range(resume_year, end_year + 1):
-        logger.info("processing tas %d", year)
+        log.info("processing tas %d", year)
         for attempt in range(3):
             try:
                 raw = _open_year(store, year)[["tas"]].resample(time="D").mean()
@@ -298,11 +289,11 @@ def process_gdex(
             except Exception as e:
                 if attempt == 2:
                     raise
-                logger.warning("attempt %d failed for %d: %s, retrying", attempt + 1, year, e)
+                log.warning("attempt %d failed for %d: %s, retrying", attempt + 1, year, e)
                 session = repo.writable_session("main")
 
         session = repo.writable_session("main")
-    logger.info("✓ Done: tas")
+    log.info("Done: tas")
 
 
 # --- CLI ---
@@ -314,7 +305,6 @@ app = typer.Typer()
 def virtualize(
     start_year: int = typer.Option(min(GDEX_0P25_YEARS), help="First year to virtualize."),
     end_year: int = typer.Option(max(GDEX_0P25_YEARS), help="Last year to virtualize."),
-    coiled: bool = typer.Option(False, "--coiled/--local", help="Use Coiled cluster."),
 ) -> None:
     """Virtualize GDEX 0.25deg 3-hourly NetCDF files (OSDF) into a virtual icechunk store."""
     osdf_store = from_url(OSDF_BASE)
@@ -323,29 +313,25 @@ def virtualize(
 
     years = range(start_year, end_year + 1)
     urls = make_osdf_urls(years=years)
-    logger.info("virtualizing %d files (tas x %d years)", len(urls), len(list(years)))
+    log.info("virtualizing %d files (tas x %d years)", len(urls), len(list(years)))
 
-    client = setup_cluster(ClusterConfig(**VIRTUALIZE_CLUSTER)) if coiled else setup_local_client()
-    try:
-        virt_ds = virtualize_and_combine(
-            urls=urls,
-            registry=registry,
-            parser=parser,
-            loadable_variables=["lat", "lon", "time"],
-        )
-        repo_config = icechunk.RepositoryConfig.default()
-        repo_config.set_virtual_chunk_container(
-            icechunk.VirtualChunkContainer(OSDF_BASE + "/", store=icechunk.http_store())
-        )
-        storage = icechunk.s3_storage(bucket=BUCKET, prefix=VIRTUAL_PREFIX, region="us-west-2")
-        repo = icechunk.Repository.open_or_create(storage, repo_config)
-        session = repo.writable_session("main")
-        virt_ds.vz.to_icechunk(session.store)
-        session.commit(f"GDEX: virtualized 0.25deg 3 hourly ({start_year}-{end_year})")
-        repo.save_config()
-        logger.info("written to s3://%s/%s", BUCKET, VIRTUAL_PREFIX)
-    finally:
-        client.shutdown()
+    virt_ds = virtualize_and_combine(
+        urls=urls,
+        registry=registry,
+        parser=parser,
+        loadable_variables=["lat", "lon", "time"],
+    )
+    repo_config = icechunk.RepositoryConfig.default()
+    repo_config.set_virtual_chunk_container(
+        icechunk.VirtualChunkContainer(OSDF_BASE + "/", store=icechunk.http_store())
+    )
+    storage = icechunk.s3_storage(bucket=BUCKET, prefix=VIRTUAL_PREFIX, region="us-west-2")
+    repo = icechunk.Repository.open_or_create(storage, repo_config)
+    session = repo.writable_session("main")
+    virt_ds.vz.to_icechunk(session.store)
+    session.commit(f"GDEX: virtualized 0.25deg 3 hourly ({start_year}-{end_year})")
+    repo.save_config()
+    log.info("written to s3://%s/%s", BUCKET, VIRTUAL_PREFIX)
 
 
 @app.command()
@@ -356,7 +342,6 @@ def process(
         False, "--use-virtual/--direct", help="Read from the virtual icechunk store."
     ),
     output: str = typer.Option(OUTPUT_URI, "--output", help="Destination s3:// URI or local path."),
-    coiled: bool = typer.Option(False, "--coiled/--local", help="Use Coiled cluster."),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -377,32 +362,14 @@ def process(
     ),
 ) -> None:
     """Materialize GDEX tas to the unified icechunk store."""
-    if dry_run:
-        process_gdex(
-            start_year=start_year,
-            end_year=end_year,
-            use_virtual=use_virtual,
-            output_uri=output,
-            dry_run=True,
-            dry_run_output=dry_run_output,
-            commit_message=commit_message,
-        )
-        return
-
-    def _make_client():
-        return setup_cluster(ClusterConfig(**PROCESS_CLUSTER)) if coiled else setup_local_client()
-
-    run_with_cluster_retry(
-        _make_client,
-        lambda _: process_gdex(
-            start_year=start_year,
-            end_year=end_year,
-            use_virtual=use_virtual,
-            output_uri=output,
-            commit_message=commit_message,
-        ),
-        ["gdex"],
-        max_retries=MAX_VAR_RETRIES,
+    process_gdex(
+        start_year=start_year,
+        end_year=end_year,
+        use_virtual=use_virtual,
+        output_uri=output,
+        dry_run=dry_run,
+        dry_run_output=dry_run_output,
+        commit_message=commit_message,
     )
 
 
