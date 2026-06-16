@@ -366,8 +366,6 @@ def point_missingness(ds: xr.Dataset, var: str) -> xr.DataArray:
     Selects the grid point nearest to (lat=0, lon=0). Result has shape (time,) or
     (time, ensemble_member) depending on the dataset structure.
     """
-    import xarray as xr  # noqa: F401
-
     return ds[var].sel(lat=0, lon=0, method="nearest").isnull()
 
 
