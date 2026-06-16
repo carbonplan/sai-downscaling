@@ -451,8 +451,8 @@ class Catalog:
                 format="icechunk",
                 expected_vars=[VarStandards.TAS],
             ),
-            "GDEX-GMF-icechunk": Dataset(
-                name="GDEX-GMF-icechunk",
+            "GDEX-GMF": Dataset(
+                name="GDEX-GMF",
                 path="s3://carbonplan-srm/input/tensor/NCAR/GDEX-GMF.icechunk",
                 format="icechunk",
                 expected_chunks={"time": 1, "lat": 720, "lon": 1440},

@@ -4,7 +4,7 @@ gcm: "CESM2-WACCM"
 variable: "tas"
 ensemble_member: "003"
 scenario: "SSP245"
-obs_dataset: "GDEX-GMF-icechunk"
+obs_dataset: "GDEX-GMF"
 
 subset_bounds: [-35, -22, 16, 33]
 
