@@ -17,6 +17,7 @@ import pydantic
 import xarray as xr
 
 from srm.datasets import catalog
+from srm.qaqc import DatasetChecker  # noqa: F401  # available for check methods to delegate into
 
 # Blocking: crash or silent wrong output — abort the pipeline run.
 # Warning:  wrong data ingested — emit a warning but continue.
