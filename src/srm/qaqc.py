@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import itertools
+
+import cf_xarray  # noqa: F401  # registers CF accessor
+import numpy as np
+import pandas as pd
 import xarray as xr
 
 from srm import catalog
@@ -95,9 +100,6 @@ def confirm_coords(ds, obs_dataset: str = "ERA5"):
 
 class DatasetChecker:
     def __init__(self, ds_info):
-        import cf_xarray  # noqa: F401  # registers CF accessor
-        import xarray as xr
-
         if isinstance(ds_info, xr.Dataset):
             self.ds_info = None
             self.ds = ds_info
@@ -138,7 +140,6 @@ class DatasetChecker:
 
     def _resolve_ensemble_member(self, obj):
         """Return first ensemble_member slice where no variable/value is entirely null."""
-        import xarray as xr
 
         if "ensemble_member" not in getattr(obj, "dims", {}):
             return obj
@@ -195,8 +196,6 @@ class DatasetChecker:
         return ValidationResult(len(issues) == 0, issues)
 
     def validate_time_axis(self) -> ValidationResult:
-        import numpy as np
-
         if "time" not in self.ds.dims:
             return ValidationResult(False, ["Dataset has no 'time' dimension"])
 
@@ -214,8 +213,6 @@ class DatasetChecker:
         return ValidationResult(len(issues) == 0, issues)
 
     def validate_calendar(self) -> ValidationResult:
-        import numpy as np
-
         issues = []
         if "time" not in self.ds.dims:
             return ValidationResult(False, ["Dataset has no 'time' dimension"])
@@ -308,8 +305,6 @@ class DatasetChecker:
     def validate_no_identical_vars(
         self, member_index: int = 0, day_index: int = 1
     ) -> ValidationResult:
-        import itertools
-
         da_slice = self.ds.isel(time=day_index)
         if "ensemble_member" in da_slice.dims:
             da_slice = self._resolve_ensemble_member(da_slice)
@@ -372,7 +367,6 @@ def summarize_time_coverage(ds: xr.Dataset, label: str) -> dict:
     n_missing is computed against an expected gap-free daily index from
     the first to last observed time step.
     """
-    import pandas as pd
 
     time = ds.indexes["time"]
     expected = pd.date_range(str(time[0])[:10], str(time[-1])[:10], freq="D")
@@ -394,8 +388,6 @@ def summarize_grid(ds: xr.Dataset, label: str) -> dict:
     Keys: source, lat_min, lat_max, lon_min, lon_max, n_lat, n_lon,
     lat_res, lon_res, lat_monotonic, lon_monotonic, lat_range_ok, lon_range_ok.
     """
-    import numpy as np
-    import pandas as pd
 
     lat = ds["lat"].values
     lon = ds["lon"].values
