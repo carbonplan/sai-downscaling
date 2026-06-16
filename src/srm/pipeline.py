@@ -26,11 +26,13 @@ from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache
+from srm.datasets import BaseDataset, catalog as _catalog
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
     detrend,
     downscale_from_coarse,
     get_experiment,
+    get_historical_experiment,
     get_obs,
     interpolate_fine_to_coarse_grid,
     rechunk,
@@ -358,7 +360,10 @@ class BCSDPipeline:
         else:
             return icechunk.local_filesystem_storage(path=path)
 
-    def _build_output_attrs(self) -> dict:
+    def _build_output_attrs(
+        self,
+        source_dataset: BaseDataset | None,
+    ) -> dict:
         """Adds attrs to output datasets"""
         dataset_attrs = {
             "author": "CarbonPlan",
@@ -498,7 +503,8 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         obs_coarse.name = self.config.variable
-        dataset_attrs = self._build_output_attrs()
+        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
+        dataset_attrs = self._build_output_attrs(hist_dataset)
         self._write_to_icechunk(
             obs_coarse, output_path, "write complete", dataset_attrs=dataset_attrs
         )
@@ -516,9 +522,9 @@ class BCSDPipeline:
         obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
-        model_hist = get_experiment(
-            gcm=self.config.gcm, scenario="historical", var=self.config.variable
-        ).sel(ensemble_member=self._hist_member)
+        model_hist = get_historical_experiment(
+            gcm=self.config.gcm, member=self._hist_member, var=self.config.variable
+        )
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         if self.config.subset_bounds:
@@ -665,7 +671,8 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         model_hist_downscaled.name = self.config.variable
-        dataset_attrs = self._build_output_attrs()
+        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
+        dataset_attrs = self._build_output_attrs(hist_dataset)
         self._write_to_icechunk(
             da=model_hist_downscaled,
             path=output_path,
@@ -759,7 +766,8 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         model_hist_downscaled.name = self.config.variable
-        dataset_attrs = self._build_output_attrs()
+        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
+        dataset_attrs = self._build_output_attrs(hist_dataset)
         self._write_to_icechunk(
             da=model_hist_downscaled,
             path=output_path,
@@ -772,10 +780,75 @@ class BCSDPipeline:
         return output_path
 
     def _load_ssp245_bridge(self) -> xr.DataArray:
-        """Load SSP245 bridge timeseries for SAI detrending."""
-        return get_experiment(gcm=self.config.gcm, scenario="SSP245", var=self.config.variable).sel(
-            ensemble_member=self._ssp245_member
+        """Load the SSP245 bridge timeseries for SAI detrending.
+
+        For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
+        G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
+        When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap before the
+        GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
+        dataset is converted via to_proleptic_gregorian before concat.
+        """
+        ssp245_cat_key = f"{self.config.gcm}-SSP245-icechunk"
+        primary_ds = _catalog.get(ssp245_cat_key).to_xarray()
+        primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
+
+        if self._ssp245_esgf_member is None:
+            return primary
+
+        primary_start_year = int(primary.time.dt.year.min())
+        if primary_start_year <= self.config.train_period_end + 1:
+            return primary
+
+        # Gap detected: prepend ESGF data for the missing years before the GeoMIP start.
+        # ESGF may use a different calendar — convert to proleptic_gregorian (primary's calendar).
+        from srm.utils import to_proleptic_gregorian
+
+        esgf_ds = to_proleptic_gregorian(
+            _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
         )
+        esgf_bridge = esgf_ds[self.config.variable].sel(ensemble_member=self._ssp245_esgf_member)
+        esgf_gap = esgf_bridge.isel(time=(esgf_bridge.time.dt.year < primary_start_year).values)
+
+        if esgf_gap.time.size == 0:
+            logger.warning(
+                "_load_ssp245_bridge: ESGF dataset for %s has no data before year %d; "
+                "returning primary GeoMIP dataset only — 2015–%d gap will remain",
+                self._ssp245_esgf_member,
+                primary_start_year,
+                primary_start_year - 1,
+            )
+            return primary
+
+        esgf_gap_years = (int(esgf_gap.time.dt.year.min()), int(esgf_gap.time.dt.year.max()))
+        primary_years = (primary_start_year, int(primary.time.dt.year.max()))
+        logger.info(
+            "_load_ssp245_bridge: stitching ESGF %s %d–%d + GeoMIP %s %d–%d",
+            self._ssp245_esgf_member,
+            *esgf_gap_years,
+            self._ssp245_member,
+            *primary_years,
+        )
+
+        # Drop the scalar ensemble_member coord before concat — the two slices carry
+        # different values (r1i1p4f2 vs r01) and xr.concat refuses to merge mismatched
+        # scalar coords. Re-attach the primary member value so the bridge is transparent
+        # to any downstream code that reads ensemble_member.
+        esgf_clean = esgf_gap.drop_vars("ensemble_member", errors="ignore")
+        primary_clean = primary.drop_vars("ensemble_member", errors="ignore")
+        bridge = xr.concat([esgf_clean, primary_clean], dim="time")
+        bridge = bridge.assign_coords(ensemble_member=primary.coords["ensemble_member"])
+        bridge.attrs.update(
+            {
+                "bridge_type": "esgf_geomip_stitch",
+                "bridge_esgf_member": self._ssp245_esgf_member,
+                "bridge_esgf_years": f"{esgf_gap_years[0]}-{esgf_gap_years[1]}",
+                "bridge_geomip_member": self._ssp245_member,
+                "bridge_geomip_years": f"{primary_years[0]}-{primary_years[1]}",
+                "bridge_gcm": self.config.gcm,
+                "bridge_variable": self.config.variable,
+            }
+        )
+        return bridge
 
     def _load_scenario_data(
         self,
@@ -794,9 +867,9 @@ class BCSDPipeline:
         obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
-        model_hist = get_experiment(
-            gcm=self.config.gcm, scenario="historical", var=self.config.variable
-        ).sel(ensemble_member=self._hist_member)
+        model_hist = get_historical_experiment(
+            gcm=self.config.gcm, member=self._hist_member, var=self.config.variable
+        )
         model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
 
         model_scenario = get_experiment(
@@ -804,6 +877,40 @@ class BCSDPipeline:
         )
         model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
         model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
+
+        # Non-SAI scenarios whose primary dataset starts after predict_period_start
+        # (e.g. MIROC-ES2H GeoMIP SSP245 starts 2020) need ESGF data prepended to close the gap.
+        if not self.config.is_sai_scenario and self._ssp245_esgf_member is not None:
+            scenario_start_year = int(model_scenario.time.dt.year.min())
+            if scenario_start_year > self.config.predict_period_start:
+                from srm.utils import to_proleptic_gregorian
+
+                esgf_ds = to_proleptic_gregorian(
+                    _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
+                )
+                esgf_data = esgf_ds[self.config.variable].sel(
+                    ensemble_member=self._ssp245_esgf_member
+                )
+                esgf_pre = esgf_data.isel(
+                    time=(
+                        (esgf_data.time.dt.year >= self.config.predict_period_start)
+                        & (esgf_data.time.dt.year < scenario_start_year)
+                    ).values
+                )
+                logger.info(
+                    "Non-SAI scenario starts at %d; prepending ESGF SSP245 %s for %d–%d",
+                    scenario_start_year,
+                    self._ssp245_esgf_member,
+                    int(esgf_pre.time.dt.year.min()),
+                    int(esgf_pre.time.dt.year.max()),
+                )
+                esgf_pre = esgf_pre.drop_vars("ensemble_member", errors="ignore")
+                scenario_clean = model_scenario.drop_vars("ensemble_member", errors="ignore")
+                model_scenario = xr.concat([esgf_pre, scenario_clean], dim="time")
+                model_scenario = model_scenario.assign_coords(
+                    ensemble_member=self.config.ensemble_member
+                )
+                model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
         # SAI scenarios need an SSP245 bridge to fill the gap between historical and SAI start
         ssp_timeseries: xr.DataArray | None = None
@@ -1116,7 +1223,10 @@ class BCSDPipeline:
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
         scenario_downscaled.name = self.config.variable
-        dataset_attrs = self._build_output_attrs()
+        scenario_dataset = _catalog.datasets.get(
+            f"{self.config.gcm}-{self.config.scenario}-icechunk"
+        )
+        dataset_attrs = self._build_output_attrs(scenario_dataset)
         self._write_to_icechunk(
             scenario_downscaled,
             output_path,
@@ -1241,7 +1351,10 @@ class BCSDPipeline:
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
         scenario_downscaled.name = self.config.variable
-        dataset_attrs = self._build_output_attrs()
+        scenario_dataset = _catalog.datasets.get(
+            f"{self.config.gcm}-{self.config.scenario}-icechunk"
+        )
+        dataset_attrs = self._build_output_attrs(scenario_dataset)
         self._write_to_icechunk(
             scenario_downscaled,
             output_path,
