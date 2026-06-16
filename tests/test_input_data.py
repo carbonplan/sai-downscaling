@@ -19,7 +19,7 @@ from srm.validation import (
 pytestmark = pytest.mark.input_data
 
 # Datasets too large or non-GCM for the expensive spatial range check.
-# ERA5 and GDEX still get lighter single-day consistency checks below.
+# ERA5 and GDEX still get other consistency checks (time axis, calendar, units, etc.).
 _SKIP_SPATIAL_RANGE = frozenset(
     {
         "ERA5",
@@ -33,11 +33,9 @@ _SKIP_SPATIAL_RANGE = frozenset(
 # Non-climate or non-data datasets — skip all physics checks.
 _SKIP_ALL_PHYSICS = frozenset({"ocean-mask"})
 
-# ERA5 tasmin/tasmax vars are forecast (minimum/maximum_2m_temperature_since_previous_post_processing)
-# while ERA5 tas derives is analysis: analysis instantaneous 2m_temperature.
-# Comparsing these, we get small tasmax < tas and tasmin < tas check failures
-# For ex: on day 1, 0.09% of grid points have tas < tasmin
-# and 0.19% have tasmax < tas
+# ERA5 tasmin/tasmax are forecast fields (minimum/maximum_2m_temperature_since_previous_post_processing)
+# while ERA5 tas is an analysis field (instantaneous 2m_temperature). The product mismatch
+# causes systematic tasmax < tas and tasmin < tas violations across grid points.
 
 _SKIP_TEMP_CONSISTENCY = frozenset({"ERA5"})
 
@@ -145,7 +143,7 @@ class TestVariablePhysics:
     def validator(self, ds_info) -> DatasetValidator:
         return DatasetValidator(ds_info)
 
-    # variable-checks: reasonable_ranges (spatial min/max on single day; catches unit mismatches)
+    # variable-checks: reasonable_ranges (spatial min/max; catches unit mismatches)
     @pytest.mark.parametrize("var", list(VAR_SPATIAL_RANGES))
     def test_spatial_range(self, ds_info, validator, var):
         self._skip_if_not_applicable(ds_info)
@@ -162,7 +160,7 @@ class TestVariablePhysics:
         result = validator.validate_dtr_consistency()
         assert result, f"{ds_info.name}: {result.issues}"
 
-    # variable-checks: temperature_consistency (tasmax > tas > tasmin; single day only — not all time steps)
+    # variable-checks: temperature_consistency (tasmax > tas > tasmin; full dataset)
     def test_temperature_consistency(self, ds_info, validator):
         self._skip_if_not_applicable(ds_info)
         if ds_info.name in _SKIP_TEMP_CONSISTENCY:
