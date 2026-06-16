@@ -11,6 +11,7 @@ from srm.bcsd_config import (
     CacheConfig,
     PipelineOptions,
     RuntimeConfig,
+    VariableClipBounds,
     VariableConfig,
     _cache_version,
 )
@@ -225,6 +226,26 @@ class TestBCSDConfigConstruction:
     def test_apply_ocean_mask_can_be_disabled(self):
         opts = PipelineOptions(apply_ocean_mask=False)
         assert opts.apply_ocean_mask is False
+
+    def test_clip_values_defaults_true(self):
+        assert PipelineOptions().clip_values is True
+
+    def test_clip_values_can_be_disabled(self):
+        assert PipelineOptions(clip_values=False).clip_values is False
+
+    def test_clip_bounds_pr_default(self):
+        bounds = PipelineOptions().clip_bounds
+        assert bounds["pr"].min == 0.0
+        assert bounds["pr"].max is None
+
+    def test_clip_bounds_hurs_default(self):
+        bounds = PipelineOptions().clip_bounds
+        assert bounds["hurs"].min == 0.0
+        assert bounds["hurs"].max == 105.0
+
+    def test_clip_bounds_can_be_overridden(self):
+        opts = PipelineOptions(clip_bounds={"pr": VariableClipBounds(min=0.0, max=500.0)})
+        assert opts.clip_bounds["pr"].max == 500.0
 
     def test_model_copy_version_override(self):
         opts = PipelineOptions()
