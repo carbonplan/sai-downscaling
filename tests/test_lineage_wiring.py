@@ -124,25 +124,25 @@ def _make_mock_da(name: str = "data") -> MagicMock:
 
 class TestLoadGcmObsMemberSelection:
     def test_historical_member_used_for_hist_sel(self, g6_001_tas_config, pipeline_options):
-        """_load_gcm_obs must select resolved hist member 'r1i1p1f1', not ensemble_member '001'."""
+        """_load_gcm_obs must call get_historical_experiment with member='r1i1p1f1', not '001'."""
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
         assert pipeline._hist_member == "r1i1p1f1"
 
-        mock_hist_da = _make_mock_da()
         with (
             patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
-            patch("srm.pipeline.get_experiment", return_value=mock_hist_da) as mock_get_exp,
+            patch(
+                "srm.pipeline.get_historical_experiment", return_value=_make_mock_da()
+            ) as mock_get_hist,
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
             patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
         ):
             mock_deps.return_value = {"obs_regridded": (True, "/fake/obs")}
             pipeline._load_gcm_obs()
 
-        mock_get_exp.assert_called_once_with(gcm="CESM2-WACCM", scenario="historical", var="tas")
-        mock_hist_da.sel.assert_any_call(ensemble_member="r1i1p1f1")
+        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM", member="r1i1p1f1", var="tas")
 
     def test_falls_back_to_ensemble_member_when_no_lineage(self, tmp_path, pipeline_options):
-        """For unknown scenario, _hist_member falls back to ensemble_member."""
+        """For an unknown scenario, _hist_member falls back to ensemble_member."""
         config = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
@@ -154,18 +154,18 @@ class TestLoadGcmObsMemberSelection:
         pipeline = BCSDPipeline(config, pipeline_options)
         assert pipeline._hist_member == "r1i1p1f1"
 
-        mock_hist_da = _make_mock_da()
         with (
             patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
-            patch("srm.pipeline.get_experiment", return_value=mock_hist_da) as mock_get_exp,
+            patch(
+                "srm.pipeline.get_historical_experiment", return_value=_make_mock_da()
+            ) as mock_get_hist,
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
             patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
         ):
             mock_deps.return_value = {"obs_regridded": (True, "/fake/obs")}
             pipeline._load_gcm_obs()
 
-        mock_get_exp.assert_called_once_with(gcm="CESM2-WACCM", scenario="historical", var="tas")
-        mock_hist_da.sel.assert_any_call(ensemble_member="r1i1p1f1")
+        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM", member="r1i1p1f1", var="tas")
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +177,7 @@ class TestLoadScenarioDataMemberSelection:
     def _run_load_scenario(self, pipeline, mock_get_experiment):
         with (
             patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
+            patch("srm.pipeline.get_historical_experiment", return_value=_make_mock_da()),
             patch("srm.pipeline.get_experiment", side_effect=mock_get_experiment),
             patch.object(pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()),
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
@@ -191,17 +192,15 @@ class TestLoadScenarioDataMemberSelection:
     def test_historical_sel_uses_historical_ensemble_member(
         self, g6_001_tas_config, pipeline_options
     ):
-        """_load_scenario_data must select resolved hist member 'r1i1p1f1', not '001'."""
+        """Historical load must use get_historical_experiment with resolved member."""
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
-
-        mock_hist_da = _make_mock_da()
-
-        def get_exp_side_effect(**kw):
-            return mock_hist_da if kw.get("scenario") == "historical" else _make_mock_da()
 
         with (
             patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
-            patch("srm.pipeline.get_experiment", side_effect=get_exp_side_effect),
+            patch(
+                "srm.pipeline.get_historical_experiment", return_value=_make_mock_da()
+            ) as mock_get_hist,
+            patch("srm.pipeline.get_experiment", return_value=_make_mock_da()),
             patch.object(pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()),
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
             patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
@@ -212,7 +211,7 @@ class TestLoadScenarioDataMemberSelection:
             }
             pipeline._load_scenario_data()
 
-        mock_hist_da.sel.assert_any_call(ensemble_member="r1i1p1f1")
+        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM", member="r1i1p1f1", var="tas")
 
     def test_falls_back_to_ensemble_member_when_no_lineage(self, pipeline_options):
         """For unknown scenario, _hist_member falls back to ensemble_member."""
@@ -227,21 +226,19 @@ class TestLoadScenarioDataMemberSelection:
         pipeline = BCSDPipeline(config, pipeline_options)
         assert pipeline._hist_member == "r1i1p1f1"
 
-        mock_hist_da = _make_mock_da()
-
-        def get_exp_side_effect(**kw):
-            return mock_hist_da if kw.get("scenario") == "historical" else _make_mock_da()
-
         with (
             patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
-            patch("srm.pipeline.get_experiment", side_effect=get_exp_side_effect),
+            patch(
+                "srm.pipeline.get_historical_experiment", return_value=_make_mock_da()
+            ) as mock_get_hist,
+            patch("srm.pipeline.get_experiment", return_value=_make_mock_da()),
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
             patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
         ):
             mock_deps.return_value = {"obs_regridded": (True, "/fake/obs")}
             pipeline._load_scenario_data()
 
-        mock_hist_da.sel.assert_any_call(ensemble_member="r1i1p1f1")
+        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM", member="r1i1p1f1", var="tas")
 
     def test_scenario_sel_uses_ensemble_member(self, g6_001_tas_config, pipeline_options):
         """G6 scenario data load must use ensemble_member (not hist override)."""
@@ -257,6 +254,7 @@ class TestLoadScenarioDataMemberSelection:
 
         with (
             patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
+            patch("srm.pipeline.get_historical_experiment", return_value=_make_mock_da()),
             patch("srm.pipeline.get_experiment", return_value=_make_mock_da()),
             patch.object(
                 pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()
@@ -346,12 +344,12 @@ class TestHistoricalPathSharedParent:
 class TestBuildOutputAttrs:
     def test_historical_ensemble_member_in_attrs(self, g6_001_tas_config, pipeline_options):
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
-        attrs = pipeline._build_output_attrs()
+        attrs = pipeline._build_output_attrs(source_dataset=None)
         assert attrs["historical_ensemble_member"] == "r1i1p1f1"
 
     def test_ssp245_ensemble_member_in_attrs(self, g6_001_tas_config, pipeline_options):
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
-        attrs = pipeline._build_output_attrs()
+        attrs = pipeline._build_output_attrs(source_dataset=None)
         assert attrs["ssp245_ensemble_member"] == "001"
 
     def test_attrs_fall_back_to_ensemble_member_when_no_lineage(self, pipeline_options):
@@ -364,14 +362,14 @@ class TestBuildOutputAttrs:
             predict_period_end=2100,
         )
         pipeline = BCSDPipeline(config, pipeline_options)
-        attrs = pipeline._build_output_attrs()
+        attrs = pipeline._build_output_attrs(source_dataset=None)
         assert attrs["historical_ensemble_member"] == "r1i1p1f1"
         assert attrs["ssp245_ensemble_member"] == "r1i1p1f1"
 
     def test_tasmax_g6_002_attrs(self, g6_002_tasmax_config, pipeline_options):
         """tasmax G6-002: historical=001, ssp245=007."""
         pipeline = BCSDPipeline(g6_002_tasmax_config, pipeline_options)
-        attrs = pipeline._build_output_attrs()
+        attrs = pipeline._build_output_attrs(source_dataset=None)
         assert attrs["historical_ensemble_member"] == "001"
         assert attrs["ssp245_ensemble_member"] == "007"
 

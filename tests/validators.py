@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-from srm.datasets import Datatree
-
 # Spatial range bounds for a single day (isel(time=0)), computed across full spatial extent.
 # Goal: catch obvious unit mismatches (e.g. Celsius instead of Kelvin, fraction instead of %).
 # Ranges are wide intentionally — based on ERA5 observed range +/- large margins.
@@ -37,16 +35,13 @@ class ValidationResult:
 
 
 class DatasetValidator:
-    def __init__(self, ds_info, group: str = "historical"):
+    def __init__(self, ds_info):
         import cf_xarray  # noqa
         import xarray as xr
 
         if isinstance(ds_info, xr.Dataset):
             self.ds_info = None
             self.ds = ds_info
-        elif isinstance(ds_info, Datatree):
-            self.ds_info = ds_info
-            self.ds = ds_info.to_xarray()[group].ds
         else:
             self.ds_info = ds_info
             self.ds = ds_info.to_xarray()
@@ -306,9 +301,7 @@ class DatasetValidator:
         return ValidationResult(len(issues) == 0, issues)
 
     # ensemble-checks: spread (global mean of tas differs across all member pairs)
-    def validate_ensemble_spread(
-        self, var: str = "tas", date: str = "2020-01-01"
-    ) -> ValidationResult:
+    def validate_ensemble_spread(self, var: str = "tas", day_index: int = 0) -> ValidationResult:
         import itertools
 
         if var not in self.ds:
@@ -318,7 +311,7 @@ class DatasetValidator:
         if self.ds.sizes["ensemble_member"] < 2:
             return ValidationResult(True, [])
 
-        da = self.ds[var].sel(time=date, method="nearest")
+        da = self.ds[var].isel(time=day_index)
         means = da.mean(dim=["lat", "lon"]).compute()  # shape: (ensemble_member,)
 
         issues = []
@@ -327,6 +320,6 @@ class DatasetValidator:
                 issues.append(
                     f"{var} global mean identical for members "
                     f"{means.ensemble_member.values[i]} and {means.ensemble_member.values[j]} "
-                    f"(date {date})"
+                    f"(day {day_index})"
                 )
         return ValidationResult(len(issues) == 0, issues)

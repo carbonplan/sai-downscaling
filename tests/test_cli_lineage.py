@@ -95,12 +95,16 @@ class TestResolveLineage:
 
 class TestValidateLineageMembers:
     def test_passes_when_hist_member_present(self):
-        """G6/001/tas resolves to hist=r1i1p1f1 and ssp245=001; unified store has both — no error."""
+        """G6/001/tas resolves to hist=r1i1p1f1 and ssp245=001; catalog has both — no error."""
         cfg = BCSDConfig(variable="tas", **_G6_BASE)
-        entry = _mock_catalog_entry(["r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001", "002", "003"])
+        hist_entry = _mock_catalog_entry(["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"])
+        ssp_entry = _mock_catalog_entry(["001", "002", "003"])
+
+        def catalog_get(store_name):
+            return ssp_entry if "SSP245" in store_name else hist_entry
 
         with patch("srm.datasets.catalog") as cat:
-            cat.get.return_value = entry
+            cat.get.side_effect = catalog_get
             _validate_lineage_members([cfg])  # must not raise
 
     def test_raises_when_hist_member_absent(self):
@@ -114,15 +118,19 @@ class TestValidateLineageMembers:
                 _validate_lineage_members([cfg])
 
     def test_raises_when_ssp245_member_absent(self):
-        """ValueError raised when resolved SSP245 bridge member is absent from unified store."""
-        # G6/001/tas → hist=r1i1p1f1, ssp245=001; unified store missing "001"
+        """ValueError raised when resolved SSP245 bridge member is absent from SSP245 store."""
+        # G6/001/tas → ssp245="001"; mock catalog missing it for SSP245 store
         cfg = BCSDConfig(variable="tas", **_G6_BASE)
-        entry = _mock_catalog_entry(
-            ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
-        )  # has hist, missing ssp245=001
+        entry_hist = _mock_catalog_entry(["r1i1p1f1"])  # hist store ok
+        entry_ssp = _mock_catalog_entry(["002", "003"])  # SSP245 store missing 001
+
+        def catalog_get(store_name):
+            if "SSP245" in store_name:
+                return entry_ssp
+            return entry_hist
 
         with patch("srm.datasets.catalog") as cat:
-            cat.get.return_value = entry
+            cat.get.side_effect = catalog_get
             with pytest.raises(ValueError, match="ssp245"):
                 _validate_lineage_members([cfg])
 
@@ -174,7 +182,7 @@ class TestValidateLineageMembers:
             _validate_lineage_members([cfg])  # must not raise
 
     def test_deduplicates_store_lookups(self):
-        """Unified store queried at most once regardless of config count."""
+        """Each unique store is queried at most once regardless of config count."""
         cfgs = [BCSDConfig(variable=var, **_G6_BASE) for var in ("tas", "pr", "rsds", "tasmax")]
         entry = _mock_catalog_entry(
             ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001", "002", "003", "009"]
@@ -182,6 +190,9 @@ class TestValidateLineageMembers:
         with patch("srm.datasets.catalog") as cat:
             cat.get.return_value = entry
             _validate_lineage_members(cfgs)
+        # tas/pr/rsds → pangeo hist store; tasmax → standard hist store; all share SSP245
         called_stores = {call.args[0] for call in cat.get.call_args_list}
-        assert "CESM2-WACCM-unified-icechunk" in called_stores
-        assert cat.get.call_count == 1
+        assert "pangeo-CESM2-WACCM-historical-icechunk" in called_stores
+        assert "CESM2-WACCM-historical-icechunk" in called_stores
+        assert "CESM2-WACCM-SSP245-icechunk" in called_stores
+        assert cat.get.call_count == 3

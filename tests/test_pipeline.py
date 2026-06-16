@@ -72,7 +72,7 @@ def _mock_fit_historical_compute():
     """Mock all compute-heavy imports used by fit_historical."""
     with (
         patch("srm.pipeline.get_obs"),
-        patch("srm.pipeline.get_experiment"),
+        patch("srm.pipeline.get_historical_experiment"),
         patch("srm.pipeline.get_experiment"),
         patch("srm.pipeline.xr.DataArray", return_value=MagicMock()),
         patch("srm.pipeline.rechunk"),
@@ -92,7 +92,7 @@ def _mock_transform_scenario_compute():
     """Mock all compute-heavy imports used by transform_scenario."""
     with (
         patch("srm.pipeline.get_obs"),
-        patch("srm.pipeline.get_experiment"),
+        patch("srm.pipeline.get_historical_experiment"),
         patch("srm.pipeline.get_experiment"),
         patch("srm.pipeline.xr.DataArray", return_value=MagicMock()),
         patch("srm.pipeline.xr.concat", return_value=MagicMock()),
