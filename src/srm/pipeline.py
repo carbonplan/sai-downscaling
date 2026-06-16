@@ -366,7 +366,7 @@ class BCSDPipeline:
             "bias_correction_method": self.config.mapping_type,
             "downscaling_method": self.config.downscaling_method,
             "train_period": f"{self.config.train_period_start}-{self.config.train_period_end}",
-            "observation_dataset": "ERA5",
+            "observation_dataset": self.config.obs_dataset,
             "creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
             "srm_version": importlib.metadata.version("srm"),
             "model": self.config.gcm,
@@ -434,7 +434,7 @@ class BCSDPipeline:
         """
         Stage 1: Regrid observations to GCM grid.
 
-        This stage loads ERA5 observations and regrids them to the coarse GCM
+        This stage loads observations and regrids them to the coarse GCM
         grid using local area averaging. The result is cached and reused across
         all ensemble members and scenarios for this GCM/variable combination.
 
@@ -470,7 +470,7 @@ class BCSDPipeline:
         )
 
         t0 = time.perf_counter()
-        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
         model_grid = get_experiment(
             gcm=self.config.gcm, scenario="historical", var=self.config.variable
@@ -513,7 +513,7 @@ class BCSDPipeline:
         )
         obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
 
-        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
         model_hist = get_experiment(
@@ -791,7 +791,7 @@ class BCSDPipeline:
         )
         obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
 
-        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
         model_hist = get_experiment(
@@ -828,7 +828,11 @@ class BCSDPipeline:
         train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
         obs_coarse = obs_coarse.sel(time=train_slice)
         obs_fine = obs_fine.sel(time=train_slice)
-        model_hist = model_hist.sel(time=train_slice)
+        model_hist = model_hist.sel(
+            time=slice(
+                f"{self.config.train_period_start}", f"{self.config.predict_period_start - 1}"
+            )
+        )
         model_scenario = model_scenario.sel(
             time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
         )

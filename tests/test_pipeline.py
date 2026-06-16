@@ -245,7 +245,7 @@ class TestPrepareObservationsCompute:
     def test_get_obs_receives_correct_variable(self, pipeline):
         with _mock_prepare_obs_compute() as (mock_get_obs, *_):
             pipeline.prepare_observations()
-        mock_get_obs.assert_called_once_with(var="tas")
+        mock_get_obs.assert_called_once_with(var="tas", dataset_name="ERA5")
 
     def test_get_experiment_called_for_historical_scenario(self, pipeline):
         with _mock_prepare_obs_compute() as (_, mock_get_exp, *_):
@@ -307,7 +307,7 @@ class TestPrepareObservationsCompute:
     def test_pr_variable_passes_correct_var_to_get_obs(self, pipeline_pr):
         with _mock_prepare_obs_compute() as (mock_get_obs, *_):
             pipeline_pr.prepare_observations()
-        mock_get_obs.assert_called_once_with(var="pr")
+        mock_get_obs.assert_called_once_with(var="pr", dataset_name="ERA5")
 
 
 # ---------------------------------------------------------------------------

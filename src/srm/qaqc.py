@@ -57,8 +57,8 @@ def check_physical_constraints(ds):
     print(f"Number of times tasmin exceeds tasmax: {min_exceeds_max}")
 
 
-def confirm_coords(ds):
-    era5 = catalog.get("ERA5").to_xarray()
-    xr.testing.assert_equal(era5[["lat", "lon"]].coords, ds[["lat", "lon"]].coords)
+def confirm_coords(ds, obs_dataset: str = "ERA5"):
+    obs = catalog.get(obs_dataset).to_xarray()
+    xr.testing.assert_equal(obs[["lat", "lon"]].coords, ds[["lat", "lon"]].coords)
     # TODO: add in the expected time coordinates
     return "Latitude and longitude match expectation"

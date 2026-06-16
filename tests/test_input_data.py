@@ -27,7 +27,7 @@ _SKIP_SPATIAL_RANGE = frozenset(
         "ERA5",
         "NASA-NEX-SSP245",
         "NASA-NEX-historical",
-        "GDEX-GMF-icechunk",
+        "GDEX-GMF",
         "ocean-mask",
     }
 )

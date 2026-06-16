@@ -175,11 +175,22 @@ def get_experiment(
     return da
 
 
-def get_obs(var: str = "tas", coord_bounds_list: list | None = None):
-    era5 = catalog.get("ERA5").to_xarray()
-    era5 = era5.proj.assign_crs(spatial_ref="epsg:4326")
+def get_historical_experiment(gcm: str, member: str, var: str) -> xr.DataArray:
+    """Load a single historical ensemble member, routing to the correct source dataset.
+    CESM2-WACCM has a two historical dataset options, so we route to the pangeo-prefixed store for r*i*p*f* members,
+    while others use the standard store path."""
+    use_pangeo = gcm == "CESM2-WACCM" and member.startswith("r")
+    key = f"pangeo-{gcm}-historical-icechunk" if use_pangeo else f"{gcm}-historical-icechunk"
+    ds = catalog.get(key).to_xarray()
+    ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
+    return ds[var].sel(ensemble_member=member)
 
-    da = era5[var]
+
+def get_obs(var: str = "tas", coord_bounds_list: list | None = None, dataset_name: str = "ERA5"):
+    obs = catalog.get(dataset_name).to_xarray()
+    obs = obs.proj.assign_crs(spatial_ref="epsg:4326")
+
+    da = obs[var]
 
     if coord_bounds_list is not None:
         da = subset_space(da, coord_bounds_list)
