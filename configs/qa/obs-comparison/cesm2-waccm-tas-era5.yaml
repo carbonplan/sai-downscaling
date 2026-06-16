@@ -1,6 +1,4 @@
 # BCSD comparison config: CESM2-WACCM / tas / ERA5 obs
-# Paired with cesm2-waccm-tas-gdex.yaml for obs dataset comparison.
-# ensemble_member r3i1p1f1 matches NASA-NEX for future three-way comparison.
 
 gcm: "CESM2-WACCM"
 variable: "tas"

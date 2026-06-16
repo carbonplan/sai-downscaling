@@ -1,7 +1,4 @@
 # BCSD comparison config: CESM2-WACCM / tas / GDEX-GMF obs
-# Paired with cesm2-waccm-tas-era5.yaml for obs dataset comparison.
-# ensemble_member r3i1p1f1 matches NASA-NEX for future three-way comparison.
-# GDEX-GMF covers 1948-2010, so train_period_end capped at 2010.
 
 gcm: "CESM2-WACCM"
 variable: "tas"
