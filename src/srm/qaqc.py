@@ -353,3 +353,132 @@ class DatasetChecker:
                     f"(day {day_index})"
                 )
         return ValidationResult(len(issues) == 0, issues)
+
+
+# ---------------------------------------------------------------------------
+# Module-level helper functions (promoted from notebook helpers)
+# ---------------------------------------------------------------------------
+
+
+def point_missingness(ds: xr.Dataset, var: str) -> xr.DataArray:
+    """Return a boolean DataArray marking NaN positions at a single grid point.
+
+    Selects the grid point nearest to (lat=0, lon=0). Result has shape (time,) or
+    (time, ensemble_member) depending on the dataset structure.
+    """
+    import xarray as xr  # noqa: F401
+
+    return ds[var].sel(lat=0, lon=0, method="nearest").isnull()
+
+
+def summarize_time_coverage(ds: xr.Dataset, label: str) -> dict:
+    """Return a summary dict of the time axis for DataFrame display.
+
+    Keys: source, start, end, n_times, n_missing, n_duplicates, monotonic.
+    n_missing is computed against an expected gap-free daily index from
+    the first to last observed time step.
+    """
+    import pandas as pd
+
+    time = ds.indexes["time"]
+    expected = pd.date_range(str(time[0])[:10], str(time[-1])[:10], freq="D")
+    dt_index = pd.DatetimeIndex([str(t)[:10] for t in time])
+    return {
+        "source": label,
+        "start": str(time[0])[:10],
+        "end": str(time[-1])[:10],
+        "n_times": len(time),
+        "n_missing": max(0, len(expected) - len(time)),
+        "n_duplicates": int(dt_index.duplicated().sum()),
+        "monotonic": bool(time.is_monotonic_increasing),
+    }
+
+
+def summarize_grid(ds: xr.Dataset, label: str) -> dict:
+    """Return a summary dict of the lat/lon grid for DataFrame display.
+
+    Keys: source, lat_min, lat_max, lon_min, lon_max, n_lat, n_lon,
+    lat_res, lon_res, lat_monotonic, lon_monotonic, lat_range_ok, lon_range_ok.
+    """
+    import numpy as np
+    import pandas as pd
+
+    lat = ds["lat"].values
+    lon = ds["lon"].values
+    return {
+        "source": label,
+        "lat_min": float(lat.min()),
+        "lat_max": float(lat.max()),
+        "lon_min": float(lon.min()),
+        "lon_max": float(lon.max()),
+        "n_lat": len(lat),
+        "n_lon": len(lon),
+        "lat_res": float(np.diff(lat).mean()) if len(lat) > 1 else float("nan"),
+        "lon_res": float(np.diff(lon).mean()) if len(lon) > 1 else float("nan"),
+        "lat_monotonic": bool(pd.Index(lat).is_monotonic_increasing),
+        "lon_monotonic": bool(pd.Index(lon).is_monotonic_increasing),
+        "lat_range_ok": bool(lat.min() >= -90 and lat.max() <= 90),
+        "lon_range_ok": bool(lon.min() >= -180 and lon.max() <= 180),
+    }
+
+
+def check_units_and_range(ds: xr.Dataset, label: str) -> list[dict]:
+    """Return per-variable unit and spatial-range check rows for DataFrame display.
+
+    For each variable in VAR_SPATIAL_RANGES that is present in ds, records the declared
+    units attribute, the actual spatial min/max on day index 1, and whether those values
+    fall within the expected ranges. Uses ensemble_member=0 when the dim is present.
+
+    Keys per row: source, variable, units, min, max, min_ok, max_ok.
+    """
+    rows = []
+    for var, ranges in VAR_SPATIAL_RANGES.items():
+        if var not in ds:
+            continue
+        da = ds[var].isel(time=1)
+        if "ensemble_member" in da.dims:
+            da = da.isel(ensemble_member=0)
+        da = da.compute()
+        actual_min = float(da.min())
+        actual_max = float(da.max())
+        min_lo, min_hi = ranges["min"]
+        max_lo, max_hi = ranges["max"]
+        rows.append(
+            {
+                "source": label,
+                "variable": var,
+                "units": ds[var].attrs.get("units"),
+                "min": actual_min,
+                "max": actual_max,
+                "min_ok": bool(min_lo <= actual_min <= min_hi),
+                "max_ok": bool(max_lo <= actual_max <= max_hi),
+            }
+        )
+    return rows
+
+
+def check_ensemble_spread(ds: xr.Dataset, label: str, var: str = "tas", day_index: int = 0) -> dict:
+    """Return an ensemble-spread summary dict for DataFrame/plot display.
+
+    Computes the global spatial mean of `var` for each ensemble member on `day_index`.
+    Returns spread_ok=True when all member means are distinct (no exact duplicates).
+    Returns empty members/means lists when the dataset has no ensemble_member dimension
+    or the variable is absent.
+
+    Keys: source, variable, members, means, spread_ok.
+    """
+    if var not in ds or "ensemble_member" not in ds.dims:
+        return {"source": label, "variable": var, "members": [], "means": [], "spread_ok": True}
+
+    da = ds[var].isel(time=day_index)
+    means_da = da.mean(dim=["lat", "lon"]).compute()
+    members = [str(m) for m in means_da.ensemble_member.values]
+    means = [float(v) for v in means_da.values]
+    spread_ok = len(set(means)) == len(means)
+    return {
+        "source": label,
+        "variable": var,
+        "members": members,
+        "means": means,
+        "spread_ok": spread_ok,
+    }
