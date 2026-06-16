@@ -1,6 +1,36 @@
+from __future__ import annotations
+
 import xarray as xr
 
 from srm import catalog
+
+# Spatial range bounds for a single day (isel(time=1)), computed across full spatial extent.
+# Goal: catch obvious unit mismatches (e.g. Celsius instead of Kelvin, fraction instead of %).
+# Ranges are wide intentionally — based on ERA5 observed range +/- large margins.
+VAR_SPATIAL_RANGES: dict[str, dict[str, tuple[float, float]]] = {
+    "tas": {"min": (100, 400), "max": (100, 400)},
+    "tasmin": {"min": (100, 400), "max": (100, 400)},
+    "tasmax": {"min": (100, 400), "max": (100, 400)},
+    "pr": {"min": (0, 1e-7), "max": (0.0001, 0.03)},
+    "rsds": {"min": (-1, 100), "max": (100, 1000)},
+    "hurs": {"min": (0, 40), "max": (40, 900)},
+    "dtr": {"min": (0, 10), "max": (10, 150)},
+}
+
+
+class ValidationResult:
+    def __init__(self, is_valid: bool, issues: list[str]):
+        self.is_valid = is_valid
+        self.issues = issues
+
+    def __bool__(self):
+        return self.is_valid
+
+    def __repr__(self):
+        status = "valid" if self.is_valid else "invalid"
+        if self.issues:
+            return f"{status}: {', '.join(self.issues)}"
+        return status
 
 
 def check_nans(ds):
