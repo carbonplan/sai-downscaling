@@ -40,6 +40,7 @@ from srm.downscaling_utils import (
     subset_space,
 )
 from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_encoding
+from srm.utils import get_variable
 
 logger = logging.getLogger(__name__)
 
@@ -790,7 +791,9 @@ class BCSDPipeline:
         """
         ssp245_cat_key = f"{self.config.gcm}-SSP245-icechunk"
         primary_ds = _catalog.get(ssp245_cat_key).to_xarray()
-        primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
+        primary = get_variable(primary_ds, self.config.variable).sel(
+            ensemble_member=self._ssp245_member
+        )
 
         if self._ssp245_esgf_member is None:
             return primary
@@ -806,7 +809,9 @@ class BCSDPipeline:
         esgf_ds = to_proleptic_gregorian(
             _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
         )
-        esgf_bridge = esgf_ds[self.config.variable].sel(ensemble_member=self._ssp245_esgf_member)
+        esgf_bridge = get_variable(esgf_ds, self.config.variable).sel(
+            ensemble_member=self._ssp245_esgf_member
+        )
         esgf_gap = esgf_bridge.isel(time=(esgf_bridge.time.dt.year < primary_start_year).values)
 
         if esgf_gap.time.size == 0:
@@ -888,7 +893,7 @@ class BCSDPipeline:
                 esgf_ds = to_proleptic_gregorian(
                     _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
                 )
-                esgf_data = esgf_ds[self.config.variable].sel(
+                esgf_data = get_variable(esgf_ds, self.config.variable).sel(
                     ensemble_member=self._ssp245_esgf_member
                 )
                 esgf_pre = esgf_data.isel(
