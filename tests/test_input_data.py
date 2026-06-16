@@ -7,9 +7,8 @@ import pytest
 if TYPE_CHECKING:
     from srm.catalog import Dataset
 
-from validators import VAR_SPATIAL_RANGES, DatasetValidator
-
 from srm.datasets import VirtualDataset, catalog
+from srm.qaqc import VAR_SPATIAL_RANGES, DatasetChecker as DatasetValidator
 from srm.validation import (
     GCM_OPTIONS,
     SCENARIO_OPTIONS,
