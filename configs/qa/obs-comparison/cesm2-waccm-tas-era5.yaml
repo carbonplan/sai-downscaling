@@ -1,0 +1,23 @@
+# BCSD comparison config: CESM2-WACCM / tas / ERA5 obs
+# Paired with cesm2-waccm-tas-gdex.yaml for obs dataset comparison.
+# ensemble_member r3i1p1f1 matches NASA-NEX for future three-way comparison.
+
+gcm: "CESM2-WACCM"
+variable: "tas"
+ensemble_member: "003"
+scenario: "SSP245"
+obs_dataset: "ERA5"
+
+subset_bounds: [-35, -22, 16, 33]
+
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+
+scratch_dir: "s3://carbonplan-srm/output/qa/bcsd-cache"
+output_dir: "s3://carbonplan-scratch/srm/output"
+environment: "qa"
+mapping_type: "nonparametric_hybrid"
+verbose: true
+save_intermediate: true

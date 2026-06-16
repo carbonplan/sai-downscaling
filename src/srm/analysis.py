@@ -145,7 +145,7 @@ class BCSDRun:
         return fig, axes
 
 
-def load_nasa_nex(*, dataset: str):
+def load_nasa_nex(*, dataset: str, obs_dataset: str = "ERA5"):
     match dataset:
         case "ssp245":
             ds = catalog.get("NASA-NEX-SSP245").to_xarray()
@@ -158,6 +158,6 @@ def load_nasa_nex(*, dataset: str):
 
     ds = lon_to_180(ds)
     ds = to_proleptic_gregorian(ds)
-    era5_ds = catalog.get("ERA5").to_xarray()
-    ds = ds.reindex(lat=era5_ds.lat, lon=era5_ds.lon, method="nearest", tolerance=0.15)
+    obs_ds = catalog.get(obs_dataset).to_xarray()
+    ds = ds.reindex(lat=obs_ds.lat, lon=obs_ds.lon, method="nearest", tolerance=0.15)
     return ds

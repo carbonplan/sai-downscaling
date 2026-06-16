@@ -15,7 +15,7 @@ def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_nam
     fig.suptitle(title, fontsize=16, y=0.98)
 
     cax = obs.plot(ax=axarr[0, 0])
-    axarr[0, 0].set_title("ERA5")
+    axarr[0, 0].set_title("Observations")
 
     raw.plot(ax=axarr[0, 1], vmin=cax.get_clim()[0], vmax=cax.get_clim()[1])
     axarr[0, 1].set_title("GCM raw output")
@@ -31,11 +31,11 @@ def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_nam
 
     if bias == "absolute":
         cax2 = (ds1 - obs).plot(ax=axarr[1, 0])
-        axarr[1, 0].set_title(f"{ds1_name} minus ERA5")
+        axarr[1, 0].set_title(f"{ds1_name} minus Obs")
 
         if ds2 is not None:
             (ds2 - obs).plot(ax=axarr[1, 1], vmax=cax2.get_clim()[1])
-            axarr[1, 1].set_title(f"{ds2_name} minus ERA5")
+            axarr[1, 1].set_title(f"{ds2_name} minus Obs")
 
             (ds2 - ds1).plot(ax=axarr[1, 2], vmax=cax2.get_clim()[1])
             axarr[1, 2].set_title(f"{ds2_name} minus {ds1_name}")
@@ -45,11 +45,11 @@ def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_nam
 
     elif bias == "percentage":
         (((ds1 - obs) / obs) * 100).plot(ax=axarr[1, 0])
-        axarr[1, 0].set_title("Nonparametric − ERA5 (%)")
+        axarr[1, 0].set_title("Nonparametric − Obs (%)")
 
         if ds2 is not None:
             (((ds2 - obs) / obs) * 100).plot(ax=axarr[1, 1])
-            axarr[1, 1].set_title("Parametric − ERA5 (%)")
+            axarr[1, 1].set_title("Parametric − Obs (%)")
 
             (((ds2 - ds1) / ds1) * 100).plot(ax=axarr[1, 2])
             axarr[1, 2].set_title("Parametric − Nonparametric (%)")
@@ -155,16 +155,16 @@ def get_4_subregions(ds, regions=REGIONS_4):
 
 
 def plot_4regions_comparisons(
-    raw, era5, ds1, stat, variable, ds1_title, ds2=None, regions=REGIONS_4
+    raw, obs, ds1, stat, variable, ds1_title, ds2=None, regions=REGIONS_4
 ):
     """
     One figure:
       rows = 4 regions
-      cols = ERA5 | raw | ds1 | ds1-ERA5
+      cols = Obs | raw | ds1 | ds1-Obs
     """
     # subset the datasets
     raw_sub = get_4_subregions(raw, regions)
-    era5_sub = get_4_subregions(era5, regions)
+    obs_sub = get_4_subregions(obs, regions)
     ds1_sub = get_4_subregions(ds1, regions)
 
     region_names = list(regions.keys())
@@ -174,28 +174,28 @@ def plot_4regions_comparisons(
     # compute statistic and plot per region
     for r, reg in enumerate(region_names):
         raw_r = raw_sub[reg]
-        era5_r = era5_sub[reg]
+        obs_r = obs_sub[reg]
         ds1_r = ds1_sub[reg]
 
-        raw_toplot, era5_toplot, ds1_toplot = calculate_statistic_to_plot(
-            ds_list=[raw_r, era5_r, ds1_r],
+        raw_toplot, obs_toplot, ds1_toplot = calculate_statistic_to_plot(
+            ds_list=[raw_r, obs_r, ds1_r],
             stat=stat,
             variable=variable,
         )
 
-        # ERA5 defines clim for the first 3 cols
-        cax = era5_toplot.plot(ax=axarr[r, 0], add_colorbar=True)
+        # obs defines clim for the first 3 cols
+        cax = obs_toplot.plot(ax=axarr[r, 0], add_colorbar=True)
         vmin, vmax = cax.get_clim()
 
         raw_toplot.plot(ax=axarr[r, 1], vmin=vmin, vmax=vmax, add_colorbar=True)
         ds1_toplot.plot(ax=axarr[r, 2], vmin=vmin, vmax=vmax, add_colorbar=True)
-        (ds1_toplot - era5_toplot).plot(ax=axarr[r, 3], add_colorbar=True)
+        (ds1_toplot - obs_toplot).plot(ax=axarr[r, 3], add_colorbar=True)
 
         # titles
-        axarr[r, 0].set_title(f"{reg}: ERA5")
+        axarr[r, 0].set_title(f"{reg}: Observations")
         axarr[r, 1].set_title(f"{reg}: Raw output")
         axarr[r, 2].set_title(f"{reg}: {ds1_title}")
-        axarr[r, 3].set_title(f"{reg}: {ds1_title} minus ERA5")
+        axarr[r, 3].set_title(f"{reg}: {ds1_title} minus Obs")
 
     fig.suptitle(f"{stat} ({variable}) — 4 subregions", fontsize=16, y=0.995)
     plt.tight_layout()
@@ -224,27 +224,27 @@ def random_non_leap_year(start=1984, end=2014):
     return chosen_year
 
 
-def prep_datasets_for_daily_timeseries_plotting(era5, raw, ds1, time_slice, lat, lon, ds2=None):
-    era5_toplot = sel_point(era5.sel(time=time_slice), lat, lon)
-    raw_toplot = sel_point(prep_funky_calendar(raw, era5, time_slice), lat, lon)
-    ds1_toplot = sel_point(prep_funky_calendar(ds1, era5, time_slice), lat, lon)
+def prep_datasets_for_daily_timeseries_plotting(obs, raw, ds1, time_slice, lat, lon, ds2=None):
+    obs_toplot = sel_point(obs.sel(time=time_slice), lat, lon)
+    raw_toplot = sel_point(prep_funky_calendar(raw, obs, time_slice), lat, lon)
+    ds1_toplot = sel_point(prep_funky_calendar(ds1, obs, time_slice), lat, lon)
     if ds2 is not None:
-        ds2_toplot = sel_point(prep_funky_calendar(ds2, era5, time_slice), lat, lon)
-        return era5_toplot, raw_toplot, ds1_toplot, ds2_toplot
+        ds2_toplot = sel_point(prep_funky_calendar(ds2, obs, time_slice), lat, lon)
+        return obs_toplot, raw_toplot, ds1_toplot, ds2_toplot
     else:
-        return era5_toplot, raw_toplot, ds1_toplot
+        return obs_toplot, raw_toplot, ds1_toplot
 
 
 def prep_datasets_for_seasonal_cycle_plotting(
-    era5, raw, ds1, time_slice, lat, lon, variable, ds2=None
+    obs, raw, ds1, time_slice, lat, lon, variable, ds2=None
 ):
-    era5_toplot, raw_toplot, ds1_toplot = [
+    obs_toplot, raw_toplot, ds1_toplot = [
         ds[variable]
         .sel(time=time_slice)
         .sel(lat=lat, lon=lon, method="nearest")
         .groupby("time.dayofyear")
         .mean()
-        for ds in [era5, raw, ds1]
+        for ds in [obs, raw, ds1]
     ]
     if ds2 is not None:
         ds2_toplot = (
@@ -254,13 +254,13 @@ def prep_datasets_for_seasonal_cycle_plotting(
             .groupby("time.dayofyear")
             .mean()
         )
-        return era5_toplot, raw_toplot, ds1_toplot, ds2_toplot
+        return obs_toplot, raw_toplot, ds1_toplot, ds2_toplot
     else:
-        return era5_toplot, raw_toplot, ds1_toplot
+        return obs_toplot, raw_toplot, ds1_toplot
 
 
-def plot_timeseries(ax, era5_toplot, raw_toplot, ds1_toplot, location, ds2_toplot=None):
-    era5_toplot.plot(ax=ax, color="grey", alpha=0.5)
+def plot_timeseries(ax, obs_toplot, raw_toplot, ds1_toplot, location, ds2_toplot=None):
+    obs_toplot.plot(ax=ax, color="grey", alpha=0.5)
     raw_toplot.plot(ax=ax, color="k")
     ds1_toplot.plot(ax=ax, color="firebrick")
     if ds2_toplot is not None:
@@ -268,13 +268,13 @@ def plot_timeseries(ax, era5_toplot, raw_toplot, ds1_toplot, location, ds2_toplo
     ax.set_title(location)
 
 
-def plot_pdf(era5, raw, ds1, var, ds2=None, title=None, xlabel=None):
+def plot_pdf(obs, raw, ds1, var, ds2=None, title=None, xlabel=None):
     plt.figure(figsize=(8, 6))
     plt.rcParams["font.size"] = 11
 
     sns.kdeplot(
-        era5,
-        label="Observations (ERA5)",
+        obs,
+        label="Observations",
         color="gray",
         linewidth=7,
         alpha=0.3,
@@ -308,7 +308,7 @@ def plot_pdf(era5, raw, ds1, var, ds2=None, title=None, xlabel=None):
     plt.xlabel(xlabel)
 
 
-def plot_cdf(era5, raw, ds1, var=None, ds2=None, title=None, xlabel=None):
+def plot_cdf(obs, raw, ds1, var=None, ds2=None, title=None, xlabel=None):
     plt.figure(figsize=(8, 6))
     plt.rcParams["font.size"] = 11
 
@@ -319,8 +319,8 @@ def plot_cdf(era5, raw, ds1, var=None, ds2=None, title=None, xlabel=None):
         return x
 
     sns.kdeplot(
-        _prep(era5),
-        label="Observations (ERA5)",
+        _prep(obs),
+        label="Observations",
         color="gray",
         linewidth=7,
         alpha=0.3,

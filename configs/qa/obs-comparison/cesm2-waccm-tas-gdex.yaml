@@ -1,0 +1,24 @@
+# BCSD comparison config: CESM2-WACCM / tas / GDEX-GMF obs
+# Paired with cesm2-waccm-tas-era5.yaml for obs dataset comparison.
+# ensemble_member r3i1p1f1 matches NASA-NEX for future three-way comparison.
+# GDEX-GMF covers 1948-2010, so train_period_end capped at 2010.
+
+gcm: "CESM2-WACCM"
+variable: "tas"
+ensemble_member: "003"
+scenario: "SSP245"
+obs_dataset: "GDEX-GMF-icechunk"
+
+subset_bounds: [-35, -22, 16, 33]
+
+train_period_start: 1978
+train_period_end: 2010
+predict_period_start: 2015
+predict_period_end: 2100
+
+scratch_dir: "s3://carbonplan-srm/output/qa/bcsd-cache"
+output_dir: "s3://carbonplan-scratch/srm/output"
+environment: "qa"
+mapping_type: "nonparametric_hybrid"
+verbose: true
+save_intermediate: true

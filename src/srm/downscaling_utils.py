@@ -203,11 +203,11 @@ def get_historical_experiment(gcm: str, member: str, var: str) -> xr.DataArray:
     return ds[var].sel(ensemble_member=member)
 
 
-def get_obs(var: str = "tas", coord_bounds_list: list | None = None):
-    era5 = catalog.get("ERA5").to_xarray()
-    era5 = era5.proj.assign_crs(spatial_ref="epsg:4326")
+def get_obs(var: str = "tas", coord_bounds_list: list | None = None, dataset_name: str = "ERA5"):
+    obs = catalog.get(dataset_name).to_xarray()
+    obs = obs.proj.assign_crs(spatial_ref="epsg:4326")
 
-    da = era5[var]
+    da = obs[var]
 
     if coord_bounds_list is not None:
         da = subset_space(da, coord_bounds_list)
