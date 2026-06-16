@@ -151,6 +151,29 @@ class Dataset(BaseDataset):
 
 
 @dataclass(kw_only=True)
+class Datatree(Dataset):
+    """Unified per-GCM icechunk store organized as zarr groups (one node per scenario)."""
+
+    format: typing.Literal["icechunk"] = "icechunk"
+
+    def to_xarray(self) -> xr.DataTree:  # type: ignore[override]
+        import icechunk
+        import xarray as xr
+
+        config = icechunk.RepositoryConfig(max_concurrent_requests=min(dask.system.CPU_COUNT, 128))
+        storage = icechunk.s3_storage(bucket=self.bucket, prefix=self.prefix, from_env=True)
+        repo = icechunk.Repository.open(storage, config=config)
+        session = repo.readonly_session("main")
+        return xr.open_datatree(
+            session.store,
+            engine="zarr",
+            chunks="auto",
+            consolidated=False,
+            zarr_format=3,
+        )
+
+
+@dataclass(kw_only=True)
 class VectorDataset(BaseCatalogEntry):
     """A vector dataset stored as a GeoParquet file (S3 or local)."""
 
@@ -416,9 +439,21 @@ class Catalog:
                     VarStandards.DTR,
                 ],
             ),
+            "CESM2-WACCM": Datatree(
+                name="CESM2-WACCM",
+                path="s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk",
+            ),
+            "MIROC-ES2H": Datatree(
+                name="MIROC-ES2H",
+                path="s3://carbonplan-srm/input/processed/miroc-es2h.icechunk",
+            ),
+            "UKESM": Datatree(
+                name="UKESM",
+                path="s3://carbonplan-srm/input/processed/ukesm.icechunk",
+            ),
             "ERA5": Dataset(
                 name="ERA5",
-                path="s3://carbonplan-srm/input/tensor/ERA5/ERA5_pancakes.icechunk",
+                path="s3://carbonplan-srm/input/processed/era5.icechunk",
                 format="icechunk",
                 expected_chunks={"time": 1, "lat": 721, "lon": 1440},
                 expected_shards={"time": 30, "lat": 721, "lon": 1440},
