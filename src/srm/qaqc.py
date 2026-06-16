@@ -4,8 +4,7 @@ import xarray as xr
 
 from srm import catalog
 
-# Spatial range bounds for a single day (isel(time=1)), computed across full spatial extent.
-# Goal: catch obvious unit mismatches (e.g. Celsius instead of Kelvin, fraction instead of %).
+# Spatial range bounds for unit-mismatch detection (e.g. Celsius instead of Kelvin).
 # Ranges are wide intentionally — based on ERA5 observed range +/- large margins.
 VAR_SPATIAL_RANGES: dict[str, dict[str, tuple[float, float]]] = {
     "tas": {"min": (100, 400), "max": (100, 400)},
@@ -232,25 +231,22 @@ class DatasetChecker:
 
         return ValidationResult(len(issues) == 0, issues)
 
-    def validate_negative_precip(self, day_index: int = 1) -> ValidationResult:
+    def validate_negative_precip(self, isel_kwargs: dict | None = None) -> ValidationResult:
         if "pr" not in self.ds:
             return ValidationResult(True, [])
-        # Reuse module-level predicate; check single day for performance.
-        count = int((self.ds["pr"].isel(time=day_index) < 0).sum().compute())
+        da = self.ds["pr"].isel(**isel_kwargs) if isel_kwargs else self.ds["pr"]
+        count = int((da < 0).sum().compute())
         if count > 0:
-            return ValidationResult(False, [f"Found negative precipitation (day {day_index})"])
+            return ValidationResult(False, [f"Found {count} negative precipitation value(s)"])
         return ValidationResult(True, [])
 
-    def validate_spatial_range(self, var: str, day_index: int = 1) -> ValidationResult:
+    def validate_spatial_range(self, var: str, isel_kwargs: dict | None = None) -> ValidationResult:
         if var not in self.ds:
             return ValidationResult(True, [])
         if var not in VAR_SPATIAL_RANGES:
             return ValidationResult(True, [])
 
-        da = self.ds[var].isel(time=day_index)
-        da = self._resolve_ensemble_member(da)
-        if da is None:
-            return ValidationResult(True, [])
+        da = self.ds[var].isel(**isel_kwargs) if isel_kwargs else self.ds[var]
         spatial_min = float(da.min().compute())
         spatial_max = float(da.max().compute())
 
@@ -268,17 +264,18 @@ class DatasetChecker:
             )
         return ValidationResult(len(issues) == 0, issues)
 
-    def validate_dtr_consistency(self, day_index: int = 1, atol: float = 0.5) -> ValidationResult:
+    def validate_dtr_consistency(
+        self, isel_kwargs: dict | None = None, atol: float = 0.5
+    ) -> ValidationResult:
         required = {"dtr", "tasmax", "tasmin"}
         if not required.issubset(self.ds.data_vars):
             return ValidationResult(True, [])
 
-        day = self.ds[list(required)].isel(time=day_index)
-        if "ensemble_member" in day.dims:
-            day = day.isel(ensemble_member=0)
-
-        expected_dtr = (day["tasmax"] - day["tasmin"]).compute()
-        actual_dtr = day["dtr"].compute()
+        subset = (
+            self.ds[list(required)].isel(**isel_kwargs) if isel_kwargs else self.ds[list(required)]
+        )
+        expected_dtr = (subset["tasmax"] - subset["tasmin"]).compute()
+        actual_dtr = subset["dtr"].compute()
         max_diff = float(abs(actual_dtr - expected_dtr).max())
 
         if max_diff > atol:
@@ -288,25 +285,24 @@ class DatasetChecker:
             )
         return ValidationResult(True, [])
 
-    def validate_temp_consistency(self, day_index: int = 1) -> ValidationResult:
+    def validate_temp_consistency(self, isel_kwargs: dict | None = None) -> ValidationResult:
         required = {"tas", "tasmin", "tasmax"}
         if not required.issubset(self.ds.data_vars):
             return ValidationResult(True, [])
 
-        day = self.ds[list(required)].isel(time=day_index)
-        if "ensemble_member" in day.dims:
-            day = day.isel(ensemble_member=0)
-
+        subset = (
+            self.ds[list(required)].isel(**isel_kwargs) if isel_kwargs else self.ds[list(required)]
+        )
         # Reuse module-level predicate.
-        min_gt_mean, mean_gt_max, min_gt_max = check_temperature_monotonic(day)
+        min_gt_mean, mean_gt_max, min_gt_max = check_temperature_monotonic(subset)
 
         issues = []
         if min_gt_mean > 0:
-            issues.append(f"tas < tasmin at {min_gt_mean} grid points (day {day_index})")
+            issues.append(f"tas < tasmin at {min_gt_mean} grid point(s)")
         if mean_gt_max > 0:
-            issues.append(f"tasmax < tas at {mean_gt_max} grid points (day {day_index})")
+            issues.append(f"tasmax < tas at {mean_gt_max} grid point(s)")
         if min_gt_max > 0:
-            issues.append(f"tasmax < tasmin at {min_gt_max} grid points (day {day_index})")
+            issues.append(f"tasmax < tasmin at {min_gt_max} grid point(s)")
         return ValidationResult(len(issues) == 0, issues)
 
     def validate_no_identical_vars(
@@ -420,12 +416,15 @@ def summarize_grid(ds: xr.Dataset, label: str) -> dict:
     }
 
 
-def check_units_and_range(ds: xr.Dataset, label: str) -> list[dict]:
+def check_units_and_range(
+    ds: xr.Dataset, label: str, *, isel_kwargs: dict | None = None
+) -> list[dict]:
     """Return per-variable unit and spatial-range check rows for DataFrame display.
 
     For each variable in VAR_SPATIAL_RANGES that is present in ds, records the declared
-    units attribute, the actual spatial min/max on day index 1, and whether those values
-    fall within the expected ranges. Uses ensemble_member=0 when the dim is present.
+    units attribute, the actual min/max, and whether those values fall within the expected
+    ranges. By default checks the full dataset; pass ``isel_kwargs`` (e.g.
+    ``{"time": 1}``) to restrict to a subset for faster spot-checks.
 
     Keys per row: source, variable, units, min, max, min_ok, max_ok.
     """
@@ -433,9 +432,7 @@ def check_units_and_range(ds: xr.Dataset, label: str) -> list[dict]:
     for var, ranges in VAR_SPATIAL_RANGES.items():
         if var not in ds:
             continue
-        da = ds[var].isel(time=1)
-        if "ensemble_member" in da.dims:
-            da = da.isel(ensemble_member=0)
+        da = ds[var].isel(**isel_kwargs) if isel_kwargs else ds[var]
         da = da.compute()
         actual_min = float(da.min())
         actual_max = float(da.max())
