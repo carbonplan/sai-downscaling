@@ -159,7 +159,8 @@ class ArtifactCache:
             S3 or local path to zarr store
         """
         subset_id = self._get_subset_id(config.subset_bounds)
-        return f"{self.scratch_dir}/{self.environment}/{self.version}/obs/{config.gcm}/{config.variable}/{subset_id}/obs_regridded.icechunk"
+        obs_id = config.obs_dataset.lower()
+        return f"{self.scratch_dir}/{self.environment}/{self.version}/obs/{config.gcm}/{config.variable}/{subset_id}/{obs_id}/obs_regridded.icechunk"
 
     def get_historical_path(self, config: BCSDConfig, hist_member: str | None = None) -> str:
         """
@@ -179,11 +180,12 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        obs_id = config.obs_dataset.lower()
         member = hist_member or config.ensemble_member
         base = self.output_dir if self.output_dir else self.scratch_dir
         return (
             f"{base}/{self.environment}/{self.version}/historical/"
-            f"{config.gcm}/{config.variable}/{member}/{subset_id}/{varconfig_id}/historical.icechunk"
+            f"{config.gcm}/{config.variable}/{member}/{subset_id}/{obs_id}/{varconfig_id}/historical.icechunk"
         )
 
     def get_scenario_path(self, config: BCSDConfig) -> str:
@@ -205,56 +207,62 @@ class ArtifactCache:
         """
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        obs_id = config.obs_dataset.lower()
         scenario_lower = config.scenario.lower()
 
         base = self.output_dir if self.output_dir else self.scratch_dir
         return (
             f"{base}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/{scenario_lower}.icechunk"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/{scenario_lower}.icechunk"
         )
 
     def get_detrended_scenario_path(self, config: BCSDConfig) -> str:
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        obs_id = config.obs_dataset.lower()
         scenario_lower = config.scenario.lower()
         return (
             f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/detrended.icechunk"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/detrended.icechunk"
         )
 
     def get_trend_scenario_path(self, config: BCSDConfig) -> str:
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        obs_id = config.obs_dataset.lower()
         scenario_lower = config.scenario.lower()
         return (
             f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/trend.icechunk"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/trend.icechunk"
         )
 
     def get_debiased_historical_path(self, config: BCSDConfig) -> str:
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        obs_id = config.obs_dataset.lower()
         return (
             f"{self.scratch_dir}/{self.environment}/{self.version}/historical/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/debiased_coarse.icechunk"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/debiased_coarse.icechunk"
         )
 
     def get_debiased_scenario_path(self, config: BCSDConfig) -> str:
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        obs_id = config.obs_dataset.lower()
         scenario_lower = config.scenario.lower()
         return (
             f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/debiased_coarse.icechunk"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/debiased_coarse.icechunk"
         )
 
     def get_debiased_retrended_scenario_path(self, config: BCSDConfig) -> str:
         subset_id = self._get_subset_id(config.subset_bounds)
         varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
+        obs_id = config.obs_dataset.lower()
         scenario_lower = config.scenario.lower()
         return (
             f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{varconfig_id}/debiased_retrended_coarse.icechunk"
+            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/debiased_retrended_coarse.icechunk"
         )
 
     def exists(self, path: str) -> bool:

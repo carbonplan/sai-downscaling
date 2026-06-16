@@ -28,7 +28,7 @@ GDEX_0P25_YEARS = range(1948, 2011)
 
 
 VIRTUAL_S3_PATH = "s3://carbonplan-srm/input/tensor/NCAR/GDEX-GMF-virtual.icechunk"
-MATERIALIZED_CATALOG_KEY = "GDEX-GMF-icechunk"
+MATERIALIZED_CATALOG_KEY = "GDEX-GMF"
 
 
 @dataclass
