@@ -1,23 +1,36 @@
 """
 Artifact caching system for BCSD pipeline.
 
-Manages S3-based cache storage with dependency tracking and automatic
-cache validation. Supports three stages:
-- obs_regridded: Observation data regridded to GCM grid
-- historical: Downscaled historical period
-- scenario: Downscaled future scenario
+Manages icechunk-based cache storage with ancestry-based existence checks.
+Supports three pipeline stages: obs_regridded, historical, and scenario,
+plus intermediate artifacts when save_intermediate is enabled.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-
-import fsspec
 
 from srm.bcsd_config import BCSDConfig, MappingType, PipelineOptions, VariableConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class StoreLocation:
+    """Pointer to one zarr group within an icechunk repository.
+
+    Parameters
+    ----------
+    store_path : str
+        S3 URI or local path to the icechunk repository.
+    group : str
+        Zarr group path within the repository (e.g. ``"obs/tas"``).
+    """
+
+    store_path: str
+    group: str
 
 
 class CacheCheckError(Exception):
@@ -30,10 +43,11 @@ class CacheCheckError(Exception):
 
 class ArtifactCache:
     """
-    S3-based cache manager with dependency tracking.
+    Icechunk-based cache manager with ancestry-based existence checks.
 
-    Ensures efficient reuse of intermediate artifacts across BCSD runs.
-    Cache paths are deterministic based on configuration parameters.
+    Cache locations are deterministic based on configuration parameters.
+    Each artifact is identified by a ``StoreLocation`` that encodes both
+    the icechunk repository path and the zarr group within it.
     """
 
     def __init__(
@@ -49,26 +63,20 @@ class ArtifactCache:
         Parameters
         ----------
         scratch_dir : str
-            Base S3 or local path for cache storage (intermediate artifacts)
+            Base S3 or local path for scratch storage (intermediate artifacts).
         environment : str
-            Environment name (qa, production) for cache namespace isolation
+            Environment name (qa, production) for cache namespace isolation.
         version : str
-            Version identifier included in all paths (e.g. 'v1', 'v2'). Bump to
+            Version identifier included in all paths (e.g. "v1", "v2"). Bump to
             invalidate all cached artifacts without changing environment.
         output_dir : str, optional
-            Directory for final scenario outputs. If None, scenarios go to cache.
+            Directory for final scenario outputs. If None, scenarios go to scratch.
         """
         self.scratch_dir = scratch_dir.rstrip("/")
         self.environment = environment
         self.version = version
         self.output_dir = output_dir.rstrip("/") if output_dir else None
         self.config: BCSDConfig | None = None
-
-        # Initialize filesystem (works for s3:// and local paths)
-        if self.scratch_dir.startswith("s3://"):
-            self.fs = fsspec.filesystem("s3")
-        else:
-            self.fs = fsspec.filesystem("local")
 
     @classmethod
     def from_config(cls, config: BCSDConfig, options: PipelineOptions) -> ArtifactCache:
@@ -78,14 +86,14 @@ class ArtifactCache:
         Parameters
         ----------
         config : BCSDConfig
-            Run-identity configuration
+            Run-identity configuration.
         options : PipelineOptions
-            Operational settings containing storage paths
+            Operational settings containing storage paths.
 
         Returns
         -------
         ArtifactCache
-            Initialized cache manager
+            Initialized cache manager.
         """
         cache = cls(
             scratch_dir=options.scratch_dir,
@@ -104,12 +112,12 @@ class ArtifactCache:
         Parameters
         ----------
         subset_bounds : tuple or None
-            Spatial bounds (lat_min, lat_max, lon_min, lon_max)
+            Spatial bounds (lat_min, lat_max, lon_min, lon_max).
 
         Returns
         -------
         str
-            Human-readable subset identifier
+            Human-readable subset identifier.
         """
         if subset_bounds is None:
             return "global"
@@ -129,216 +137,193 @@ class ArtifactCache:
             )
         return self.config
 
-    @property
-    def obs_path(self) -> str:
-        """Path to the obs regridding artifact for the bound config."""
-        return self.get_obs_path(self._require_config())
+    # ── store-path helpers ────────────────────────────────────────────────────
 
     @property
-    def historical_path(self) -> str:
-        """Path to the historical downscaling artifact for the bound config."""
-        return self.get_historical_path(self._require_config())
-
-    @property
-    def scenario_path(self) -> str:
-        """Path to the scenario downscaling artifact for the bound config."""
-        return self.get_scenario_path(self._require_config())
-
-    def get_obs_path(self, config: BCSDConfig) -> str:
-        """
-        Get path to cached observation regridding artifact.
-
-        Parameters
-        ----------
-        config : BCSDConfig
-            Run configuration
-
-        Returns
-        -------
-        str
-            S3 or local path to zarr store
-        """
+    def _scratch_store(self) -> str:
+        config = self._require_config()
         subset_id = self._get_subset_id(config.subset_bounds)
-        obs_id = config.obs_dataset.lower()
-        return f"{self.scratch_dir}/{self.environment}/{self.version}/obs/{config.gcm}/{config.variable}/{subset_id}/{obs_id}/obs_regridded.icechunk"
+        return (
+            f"{self.scratch_dir}/{self.environment}"
+            f"/{self.version}"
+            f"/{config.gcm}-{config.obs_dataset}-{subset_id}.icechunk"
+        )
 
-    def get_historical_path(self, config: BCSDConfig, hist_member: str | None = None) -> str:
-        """
-        Get path to cached historical downscaling artifact.
-
-        Parameters
-        ----------
-        config : BCSDConfig
-            Run configuration
-        hist_member : str, optional
-            Resolved historical ensemble member. Defaults to config.ensemble_member.
-
-        Returns
-        -------
-        str
-            S3 or local path to zarr store
-        """
+    @property
+    def _output_store(self) -> str:
+        config = self._require_config()
         subset_id = self._get_subset_id(config.subset_bounds)
-        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        obs_id = config.obs_dataset.lower()
-        member = hist_member or config.ensemble_member
         base = self.output_dir if self.output_dir else self.scratch_dir
         return (
-            f"{base}/{self.environment}/{self.version}/historical/"
-            f"{config.gcm}/{config.variable}/{member}/{subset_id}/{obs_id}/{varconfig_id}/historical.icechunk"
+            f"{base}/{self.environment}"
+            f"/{self.version}"
+            f"/{config.gcm}-{config.obs_dataset}-{subset_id}.icechunk"
         )
 
-    def get_scenario_path(self, config: BCSDConfig) -> str:
-        """
-        Get path to scenario downscaling output.
+    # ── artifact location properties ─────────────────────────────────────────
 
-        Final scenario outputs are written to output_dir (if specified) rather than
-        scratch_dir, since they are the final deliverable products.
+    @property
+    def obs_loc(self) -> StoreLocation:
+        """StoreLocation for the obs-regridding artifact."""
+        config = self._require_config()
+        return StoreLocation(self._scratch_store, f"obs/{config.variable}")
+
+    def historical_loc(self, hist_member: str) -> StoreLocation:
+        """StoreLocation for the historical bias-correction artifact.
 
         Parameters
         ----------
-        config : BCSDConfig
-            Run configuration
-
-        Returns
-        -------
-        str
-            S3 or local path to zarr store
+        hist_member : str
+            Resolved historical ensemble member ID.
         """
-        subset_id = self._get_subset_id(config.subset_bounds)
-        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        obs_id = config.obs_dataset.lower()
-        scenario_lower = config.scenario.lower()
-
-        base = self.output_dir if self.output_dir else self.scratch_dir
-        return (
-            f"{base}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/{scenario_lower}.icechunk"
+        config = self._require_config()
+        return StoreLocation(
+            self._scratch_store,
+            f"historical/{config.variable}/{hist_member}",
         )
 
-    def get_detrended_scenario_path(self, config: BCSDConfig) -> str:
-        subset_id = self._get_subset_id(config.subset_bounds)
-        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        obs_id = config.obs_dataset.lower()
-        scenario_lower = config.scenario.lower()
-        return (
-            f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/detrended.icechunk"
+    @property
+    def scenario_loc(self) -> StoreLocation:
+        """StoreLocation for the scenario downscaling output."""
+        from srm.config import SCENARIO_TO_GROUP
+
+        config = self._require_config()
+        scenario_group = SCENARIO_TO_GROUP[config.scenario]
+        return StoreLocation(
+            self._output_store,
+            f"{scenario_group}/{config.variable}/{config.ensemble_member}",
         )
 
-    def get_trend_scenario_path(self, config: BCSDConfig) -> str:
-        subset_id = self._get_subset_id(config.subset_bounds)
-        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        obs_id = config.obs_dataset.lower()
-        scenario_lower = config.scenario.lower()
-        return (
-            f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/trend.icechunk"
+    def debiased_historical_loc(self, hist_member: str) -> StoreLocation:
+        """StoreLocation for intermediate debiased-historical artifact."""
+        config = self._require_config()
+        return StoreLocation(
+            self._scratch_store,
+            f"debiased_historical/{config.variable}/{hist_member}",
         )
 
-    def get_debiased_historical_path(self, config: BCSDConfig) -> str:
-        subset_id = self._get_subset_id(config.subset_bounds)
-        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        obs_id = config.obs_dataset.lower()
-        return (
-            f"{self.scratch_dir}/{self.environment}/{self.version}/historical/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/debiased_coarse.icechunk"
+    def detrended_scenario_loc(self) -> StoreLocation:
+        """StoreLocation for intermediate detrended-scenario artifact."""
+        from srm.config import SCENARIO_TO_GROUP
+
+        config = self._require_config()
+        scenario_group = SCENARIO_TO_GROUP[config.scenario]
+        return StoreLocation(
+            self._scratch_store,
+            f"detrended_scenario/{scenario_group}/{config.variable}/{config.ensemble_member}",
         )
 
-    def get_debiased_scenario_path(self, config: BCSDConfig) -> str:
-        subset_id = self._get_subset_id(config.subset_bounds)
-        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        obs_id = config.obs_dataset.lower()
-        scenario_lower = config.scenario.lower()
-        return (
-            f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/debiased_coarse.icechunk"
+    def trend_scenario_loc(self) -> StoreLocation:
+        """StoreLocation for intermediate trend-scenario artifact."""
+        from srm.config import SCENARIO_TO_GROUP
+
+        config = self._require_config()
+        scenario_group = SCENARIO_TO_GROUP[config.scenario]
+        return StoreLocation(
+            self._scratch_store,
+            f"trend_scenario/{scenario_group}/{config.variable}/{config.ensemble_member}",
         )
 
-    def get_debiased_retrended_scenario_path(self, config: BCSDConfig) -> str:
-        subset_id = self._get_subset_id(config.subset_bounds)
-        varconfig_id = self._get_varconfig_id(config.variable_config, config.mapping_type)
-        obs_id = config.obs_dataset.lower()
-        scenario_lower = config.scenario.lower()
-        return (
-            f"{self.scratch_dir}/{self.environment}/{self.version}/{scenario_lower}/"
-            f"{config.gcm}/{config.variable}/{config.ensemble_member}/{subset_id}/{obs_id}/{varconfig_id}/debiased_retrended_coarse.icechunk"
+    def debiased_scenario_loc(self) -> StoreLocation:
+        """StoreLocation for intermediate debiased-scenario artifact."""
+        from srm.config import SCENARIO_TO_GROUP
+
+        config = self._require_config()
+        scenario_group = SCENARIO_TO_GROUP[config.scenario]
+        return StoreLocation(
+            self._scratch_store,
+            f"debiased_scenario/{scenario_group}/{config.variable}/{config.ensemble_member}",
         )
 
-    def exists(self, path: str) -> bool:
+    def debiased_retrended_scenario_loc(self) -> StoreLocation:
+        """StoreLocation for intermediate debiased-retrended-scenario artifact."""
+        from srm.config import SCENARIO_TO_GROUP
+
+        config = self._require_config()
+        scenario_group = SCENARIO_TO_GROUP[config.scenario]
+        return StoreLocation(
+            self._scratch_store,
+            f"debiased_retrended_scenario/{scenario_group}/{config.variable}/{config.ensemble_member}",
+        )
+
+    # ── existence check ───────────────────────────────────────────────────────
+
+    def exists(self, loc: StoreLocation) -> bool:
         """
-        Check if artifact exists in cache.
+        Check if an artifact exists by scanning the icechunk commit ancestry.
 
-        Uses icechunk repository ancestry to verify a successful write, ensuring
-        the store is complete and not partially written.
+        A commit is present iff a snapshot with message equal to ``loc.group``
+        exists on the main branch. This is atomic — partial writes leave no
+        matching commit.
 
         Parameters
         ----------
-        path : str
-            Full path to icechunk store
+        loc : StoreLocation
+            Location to check.
 
         Returns
         -------
         bool
-            True if the store exists and has a 'write complete' commit in its ancestry
+            True if a commit with message ``loc.group`` is in the ancestry.
         """
         import icechunk
 
         try:
-            if path.startswith("s3://"):
-                path_no_scheme = path[len("s3://") :]
+            if loc.store_path.startswith("s3://"):
+                path_no_scheme = loc.store_path[len("s3://") :]
                 bucket, _, prefix = path_no_scheme.partition("/")
                 storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
             else:
-                storage = icechunk.local_filesystem_storage(path=path)
+                storage = icechunk.local_filesystem_storage(path=loc.store_path)
 
             repo = icechunk.Repository.open(storage)
-            messages = [c.message for c in repo.ancestry(branch="main")]
-            result = "write complete" in messages
+            result = any(snapshot.message == loc.group for snapshot in repo.ancestry(branch="main"))
             if result:
-                logger.debug(f"Cache hit: {path}")
+                logger.debug("Cache hit: %s / %s", loc.store_path, loc.group)
             else:
-                logger.debug(f"Cache miss (no write complete commit): {path}")
+                logger.debug(
+                    "Cache miss (group not in ancestry): %s / %s", loc.store_path, loc.group
+                )
             return result
-        except icechunk.IcechunkError as e:
-            if "doesn't exist" in str(e) or "does not exist" in str(e):
-                logger.debug(f"Cache miss: {path}: {e}")
-                return False
-            raise CacheCheckError(f"Failed to check cache at {path}") from e
-        except Exception as e:
-            raise CacheCheckError(f"Failed to check cache at {path}") from e
+        except Exception:
+            logger.debug("Cache miss (store does not exist): %s", loc.store_path)
+            return False
+
+    # ── dependency helpers ────────────────────────────────────────────────────
 
     def check_dependencies(
         self, stage: str, config: BCSDConfig, hist_member: str | None = None
-    ) -> dict[str, tuple[bool, str]]:
+    ) -> dict[str, tuple[bool, StoreLocation]]:
         """
         Check if all dependencies for a stage exist.
 
         Parameters
         ----------
         stage : str
-            Pipeline stage: 'prepare_observations', 'fit_historical', or 'transform_scenario'
+            Pipeline stage: 'prepare_observations', 'fit_historical', or 'transform_scenario'.
         config : BCSDConfig
-            Configuration for the run
+            Configuration for the run.
+        hist_member : str, optional
+            Resolved historical ensemble member (required for transform_scenario).
 
         Returns
         -------
-        dict[str, tuple[bool, str]]
-            Mapping of dependency name to (exists, path) tuple
+        dict[str, tuple[bool, StoreLocation]]
+            Mapping of dependency name to (exists, StoreLocation) tuple.
         """
         if stage == "prepare_observations":
-            return {}  # No dependencies
+            return {}
 
         elif stage == "fit_historical":
-            obs_path = self.get_obs_path(config)
-            return {"obs_regridded": (self.exists(obs_path), obs_path)}
+            loc = self.obs_loc
+            return {"obs_regridded": (self.exists(loc), loc)}
 
         elif stage == "transform_scenario":
-            obs_path = self.get_obs_path(config)
-            hist_path = self.get_historical_path(config, hist_member=hist_member)
+            obs_loc = self.obs_loc
+            hist_loc = self.historical_loc(hist_member or config.ensemble_member)
             return {
-                "obs_regridded": (self.exists(obs_path), obs_path),
-                "historical": (self.exists(hist_path), hist_path),
+                "obs_regridded": (self.exists(obs_loc), obs_loc),
+                "historical": (self.exists(hist_loc), hist_loc),
             }
 
         else:
@@ -353,20 +338,24 @@ class ArtifactCache:
         Parameters
         ----------
         stage : str
-            Pipeline stage
+            Pipeline stage.
         config : BCSDConfig
-            Configuration for the run
+            Configuration for the run.
+        hist_member : str, optional
+            Resolved historical ensemble member.
 
         Raises
         ------
         ValueError
-            If any required dependencies are missing
+            If any required dependencies are missing.
         """
         deps = self.check_dependencies(stage, config, hist_member=hist_member)
-        missing = {name: path for name, (exists, path) in deps.items() if not exists}
+        missing = {name: loc for name, (exists, loc) in deps.items() if not exists}
 
         if missing:
-            dep_list = "\n  ".join([f"{name}: {path}" for name, path in missing.items()])
+            dep_list = "\n  ".join(
+                [f"{name}: {loc.store_path} / {loc.group}" for name, loc in missing.items()]
+            )
             raise ValueError(
                 f"Missing dependencies for stage '{stage}':\n  {dep_list}\n"
                 f"Run the required upstream stages first."
@@ -376,30 +365,32 @@ class ArtifactCache:
         self, stage: str, config: BCSDConfig, hist_member: str | None = None
     ) -> str:
         """
-        Get output path for a given stage and config.
+        Get output store path for a given stage (returns store_path only, not group).
 
         Parameters
         ----------
         stage : str
-            Pipeline stage
+            Pipeline stage.
         config : BCSDConfig
-            Configuration for the run
+            Configuration for the run.
+        hist_member : str, optional
+            Resolved historical ensemble member.
 
         Returns
         -------
         str
-            Full path to output artifact
+            Full path to the icechunk store.
         """
         if stage == "prepare_observations":
-            return self.get_obs_path(config)
+            return self.obs_loc.store_path
 
         elif stage == "fit_historical":
-            return self.get_historical_path(config, hist_member=hist_member)
+            return self.historical_loc(hist_member or config.ensemble_member).store_path
 
         elif stage == "transform_scenario":
             if config.scenario is None:
                 raise ValueError("scenario must be specified for transform_scenario stage")
-            return self.get_scenario_path(config)
+            return self.scenario_loc.store_path
 
         else:
             raise ValueError(f"Unknown stage: {stage}")
@@ -416,56 +407,56 @@ class ArtifactCache:
         Parameters
         ----------
         stage : str, optional
-            Clear only specific stage ('obs', 'historical', 'scenarios')
+            Clear only specific stage ('obs', 'historical', 'scenarios').
         gcm : str, optional
-            Clear only specific GCM
+            Clear only specific GCM.
         variable : str, optional
-            Clear only specific variable
+            Clear only specific variable.
 
         Returns
         -------
         int
-            Number of artifacts deleted
+            Number of artifacts deleted.
         """
         deleted_count = 0
 
-        # Build search patterns
         if stage:
             search_base = f"{self.scratch_dir}/{self.environment}/{self.version}/{stage}/"
         else:
             search_base = f"{self.scratch_dir}/{self.environment}/{self.version}/"
 
         try:
-            # List all zarr stores
+            import fsspec
+
             if self.scratch_dir.startswith("s3://"):
+                fs = fsspec.filesystem("s3")
                 search_base_no_scheme = search_base.replace("s3://", "")
-                all_paths = self.fs.glob(f"{search_base_no_scheme}**/*.icechunk")
+                all_paths = fs.glob(f"{search_base_no_scheme}**/*.icechunk")
                 all_paths = [f"s3://{p}" for p in all_paths]
             else:
+                fs = fsspec.filesystem("local")
                 all_paths = list(Path(search_base).rglob("*.icechunk"))
                 all_paths = [str(p) for p in all_paths]
 
-            # Filter by GCM and variable using directory components
             for path in all_paths:
-                if gcm and f"/{gcm}/" not in path:
+                if gcm and f"/{gcm}" not in path:
                     continue
                 if variable and f"/{variable}/" not in path:
                     continue
 
-                # Delete the zarr store
                 if self.scratch_dir.startswith("s3://"):
                     path_no_scheme = path.replace("s3://", "")
-                    self.fs.rm(path_no_scheme, recursive=True)
+                    fs.rm(path_no_scheme, recursive=True)
                 else:
                     import shutil
 
                     shutil.rmtree(path)
 
                 deleted_count += 1
-                logger.info(f"Deleted cache: {path}")
+                logger.info("Deleted cache: %s", path)
 
         except Exception as e:
-            logger.error(f"Error clearing cache: {e}")
+            logger.error("Error clearing cache: %s", e)
 
         return deleted_count
 
@@ -476,35 +467,30 @@ class ArtifactCache:
         variable: str | None = None,
     ) -> list[str]:
         """
-        List cached artifacts matching filters.
-
-        Uses efficient S3 prefix listing instead of recursive globbing.
+        List cached artifact store paths matching filters.
 
         Parameters
         ----------
         stage : str, optional
-            List only specific stage
+            List only specific stage.
         gcm : str, optional
-            List only specific GCM
+            List only specific GCM.
         variable : str, optional
-            List only specific variable
+            List only specific variable.
 
         Returns
         -------
         list[str]
-            List of artifact paths
+            List of icechunk store paths.
         """
-        artifacts = set()
+        artifacts: set[str] = set()
 
-        # Determine which stages to search
-        if stage:
-            stages = [stage]
-        else:
-            stages = ["obs", "historical", "scenarios"]
+        stages = [stage] if stage else ["obs", "historical", "scenarios"]
 
         try:
+            import fsspec
+
             for stage_name in stages:
-                # Scenarios go to output_dir if specified, others to cache
                 if stage_name == "scenarios" and self.output_dir:
                     search_base = f"{self.output_dir}/{self.environment}/{self.version}/"
                 else:
@@ -513,43 +499,34 @@ class ArtifactCache:
                     )
 
                 if self.scratch_dir.startswith("s3://"):
+                    fs = fsspec.filesystem("s3")
                     search_base_no_scheme = search_base.replace("s3://", "")
-
                     try:
-                        all_files = self.fs.glob(f"{search_base_no_scheme}**/*.icechunk")
+                        all_files = fs.glob(f"{search_base_no_scheme}**/*.icechunk")
                     except Exception:
                         continue
 
                     for path in all_files:
                         full_path = f"s3://{path}"
-
-                        # Filter by GCM and variable using directory components
-                        if gcm and f"/{gcm}/" not in full_path:
+                        if gcm and f"/{gcm}" not in full_path:
                             continue
                         if variable and f"/{variable}/" not in full_path:
                             continue
-
-                        if self.exists(full_path):
-                            artifacts.add(full_path)
+                        artifacts.add(full_path)
                 else:
-                    # Local filesystem
                     search_path = Path(search_base)
                     if not search_path.exists():
                         continue
 
                     for path in search_path.rglob("*.icechunk"):
                         path_str = str(path)
-
-                        # Filter by GCM and variable using directory components
-                        if gcm and f"/{gcm}/" not in path_str:
+                        if gcm and f"/{gcm}" not in path_str:
                             continue
                         if variable and f"/{variable}/" not in path_str:
                             continue
-
-                        if self.exists(path_str):
-                            artifacts.add(path_str)
+                        artifacts.add(path_str)
 
         except Exception as e:
-            logger.error(f"Error listing artifacts: {e}")
+            logger.error("Error listing artifacts: %s", e)
 
         return sorted(list(artifacts))
