@@ -137,33 +137,35 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
 
 
 def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
-    """Cross-scenario validation: check resolved members exist in target stores.
+    """Cross-scenario validation: check resolved members exist in the unified datatree store.
 
-    Uses static catalog ensemble_members metadata when available; falls back to
-    a lazy store open (reads coordinate metadata only, no data loaded). Silently
-    skips stores that are unreachable or have no member metadata.
+    Opens each GCM's unified datatree at most once and inspects group children to
+    determine which ensemble members are present. Silently skips stores that are
+    unreachable or whose groups cannot be navigated.
     """
+    from srm.config import SCENARIO_TO_GROUP
     from srm.datasets import catalog
     from srm.lineage import resolve_member_lineage
 
     errors: list[str] = []
-    _store_cache: dict[str, frozenset[str] | None] = {}
+    _dt_cache: dict[str, object] = {}  # gcm → DataTree or None
 
-    def _members(store_name: str) -> frozenset[str] | None:
-        if store_name not in _store_cache:
+    def _get_dt(gcm: str):
+        if gcm not in _dt_cache:
             try:
-                entry = catalog.get(store_name)
-                if entry.ensemble_members is not None:
-                    _store_cache[store_name] = frozenset(entry.ensemble_members)
-                else:
-                    ds = entry.to_xarray()
-                    coord = ds.coords.get("ensemble_member")
-                    _store_cache[store_name] = (
-                        frozenset(str(m) for m in coord.values) if coord is not None else None
-                    )
+                _dt_cache[gcm] = catalog.get(gcm).to_xarray()
             except Exception:
-                _store_cache[store_name] = None
-        return _store_cache[store_name]
+                _dt_cache[gcm] = None
+        return _dt_cache[gcm]
+
+    def _members(gcm: str, group: str) -> frozenset[str] | None:
+        dt = _get_dt(gcm)
+        if dt is None:
+            return None
+        try:
+            return frozenset(dt[group].children.keys())
+        except Exception:
+            return None
 
     for config in configs:
         if config.scenario is None:
@@ -174,24 +176,26 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
             )
         except KeyError:
             continue
-        # CESM2-WACCM r* historical members live in the pangeo-prefixed store; all other GCMs
-        # (including UKESM) keep r* members in their standard historical store.
-        hist_store = (
-            f"pangeo-{config.gcm}-historical-icechunk"
-            if config.gcm == "CESM2-WACCM" and hist.startswith("r")
-            else f"{config.gcm}-historical-icechunk"
-        )
-        known = _members(hist_store)
+
+        hist_group = f"historical/{config.variable}"
+        known = _members(config.gcm, hist_group)
         if known is not None and hist not in known:
             errors.append(
-                f"  {config.gcm}/{config.variable}: historical:{hist!r} not in {hist_store}"
+                f"  {config.gcm}/{config.variable}: historical:{hist!r} not in {hist_group}"
             )
-        ssp245_store = f"{config.gcm}-SSP245-icechunk"
-        known = _members(ssp245_store)
-        if ssp245 is not None and known is not None and ssp245 not in known:
-            errors.append(
-                f"  {config.gcm}/{config.variable}: ssp245:{ssp245!r} not in {ssp245_store}"
-            )
+
+        if ssp245 is not None:
+            try:
+                scenario_group = SCENARIO_TO_GROUP[config.scenario]
+            except KeyError:
+                scenario_group = None
+            if scenario_group is not None:
+                ssp245_group = f"{scenario_group}/{config.variable}"
+                known = _members(config.gcm, ssp245_group)
+                if known is not None and ssp245 not in known:
+                    errors.append(
+                        f"  {config.gcm}/{config.variable}: ssp245:{ssp245!r} not in {ssp245_group}"
+                    )
 
     if errors:
         raise ValueError("Resolved ensemble members not found in stores:\n" + "\n".join(errors))
@@ -701,6 +705,7 @@ def status(
     if verbose and configs:
         cache = orchestrator._get_cache()
         config = configs[0]
+        cache.config = config
         lines = [
             "Cache Configuration:",
             f"  Cache Path: {cache.scratch_dir}",
@@ -708,11 +713,11 @@ def status(
             f"  Environment: {cache.environment}",
             f"  Version: {cache.version}",
             "Example Paths:",
-            f"  Obs: {cache.get_obs_path(config)}",
-            f"  Historical: {cache.get_historical_path(config)}",
+            f"  Obs: {cache.obs_loc.store_path}",
+            f"  Historical: {cache.historical_loc(config.ensemble_member).store_path}",
         ]
         if config.scenario:
-            lines.append(f"  Scenario: {cache.get_scenario_path(config)}")
+            lines.append(f"  Scenario: {cache.scenario_loc.store_path}")
         logger.info("\n".join(lines))
 
     status_info = orchestrator.get_status(configs)

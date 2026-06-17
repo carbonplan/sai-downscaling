@@ -72,17 +72,15 @@ class BCSDRun:
 
     @cached_property
     def obs(self) -> xr.Dataset:
-        return load_cached_data(self._cache.obs_path)
+        return load_cached_data(self._cache.obs_loc.store_path)
 
     @cached_property
     def historical(self) -> xr.Dataset:
-        return load_cached_data(
-            self._cache.get_historical_path(self.config, hist_member=self._hist_member)
-        )
+        return load_cached_data(self._cache.historical_loc(self._hist_member).store_path)
 
     @cached_property
     def scenario(self) -> xr.Dataset:
-        return load_cached_data(self._cache.scenario_path)
+        return load_cached_data(self._cache.scenario_loc.store_path)
 
     def get_location_data(self, lat, lon):
         """
