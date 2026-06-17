@@ -11,19 +11,19 @@ from srm import catalog
 
 # Spatial range bounds for unit-mismatch detection (e.g. Celsius instead of Kelvin).
 # Ranges are wide intentionally — based on ERA5 observed range +/- large margins.
-_N_TIME_SAMPLES = 15  # number of pseudo-random time indices used by multi-step checks
-_TIME_SAMPLE_SEED = 0  # fixed seed → deterministic draws across runs
+_N_TIME_SAMPLES = 15  # window size used by multi-step identity/spread checks
 
 
-def _sample_time_indices(
-    n: int, k: int = _N_TIME_SAMPLES, seed: int = _TIME_SAMPLE_SEED
-) -> list[int]:
-    """k deterministic pseudo-random indices drawn from [1, n-1] (day 0 excluded)."""
-    if n <= 1:
-        return [0]
-    pool = list(range(1, n))
-    rng = np.random.default_rng(seed)
-    return sorted(int(i) for i in rng.choice(pool, size=min(k, len(pool)), replace=False))
+def _sample_time_window(n: int, k: int = _N_TIME_SAMPLES) -> slice:
+    """Contiguous k-step window centered in [0, n), avoiding day 0.
+
+    Using a contiguous window minimises zarr chunk access — at most two time
+    chunks are fetched instead of up to k chunks from scattered random indices.
+    """
+    if n <= k:
+        return slice(0, n)
+    start = max(1, (n - k) // 2)
+    return slice(start, start + k)
 
 
 VAR_SPATIAL_RANGES: dict[str, dict[str, tuple[float, float]]] = {
@@ -158,23 +158,30 @@ class DatasetChecker:
 
         Checks one member at a time and stops as soon as a non-null member is found,
         minimising S3 reads for the common case where member 0 has data.
+
+        The null probe uses a single time step (``isel(time=0)``) rather than the full
+        multi-step sample passed in ``obj``. Reading all time indices just to detect
+        null members fetches O(N_TIME_SAMPLES × N_vars) chunks from S3 unnecessarily;
+        a single time step is sufficient to identify an entirely-null member.
         """
         if "ensemble_member" not in getattr(obj, "dims", {}):
             return obj
 
-        other_dims = [d for d in obj.dims if d != "ensemble_member"]
+        # Probe with one time step to avoid reading the full scattered sample from S3.
+        probe = obj.isel(time=0) if "time" in getattr(obj, "dims", {}) else obj
+        spatial_dims = [d for d in probe.dims if d != "ensemble_member"]
 
         for i in range(obj.sizes["ensemble_member"]):
-            member = obj.isel(ensemble_member=i)
-            if isinstance(member, xr.Dataset):
+            member_probe = probe.isel(ensemble_member=i)
+            if isinstance(member_probe, xr.Dataset):
                 if all(
-                    not bool(member[v].isnull().all(dim=other_dims).compute())
-                    for v in member.data_vars
+                    not bool(member_probe[v].isnull().all(dim=spatial_dims).compute())
+                    for v in member_probe.data_vars
                 ):
-                    return member
+                    return obj.isel(ensemble_member=i)
             else:
-                if not bool(member.isnull().all(dim=other_dims).compute()):
-                    return member
+                if not bool(member_probe.isnull().all().compute()):
+                    return obj.isel(ensemble_member=i)
 
         return None
 
@@ -332,28 +339,30 @@ class DatasetChecker:
         if "time" not in self.ds.dims or self.ds.sizes["time"] == 0:
             return ValidationResult(True, [])
 
-        time_indices = _sample_time_indices(self.ds.sizes["time"])
-        ds_sample = self.ds.isel(time=time_indices)
+        n = self.ds.sizes["time"]
+        window = _sample_time_window(n)
+        ds_sample = self.ds.isel(time=window)
 
         if "ensemble_member" in ds_sample.dims:
             ds_sample = self._resolve_ensemble_member(ds_sample)
             if ds_sample is None:
                 return ValidationResult(True, [])
 
-        # One compute call loads all sampled time steps for all variables at once.
+        # One compute call loads the contiguous window for all variables at once.
         ds_computed = ds_sample.compute()
+        n_steps = ds_computed.sizes["time"]
 
         var_names = list(ds_computed.data_vars)
         issues = []
         for v1, v2 in itertools.combinations(var_names, 2):
             a = ds_computed[v1]
             b = ds_computed[v2]
-            # Both all-NaN across all samples → fill-data equality, not a real data bug.
+            # Both all-NaN across the window → fill-data equality, not a real data bug.
             if a.isnull().all() and b.isnull().all():
                 continue
             if a.equals(b):
                 issues.append(
-                    f"{v1} and {v2} are identical across {len(time_indices)} sampled time steps"
+                    f"{v1} and {v2} are identical across {n_steps} consecutive time steps"
                 )
         return ValidationResult(len(issues) == 0, issues)
 
@@ -372,13 +381,14 @@ class DatasetChecker:
         if "time" not in self.ds.dims or self.ds.sizes["time"] == 0:
             return ValidationResult(True, [])
 
-        time_indices = _sample_time_indices(self.ds.sizes["time"])
-        # One compute: global mean for all members × all sampled time steps.
-        means = self.ds[var].isel(time=time_indices).mean(dim=["lat", "lon"]).compute()
+        n = self.ds.sizes["time"]
+        window = _sample_time_window(n)
+        # One compute: global mean for all members × the contiguous time window.
+        means = self.ds[var].isel(time=window).mean(dim=["lat", "lon"]).compute()
+        n_steps = means.sizes["time"]
 
-        # A member pair is flagged only when their global means are equal at ALL sampled
-        # time steps (and neither series is NaN-only). A stitch artifact at one time step
-        # is therefore outvoted by the remaining clean samples.
+        # A member pair is flagged only when their global means are equal across every
+        # step in the window (and neither series contains NaN).
         n_members = self.ds.sizes["ensemble_member"]
         issues = []
         for i, j in itertools.combinations(range(n_members), 2):
@@ -390,7 +400,7 @@ class DatasetChecker:
                 issues.append(
                     f"{var} global mean identical for members "
                     f"{means.ensemble_member.values[i]} and {means.ensemble_member.values[j]} "
-                    f"across {len(time_indices)} sampled time steps"
+                    f"across {n_steps} consecutive time steps"
                 )
         return ValidationResult(len(issues) == 0, issues)
 
