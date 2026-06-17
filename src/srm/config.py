@@ -27,6 +27,14 @@ class VarStandards:
     DTR: VarSpec = VarSpec(name="dtr", units="K")
 
 
+SCENARIO_TO_GROUP: dict[str, str] = {
+    "historical": "historical",
+    "SSP245": "ssp245",
+    "G6-1.5K": "g6_1p5k",
+    "esgf-SSP245": "esgf_ssp245",
+}
+
+
 @dataclass
 class ClusterConfig:
     n_workers: list = field(default_factory=lambda: [1, 50])
