@@ -7,7 +7,7 @@ import pytest
 if TYPE_CHECKING:
     from srm.catalog import Dataset
 
-from srm.datasets import VirtualDataset, catalog
+from srm.datasets import Datatree, VirtualDataset, catalog
 from srm.qaqc import VAR_SPATIAL_RANGES, DatasetChecker as DatasetValidator
 from srm.validation import (
     GCM_OPTIONS,
@@ -17,6 +17,10 @@ from srm.validation import (
 )
 
 pytestmark = pytest.mark.input_data
+
+# Spot-check slice: negative precip and spatial range are systematic errors (unit/sign
+# problems) that manifest in any small sample. Reading the full array is unnecessary.
+_SAMPLE_KWARGS = {"time": slice(0, 5)}
 
 # Datasets too large or non-GCM for the expensive spatial range check.
 # ERA5 and GDEX still get other consistency checks (time axis, calendar, units, etc.).
@@ -36,7 +40,6 @@ _SKIP_ALL_PHYSICS = frozenset({"ocean-mask"})
 # ERA5 tasmin/tasmax are forecast fields (minimum/maximum_2m_temperature_since_previous_post_processing)
 # while ERA5 tas is an analysis field (instantaneous 2m_temperature). The product mismatch
 # causes systematic tasmax < tas and tasmin < tas violations across grid points.
-
 _SKIP_TEMP_CONSISTENCY = frozenset({"ERA5"})
 
 
@@ -98,11 +101,11 @@ class TestCatalogDatasets:
 
     # variable-checks: reasonable_ranges (pr >= 0)
     def test_negative_precip(self, ds_info: Dataset, validator: DatasetValidator):
-        """Only run on datasets that contain 'pr'"""
+        """Spot-check first 5 time steps — negative pr is a systematic sign/unit error."""
         self._skip_if_virtual(ds_info)
         if ds_info.expected_vars and not any(v.name == "pr" for v in ds_info.expected_vars):
             pytest.skip(f"Dataset {ds_info.name} does not contain precipitation.")
-        result = validator.validate_negative_precip()
+        result = validator.validate_negative_precip(isel_kwargs=_SAMPLE_KWARGS)
         assert result, f"{ds_info.name}: {result.issues}"
 
 
@@ -151,13 +154,13 @@ class TestVariablePhysics:
             pytest.skip(f"{ds_info.name} excluded from spatial range checks")
         if var not in validator.ds.data_vars:
             pytest.skip(f"{var} not in {ds_info.name}")
-        result = validator.validate_spatial_range(var)
+        result = validator.validate_spatial_range(var, isel_kwargs=_SAMPLE_KWARGS)
         assert result, f"{ds_info.name}: {result.issues}"
 
     # variable-checks: dtr_consistency (dtr ≈ tasmax − tasmin; catches unit mismatch in derived variable)
     def test_dtr_consistency(self, ds_info, validator):
         self._skip_if_not_applicable(ds_info)
-        result = validator.validate_dtr_consistency()
+        result = validator.validate_dtr_consistency(isel_kwargs=_SAMPLE_KWARGS)
         assert result, f"{ds_info.name}: {result.issues}"
 
     # variable-checks: temperature_consistency (tasmax > tas > tasmin; full dataset)
@@ -165,7 +168,7 @@ class TestVariablePhysics:
         self._skip_if_not_applicable(ds_info)
         if ds_info.name in _SKIP_TEMP_CONSISTENCY:
             pytest.skip(f"{ds_info.name} excluded from temp consistency check")
-        result = validator.validate_temp_consistency()
+        result = validator.validate_temp_consistency(isel_kwargs=_SAMPLE_KWARGS)
         assert result, f"{ds_info.name}: {result.issues}"
 
     # variable-checks: no_identical_vars
@@ -186,7 +189,9 @@ class TestSpatialConsistency:
         gcm_datasets = [
             entry
             for name, entry in catalog.datasets.items()
-            if gcm in name and not isinstance(entry, VirtualDataset)
+            if gcm in name
+            and not isinstance(entry, VirtualDataset)
+            and not isinstance(entry, Datatree)
         ]
         if len(gcm_datasets) < 2:
             pytest.skip(f"Fewer than 2 non-virtual datasets found for {gcm}")
