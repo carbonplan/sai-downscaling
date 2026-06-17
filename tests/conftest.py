@@ -3,7 +3,7 @@ import pytest
 import xarray as xr
 
 from srm import catalog
-from srm.datasets import BaseDataset
+from srm.datasets import BaseDataset, Datatree
 
 
 @pytest.fixture(scope="session")
@@ -13,11 +13,21 @@ def dataset_catalog():
 
 
 @pytest.fixture(
-    params=[ds for ds in catalog.datasets.values() if isinstance(ds, BaseDataset)],
+    params=[
+        ds
+        for ds in catalog.datasets.values()
+        if isinstance(ds, BaseDataset) and not isinstance(ds, Datatree)
+    ],
     ids=lambda ds: ds.name,
 )
 def ds_info(request):
-    """Parametrize by dataset objects (xarray-compatible datasets only)"""
+    """Parametrize by dataset objects (xarray-compatible datasets only).
+
+    Datatree entries are excluded here because their .to_xarray() returns xr.DataTree,
+    not xr.Dataset, and calling it requires S3 access at collection time. Datatree stores
+    are validated via DatasetValidator (test_input_data.py TestDataIntegrity etc.) which
+    opens them lazily at test runtime.
+    """
     return request.param
 
 

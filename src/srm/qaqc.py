@@ -322,6 +322,11 @@ class DatasetChecker:
                 )
         return ValidationResult(len(issues) == 0, issues)
 
+    def validate_ensemble_member_dim(self) -> ValidationResult:
+        if "ensemble_member" in self.ds.dims and self.ds.sizes["ensemble_member"] >= 1:
+            return ValidationResult(True, [])
+        return ValidationResult(False, ["ensemble_member dimension missing or empty"])
+
     def validate_ensemble_spread(self, var: str = "tas", day_index: int = 0) -> ValidationResult:
         import itertools
 
