@@ -61,7 +61,9 @@ def dataset_catalog():
     params=[
         ds
         for ds in catalog.datasets.values()
-        if isinstance(ds, BaseDataset) and not isinstance(ds, Datatree)
+        if isinstance(ds, BaseDataset)
+        and not isinstance(ds, Datatree)
+        and not ds.name.endswith("-icechunk")
     ]
     + _DATATREE_PARAMS,
     ids=lambda ds: ds.name,
@@ -69,10 +71,10 @@ def dataset_catalog():
 def ds_info(request):
     """Parametrize over all xarray-compatible catalog entries.
 
-    Yields BaseDataset instances (Dataset, VirtualDataset) for the legacy per-scenario
-    icechunk stores, and DatatreeGroupEntry instances for each scenario group in the
-    unified per-GCM datatree stores. Both expose the same duck-type interface so
-    DatasetChecker handles them identically.
+    Yields non-GCM BaseDataset instances (ERA5, NASA-NEX, GDEX-GMF) plus
+    DatatreeGroupEntry instances for each scenario group in the unified per-GCM
+    datatree stores. Both expose the same duck-type interface so DatasetChecker
+    handles them identically. Legacy per-scenario icechunk stores are excluded.
     """
     return request.param
 

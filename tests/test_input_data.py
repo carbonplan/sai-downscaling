@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from srm.datasets import Datatree, VirtualDataset, catalog
 from srm.qaqc import VAR_SPATIAL_RANGES, DatasetChecker as DatasetValidator
 from srm.validation import (
+    _SCENARIO_TO_GROUP,
     GCM_OPTIONS,
     SCENARIO_OPTIONS,
     CheckStatus,
@@ -179,35 +180,34 @@ class TestVariablePhysics:
 
 
 class TestSpatialConsistency:
-    """All datasets from the same GCM must share the same lat/lon grid."""
+    """All scenario groups in a unified GCM datatree must share the same lat/lon grid."""
 
     # spatial-checks: grid_consistency
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     def test_same_gcm_grid(self, gcm):
         import numpy as np
 
-        gcm_datasets = [
-            entry
-            for name, entry in catalog.datasets.items()
-            if gcm in name
-            and not isinstance(entry, VirtualDataset)
-            and not isinstance(entry, Datatree)
-        ]
-        if len(gcm_datasets) < 2:
-            pytest.skip(f"Fewer than 2 non-virtual datasets found for {gcm}")
+        entry = catalog.get(gcm)
+        if entry is None or not isinstance(entry, Datatree):
+            pytest.skip(f"No unified datatree found for {gcm}")
 
-        reference_ds = gcm_datasets[0].to_xarray()
-        ref_lat = reference_ds["lat"].values
-        ref_lon = reference_ds["lon"].values
+        dt = entry.to_xarray()
+        available_groups = [g for g in _SCENARIO_TO_GROUP.values() if g in dt.children]
+        if len(available_groups) < 2:
+            pytest.skip(f"Fewer than 2 scenario groups found for {gcm}")
+
+        ref_ds = dt[available_groups[0]].to_dataset()
+        ref_lat = ref_ds["lat"].values
+        ref_lon = ref_ds["lon"].values
 
         issues = []
-        for entry in gcm_datasets[1:]:
-            ds = entry.to_xarray()
+        for group in available_groups[1:]:
+            ds = dt[group].to_dataset()
             try:
                 np.testing.assert_array_equal(ref_lat, ds["lat"].values)
                 np.testing.assert_array_equal(ref_lon, ds["lon"].values)
             except AssertionError as exc:
-                issues.append(f"{entry.name}: {exc}")
+                issues.append(f"{gcm}/{group}: {exc}")
 
         assert not issues, "\n".join(issues)
 
@@ -219,18 +219,22 @@ class TestEnsembleSpread:
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     @pytest.mark.parametrize("scenario", list(SCENARIO_OPTIONS))
     def test_ensemble_spread_nonzero(self, gcm, scenario):
-        key = f"{gcm}-{scenario}-icechunk"
-        try:
-            entry = catalog.get(key)
-        except KeyError:
-            pytest.skip(f"{key} not in catalog")
+        gcm_entry = catalog.get(gcm)
+        if gcm_entry is None or not isinstance(gcm_entry, Datatree):
+            pytest.skip(f"No unified datatree found for {gcm}")
 
-        if isinstance(entry, VirtualDataset):
-            pytest.skip("Not applicable to virtual datasets")
+        group = _SCENARIO_TO_GROUP.get(scenario)
+        if group is None:
+            pytest.skip(f"No group mapping for scenario {scenario}")
 
-        validator = DatasetValidator(entry)
+        dt = gcm_entry.to_xarray()
+        if group not in dt.children:
+            pytest.skip(f"Group '{group}' not present in datatree for {gcm}")
+
+        ds = dt[group].to_dataset()
+        validator = DatasetValidator(ds)
         result = validator.validate_ensemble_spread()
-        assert result, f"{key}: {result.issues}"
+        assert result, f"{gcm}/{scenario}: {result.issues}"
 
 
 class TestDataIntegrity:
