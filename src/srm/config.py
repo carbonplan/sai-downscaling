@@ -29,6 +29,7 @@ class VarStandards:
 
 SCENARIO_TO_GROUP: dict[str, str] = {
     "historical": "historical",
+    "pangeo-historical": "historical",  # ETL alias: pangeo CMIP6 members merged into historical group
     "SSP245": "ssp245",
     "G6-1.5K": "g6_1p5k",
     "esgf-SSP245": "esgf_ssp245",

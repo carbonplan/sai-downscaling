@@ -10,5 +10,15 @@ def test_scenario_to_group_values():
     assert SCENARIO_TO_GROUP["esgf-SSP245"] == "esgf_ssp245"
 
 
+def test_scenario_to_group_pangeo_alias():
+    assert SCENARIO_TO_GROUP["pangeo-historical"] == "historical"
+
+
 def test_scenario_to_group_completeness():
-    assert set(SCENARIO_TO_GROUP.keys()) == {"historical", "SSP245", "G6-1.5K", "esgf-SSP245"}
+    assert set(SCENARIO_TO_GROUP.keys()) == {
+        "historical",
+        "pangeo-historical",
+        "SSP245",
+        "G6-1.5K",
+        "esgf-SSP245",
+    }

@@ -15,7 +15,7 @@ import xarray as xr
 import zarr
 from obstore.store import from_url
 
-from srm.config import VarSpec, VarStandards, init_repo
+from srm.config import SCENARIO_TO_GROUP, VarSpec, VarStandards, init_repo
 from srm.input_data.etl_utils import (
     CMORIZE_pr,
     _display_dry_run_result,
@@ -49,12 +49,6 @@ SHARED_ENSEMBLE_MEMBERS = ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
 BUCKET = "carbonplan-srm"
 UNIFIED_PREFIX = "input/processed/cesm2-waccm.icechunk"
 
-SCENARIO_TO_GROUP: dict[str, str] = {
-    "historical": "historical",
-    "pangeo-historical": "historical",
-    "SSP245": "ssp245",
-    "G6-1.5K": "g6_1p5k",
-}
 
 NETCDF_PREFIX: dict[str, str] = {
     "historical": "input/tensor/CESM2/CESM2-WACCM-Historical/netcdf",
