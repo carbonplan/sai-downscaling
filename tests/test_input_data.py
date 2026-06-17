@@ -44,6 +44,15 @@ _SKIP_ALL_PHYSICS = frozenset({"ocean-mask"})
 # causes systematic tasmax < tas and tasmin < tas violations across grid points.
 _SKIP_TEMP_CONSISTENCY = frozenset({"ERA5"})
 
+# Known data issues where identical-variable failures are expected. The test is marked
+# xfail (not skipped) so that an unexpected pass signals the upstream issue was resolved.
+# Maps ds_info.name → human-readable reason.
+_XFAIL_IDENTICAL_VARS: dict[str, str] = {
+    "CESM2-WACCM/ssp245": (
+        "tasmax, tasmin, and tas are identical — known upstream data issue in the unified SSP245 store"
+    ),
+}
+
 
 class TestCatalogDatasets:
     """Validate input datasets in the catalog"""
@@ -177,6 +186,8 @@ class TestVariablePhysics:
     def test_no_identical_vars(self, ds_info, validator):
         self._skip_if_not_applicable(ds_info)
         result = validator.validate_no_identical_vars()
+        if not result and ds_info.name in _XFAIL_IDENTICAL_VARS:
+            pytest.xfail(f"{ds_info.name}: {_XFAIL_IDENTICAL_VARS[ds_info.name]}")
         assert result, f"{ds_info.name}: {result.issues}"
 
 
