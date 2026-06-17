@@ -154,20 +154,27 @@ class DatasetChecker:
         return ValidationResult(len(issues) == 0, issues)
 
     def _resolve_ensemble_member(self, obj):
-        """Return first ensemble_member slice where no variable/value is entirely null."""
+        """Return first ensemble_member slice where no variable/value is entirely null.
 
+        Vectorizes the NaN scan: one compute call per variable covering all members at
+        once, rather than one call per (member, variable) pair.
+        """
         if "ensemble_member" not in getattr(obj, "dims", {}):
             return obj
-        for i in range(obj.sizes["ensemble_member"]):
-            candidate = obj.isel(ensemble_member=i)
-            if isinstance(candidate, xr.Dataset):
-                if all(
-                    not bool(candidate[v].isnull().all().compute()) for v in candidate.data_vars
-                ):
-                    return candidate
-            else:
-                if not bool(candidate.isnull().all().compute()):
-                    return candidate
+
+        other_dims = [d for d in obj.dims if d != "ensemble_member"]
+
+        if isinstance(obj, xr.Dataset):
+            all_null = {v: obj[v].isnull().all(dim=other_dims).compute() for v in obj.data_vars}
+            for i in range(obj.sizes["ensemble_member"]):
+                if all(not bool(all_null[v].isel(ensemble_member=i)) for v in obj.data_vars):
+                    return obj.isel(ensemble_member=i)
+        else:
+            all_null_da = obj.isnull().all(dim=other_dims).compute()
+            for i in range(obj.sizes["ensemble_member"]):
+                if not bool(all_null_da.isel(ensemble_member=i)):
+                    return obj.isel(ensemble_member=i)
+
         return None
 
     def validate_lon(
