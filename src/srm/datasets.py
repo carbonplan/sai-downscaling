@@ -465,12 +465,11 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.PS,
                     VarStandards.TASMIN,
-                    VarStandards.DTR,
                 ],
             ),
             "NASA-NEX-SSP245": VirtualDataset(
                 name="NASA-NEX-SSP245",
-                virtual_path="s3://carbonplan-srm/input/tensor/nasa-nex/ssp245/virtual.icechunk",
+                virtual_path="s3://carbonplan-srm/input/processed/nasa-nex/ssp245/virtual.icechunk",
                 format="icechunk",
                 virtual_chunk_container=VirtualChunkContainerConfig(
                     uri="s3://nex-gddp-cmip6/", anonymous=True
@@ -479,7 +478,7 @@ class Catalog:
             ),
             "NASA-NEX-historical": VirtualDataset(
                 name="NASA-NEX-historical",
-                virtual_path="s3://carbonplan-srm/input/tensor/nasa-nex/historical/virtual.icechunk",
+                virtual_path="s3://carbonplan-srm/input/processed/nasa-nex/historical/virtual.icechunk",
                 virtual_chunk_container=VirtualChunkContainerConfig(
                     uri="s3://nex-gddp-cmip6/", anonymous=True
                 ),
@@ -488,7 +487,7 @@ class Catalog:
             ),
             "GDEX-GMF": Dataset(
                 name="GDEX-GMF",
-                path="s3://carbonplan-srm/input/tensor/NCAR/GDEX-GMF.icechunk",
+                path="s3://carbonplan-srm/input/processed/gdex-gmf.icechunk",
                 format="icechunk",
                 expected_chunks={"time": 1, "lat": 720, "lon": 1440},
                 expected_shards={"time": 30, "lat": 720, "lon": 1440},
