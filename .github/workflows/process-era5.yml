@@ -1,0 +1,88 @@
+name: process ERA5 input data
+
+on:
+    workflow_dispatch:
+        inputs:
+            variables:
+                description: >
+                    Comma-separated CMIP6 variable names, or "all".
+                    Valid values: tas, tasmin, tasmax, pr, rsds, rlds, ps, hurs
+                required: true
+                type: string
+                default: "all"
+            start_year:
+                description: "First year to include (inclusive)"
+                required: false
+                type: string
+                default: "1950"
+            end_year:
+                description: "Last year to include (inclusive)"
+                required: false
+                type: string
+                default: "2014"
+            dry_run:
+                description: "Run transforms on a 48-step sample and display results without writing"
+                required: false
+                type: boolean
+                default: false
+            commit_message:
+                description: "Icechunk commit message (defaults to variable name)"
+                required: false
+                type: string
+                default: ""
+            s3_cleanup_path:
+                description: "S3 prefix to delete before processing (e.g. s3://carbonplan-srm/input/tensor/era5.icechunk/). Leave empty to skip."
+                required: false
+                type: string
+                default: ""
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    id-token: write
+    contents: read
+
+jobs:
+    process:
+        name: "ERA5 / ${{ inputs.variables }}"
+        runs-on: ubuntu-latest
+        timeout-minutes: 480
+        steps:
+            - uses: actions/checkout@v6
+            - uses: ./.github/actions/setup
+
+            - name: Clean S3 icechunk store
+              if: inputs.s3_cleanup_path != ''
+              env:
+                  S3_CLEANUP_PATH: ${{ inputs.s3_cleanup_path }}
+              run: aws s3 rm "$S3_CLEANUP_PATH" --recursive
+
+            - name: Process ERA5 variables
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+                  VARIABLES: ${{ inputs.variables }}
+                  START_YEAR: ${{ inputs.start_year }}
+                  END_YEAR: ${{ inputs.end_year }}
+                  DRY_RUN: ${{ inputs.dry_run }}
+                  COMMIT_MESSAGE: ${{ inputs.commit_message }}
+              run: |
+                  ALL_VARS="tas tasmin tasmax pr rsds rlds ps hurs"
+
+                  if [[ "$VARIABLES" == "all" ]]; then
+                    IFS=' ' read -ra VAR_LIST <<< "$ALL_VARS"
+                  else
+                    IFS=',' read -ra VAR_LIST <<< "$VARIABLES"
+                  fi
+
+                  CMD=(uv run python src/srm/input_data/era5.py era5)
+                  for var in "${VAR_LIST[@]}"; do
+                    CMD+=(--variable "$(echo "$var" | xargs)")
+                  done
+                  CMD+=(--start-year "$START_YEAR" --end-year "$END_YEAR" --coiled)
+
+                  [[ "$DRY_RUN" == "true" ]] && CMD+=(--dry-run)
+                  [[ -n "$COMMIT_MESSAGE" ]] && CMD+=(--commit-message "$COMMIT_MESSAGE")
+
+                  "${CMD[@]}"

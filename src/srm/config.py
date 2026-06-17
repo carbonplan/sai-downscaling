@@ -58,11 +58,31 @@ def setup_local_client(n_workers=4):
     return Client(n_workers=n_workers)
 
 
+def _ensure_root_group(repo: icechunk.Repository) -> None:
+    """Commit an empty root group on a brand-new repo.
+
+    Without this, concurrent first writers to different zarr groups each create
+    the root node and their commits cannot rebase
+    (NewNodeConflictsWithExistingNode at "/").
+    """
+    import zarr
+
+    if len(list(repo.ancestry(branch="main"))) > 1:
+        return
+    session = repo.writable_session("main")
+    zarr.open_group(session.store, mode="a")
+    try:
+        session.commit("initialize root group")
+    except icechunk.ConflictError:
+        pass  # another writer initialized the root concurrently
+
+
 def init_repo(bucket, prefix, region="us-west-2", readonly: bool = True):
     storage = icechunk.s3_storage(bucket=bucket, prefix=prefix, region=region)
     repo = icechunk.Repository.open_or_create(storage)
     if readonly:
         session = repo.readonly_session("main")
     else:
+        _ensure_root_group(repo)
         session = repo.writable_session("main")
     return repo, session

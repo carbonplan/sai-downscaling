@@ -192,6 +192,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 
+    obs_dataset: str = Field(
+        "ERA5",
+        description="Catalog key for observation dataset (e.g. 'ERA5', 'GDEX-GMF-icechunk').",
+    )
+
     model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 
     # Variable-specific settings (auto-populated)
@@ -201,7 +206,8 @@ class BCSDConfig(pydantic_settings.BaseSettings):
 
     def model_post_init(self, __context) -> None:
         """Post-initialization validation and auto-population"""
-        # Auto-populate variable_config if not provided
+        if self.obs_dataset == "GDEX-GMF-icechunk" and self.variable != "tas":
+            raise ValueError(f"GDEX-GMF-icechunk only supports 'tas'. Got '{self.variable}'.")
         if self.variable_config is None:
             self.variable_config = VariableConfig.for_variable(self.variable)
 

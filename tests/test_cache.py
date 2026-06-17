@@ -185,11 +185,11 @@ class TestObsPath:
 
     def test_global_subset_id_in_filename(self, local_cache, base_config):
         path = local_cache.get_obs_path(base_config)
-        assert "/CESM2-WACCM/tas/global/obs_regridded.icechunk" in path
+        assert "/CESM2-WACCM/tas/global/era5/obs_regridded.icechunk" in path
 
     def test_regional_subset_id_in_filename(self, local_cache, regional_config):
         path = local_cache.get_obs_path(regional_config)
-        assert "/lat-35.0to-22.0_lon16.0to33.0/obs_regridded.icechunk" in path
+        assert "/lat-35.0to-22.0_lon16.0to33.0/era5/obs_regridded.icechunk" in path
 
     def test_paths_differ_per_environment(self, subtests, tmp_path, base_config):
         for env in ("qa", "production"):

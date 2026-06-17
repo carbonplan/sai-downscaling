@@ -40,6 +40,7 @@ from srm.downscaling_utils import (
     subset_space,
 )
 from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_encoding
+from srm.utils import get_variable
 
 logger = logging.getLogger(__name__)
 
@@ -371,7 +372,7 @@ class BCSDPipeline:
             "bias_correction_method": self.config.mapping_type,
             "downscaling_method": self.config.downscaling_method,
             "train_period": f"{self.config.train_period_start}-{self.config.train_period_end}",
-            "observation_dataset": "ERA5",
+            "observation_dataset": self.config.obs_dataset,
             "creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
             "srm_version": importlib.metadata.version("srm"),
             "model": self.config.gcm,
@@ -439,7 +440,7 @@ class BCSDPipeline:
         """
         Stage 1: Regrid observations to GCM grid.
 
-        This stage loads ERA5 observations and regrids them to the coarse GCM
+        This stage loads observations and regrids them to the coarse GCM
         grid using local area averaging. The result is cached and reused across
         all ensemble members and scenarios for this GCM/variable combination.
 
@@ -475,7 +476,7 @@ class BCSDPipeline:
         )
 
         t0 = time.perf_counter()
-        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
         model_grid = get_experiment(
             gcm=self.config.gcm, scenario="historical", var=self.config.variable
@@ -519,7 +520,7 @@ class BCSDPipeline:
         )
         obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
 
-        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
         model_hist = get_historical_experiment(
@@ -790,7 +791,9 @@ class BCSDPipeline:
         """
         ssp245_cat_key = f"{self.config.gcm}-SSP245-icechunk"
         primary_ds = _catalog.get(ssp245_cat_key).to_xarray()
-        primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
+        primary = get_variable(primary_ds, self.config.variable).sel(
+            ensemble_member=self._ssp245_member
+        )
 
         if self._ssp245_esgf_member is None:
             return primary
@@ -806,7 +809,9 @@ class BCSDPipeline:
         esgf_ds = to_proleptic_gregorian(
             _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
         )
-        esgf_bridge = esgf_ds[self.config.variable].sel(ensemble_member=self._ssp245_esgf_member)
+        esgf_bridge = get_variable(esgf_ds, self.config.variable).sel(
+            ensemble_member=self._ssp245_esgf_member
+        )
         esgf_gap = esgf_bridge.isel(time=(esgf_bridge.time.dt.year < primary_start_year).values)
 
         if esgf_gap.time.size == 0:
@@ -864,7 +869,7 @@ class BCSDPipeline:
         )
         obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
 
-        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
         model_hist = get_historical_experiment(
@@ -888,7 +893,7 @@ class BCSDPipeline:
                 esgf_ds = to_proleptic_gregorian(
                     _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
                 )
-                esgf_data = esgf_ds[self.config.variable].sel(
+                esgf_data = get_variable(esgf_ds, self.config.variable).sel(
                     ensemble_member=self._ssp245_esgf_member
                 )
                 esgf_pre = esgf_data.isel(
@@ -935,7 +940,11 @@ class BCSDPipeline:
         train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
         obs_coarse = obs_coarse.sel(time=train_slice)
         obs_fine = obs_fine.sel(time=train_slice)
-        model_hist = model_hist.sel(time=train_slice)
+        model_hist = model_hist.sel(
+            time=slice(
+                f"{self.config.train_period_start}", f"{self.config.predict_period_start - 1}"
+            )
+        )
         model_scenario = model_scenario.sel(
             time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
         )
