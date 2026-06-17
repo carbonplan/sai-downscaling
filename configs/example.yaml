@@ -26,7 +26,7 @@ predict_period_end: 2100
 # subset_bounds: [-35, -22, 16, 33] # South Africa region
 
 # Bias correction method
-mapping_type: "nonparametric_hybrid" # "parametric", "nonparametric", or "nonparametric_hybrid" (default: "parametric")
+mapping_type: "nonparametric" # "parametric", "nonparametric", "nonparametric_hybrid", or "nonparametric_hybrid_2sided" (default: "nonparametric")
 
 # === PipelineOptions: Operational Settings ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache" # Cache for intermediate artifacts (obs, historical)

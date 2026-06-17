@@ -186,9 +186,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     subset_bounds: tuple[float, float, float, float] | None = Field(
         None, description="Spatial bounds as (lat_min, lat_max, lon_min, lon_max). None for global."
     )
-
+    # changed default from "nonparametric_hybrid_2sided" to "nonparametric" for performance.
     mapping_type: MappingType = Field(
-        "nonparametric_hybrid_2sided",
+        "nonparametric",
         description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 

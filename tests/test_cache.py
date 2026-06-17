@@ -235,8 +235,9 @@ class TestHistoricalPath:
         assert path_default != path_custom
 
     def test_different_mapping_type_produces_different_path(self, local_cache, base_config):
+        config_param = base_config.model_copy(update={"mapping_type": "parametric"})
         config_nonparam = base_config.model_copy(update={"mapping_type": "nonparametric"})
-        path_param = local_cache.get_historical_path(base_config)
+        path_param = local_cache.get_historical_path(config_param)
         path_nonparam = local_cache.get_historical_path(config_nonparam)
         assert path_param != path_nonparam
 
