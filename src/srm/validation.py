@@ -87,7 +87,7 @@ _DS_CHECKER_CHECKS: list[tuple[str, str, dict]] = [
     ("lon_valid", "validate_lon", {}),
     ("time_axis", "validate_time_axis", {}),
     ("calendar", "validate_calendar", {}),
-    ("negative_precip", "validate_negative_precip", {}),
+    ("negative_precip", "validate_negative_precip", _FAST),
     ("spatial_range_tas", "validate_spatial_range", {"var": "tas", **_FAST}),
     ("spatial_range_tasmax", "validate_spatial_range", {"var": "tasmax", **_FAST}),
     ("spatial_range_tasmin", "validate_spatial_range", {"var": "tasmin", **_FAST}),

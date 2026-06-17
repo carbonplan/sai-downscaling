@@ -156,24 +156,25 @@ class DatasetChecker:
     def _resolve_ensemble_member(self, obj):
         """Return first ensemble_member slice where no variable/value is entirely null.
 
-        Vectorizes the NaN scan: one compute call per variable covering all members at
-        once, rather than one call per (member, variable) pair.
+        Checks one member at a time and stops as soon as a non-null member is found,
+        minimising S3 reads for the common case where member 0 has data.
         """
         if "ensemble_member" not in getattr(obj, "dims", {}):
             return obj
 
         other_dims = [d for d in obj.dims if d != "ensemble_member"]
 
-        if isinstance(obj, xr.Dataset):
-            all_null = {v: obj[v].isnull().all(dim=other_dims).compute() for v in obj.data_vars}
-            for i in range(obj.sizes["ensemble_member"]):
-                if all(not bool(all_null[v].isel(ensemble_member=i)) for v in obj.data_vars):
-                    return obj.isel(ensemble_member=i)
-        else:
-            all_null_da = obj.isnull().all(dim=other_dims).compute()
-            for i in range(obj.sizes["ensemble_member"]):
-                if not bool(all_null_da.isel(ensemble_member=i)):
-                    return obj.isel(ensemble_member=i)
+        for i in range(obj.sizes["ensemble_member"]):
+            member = obj.isel(ensemble_member=i)
+            if isinstance(member, xr.Dataset):
+                if all(
+                    not bool(member[v].isnull().all(dim=other_dims).compute())
+                    for v in member.data_vars
+                ):
+                    return member
+            else:
+                if not bool(member.isnull().all(dim=other_dims).compute()):
+                    return member
 
         return None
 
