@@ -61,9 +61,7 @@ def dataset_catalog():
     params=[
         ds
         for ds in catalog.datasets.values()
-        if isinstance(ds, BaseDataset)
-        and not isinstance(ds, Datatree)
-        and not ds.name.endswith("-icechunk")
+        if isinstance(ds, BaseDataset) and not isinstance(ds, Datatree)
     ]
     + _DATATREE_PARAMS,
     ids=lambda ds: ds.name,
@@ -74,7 +72,7 @@ def ds_info(request):
     Yields non-GCM BaseDataset instances (ERA5, NASA-NEX, GDEX-GMF) plus
     DatatreeGroupEntry instances for each scenario group in the unified per-GCM
     datatree stores. Both expose the same duck-type interface so DatasetChecker
-    handles them identically. Legacy per-scenario icechunk stores are excluded.
+    handles them identically.
     """
     return request.param
 

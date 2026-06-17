@@ -25,6 +25,7 @@ import scipy.stats
 import xarray as xr
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.cache import StoreLocation
 from srm.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
@@ -38,19 +39,23 @@ from srm.pipeline import (
 # ---------------------------------------------------------------------------
 
 
-def _make_icechunk_store(path: str) -> None:
-    """Create a minimal icechunk store with a 'write complete' commit."""
+def _make_icechunk_group(loc: StoreLocation) -> None:
+    """Create an icechunk store and commit with message matching ``loc.group``.
+
+    ArtifactCache.exists() scans ancestry for a snapshot whose message equals
+    loc.group, so the commit message is what triggers a cache hit.
+    """
     import icechunk
     import numpy as np
     import xarray as xr
     from icechunk.xarray import to_icechunk
 
-    storage = icechunk.local_filesystem_storage(path=path)
+    storage = icechunk.local_filesystem_storage(path=loc.store_path)
     repo = icechunk.Repository.open_or_create(storage)
     session = repo.writable_session("main")
     ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
     to_icechunk(ds, session, mode="w")
-    session.commit("write complete")
+    session.commit(loc.group)
 
 
 @contextmanager
@@ -130,12 +135,12 @@ def pipeline_options(tmp_path) -> PipelineOptions:
 
 @pytest.fixture
 def config() -> BCSDConfig:
-    """Standard ssp245 config."""
+    """Standard SSP245 config."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="tas",
         ensemble_member="r1i1p1f1",
-        scenario="ssp245",
+        scenario="SSP245",
         predict_period_start=2015,
         predict_period_end=2100,
     )
@@ -148,7 +153,7 @@ def pr_config() -> BCSDConfig:
         gcm="CESM2-WACCM",
         variable="pr",
         ensemble_member="r1i1p1f1",
-        scenario="ssp245",
+        scenario="SSP245",
         predict_period_start=2015,
         predict_period_end=2100,
     )
@@ -167,8 +172,8 @@ def pipeline_pr(pr_config, pipeline_options) -> BCSDPipeline:
 @pytest.fixture
 def all_deps_present(pipeline) -> BCSDPipeline:
     """Pipeline whose obs and historical dependencies are pre-created locally."""
-    _make_icechunk_store(pipeline.cache.obs_path)
-    _make_icechunk_store(pipeline.cache.historical_path)
+    _make_icechunk_group(pipeline.cache.obs_loc)
+    _make_icechunk_group(pipeline.cache.historical_loc(pipeline._hist_member))
     return pipeline
 
 
@@ -202,18 +207,17 @@ class TestBCSDPipelineInit:
 
 class TestPrepareObservationsCache:
     def test_returns_obs_path_when_cached(self, pipeline):
-        obs_path = pipeline.cache.obs_path
-        _make_icechunk_store(obs_path)
+        obs_loc = pipeline.cache.obs_loc
+        _make_icechunk_group(obs_loc)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
             result = pipeline.prepare_observations()
 
-        assert result == obs_path
+        assert result == obs_loc.store_path
         mock_get_obs.assert_not_called()
 
     def test_does_not_compute_when_cached(self, pipeline):
-        obs_path = pipeline.cache.obs_path
-        _make_icechunk_store(obs_path)
+        _make_icechunk_group(pipeline.cache.obs_loc)
 
         with _mock_prepare_obs_compute() as (get_obs, get_exp, interp, *_):
             pipeline.prepare_observations()
@@ -222,15 +226,14 @@ class TestPrepareObservationsCache:
             interp.assert_not_called()
 
     def test_force_runs_compute_even_when_cached(self, pipeline):
-        obs_path = pipeline.cache.obs_path
-        _make_icechunk_store(obs_path)
+        _make_icechunk_group(pipeline.cache.obs_loc)
 
         with _mock_prepare_obs_compute() as (mock_get_obs, *_):
             pipeline.prepare_observations(force=True)
             mock_get_obs.assert_called_once()
 
     def test_returns_obs_path_even_after_compute(self, pipeline):
-        expected = pipeline.cache.obs_path
+        expected = pipeline.cache.obs_loc.store_path
         with _mock_prepare_obs_compute():
             result = pipeline.prepare_observations()
         assert result == expected
@@ -377,19 +380,18 @@ class TestFitHistoricalBehavior:
 
     def test_returns_cached_historical_path(self, all_deps_present):
         pipeline = all_deps_present
-        hist_path = pipeline.cache.historical_path
-        _make_icechunk_store(hist_path)
+        hist_loc = pipeline.cache.historical_loc(pipeline._hist_member)
+        _make_icechunk_group(hist_loc)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
             result = pipeline.fit_historical()
 
-        assert result == hist_path
+        assert result == hist_loc.store_path
         mock_get_obs.assert_not_called()
 
     def test_force_bypasses_cached_historical(self, all_deps_present):
         pipeline = all_deps_present
-        hist_path = pipeline.cache.historical_path
-        _make_icechunk_store(hist_path)
+        _make_icechunk_group(pipeline.cache.historical_loc(pipeline._hist_member))
 
         with _mock_fit_historical_compute():
             with patch("srm.pipeline.get_obs") as mock_get_obs:
@@ -399,7 +401,7 @@ class TestFitHistoricalBehavior:
 
     def test_returns_historical_path_after_compute(self, all_deps_present):
         pipeline = all_deps_present
-        expected = pipeline.cache.historical_path
+        expected = pipeline.cache.historical_loc(pipeline._hist_member).store_path
         with _mock_fit_historical_compute():
             result = pipeline.fit_historical()
         assert result == expected
@@ -430,8 +432,7 @@ class TestTransformScenarioBehavior:
             pipeline.transform_scenario()
 
     def test_raises_when_only_obs_present(self, pipeline):
-        obs_path = pipeline.cache.obs_path
-        _make_icechunk_store(obs_path)
+        _make_icechunk_group(pipeline.cache.obs_loc)
         with pytest.raises(ValueError, match="Missing dependencies"):
             pipeline.transform_scenario()
 
@@ -447,22 +448,21 @@ class TestTransformScenarioBehavior:
 
     def test_returns_cached_scenario_path(self, all_deps_present):
         pipeline = all_deps_present
-        scenario_path = pipeline.cache.scenario_path
-        _make_icechunk_store(scenario_path)
+        scenario_loc = pipeline.cache.scenario_loc
+        _make_icechunk_group(scenario_loc)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
             result = pipeline.transform_scenario()
 
-        assert result == scenario_path
+        assert result == scenario_loc.store_path
         mock_get_obs.assert_not_called()
 
     def test_force_bypasses_cached_scenario(self, pipeline_pr, tmp_path):
         # Use pr config: detrend_data=False avoids the xr.concat detrend branch
         p = pipeline_pr
-        _make_icechunk_store(p.cache.obs_path)
-        _make_icechunk_store(p.cache.historical_path)
-        scenario_path = p.cache.scenario_path
-        _make_icechunk_store(scenario_path)
+        _make_icechunk_group(p.cache.obs_loc)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member))
+        _make_icechunk_group(p.cache.scenario_loc)
 
         with _mock_transform_scenario_compute():
             with patch("srm.pipeline.get_obs") as mock_get_obs:
@@ -473,9 +473,9 @@ class TestTransformScenarioBehavior:
     def test_returns_scenario_path_after_compute(self, pipeline_pr):
         # Use pr config: detrend_data=False avoids the xr.concat detrend branch
         p = pipeline_pr
-        _make_icechunk_store(p.cache.obs_path)
-        _make_icechunk_store(p.cache.historical_path)
-        expected = p.cache.scenario_path
+        _make_icechunk_group(p.cache.obs_loc)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member))
+        expected = p.cache.scenario_loc.store_path
         with _mock_transform_scenario_compute():
             result = p.transform_scenario()
         assert result == expected
@@ -483,8 +483,8 @@ class TestTransformScenarioBehavior:
     def test_detrend_not_called_for_pr(self, all_deps_present, pipeline_pr, tmp_path):
         # Recreate all_deps_present for the pr pipeline
         pr_pipeline = pipeline_pr
-        _make_icechunk_store(pr_pipeline.cache.obs_path)
-        _make_icechunk_store(pr_pipeline.cache.historical_path)
+        _make_icechunk_group(pr_pipeline.cache.obs_loc)
+        _make_icechunk_group(pr_pipeline.cache.historical_loc(pr_pipeline._hist_member))
         with _mock_transform_scenario_compute():
             with patch("srm.pipeline.detrend") as mock_detrend:
                 pr_pipeline.transform_scenario()
@@ -512,8 +512,8 @@ class TestTransformScenarioBehavior:
             apply_ocean_mask=True,
         )
         p = BCSDPipeline(pr_config, opts)
-        _make_icechunk_store(p.cache.obs_path)
-        _make_icechunk_store(p.cache.historical_path)
+        _make_icechunk_group(p.cache.obs_loc)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member))
         with _mock_transform_scenario_compute():
             with patch.object(
                 BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()
@@ -527,7 +527,7 @@ class TestTransformScenarioBehavior:
             gcm="CESM2-WACCM",
             variable="pr",
             ensemble_member="r1i1p1f1",
-            scenario="ssp245",
+            scenario="SSP245",
             predict_period_start=2015,
             predict_period_end=2100,
         )
@@ -539,8 +539,8 @@ class TestTransformScenarioBehavior:
             apply_ocean_mask=False,
         )
         p = BCSDPipeline(cfg, opts)
-        _make_icechunk_store(p.cache.obs_path)
-        _make_icechunk_store(p.cache.historical_path)
+        _make_icechunk_group(p.cache.obs_loc)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member))
         with _mock_transform_scenario_compute():
             with patch.object(
                 BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()
@@ -560,8 +560,8 @@ class TestTransformScenarioBehavior:
         )
 
         p = pipeline_pr
-        _make_icechunk_store(p.cache.obs_path)
-        _make_icechunk_store(p.cache.historical_path)
+        _make_icechunk_group(p.cache.obs_loc)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member))
         with _mock_transform_scenario_compute():
             with patch.object(
                 BCSDPipeline, "_write_to_icechunk", return_value="snap"
