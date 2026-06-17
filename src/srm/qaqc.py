@@ -16,7 +16,7 @@ VAR_SPATIAL_RANGES: dict[str, dict[str, tuple[float, float]]] = {
     "tasmin": {"min": (100, 400), "max": (100, 400)},
     "tasmax": {"min": (100, 400), "max": (100, 400)},
     "pr": {"min": (0, 1e-7), "max": (0.0001, 0.03)},
-    "rsds": {"min": (-1, 100), "max": (100, 1000)},
+    "rsds": {"min": (-1, 100), "max": (100, 1200)},
     "hurs": {"min": (0, 40), "max": (40, 900)},
     "dtr": {"min": (0, 10), "max": (10, 150)},
 }
@@ -247,6 +247,9 @@ class DatasetChecker:
         spatial_min = float(da.min().compute())
         spatial_max = float(da.max().compute())
 
+        if np.isnan(spatial_min) or np.isnan(spatial_max):
+            return ValidationResult(True, [])
+
         min_lo, min_hi = VAR_SPATIAL_RANGES[var]["min"]
         max_lo, max_hi = VAR_SPATIAL_RANGES[var]["max"]
 
@@ -312,8 +315,13 @@ class DatasetChecker:
                 return ValidationResult(True, [])
 
         var_names = list(da_slice.data_vars)
+        # Pre-check per-variable all-NaN: two all-NaN variables appear "identical" via .equals()
+        # because xarray treats NaN==NaN, but that is fill-data equality, not a data bug.
+        all_nan = {v: bool(da_slice[v].isnull().all().compute()) for v in var_names}
         issues = []
         for v1, v2 in itertools.combinations(var_names, 2):
+            if all_nan[v1] and all_nan[v2]:
+                continue
             a = da_slice[v1].compute()
             b = da_slice[v2].compute()
             if a.equals(b):

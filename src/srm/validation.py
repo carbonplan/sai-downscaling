@@ -60,14 +60,16 @@ _SCENARIO_TO_GROUP: dict[str, str] = {
 # as the first day of the month following the final data month.
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     "CESM2-WACCM": {
-        "historical": ("1978-01-01", "2015-01-16"),
-        "SSP245": ("2015-01-01", "2101-01-01"),
+        # historical merges ESGF '001' (1978–2015) + Pangeo r*i1p1f1 (1850–2015);
+        # the union time axis starts at 1850. End is first-of-next-month encoded.
+        "historical": ("1850-01-01", "2015-01-16"),
+        "SSP245": ("2015-01-01", "2099-12-31"),
         "G6-1.5K": ("2035-01-01", "2085-01-01"),
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
-        # GeoMIP baseline data starts 2020; 2015-2019 gap is an upstream data limitation.
-        "SSP245": ("2020-01-01", "2084-12-31"),
+        # Unified store stitches 2015–2019 gap-fill data together with the GeoMIP baseline.
+        "SSP245": ("2015-01-01", "2084-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
     },
     "UKESM": {

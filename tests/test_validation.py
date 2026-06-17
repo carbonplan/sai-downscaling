@@ -338,12 +338,12 @@ class TestCheckTemporalCoverage:
         assert result.status == CheckStatus.FAIL
 
     def test_pass_correct_ssp245_coverage(self, mock_datasets):
-        ds = _ds_with_time("2015-01-01", "2101-01-01")
+        ds = _ds_with_time("2015-01-01", "2099-12-31")
         mock_datasets["CESM2-WACCM"] = _datatree_entry(ssp245=ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
         assert result.detail["actual_start"] == "2015-01-01"
-        assert result.detail["actual_end"] == "2101-01-01"
+        assert result.detail["actual_end"] == "2099-12-31"
 
     def test_fail_wrong_start_date(self, mock_datasets):
         ds = _ds_with_time("2016-01-01", "2100-12-31")
@@ -353,7 +353,7 @@ class TestCheckTemporalCoverage:
         assert "start date" in result.message
 
     def test_fail_wrong_end_date(self, mock_datasets):
-        ds = _ds_with_time("2015-01-01", "2099-12-31")
+        ds = _ds_with_time("2015-01-01", "2098-12-31")
         mock_datasets["CESM2-WACCM"] = _datatree_entry(ssp245=ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
@@ -366,7 +366,7 @@ class TestCheckTemporalCoverage:
         assert result.status == CheckStatus.PASS
 
     def test_pass_correct_historical_coverage(self, mock_datasets):
-        ds = _ds_with_time("1978-01-01", "2015-01-16")
+        ds = _ds_with_time("1850-01-01", "2015-01-16")
         mock_datasets["CESM2-WACCM"] = _datatree_entry(historical=ds)
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"

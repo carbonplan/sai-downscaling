@@ -465,7 +465,6 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.PS,
                     VarStandards.TASMIN,
-                    VarStandards.DTR,
                 ],
             ),
             "NASA-NEX-SSP245": VirtualDataset(
