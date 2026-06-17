@@ -11,6 +11,21 @@ from srm import catalog
 
 # Spatial range bounds for unit-mismatch detection (e.g. Celsius instead of Kelvin).
 # Ranges are wide intentionally — based on ERA5 observed range +/- large margins.
+_N_TIME_SAMPLES = 15  # number of pseudo-random time indices used by multi-step checks
+_TIME_SAMPLE_SEED = 0  # fixed seed → deterministic draws across runs
+
+
+def _sample_time_indices(
+    n: int, k: int = _N_TIME_SAMPLES, seed: int = _TIME_SAMPLE_SEED
+) -> list[int]:
+    """k deterministic pseudo-random indices drawn from [1, n-1] (day 0 excluded)."""
+    if n <= 1:
+        return [0]
+    pool = list(range(1, n))
+    rng = np.random.default_rng(seed)
+    return sorted(int(i) for i in rng.choice(pool, size=min(k, len(pool)), replace=False))
+
+
 VAR_SPATIAL_RANGES: dict[str, dict[str, tuple[float, float]]] = {
     "tas": {"min": (100, 400), "max": (100, 400)},
     "tasmin": {"min": (100, 400), "max": (100, 400)},
@@ -305,28 +320,32 @@ class DatasetChecker:
             issues.append(f"tasmax < tasmin at {min_gt_max} grid point(s)")
         return ValidationResult(len(issues) == 0, issues)
 
-    def validate_no_identical_vars(
-        self, member_index: int = 0, day_index: int = 1
-    ) -> ValidationResult:
-        da_slice = self.ds.isel(time=day_index)
-        if "ensemble_member" in da_slice.dims:
-            da_slice = self._resolve_ensemble_member(da_slice)
-            if da_slice is None:
+    def validate_no_identical_vars(self) -> ValidationResult:
+        if "time" not in self.ds.dims or self.ds.sizes["time"] == 0:
+            return ValidationResult(True, [])
+
+        time_indices = _sample_time_indices(self.ds.sizes["time"])
+        ds_sample = self.ds.isel(time=time_indices)
+
+        if "ensemble_member" in ds_sample.dims:
+            ds_sample = self._resolve_ensemble_member(ds_sample)
+            if ds_sample is None:
                 return ValidationResult(True, [])
 
-        var_names = list(da_slice.data_vars)
-        # Pre-check per-variable all-NaN: two all-NaN variables appear "identical" via .equals()
-        # because xarray treats NaN==NaN, but that is fill-data equality, not a data bug.
-        all_nan = {v: bool(da_slice[v].isnull().all().compute()) for v in var_names}
+        # One compute call loads all sampled time steps for all variables at once.
+        ds_computed = ds_sample.compute()
+
+        var_names = list(ds_computed.data_vars)
         issues = []
         for v1, v2 in itertools.combinations(var_names, 2):
-            if all_nan[v1] and all_nan[v2]:
+            a = ds_computed[v1]
+            b = ds_computed[v2]
+            # Both all-NaN across all samples → fill-data equality, not a real data bug.
+            if a.isnull().all() and b.isnull().all():
                 continue
-            a = da_slice[v1].compute()
-            b = da_slice[v2].compute()
             if a.equals(b):
                 issues.append(
-                    f"{v1} and {v2} are identical (member_index={member_index}, day={day_index})"
+                    f"{v1} and {v2} are identical across {len(time_indices)} sampled time steps"
                 )
         return ValidationResult(len(issues) == 0, issues)
 
@@ -335,26 +354,35 @@ class DatasetChecker:
             return ValidationResult(True, [])
         return ValidationResult(False, ["ensemble_member dimension missing or empty"])
 
-    def validate_ensemble_spread(self, var: str = "tas", day_index: int = 0) -> ValidationResult:
-        import itertools
-
+    def validate_ensemble_spread(self, var: str = "tas") -> ValidationResult:
         if var not in self.ds:
             return ValidationResult(True, [])
         if "ensemble_member" not in self.ds.dims:
             return ValidationResult(True, [])
         if self.ds.sizes["ensemble_member"] < 2:
             return ValidationResult(True, [])
+        if "time" not in self.ds.dims or self.ds.sizes["time"] == 0:
+            return ValidationResult(True, [])
 
-        da = self.ds[var].isel(time=day_index)
-        means = da.mean(dim=["lat", "lon"]).compute()
+        time_indices = _sample_time_indices(self.ds.sizes["time"])
+        # One compute: global mean for all members × all sampled time steps.
+        means = self.ds[var].isel(time=time_indices).mean(dim=["lat", "lon"]).compute()
 
+        # A member pair is flagged only when their global means are equal at ALL sampled
+        # time steps (and neither series is NaN-only). A stitch artifact at one time step
+        # is therefore outvoted by the remaining clean samples.
+        n_members = self.ds.sizes["ensemble_member"]
         issues = []
-        for i, j in itertools.combinations(range(len(means)), 2):
-            if means.values[i] == means.values[j]:
+        for i, j in itertools.combinations(range(n_members), 2):
+            mi = means.isel(ensemble_member=i).values
+            mj = means.isel(ensemble_member=j).values
+            if np.any(np.isnan(mi)) or np.any(np.isnan(mj)):
+                continue
+            if np.all(mi == mj):
                 issues.append(
                     f"{var} global mean identical for members "
                     f"{means.ensemble_member.values[i]} and {means.ensemble_member.values[j]} "
-                    f"(day {day_index})"
+                    f"across {len(time_indices)} sampled time steps"
                 )
         return ValidationResult(len(issues) == 0, issues)
 
