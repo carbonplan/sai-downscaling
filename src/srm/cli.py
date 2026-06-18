@@ -996,24 +996,54 @@ def validate_output(
     snapshot_id: str | None = typer.Option(
         None, "--snapshot-id", help="Icechunk snapshot ID to read."
     ),
+    scenario: list[str] | None = typer.Option(
+        None, "--scenario", help="Scenario(s) to validate (repeatable). Defaults to all."
+    ),
+    variable: list[str] | None = typer.Option(
+        None, "--variable", help="Variable(s) to validate (repeatable). Defaults to all."
+    ),
 ) -> None:
     """Validate output datatree store(s), one leaf (scenario/variable/member) at a time.
 
     Renders a single table per store. Exits with code 1 if any blocking check fails in any
-    store, otherwise exits with code 0.
+    store, otherwise exits with code 0. --scenario and --variable restrict validation to
+    matching subtrees (defaulting to the whole store).
 
     Runs locally or with coiled batch.
     local: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
     coiled batch: uv run coiled batch run --region us-west-2 "bcsd validate-output <store_uri> [<store_uri> ...]"
 
     """
-    from srm.validation import BLOCKING_CHECKS, validate_output_store
+    from srm.validation import (
+        _SCENARIO_TO_GROUP,
+        BLOCKING_CHECKS,
+        parse_scenario,
+        parse_variable,
+        validate_output_store,
+    )
+
+    # Translate/validate filters to on-disk group names (SSP245 -> ssp245; variables are
+    # already canonical). parse_* raise on unknown values.
+    scenarios = [_SCENARIO_TO_GROUP[parse_scenario(s)] for s in scenario] if scenario else None
+    variables = [parse_variable(v) for v in variable] if variable else None
+    filtered = bool(scenarios or variables)
 
     any_blocking = False
     for store_uri in store_uris:
-        results = validate_output_store(store_uri, branch=branch, tag=tag, snapshot_id=snapshot_id)
+        results = validate_output_store(
+            store_uri,
+            branch=branch,
+            tag=tag,
+            snapshot_id=snapshot_id,
+            scenarios=scenarios,
+            variables=variables,
+        )
         if not results:
-            logger.warning("No populated leaves found in %s", store_uri)
+            # An explicit filter matching nothing is an error, not an empty success.
+            log = logger.error if filtered else logger.warning
+            log("No populated leaves found in %s", store_uri)
+            if filtered:
+                any_blocking = True
             continue
 
         console.rule(f"[bold]{store_uri}[/bold]")

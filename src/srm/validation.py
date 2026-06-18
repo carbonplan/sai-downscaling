@@ -8,10 +8,12 @@ Use :func:`validate_output_store` to run checks against a post-consolidation out
 import enum
 import hashlib
 import traceback
+from typing import get_args
 
 import pydantic
 import xarray as xr
 
+from srm.bcsd_config import VariableName
 from srm.datasets import catalog
 from srm.qaqc import DatasetChecker, ValidationResult
 
@@ -35,6 +37,8 @@ BLOCKING_CHECKS = {
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
+# On-disk variable group names; canonical (lowercase), so no translation needed.
+VARIABLE_OPTIONS = get_args(VariableName)
 
 _SCENARIO_TO_GROUP: dict[str, str] = {
     "historical": "historical",
@@ -97,6 +101,11 @@ def parse_gcm(value: str) -> str:
 def parse_scenario(value: str) -> str:
     """Parse a user-provided scenario string to a canonical catalog value."""
     return _parse_catalog_value("scenario", value, SCENARIO_OPTIONS)
+
+
+def parse_variable(value: str) -> str:
+    """Parse a user-provided variable string to a canonical on-disk group name."""
+    return _parse_catalog_value("variable", value, VARIABLE_OPTIONS)
 
 
 class CheckStatus(enum.StrEnum):
@@ -571,6 +580,8 @@ def validate_output_store(
     branch: str = "main",
     tag: str | None = None,
     snapshot_id: str | None = None,
+    scenarios: list[str] | None = None,
+    variables: list[str] | None = None,
 ) -> list[CheckResult]:
     """Run OUTPUT_CHECKS against every populated leaf of an output datatree store.
 
@@ -578,6 +589,10 @@ def validate_output_store(
     and ``snapshot_id`` mirror icechunk's ``readonly_session`` parameters and are ignored
     when ``store`` is a DataTree. Each CheckResult reuses the ``gcm`` field for the store
     label and the ``scenario`` field for the leaf path.
+
+    ``scenarios`` and ``variables`` restrict validation to matching leaves of the
+    ``/scenario/variable/member`` tree; they take the on-disk group names (e.g. ``"ssp245"``,
+    ``"tas"``). ``None`` means no filter.
     """
     if isinstance(store, str):
         from cloudpathlib import S3Path
@@ -588,18 +603,30 @@ def validate_output_store(
         tree = store
         label = "output"
 
+    def _select(node: xr.DataTree, names: list[str] | None) -> list[xr.DataTree]:
+        """Child nodes to descend into: all children, or only the named ones present."""
+        if names is None:
+            return list(node.children.values())
+        return [node[name] for name in names if name in node.children]
+
+    # Descend the /scenario/variable/member tree one level at a time; member nodes are
+    # the leaves we validate. Filtering uses the tree structure, not path parsing.
+    scenario_nodes = _select(tree, scenarios)
+    variable_nodes = [vn for sn in scenario_nodes for vn in _select(sn, variables)]
+
     results: list[CheckResult] = []
-    for node in tree.leaves:
-        checker = DatasetChecker(node.to_dataset())
-        for check_id, method, kwargs in OUTPUT_CHECKS:
-            vr: ValidationResult = getattr(checker, method)(**kwargs)
-            results.append(
-                CheckResult(
-                    check_id=check_id,
-                    gcm=label,
-                    scenario=node.path,
-                    status=CheckStatus.PASS if vr else CheckStatus.FAIL,
-                    message="" if vr else "; ".join(vr.issues),
+    for variable_node in variable_nodes:
+        for node in variable_node.leaves:
+            checker = DatasetChecker(node.to_dataset())
+            for check_id, method, kwargs in OUTPUT_CHECKS:
+                vr: ValidationResult = getattr(checker, method)(**kwargs)
+                results.append(
+                    CheckResult(
+                        check_id=check_id,
+                        gcm=label,
+                        scenario=node.path,
+                        status=CheckStatus.PASS if vr else CheckStatus.FAIL,
+                        message="" if vr else "; ".join(vr.issues),
+                    )
                 )
-            )
     return results

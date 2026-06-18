@@ -467,6 +467,44 @@ def test_validate_output_store():
     assert [r for r in results if r.status == CheckStatus.FAIL] == []
 
 
+def test_validate_output_store_filters():
+    tree = _make_output_datatree(
+        scenarios=["ssp245", "historical"],
+        variables=["tas", "pr"],
+        members=["006", "007"],
+    )
+
+    def leaves(results):
+        return sorted({r.scenario for r in results})
+
+    assert leaves(validate_output_store(tree, scenarios=["ssp245"])) == [
+        "/ssp245/pr/006",
+        "/ssp245/pr/007",
+        "/ssp245/tas/006",
+        "/ssp245/tas/007",
+    ]
+    assert leaves(validate_output_store(tree, variables=["tas"])) == [
+        "/historical/tas/006",
+        "/historical/tas/007",
+        "/ssp245/tas/006",
+        "/ssp245/tas/007",
+    ]
+    assert leaves(validate_output_store(tree, scenarios=["ssp245"], variables=["pr"])) == [
+        "/ssp245/pr/006",
+        "/ssp245/pr/007",
+    ]
+    # Unknown filter values match nothing rather than erroring.
+    assert validate_output_store(tree, scenarios=["nope"]) == []
+
+
+def test_parse_variable():
+    from srm.validation import parse_variable
+
+    assert parse_variable("tas") == "tas"
+    with pytest.raises(ValueError, match="Unknown variable"):
+        parse_variable("TAS")
+
+
 def test_open_output_datatree_rejects_non_s3():
     from srm.validation import _open_output_datatree
 
