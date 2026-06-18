@@ -42,7 +42,6 @@ def local_cache(tmp_path) -> ArtifactCache:
     return ArtifactCache(
         scratch_dir=str(tmp_path / "cache"),
         environment="qa",
-        version="v1",
     )
 
 
@@ -52,7 +51,6 @@ def local_cache_with_output(tmp_path) -> ArtifactCache:
     return ArtifactCache(
         scratch_dir=str(tmp_path / "cache"),
         environment="qa",
-        version="v1",
         output_dir=str(tmp_path / "outputs"),
     )
 
@@ -103,7 +101,6 @@ def bound_cache(tmp_path, base_config) -> ArtifactCache:
     cache = ArtifactCache(
         scratch_dir=str(tmp_path / "cache"),
         environment="qa",
-        version="v1",
         output_dir=None,
     )
     cache.config = base_config
@@ -118,7 +115,6 @@ def bound_cache_with_output(tmp_path, base_config) -> ArtifactCache:
         PipelineOptions(
             scratch_dir=str(tmp_path / "cache"),
             environment="qa",
-            version="v1",
             output_dir=str(tmp_path / "outputs"),
         ),
     )
@@ -166,12 +162,12 @@ class TestArtifactCacheInit:
     def test_output_dir_is_none_by_default(self, local_cache):
         assert local_cache.output_dir is None
 
-    def test_environment_and_version_stored(self, subtests):
-        for env, ver in [("qa", "v1"), ("production", "v2")]:
-            with subtests.test(environment=env, version=ver):
-                cache = ArtifactCache(scratch_dir="/tmp/cache", environment=env, version=ver)
+    def test_environment_and_branch_stored(self, subtests):
+        for env, branch in [("qa", "v1.0"), ("production", "v2.0")]:
+            with subtests.test(environment=env, branch=branch):
+                cache = ArtifactCache(scratch_dir="/tmp/cache", environment=env, branch=branch)
                 assert cache.environment == env
-                assert cache.version == ver
+                assert cache.branch == branch
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +223,8 @@ class TestStorePaths:
     def test_scratch_store_ends_with_icechunk(self, bound_cache):
         assert bound_cache._scratch_store.endswith(".icechunk")
 
-    def test_scratch_store_contains_env_and_version(self, bound_cache):
+    def test_scratch_store_contains_env(self, bound_cache):
         assert "/qa/" in bound_cache._scratch_store
-        assert "/v1/" in bound_cache._scratch_store
 
     def test_scratch_store_encodes_gcm_obs_subset(self, bound_cache):
         assert "CESM2-WACCM-ERA5-global.icechunk" in bound_cache._scratch_store
@@ -253,7 +248,7 @@ class TestStorePaths:
             with subtests.test(environment=env):
                 cache = ArtifactCache.from_config(
                     base_config,
-                    PipelineOptions(scratch_dir=str(tmp_path), environment=env, version="v1"),
+                    PipelineOptions(scratch_dir=str(tmp_path), environment=env),
                 )
                 assert f"/{env}/" in cache._scratch_store
 
@@ -273,9 +268,8 @@ class TestObsLoc:
     def test_group_encodes_obs_and_variable(self, bound_cache):
         assert bound_cache.obs_loc.group == "obs/tas"
 
-    def test_store_path_contains_env_and_version(self, bound_cache):
+    def test_store_path_contains_env(self, bound_cache):
         assert "/qa/" in bound_cache.obs_loc.store_path
-        assert "/v1/" in bound_cache.obs_loc.store_path
 
     def test_regional_subset_id_in_store_path(self, tmp_path, regional_config):
         cache = ArtifactCache.from_config(

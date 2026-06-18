@@ -39,11 +39,12 @@ from srm.pipeline import (
 # ---------------------------------------------------------------------------
 
 
-def _make_icechunk_group(loc: StoreLocation) -> None:
+def _make_icechunk_group(loc: StoreLocation, branch: str = "main") -> None:
     """Create an icechunk store and commit with message matching ``loc.group``.
 
     ArtifactCache.exists() scans ancestry for a snapshot whose message equals
     loc.group, so the commit message is what triggers a cache hit.
+    Pass the cache's branch for output artifacts; scratch artifacts always use "main".
     """
     import icechunk
     import numpy as np
@@ -52,7 +53,9 @@ def _make_icechunk_group(loc: StoreLocation) -> None:
 
     storage = icechunk.local_filesystem_storage(path=loc.store_path)
     repo = icechunk.Repository.open_or_create(storage)
-    session = repo.writable_session("main")
+    if branch not in repo.list_branches():
+        repo.create_branch(branch, repo.lookup_branch("main"))
+    session = repo.writable_session(branch)
     ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
     to_icechunk(ds, session, mode="w")
     session.commit(loc.group)
@@ -189,8 +192,8 @@ class TestBCSDPipelineInit:
     def test_cache_uses_options_environment(self, pipeline):
         assert pipeline.cache.environment == pipeline.options.environment
 
-    def test_cache_uses_options_version(self, pipeline):
-        assert pipeline.cache.version == pipeline.options.version
+    def test_cache_uses_options_branch(self, pipeline):
+        assert pipeline.cache.branch == pipeline.options.branch
 
     def test_cache_has_output_dir(self, pipeline):
         assert pipeline.cache.output_dir is not None
@@ -449,7 +452,7 @@ class TestTransformScenarioBehavior:
     def test_returns_cached_scenario_path(self, all_deps_present):
         pipeline = all_deps_present
         scenario_loc = pipeline.cache.scenario_loc
-        _make_icechunk_group(scenario_loc)
+        _make_icechunk_group(scenario_loc, branch=pipeline.cache.branch)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
             result = pipeline.transform_scenario()

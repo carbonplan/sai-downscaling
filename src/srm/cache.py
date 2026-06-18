@@ -54,7 +54,7 @@ class ArtifactCache:
         self,
         scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
         environment: str = "qa",
-        version: str = "v1",
+        branch: str = "main",
         output_dir: str | None = None,
     ):
         """
@@ -66,15 +66,15 @@ class ArtifactCache:
             Base S3 or local path for scratch storage (intermediate artifacts).
         environment : str
             Environment name (qa, production) for cache namespace isolation.
-        version : str
-            Version identifier included in all paths (e.g. "v1", "v2"). Bump to
-            invalidate all cached artifacts without changing environment.
+        branch : str
+            icechunk branch for output writes (e.g. ``"v2"``). Scratch intermediate
+            artifacts always write to ``"main"`` regardless of this value.
         output_dir : str, optional
             Directory for final scenario outputs. If None, scenarios go to scratch.
         """
         self.scratch_dir = scratch_dir.rstrip("/")
         self.environment = environment
-        self.version = version
+        self.branch = branch
         self.output_dir = output_dir.rstrip("/") if output_dir else None
         self.config: BCSDConfig | None = None
 
@@ -98,7 +98,7 @@ class ArtifactCache:
         cache = cls(
             scratch_dir=options.scratch_dir,
             environment=options.environment,
-            version=options.version,
+            branch=options.branch,
             output_dir=options.output_dir,
         )
         cache.config = config
@@ -145,7 +145,6 @@ class ArtifactCache:
         subset_id = self._get_subset_id(config.subset_bounds)
         return (
             f"{self.scratch_dir}/{self.environment}"
-            f"/{self.version}"
             f"/{config.gcm}-{config.obs_dataset}-{subset_id}.icechunk"
         )
 
@@ -154,11 +153,7 @@ class ArtifactCache:
         config = self._require_config()
         subset_id = self._get_subset_id(config.subset_bounds)
         base = self.output_dir if self.output_dir else self.scratch_dir
-        return (
-            f"{base}/{self.environment}"
-            f"/{self.version}"
-            f"/{config.gcm}-{config.obs_dataset}-{subset_id}.icechunk"
-        )
+        return f"{base}/{self.environment}/{config.gcm}-{config.obs_dataset}-{subset_id}.icechunk"
 
     # ── artifact location properties ─────────────────────────────────────────
 
@@ -246,6 +241,20 @@ class ArtifactCache:
             f"debiased_retrended_scenario/{scenario_group}/{config.variable}/{config.ensemble_member}",
         )
 
+    # ── branch helpers ────────────────────────────────────────────────────────
+
+    def _branch_for(self, loc: StoreLocation) -> str:
+        """Return the icechunk branch to use for reads/writes at this location.
+
+        Scratch intermediate artifacts always use ``"main"`` so they are shared
+        across QA branches. Output artifacts use ``self.branch``. When both
+        stores share the same path (no separate ``output_dir``), ``self.branch``
+        is used for everything.
+        """
+        if self._scratch_store == self._output_store:
+            return self.branch
+        return "main" if loc.store_path == self._scratch_store else self.branch
+
     # ── existence check ───────────────────────────────────────────────────────
 
     def exists(self, loc: StoreLocation) -> bool:
@@ -253,8 +262,8 @@ class ArtifactCache:
         Check if an artifact exists by scanning the icechunk commit ancestry.
 
         A commit is present iff a snapshot with message equal to ``loc.group``
-        exists on the main branch. This is atomic — partial writes leave no
-        matching commit.
+        exists on the appropriate branch (scratch → ``"main"``, output →
+        ``self.branch``). This is atomic — partial writes leave no matching commit.
 
         Parameters
         ----------
@@ -268,6 +277,7 @@ class ArtifactCache:
         """
         import icechunk
 
+        branch = self._branch_for(loc)
         try:
             if loc.store_path.startswith("s3://"):
                 path_no_scheme = loc.store_path[len("s3://") :]
@@ -277,7 +287,7 @@ class ArtifactCache:
                 storage = icechunk.local_filesystem_storage(path=loc.store_path)
 
             repo = icechunk.Repository.open(storage)
-            result = any(snapshot.message == loc.group for snapshot in repo.ancestry(branch="main"))
+            result = any(snapshot.message == loc.group for snapshot in repo.ancestry(branch=branch))
             if result:
                 logger.debug("Cache hit: %s / %s", loc.store_path, loc.group)
             else:
@@ -288,6 +298,36 @@ class ArtifactCache:
         except Exception:
             logger.debug("Cache miss (store does not exist): %s", loc.store_path)
             return False
+
+    def release(self, tag: str) -> None:
+        """Freeze both scratch and output stores as a production release tag.
+
+        Creates an icechunk tag on both stores using the same name so that
+        ``readonly_session(tag=tag)`` on either store returns the exact state
+        that produced this release.
+
+        Parameters
+        ----------
+        tag : str
+            Tag name (e.g. ``"v2"``). Must not already exist on either store.
+        """
+        import icechunk
+
+        def _tag_store(store_path: str, branch: str) -> None:
+            if store_path.startswith("s3://"):
+                path_no_scheme = store_path[len("s3://") :]
+                bucket, _, prefix = path_no_scheme.partition("/")
+                storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
+            else:
+                storage = icechunk.local_filesystem_storage(path=store_path)
+            repo = icechunk.Repository.open(storage)
+            snapshot_id = repo.lookup_branch(branch)
+            repo.create_tag(tag, snapshot_id)
+            logger.info("Tagged %s@%s as %r", store_path, branch, tag)
+
+        _tag_store(self._output_store, self.branch)
+        if self._scratch_store != self._output_store:
+            _tag_store(self._scratch_store, "main")
 
     # ── dependency helpers ────────────────────────────────────────────────────
 
@@ -421,9 +461,9 @@ class ArtifactCache:
         deleted_count = 0
 
         if stage:
-            search_base = f"{self.scratch_dir}/{self.environment}/{self.version}/{stage}/"
+            search_base = f"{self.scratch_dir}/{self.environment}/{stage}/"
         else:
-            search_base = f"{self.scratch_dir}/{self.environment}/{self.version}/"
+            search_base = f"{self.scratch_dir}/{self.environment}/"
 
         try:
             import fsspec
@@ -492,11 +532,9 @@ class ArtifactCache:
 
             for stage_name in stages:
                 if stage_name == "scenarios" and self.output_dir:
-                    search_base = f"{self.output_dir}/{self.environment}/{self.version}/"
+                    search_base = f"{self.output_dir}/{self.environment}/"
                 else:
-                    search_base = (
-                        f"{self.scratch_dir}/{self.environment}/{self.version}/{stage_name}/"
-                    )
+                    search_base = f"{self.scratch_dir}/{self.environment}/{stage_name}/"
 
                 if self.scratch_dir.startswith("s3://"):
                     fs = fsspec.filesystem("s3")

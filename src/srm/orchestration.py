@@ -68,7 +68,7 @@ class BCSDOrchestrator:
             self._cache = ArtifactCache(
                 scratch_dir=self.options.scratch_dir,
                 environment=self.options.environment,
-                version=self.options.version,
+                branch=self.options.branch,
                 output_dir=self.options.output_dir,
             )
         return self._cache

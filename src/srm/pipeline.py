@@ -399,23 +399,47 @@ class BCSDPipeline:
         dataset_attrs: dict | None = None,
         force: bool = False,
     ) -> str:
-        """Write a DataArray to an icechunk group and commit atomically."""
+        """Write a DataArray to an icechunk group and commit atomically.
+
+        Retries up to 3 times on RebaseFailedError. Concurrent VMs writing to
+        sibling groups race to create their shared parent zarr group for the
+        first time, producing a structural conflict. On retry the parent exists
+        and the commit succeeds cleanly.
+        """
+        branch = self.cache._branch_for(loc)
         storage = self._icechunk_storage(loc.store_path)
-        repo = icechunk.Repository.open_or_create(storage)
-        _ensure_root_group(repo)
-        session = repo.writable_session("main")
-        ds = da.to_dataset()
-        if dataset_attrs is not None:
-            ds.attrs = dataset_attrs
-        # fix incompatible dask chunk sizes in encoding
-        for coord in list(ds.coords):
-            ds[coord].encoding.pop("chunks", None)
-            ds[coord].encoding.pop("shards", None)
-        to_icechunk(ds, session, mode="w", encoding=encoding or {}, group=loc.group)
-        commit_id = session.commit(loc.group, rebase_with=icechunk.ConflictDetector())
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            repo = icechunk.Repository.open_or_create(storage)
+            _ensure_root_group(repo)
+            if branch not in repo.list_branches():
+                repo.create_branch(branch, repo.lookup_branch("main"))
+            session = repo.writable_session(branch)
+            ds = da.to_dataset()
+            if dataset_attrs is not None:
+                ds.attrs = dataset_attrs
+            # fix incompatible dask chunk sizes in encoding
+            for coord in list(ds.coords):
+                ds[coord].encoding.pop("chunks", None)
+                ds[coord].encoding.pop("shards", None)
+            to_icechunk(ds, session, mode="w", encoding=encoding or {}, group=loc.group)
+            try:
+                commit_id = session.commit(loc.group, rebase_with=icechunk.ConflictDetector())
+                break
+            except icechunk.RebaseFailedError:
+                if attempt == max_attempts - 1:
+                    raise
+                logger.warning(
+                    "Rebase conflict on %s (attempt %d/%d), retrying after sibling write",
+                    loc.group,
+                    attempt + 1,
+                    max_attempts,
+                )
+                time.sleep(0.5 * (attempt + 1))
 
         if force:
-            history = list(repo.ancestry(branch="main"))
+            history = list(repo.ancestry(branch=branch))
             if len(history) > 2:
                 keep_from = history[1].written_at
                 n_expired = len(repo.expire_snapshots(older_than=keep_from))
@@ -453,9 +477,10 @@ class BCSDPipeline:
 
     def _open_from_icechunk(self, loc: StoreLocation) -> xr.Dataset:
         """Open a zarr group from an icechunk store."""
+        branch = self.cache._branch_for(loc)
         storage = self._icechunk_storage(loc.store_path)
         repo = icechunk.Repository.open(storage)
-        session = repo.readonly_session("main")
+        session = repo.readonly_session(branch=branch)
         return xr.open_dataset(
             session.store, engine="zarr", consolidated=False, chunks="auto", group=loc.group
         )

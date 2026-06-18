@@ -27,11 +27,12 @@ from srm.orchestration import BCSDOrchestrator
 # ---------------------------------------------------------------------------
 
 
-def _make_icechunk_group(loc: StoreLocation) -> None:
+def _make_icechunk_group(loc: StoreLocation, branch: str = "main") -> None:
     """Create an icechunk store committing with loc.group as the message.
 
     ArtifactCache.exists() scans ancestry for snapshot.message == loc.group,
     so the commit message must match the group path to register as a cache hit.
+    Pass the cache's branch for output artifacts; scratch artifacts always use "main".
     """
     import icechunk
     import numpy as np
@@ -40,7 +41,9 @@ def _make_icechunk_group(loc: StoreLocation) -> None:
 
     storage = icechunk.local_filesystem_storage(path=loc.store_path)
     repo = icechunk.Repository.open_or_create(storage)
-    session = repo.writable_session("main")
+    if branch not in repo.list_branches():
+        repo.create_branch(branch, repo.lookup_branch("main"))
+    session = repo.writable_session(branch)
     ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
     to_icechunk(ds, session, mode="w")
     session.commit(loc.group)
@@ -109,20 +112,20 @@ class TestGetCache:
         opts = orchestrator.options
         assert opts.scratch_dir.rstrip("/") in cache.scratch_dir
         assert cache.environment == opts.environment
-        assert cache.version == opts.version
+        assert cache.branch == opts.branch
 
     def test_same_call_returns_same_instance(self, orchestrator):
         cache_a = orchestrator._get_cache()
         cache_b = orchestrator._get_cache()
         assert cache_a is cache_b
 
-    def test_different_version_orchestrator_has_different_cache(self, tmp_path):
-        opts_v1 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), version="v1")
-        opts_v2 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), version="v2")
-        orch_v1 = BCSDOrchestrator(opts_v1)
+    def test_different_branch_orchestrator_has_different_cache(self, tmp_path):
+        opts_v2 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), branch="v2")
+        opts_v3 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), branch="v3")
         orch_v2 = BCSDOrchestrator(opts_v2)
-        assert orch_v1._get_cache().version == "v1"
-        assert orch_v2._get_cache().version == "v2"
+        orch_v3 = BCSDOrchestrator(opts_v3)
+        assert orch_v2._get_cache().branch == "v2"
+        assert orch_v3._get_cache().branch == "v3"
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +597,8 @@ class TestGetStatus:
 
     def test_scenario_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache()
-        _make_icechunk_group(orchestrator._stage_loc(cache, "transform_scenario", config))
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        _make_icechunk_group(loc, branch=cache.branch)
 
         status = orchestrator.get_status([config])
         assert status["transform_scenario"]["cached"] == 1

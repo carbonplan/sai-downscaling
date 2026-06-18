@@ -301,7 +301,7 @@ def configs_from_matrix(
     scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
     output_dir: str = "s3://carbonplan-scratch/srm/outputs/",
     environment: str = "qa",
-    version: str = "v1",
+    branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
     mapping_type: str = "nonparametric_hybrid_2sided",
@@ -374,7 +374,7 @@ def configs_from_matrix(
         scratch_dir=scratch_dir,
         output_dir=output_dir,
         environment=environment,
-        version=version,
+        branch=branch,
         verbose=verbose,
         save_intermediate=save_intermediate,
     )
@@ -421,8 +421,8 @@ def run(
     stage: str = typer.Option(None, help="Run specific stage: obs, historical, scenario, or all"),
     force: bool = typer.Option(False, help="Force recompute even if cached"),
     coiled: bool = typer.Option(True, help="Use Coiled for execution"),
-    version: str | None = typer.Option(
-        None, "--version", help="Override the version from config (e.g. 'v2')"
+    branch: str | None = typer.Option(
+        None, "--branch", help="Override the output icechunk branch (e.g. 'v2')"
     ),
 ):
     """Run BCSD pipeline with automatic caching and resumability"""
@@ -431,8 +431,8 @@ def run(
     loaded = [load_configs(path) for path in config_path]
     configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
     options = loaded[0][1] if loaded else PipelineOptions()
-    if version is not None:
-        options = options.model_copy(update={"version": version})
+    if branch is not None:
+        options = options.model_copy(update={"branch": branch})
     logger.info("Loaded %d configuration(s)", len(configs))
     _print_lineage_summary(configs)
     _validate_lineage_members(configs)
@@ -515,7 +515,7 @@ def run_matrix(
         "s3://carbonplan-scratch/srm/outputs/", help="Directory for final outputs"
     ),
     environment: str = typer.Option("qa", help="Environment (qa, production)"),
-    version: str = typer.Option("v1", help="Version identifier (e.g. 'v1', 'v2')"),
+    branch: str = typer.Option("main", help="icechunk output branch (e.g. 'v2', 'v3')"),
     subset_bounds: str | None = typer.Option(
         None,
         help="Spatial bounds as 'lat_min,lat_max,lon_min,lon_max' (e.g. '-35,-22,16,33')",
@@ -613,7 +613,7 @@ def run_matrix(
         scratch_dir=scratch_dir,
         output_dir=output_dir,
         environment=environment,
-        version=version,
+        branch=branch,
         subset_bounds=parsed_bounds,
         save_intermediate=save_intermediate,
         mapping_type=mapping_type,
@@ -689,16 +689,16 @@ def status(
         ..., help="Path to config(s) (can be specified multiple times)"
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed path information"),
-    version: str | None = typer.Option(
-        None, "--version", help="Override the version from config (e.g. 'v2')"
+    branch: str | None = typer.Option(
+        None, "--branch", help="Override the output icechunk branch (e.g. 'v2')"
     ),
 ):
     """Check status of cached artifacts for given configs"""
     loaded = [load_configs(path) for path in config_path]
     configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
     options = loaded[0][1] if loaded else PipelineOptions()
-    if version is not None:
-        options = options.model_copy(update={"version": version})
+    if branch is not None:
+        options = options.model_copy(update={"branch": branch})
     orchestrator = BCSDOrchestrator(options)
 
     # Show cache configuration if verbose
@@ -711,7 +711,7 @@ def status(
             f"  Cache Path: {cache.scratch_dir}",
             f"  Output Path: {cache.output_dir or '(same as cache)'}",
             f"  Environment: {cache.environment}",
-            f"  Version: {cache.version}",
+            f"  Branch: {cache.branch}",
             "Example Paths:",
             f"  Obs: {cache.obs_loc.store_path}",
             f"  Historical: {cache.historical_loc(config.ensemble_member).store_path}",
@@ -774,7 +774,7 @@ def cache_clear(
     cache = ArtifactCache(
         scratch_dir=options.scratch_dir,
         environment=options.environment,
-        version=options.version,
+        branch=options.branch,
     )
 
     # Build description
@@ -815,7 +815,7 @@ def cache_list(
     cache = ArtifactCache(
         scratch_dir=options.scratch_dir,
         environment=options.environment,
-        version=options.version,
+        branch=options.branch,
     )
     artifacts = cache.list_artifacts(stage=stage, gcm=gcm, variable=variable)
 
