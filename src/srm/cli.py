@@ -425,6 +425,9 @@ def run(
     branch: str | None = typer.Option(
         None, "--branch", help="Override the output icechunk branch (e.g. 'v2')"
     ),
+    save_intermediate: bool = typer.Option(
+        False, "--save-intermediate", help="Save and display intermediate artifacts"
+    ),
 ):
     """Run BCSD pipeline with automatic caching and resumability"""
 
@@ -432,8 +435,12 @@ def run(
     loaded = [load_configs(path) for path in config_path]
     configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
     options = loaded[0][1] if loaded else PipelineOptions()
+    updates: dict = {}
     if branch is not None:
-        options = options.model_copy(update={"branch": branch})
+        updates["branch"] = branch
+    if save_intermediate:
+        updates["save_intermediate"] = True
+    options = options.model_copy(update=updates)
     logger.info("Loaded %d configuration(s)", len(configs))
     _print_lineage_summary(configs)
     _validate_lineage_members(configs)
@@ -467,11 +474,28 @@ def run(
         )
         _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical", cache)
         _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario", cache)
+        if options.save_intermediate:
+            _print_intermediate_summary(cache)
 
     else:
         raise ValueError(f"Unknown stage: {stage}")
 
     logger.info("✓ Complete!")
+
+
+def _print_intermediate_summary(cache: ArtifactCache) -> None:
+    """Print a tree of intermediate artifacts on the current branch."""
+    stores = cache.list_intermediate_groups()
+    if not stores:
+        return
+
+    n_total = sum(len(groups) for groups in stores.values())
+    console.print(f"\n[bold]Intermediates[/bold] ({n_total} artifact(s))")
+    for store_path, groups in stores.items():
+        tree = Tree(f"[cyan]{store_path}[/cyan] [dim](branch: {cache.branch})[/dim]")
+        for group in groups:
+            _insert_group_path(tree, group.split("/"))
+        console.print(tree)
 
 
 def _insert_group_path(node: Tree, segments: list[str]) -> None:

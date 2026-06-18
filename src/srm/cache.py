@@ -12,8 +12,10 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+import icechunk
+
 from srm.bcsd_config import BCSDConfig, MappingType, PipelineOptions, VariableConfig
-from srm.config import SCENARIO_TO_GROUP, _icechunk_storage_for_path
+from srm.config import _ROOT_MESSAGES, SCENARIO_TO_GROUP, _icechunk_storage_for_path
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,14 @@ class ArtifactCache:
     Each artifact is identified by a ``StoreLocation`` that encodes both
     the icechunk repository path and the zarr group within it.
     """
+
+    INTERMEDIATE_PREFIXES: tuple[str, ...] = (
+        "debiased_historical/",
+        "detrended_scenario/",
+        "trend_scenario/",
+        "debiased_scenario/",
+        "debiased_retrended_scenario/",
+    )
 
     def __init__(
         self,
@@ -280,6 +290,58 @@ class ArtifactCache:
         except Exception:
             logger.debug("Cache miss (store does not exist): %s", loc.store_path)
             return False
+
+    def list_groups_on_branch(self, store_path: str) -> list[str]:
+        """Return all zarr group paths committed on the current branch of a store.
+
+        Walks the icechunk ancestry and collects every snapshot message that
+        looks like a zarr group path (contains a ``/``). Returns an empty list
+        if the store does not exist or the branch has no user commits.
+
+        Parameters
+        ----------
+        store_path : str
+            S3 or local path to the icechunk repository.
+
+        Returns
+        -------
+        list[str]
+            Sorted list of group paths, e.g. ``["obs/tas", "obs/pr"]``.
+        """
+        branch = self._branch_for()
+        try:
+            storage = _icechunk_storage_for_path(store_path)
+            repo = icechunk.Repository.open(storage)
+            return sorted(
+                s.message
+                for s in repo.ancestry(branch=branch)
+                if s.message not in _ROOT_MESSAGES and "/" in s.message
+            )
+        except Exception:
+            return []
+
+    def list_intermediate_groups(self) -> dict[str, list[str]]:
+        """Return intermediate artifact groups on the current branch, keyed by store path.
+
+        Scans both scratch and output stores and returns only groups whose
+        paths start with one of ``INTERMEDIATE_PREFIXES``. Empty stores are
+        omitted from the result.
+
+        Returns
+        -------
+        dict[str, list[str]]
+            Mapping of store path → sorted list of intermediate group paths.
+        """
+        result: dict[str, list[str]] = {}
+        for store_path in {self._scratch_store, self._output_store}:
+            groups = [
+                g
+                for g in self.list_groups_on_branch(store_path)
+                if any(g.startswith(p) for p in self.INTERMEDIATE_PREFIXES)
+            ]
+            if groups:
+                result[store_path] = groups
+        return result
 
     def release(self, tag: str) -> None:
         """Freeze both scratch and output stores as a production release tag.
