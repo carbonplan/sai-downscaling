@@ -6,6 +6,7 @@ resumability, and Coiled integration for distributed execution.
 """
 
 import itertools
+import json
 import logging
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from rich.table import Table
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
+from srm.validation import CheckResult, CheckStatus
 
 console = Console()
 logging.basicConfig(
@@ -29,7 +31,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_STATUS_SYMBOL = {
+    CheckStatus.PASS: "[green]✓[/green]",
+    CheckStatus.FAIL: "[red]✗[/red]",
+    CheckStatus.SKIP: "-",
+}
+
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
+
+
+def _build_check_matrix_table(
+    check_ids: list[str],
+    columns: list[str],
+    index: dict[tuple[str, str], CheckResult],
+) -> Table:
+    tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+    tbl.add_column("check", style="dim", no_wrap=True)
+    for col in columns:
+        tbl.add_column(col, justify="center")
+    for cid in check_ids:
+        row = [cid]
+        for col in columns:
+            r = index.get((cid, col))
+            row.append(_STATUS_SYMBOL[r.status] if r else " ")
+        tbl.add_row(*row)
+    return tbl
 
 
 _MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
@@ -850,16 +876,12 @@ def validate(
     When --config-path is given, GCMs and scenarios are derived from those configs.
     Otherwise, --gcm and --scenario filter the check matrix (defaulting to all known values).
     """
-    import json
-
     import pydantic
 
     from srm.validation import (
         BLOCKING_CHECKS,
         GCM_OPTIONS,
         SCENARIO_OPTIONS,
-        XFAIL_CHECKS,
-        CheckStatus,
         DatasetValidator,
     )
 
@@ -871,15 +893,6 @@ def validate(
             dict.fromkeys(c.scenario if c.scenario is not None else "historical" for c in configs)
         )
         logger.info("Validating %d GCM(s) x %d scenario(s) from configs", len(gcm), len(scenario))
-
-    _STATUS_SYMBOL = {
-        CheckStatus.PASS: "[green]✓[/green]",
-        CheckStatus.FAIL: "[red]✗[/red]",
-        CheckStatus.UNKNOWN: "[yellow]?[/yellow]",
-        CheckStatus.SKIP: "-",
-        CheckStatus.XFAIL: "[yellow]x[/yellow]",  # expected failure — not blocking
-        CheckStatus.XPASS: "[cyan]✓?[/cyan]",  # unexpected pass — worth investigating
-    }
 
     pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
 
@@ -924,17 +937,7 @@ def validate(
                 table_checks.append(cid)
 
         if table_checks:
-            tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
-            tbl.add_column("check", style="dim", no_wrap=True)
-            for s in scenarios:
-                tbl.add_column(s, justify="center")
-            for cid in table_checks:
-                row = [cid]
-                for s in scenarios:
-                    r = index.get((cid, s))
-                    row.append(_STATUS_SYMBOL[r.status] if r else " ")
-                tbl.add_row(*row)
-            console.print(tbl)
+            console.print(_build_check_matrix_table(table_checks, scenarios, index))
 
         if scoped_checks:
             scoped_tbl = Table(
@@ -979,19 +982,63 @@ def validate(
                 )
                 console.print_json(json.dumps(r.detail))
 
-    xfail_results = [r for r in all_results if r.status == CheckStatus.XFAIL]
-    xpass_results = [r for r in all_results if r.status == CheckStatus.XPASS]
-
-    if xfail_results:
-        logger.warning("--- Expected failures (xfail, non-blocking) ---")
-        for r in xfail_results:
-            reason = XFAIL_CHECKS.get((r.gcm, r.scenario, r.check_id), "")
-            logger.warning("x %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, reason)
-
-    if xpass_results:
-        logger.warning("--- Unexpected passes (xpass) — verify xfail entries are still needed ---")
-        for r in xpass_results:
-            logger.warning("✓? %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, r.message)
-
     if blocking_failures:
         raise typer.Exit(1)
+
+
+@app.command()
+def validate_output(
+    store_uris: list[str] = typer.Argument(
+        ..., help="One or more output datatree icechunk store URIs."
+    ),
+    branch: str = typer.Option("main", "--branch", help="Icechunk branch to read."),
+    tag: str | None = typer.Option(None, "--tag", help="Icechunk tag to read."),
+    snapshot_id: str | None = typer.Option(
+        None, "--snapshot-id", help="Icechunk snapshot ID to read."
+    ),
+) -> None:
+    """Validate output datatree store(s), one leaf (scenario/variable/member) at a time.
+
+    Renders a single table per store. Exits with code 1 if any blocking check fails in any
+    store, otherwise exits with code 0.
+
+    Runs locally or with coiled batch.
+    local: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
+    coiled batch: uv run coiled batch run --region us-west-2 "bcsd validate-output <store_uri> [<store_uri> ...]"
+
+    """
+    from srm.validation import BLOCKING_CHECKS, validate_output_store
+
+    any_blocking = False
+    for store_uri in store_uris:
+        results = validate_output_store(store_uri, branch=branch, tag=tag, snapshot_id=snapshot_id)
+        if not results:
+            logger.warning("No populated leaves found in %s", store_uri)
+            continue
+
+        console.rule(f"[bold]{store_uri}[/bold]")
+        tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+        tbl.add_column("check", style="dim", no_wrap=True)
+        tbl.add_column("leaf", no_wrap=True)
+        tbl.add_column("status", justify="center")
+        for r in results:
+            tbl.add_row(r.check_id, r.scenario, _STATUS_SYMBOL[r.status])
+        console.print(tbl)
+
+        blocking_failures = [
+            r for r in results if r.status == CheckStatus.FAIL and r.check_id in BLOCKING_CHECKS
+        ]
+        if blocking_failures:
+            any_blocking = True
+            logger.error("--- Blocking failures in %s ---", store_uri)
+            for r in blocking_failures:
+                logger.error("✗ %s (%s): %s", r.check_id, r.scenario, r.message)
+                if r.detail:
+                    console.print_json(json.dumps(r.detail))
+
+    if any_blocking:
+        raise typer.Exit(1)
+
+
+if __name__ == "__main__":
+    app()

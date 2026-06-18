@@ -1,11 +1,8 @@
 """
-Input data validation checks for BCSD pipeline datasets.
-
-Checks are organized into the following groups:
-- integrity: checks for data completeness and correctness, such as missing values, duplicates
-- lineage: verifies that all lineage-resolved parent members exist in their stores
+Input data and output store validation checks for the BCSD pipeline.
 
 Use :class:`DatasetValidator` to run checks for a given (gcm, scenario) pair.
+Use :func:`validate_output_store` to run checks against a post-consolidation output datatree.
 """
 
 import enum
@@ -18,9 +15,6 @@ import xarray as xr
 from srm.datasets import catalog
 from srm.qaqc import DatasetChecker, ValidationResult
 
-# Blocking: crash or silent wrong output — abort the pipeline run.
-# Warning:  wrong data ingested — emit a warning but continue.
-# Info:     incomplete provenance — informational only.
 BLOCKING_CHECKS = {
     "ensemble_member_dim",
     "g6_not_identical_to_ssp245",
@@ -37,13 +31,6 @@ BLOCKING_CHECKS = {
     "spatial_range_pr",
     "spatial_range_rsds",
 }
-WARNING_CHECKS: set[str] = set()
-INFO_CHECKS: set[str] = set()
-
-# (gcm, scenario, check_id) → human-readable reason for the expected failure.
-# A FAIL result for a key present here is downgraded to XFAIL (non-blocking).
-# If the check unexpectedly passes it becomes XPASS (also non-blocking, but flagged).
-XFAIL_CHECKS: dict[tuple[str, str, str], str] = {}
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
@@ -116,9 +103,6 @@ class CheckStatus(enum.StrEnum):
     PASS = "pass"
     FAIL = "fail"
     SKIP = "skip"  # not applicable for this (gcm, scenario) pair
-    UNKNOWN = "unknown"  # check could not be determined
-    XFAIL = "xfail"  # expected to fail, and did — not blocking
-    XPASS = "xpass"  # expected to fail, but passed — flag for investigation
 
 
 class CheckResult(pydantic.BaseModel):
@@ -258,16 +242,6 @@ class DatasetValidator(pydantic.BaseModel):
             status=CheckStatus.PASS if vr else CheckStatus.FAIL,
             message="; ".join(vr.issues) if not vr else "",
         )
-
-    def _apply_xfail(self, result: CheckResult) -> CheckResult:
-        key = (self.gcm, self.scenario, result.check_id)
-        if key not in XFAIL_CHECKS:
-            return result
-        if result.status == CheckStatus.FAIL:
-            return result.model_copy(update={"status": CheckStatus.XFAIL})
-        if result.status == CheckStatus.PASS:
-            return result.model_copy(update={"status": CheckStatus.XPASS})
-        return result
 
     # ── public check methods ─────────────────────────────────────────────────────
 
@@ -534,12 +508,7 @@ class DatasetValidator(pydantic.BaseModel):
     # ── orchestration ────────────────────────────────────────────────────────────
 
     def run_checks(self) -> list[CheckResult]:
-        """Run all applicable checks and return results stamped with ``check_id``.
-
-        Results whose (gcm, scenario, check_id) key appears in :data:`XFAIL_CHECKS` are
-        downgraded from ``FAIL`` → ``XFAIL`` (non-blocking expected failure) or upgraded
-        from ``PASS`` → ``XPASS`` (unexpected pass — worth investigating).
-        """
+        """Run all applicable checks and return results stamped with ``check_id``."""
         ds, err = self._open_scenario_ds()
         if err:
             return [err]
@@ -561,4 +530,76 @@ class DatasetValidator(pydantic.BaseModel):
                 result = result.model_copy(update={"check_id": check_id})
             results.append(result)
 
-        return [self._apply_xfail(r) for r in results]
+        return results
+
+
+# ── output store validation ──────────────────────────────────────────────────────
+
+# Output leaves are /scenario/variable/member single-variable datasets with no
+# ensemble_member dim, so reuse the input primitives but drop the ensemble check.
+OUTPUT_CHECKS: list[tuple[str, str, dict]] = [
+    c for c in _DS_CHECKER_CHECKS if c[0] != "ensemble_member_dim"
+]
+
+
+def _open_output_datatree(
+    uri: str,
+    branch: str = "main",
+    tag: str | None = None,
+    snapshot_id: str | None = None,
+) -> xr.DataTree:
+    """Open an icechunk output store as a DataTree at a given branch, tag, or snapshot."""
+    import icechunk
+    from cloudpathlib import S3Path
+
+    if not uri.startswith(S3Path.cloud_prefix):
+        raise ValueError(f"Output store must be an {S3Path.cloud_prefix} URI, got: {uri}")
+    path = S3Path(uri)
+    storage = icechunk.s3_storage(bucket=path.bucket, prefix=path.key, from_env=True)
+    repo = icechunk.Repository.open(storage)
+    if tag is not None:
+        session = repo.readonly_session(tag=tag)
+    elif snapshot_id is not None:
+        session = repo.readonly_session(snapshot_id=snapshot_id)
+    else:
+        session = repo.readonly_session(branch=branch)
+    return xr.open_datatree(session.store, engine="zarr", chunks="auto", consolidated=False)
+
+
+def validate_output_store(
+    store: str | xr.DataTree,
+    branch: str = "main",
+    tag: str | None = None,
+    snapshot_id: str | None = None,
+) -> list[CheckResult]:
+    """Run OUTPUT_CHECKS against every populated leaf of an output datatree store.
+
+    ``store`` may be an S3 URI string or an already-open DataTree. ``branch``, ``tag``,
+    and ``snapshot_id`` mirror icechunk's ``readonly_session`` parameters and are ignored
+    when ``store`` is a DataTree. Each CheckResult reuses the ``gcm`` field for the store
+    label and the ``scenario`` field for the leaf path.
+    """
+    if isinstance(store, str):
+        from cloudpathlib import S3Path
+
+        tree = _open_output_datatree(store, branch=branch, tag=tag, snapshot_id=snapshot_id)
+        label = S3Path(store).name or store
+    else:
+        tree = store
+        label = "output"
+
+    results: list[CheckResult] = []
+    for node in tree.leaves:
+        checker = DatasetChecker(node.to_dataset())
+        for check_id, method, kwargs in OUTPUT_CHECKS:
+            vr: ValidationResult = getattr(checker, method)(**kwargs)
+            results.append(
+                CheckResult(
+                    check_id=check_id,
+                    gcm=label,
+                    scenario=node.path,
+                    status=CheckStatus.PASS if vr else CheckStatus.FAIL,
+                    message="" if vr else "; ".join(vr.issues),
+                )
+            )
+    return results
