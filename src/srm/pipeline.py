@@ -410,6 +410,13 @@ class BCSDPipeline:
                 ds = da.to_dataset()
                 if dataset_attrs is not None:
                     ds.attrs = dataset_attrs
+                # Drop non-index auxiliary coords that leak from intermediate ops:
+                # dayofyear - broadcast residual from .sel(dayofyear=...) in bias correction
+                # ensemble_member - string scalar from raw GCM source (already in attrs),
+                #   causes NotImplementedError when opening with chunks="auto" (object dtype)
+                _drop = [c for c in ("dayofyear", "ensemble_member") if c in ds.coords]
+                if _drop:
+                    ds = ds.drop_vars(_drop)
                 # fix incompatible dask chunk sizes in encoding
                 for coord in list(ds.coords):
                     ds[coord].encoding.pop("chunks", None)
