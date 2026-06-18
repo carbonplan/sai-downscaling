@@ -131,8 +131,10 @@ class BCSDOrchestrator:
             loc = self._stage_loc(cache, stage, config, hist_member=hist_member)
 
             if cache.exists(loc) and not force:
-                if self.options.verbose:
-                    logger.info(f"⊙ Skipping {config.run_id} - output exists: {loc.store_path}")
+                branch = cache._branch_for()
+                logger.info(
+                    f"⊙ Skipping {config.run_id} - {loc.group} already cached (branch: {branch})"
+                )
                 output_paths.append(f"{loc.store_path}::{loc.group}")
             else:
                 configs_to_run.append(config)
@@ -245,6 +247,7 @@ class BCSDOrchestrator:
                 region="us-west-2",
                 map_over_task_var_dicts=task_var_dicts,
                 forward_aws_credentials=False,
+                spot_policy="spot_with_fallback",
                 logger=logger,
                 tag={"Project": "SRM"},
                 disk_size="100GB",

@@ -3,33 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from conftest import make_icechunk_group
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache, StoreLocation
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def make_icechunk_group(loc: StoreLocation) -> None:
-    """Create an icechunk store and append a commit whose message equals ``loc.group``.
-
-    The existence check in ArtifactCache.exists() scans commit ancestry for a snapshot
-    whose message matches loc.group, so the commit message is the only thing that matters.
-    """
-    import icechunk
-    import numpy as np
-    import xarray as xr
-    from icechunk.xarray import to_icechunk
-
-    storage = icechunk.local_filesystem_storage(path=loc.store_path)
-    repo = icechunk.Repository.open_or_create(storage)
-    session = repo.writable_session("main")
-    ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
-    to_icechunk(ds, session, mode="w")
-    session.commit(loc.group)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -433,13 +410,13 @@ class TestExists:
 
     def test_store_with_matching_group_commit_returns_true(self, bound_cache, tmp_path):
         loc = StoreLocation(str(tmp_path / "valid.icechunk"), "obs/tas")
-        make_icechunk_group(loc)
+        make_icechunk_group(loc, branch=bound_cache.branch)
         assert bound_cache.exists(loc) is True
 
     def test_store_with_different_commit_message_returns_false(self, bound_cache, tmp_path):
         loc = StoreLocation(str(tmp_path / "other.icechunk"), "obs/tas")
         wrong_loc = StoreLocation(str(tmp_path / "other.icechunk"), "obs/pr")
-        make_icechunk_group(wrong_loc)
+        make_icechunk_group(wrong_loc, branch=bound_cache.branch)
         assert bound_cache.exists(loc) is False
 
     def test_exists_returns_false_on_exception(self, bound_cache, tmp_path, monkeypatch):
@@ -455,13 +432,13 @@ class TestExists:
     def test_exists_via_ancestry_after_write(self, bound_cache, tmp_path):
         loc = StoreLocation(str(tmp_path / "test.icechunk"), "obs/tas")
         assert bound_cache.exists(loc) is False
-        make_icechunk_group(loc)
+        make_icechunk_group(loc, branch=bound_cache.branch)
         assert bound_cache.exists(loc) is True
 
     def test_sibling_group_does_not_satisfy_different_group_check(self, bound_cache, tmp_path):
         obs_loc = StoreLocation(str(tmp_path / "store.icechunk"), "obs/tas")
         hist_loc = StoreLocation(str(tmp_path / "store.icechunk"), "historical/tas/r1i1p1f1")
-        make_icechunk_group(obs_loc)
+        make_icechunk_group(obs_loc, branch=bound_cache.branch)
         assert bound_cache.exists(hist_loc) is False
 
 
@@ -505,17 +482,19 @@ class TestValidateDependencies:
             bound_cache.validate_dependencies("fit_historical", base_config)
 
     def test_passes_when_obs_group_exists(self, bound_cache, base_config):
-        make_icechunk_group(bound_cache.obs_loc)
+        make_icechunk_group(bound_cache.obs_loc, branch=bound_cache.branch)
         bound_cache.validate_dependencies("fit_historical", base_config)
 
     def test_raises_when_only_obs_present_for_scenario_stage(self, bound_cache, base_config):
-        make_icechunk_group(bound_cache.obs_loc)
+        make_icechunk_group(bound_cache.obs_loc, branch=bound_cache.branch)
         with pytest.raises(ValueError, match="Missing dependencies"):
             bound_cache.validate_dependencies("transform_scenario", base_config)
 
     def test_passes_when_all_scenario_deps_present(self, bound_cache, base_config):
-        make_icechunk_group(bound_cache.obs_loc)
-        make_icechunk_group(bound_cache.historical_loc(base_config.ensemble_member))
+        make_icechunk_group(bound_cache.obs_loc, branch=bound_cache.branch)
+        make_icechunk_group(
+            bound_cache.historical_loc(base_config.ensemble_member), branch=bound_cache.branch
+        )
         bound_cache.validate_dependencies("transform_scenario", base_config)
 
 

@@ -26,7 +26,7 @@ from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache, StoreLocation
-from srm.config import _ensure_root_group
+from srm.config import _ensure_root_group, _icechunk_storage_for_path
 from srm.datasets import catalog as _catalog
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
@@ -352,16 +352,6 @@ class BCSDPipeline:
                 parts.append(f"ssp245_bridge={self._ssp245_member!r}")
             logger.info("Lineage resolved — %s", "  ".join(parts))
 
-    @staticmethod
-    def _icechunk_storage(path: str):
-        """Create icechunk Storage from an S3 or local path."""
-        if path.startswith("s3://"):
-            path_no_scheme = path[len("s3://") :]
-            bucket, _, prefix = path_no_scheme.partition("/")
-            return icechunk.s3_storage(bucket=bucket, prefix=prefix)
-        else:
-            return icechunk.local_filesystem_storage(path=path)
-
     def _build_output_attrs(self) -> dict:
         """Build dataset-level attributes for pipeline output artifacts."""
         version = importlib.metadata.version("srm")
@@ -406,32 +396,32 @@ class BCSDPipeline:
         first time, producing a structural conflict. On retry the parent exists
         and the commit succeeds cleanly.
         """
-        branch = self.cache._branch_for(loc)
-        storage = self._icechunk_storage(loc.store_path)
+        branch = self.cache._branch_for()
+        storage = _icechunk_storage_for_path(loc.store_path)
 
         max_attempts = 3
         for attempt in range(max_attempts):
-            repo = icechunk.Repository.open_or_create(storage)
-            _ensure_root_group(repo)
-            if branch not in repo.list_branches():
-                repo.create_branch(branch, repo.lookup_branch("main"))
-            session = repo.writable_session(branch)
-            ds = da.to_dataset()
-            if dataset_attrs is not None:
-                ds.attrs = dataset_attrs
-            # fix incompatible dask chunk sizes in encoding
-            for coord in list(ds.coords):
-                ds[coord].encoding.pop("chunks", None)
-                ds[coord].encoding.pop("shards", None)
-            to_icechunk(ds, session, mode="w", encoding=encoding or {}, group=loc.group)
             try:
+                repo = icechunk.Repository.open_or_create(storage)
+                root_snapshot_id = _ensure_root_group(repo)
+                if branch not in repo.list_branches():
+                    repo.create_branch(branch, root_snapshot_id)
+                session = repo.writable_session(branch)
+                ds = da.to_dataset()
+                if dataset_attrs is not None:
+                    ds.attrs = dataset_attrs
+                # fix incompatible dask chunk sizes in encoding
+                for coord in list(ds.coords):
+                    ds[coord].encoding.pop("chunks", None)
+                    ds[coord].encoding.pop("shards", None)
+                to_icechunk(ds, session, mode="w", encoding=encoding or {}, group=loc.group)
                 commit_id = session.commit(loc.group, rebase_with=icechunk.ConflictDetector())
                 break
             except icechunk.RebaseFailedError:
                 if attempt == max_attempts - 1:
                     raise
                 logger.warning(
-                    "Rebase conflict on %s (attempt %d/%d), retrying after sibling write",
+                    "Rebase conflict on %s (attempt %d/%d), retrying",
                     loc.group,
                     attempt + 1,
                     max_attempts,
@@ -477,8 +467,8 @@ class BCSDPipeline:
 
     def _open_from_icechunk(self, loc: StoreLocation) -> xr.Dataset:
         """Open a zarr group from an icechunk store."""
-        branch = self.cache._branch_for(loc)
-        storage = self._icechunk_storage(loc.store_path)
+        branch = self.cache._branch_for()
+        storage = _icechunk_storage_for_path(loc.store_path)
         repo = icechunk.Repository.open(storage)
         session = repo.readonly_session(branch=branch)
         return xr.open_dataset(
@@ -684,15 +674,9 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        dtr_config = self.config.make_config_for_variable("dtr")
-        tasmax_config = self.config.make_config_for_variable("tasmax")
-        debiased_dtr_loc = StoreLocation(
-            self.cache._scratch_store,
-            f"debiased_historical/{dtr_config.variable}/{self._hist_member}",
-        )
-        debiased_tasmax_loc = StoreLocation(
-            self.cache._scratch_store,
-            f"debiased_historical/{tasmax_config.variable}/{self._hist_member}",
+        debiased_dtr_loc = self.cache.debiased_historical_loc(self._hist_member, variable="dtr")
+        debiased_tasmax_loc = self.cache.debiased_historical_loc(
+            self._hist_member, variable="tasmax"
         )
         missing = [
             (var, dep_loc)
@@ -712,8 +696,8 @@ class BCSDPipeline:
                 f"Run fit_historical with save_intermediate=True for dtr and tasmax "
                 f"before running fit_historical_tasmin."
             )
-        debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)[dtr_config.variable]
-        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)[tasmax_config.variable]
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
         model_hist_debiased = debiased_tasmax - debiased_dtr
         logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
 
@@ -1260,19 +1244,8 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        dtr_config = self.config.make_config_for_variable("dtr")
-        tasmax_config = self.config.make_config_for_variable("tasmax")
-        from srm.config import SCENARIO_TO_GROUP
-
-        scenario_group = SCENARIO_TO_GROUP[self.config.scenario]
-        debiased_dtr_loc = StoreLocation(
-            self.cache._scratch_store,
-            f"debiased_retrended_scenario/{scenario_group}/{dtr_config.variable}/{self.config.ensemble_member}",
-        )
-        debiased_tasmax_loc = StoreLocation(
-            self.cache._scratch_store,
-            f"debiased_retrended_scenario/{scenario_group}/{tasmax_config.variable}/{self.config.ensemble_member}",
-        )
+        debiased_dtr_loc = self.cache.debiased_retrended_scenario_loc(variable="dtr")
+        debiased_tasmax_loc = self.cache.debiased_retrended_scenario_loc(variable="tasmax")
         missing = [
             (var, dep_loc)
             for var, dep_loc in [
@@ -1291,8 +1264,8 @@ class BCSDPipeline:
                 f"Run transform_scenario with save_intermediate=True for dtr and tasmax "
                 f"before running transform_scenario_tasmin."
             )
-        debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)[dtr_config.variable]
-        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)[tasmax_config.variable]
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
         scenario_debiased = debiased_tasmax - debiased_dtr
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 

@@ -8,8 +8,33 @@ import pytest
 import xarray as xr
 
 from srm import catalog
+from srm.cache import StoreLocation
+from srm.config import _ensure_root_group
 from srm.datasets import BaseDataset, Datatree
 from srm.validation import _SCENARIO_TO_GROUP
+
+
+def make_icechunk_group(loc: StoreLocation, branch: str = "main") -> None:
+    """Create an icechunk store with a commit whose message equals ``loc.group``.
+
+    ArtifactCache.exists() finds artifacts by commit message, so the message
+    must match the group path. Pass ``branch=cache.branch`` — all artifacts use
+    the same branch.
+    """
+    import icechunk
+    import numpy as np
+    import xarray as xr
+    from icechunk.xarray import to_icechunk
+
+    storage = icechunk.local_filesystem_storage(path=loc.store_path)
+    repo = icechunk.Repository.open_or_create(storage)
+    root_snapshot_id = _ensure_root_group(repo)
+    if branch not in repo.list_branches():
+        repo.create_branch(branch, root_snapshot_id)
+    session = repo.writable_session(branch)
+    ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
+    to_icechunk(ds, session, mode="w")
+    session.commit(loc.group)
 
 
 @dataclass

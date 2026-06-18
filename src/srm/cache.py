@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from srm.bcsd_config import BCSDConfig, MappingType, PipelineOptions, VariableConfig
+from srm.config import SCENARIO_TO_GROUP, _icechunk_storage_for_path
 
 logger = logging.getLogger(__name__)
 
@@ -177,83 +178,70 @@ class ArtifactCache:
             f"historical/{config.variable}/{hist_member}",
         )
 
+    def _scenario_group(self) -> str:
+        """Return the icechunk group prefix for the bound config's scenario."""
+        return SCENARIO_TO_GROUP[self._require_config().scenario]
+
     @property
     def scenario_loc(self) -> StoreLocation:
         """StoreLocation for the scenario downscaling output."""
-        from srm.config import SCENARIO_TO_GROUP
-
         config = self._require_config()
-        scenario_group = SCENARIO_TO_GROUP[config.scenario]
         return StoreLocation(
             self._output_store,
-            f"{scenario_group}/{config.variable}/{config.ensemble_member}",
+            f"{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
         )
 
-    def debiased_historical_loc(self, hist_member: str) -> StoreLocation:
+    def debiased_historical_loc(
+        self, hist_member: str, variable: str | None = None
+    ) -> StoreLocation:
         """StoreLocation for intermediate debiased-historical artifact."""
         config = self._require_config()
-        return StoreLocation(
-            self._scratch_store,
-            f"debiased_historical/{config.variable}/{hist_member}",
-        )
+        var = variable or config.variable
+        return StoreLocation(self._scratch_store, f"debiased_historical/{var}/{hist_member}")
 
     def detrended_scenario_loc(self) -> StoreLocation:
         """StoreLocation for intermediate detrended-scenario artifact."""
-        from srm.config import SCENARIO_TO_GROUP
-
         config = self._require_config()
-        scenario_group = SCENARIO_TO_GROUP[config.scenario]
         return StoreLocation(
             self._scratch_store,
-            f"detrended_scenario/{scenario_group}/{config.variable}/{config.ensemble_member}",
+            f"detrended_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
         )
 
     def trend_scenario_loc(self) -> StoreLocation:
         """StoreLocation for intermediate trend-scenario artifact."""
-        from srm.config import SCENARIO_TO_GROUP
-
         config = self._require_config()
-        scenario_group = SCENARIO_TO_GROUP[config.scenario]
         return StoreLocation(
             self._scratch_store,
-            f"trend_scenario/{scenario_group}/{config.variable}/{config.ensemble_member}",
+            f"trend_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
         )
 
     def debiased_scenario_loc(self) -> StoreLocation:
         """StoreLocation for intermediate debiased-scenario artifact."""
-        from srm.config import SCENARIO_TO_GROUP
-
         config = self._require_config()
-        scenario_group = SCENARIO_TO_GROUP[config.scenario]
         return StoreLocation(
             self._scratch_store,
-            f"debiased_scenario/{scenario_group}/{config.variable}/{config.ensemble_member}",
+            f"debiased_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
         )
 
-    def debiased_retrended_scenario_loc(self) -> StoreLocation:
+    def debiased_retrended_scenario_loc(self, variable: str | None = None) -> StoreLocation:
         """StoreLocation for intermediate debiased-retrended-scenario artifact."""
-        from srm.config import SCENARIO_TO_GROUP
-
         config = self._require_config()
-        scenario_group = SCENARIO_TO_GROUP[config.scenario]
+        var = variable or config.variable
         return StoreLocation(
             self._scratch_store,
-            f"debiased_retrended_scenario/{scenario_group}/{config.variable}/{config.ensemble_member}",
+            f"debiased_retrended_scenario/{self._scenario_group()}/{var}/{config.ensemble_member}",
         )
 
     # ── branch helpers ────────────────────────────────────────────────────────
 
-    def _branch_for(self, loc: StoreLocation) -> str:
-        """Return the icechunk branch to use for reads/writes at this location.
+    def _branch_for(self) -> str:
+        """Return the icechunk branch for reads/writes.
 
-        Scratch intermediate artifacts always use ``"main"`` so they are shared
-        across QA branches. Output artifacts use ``self.branch``. When both
-        stores share the same path (no separate ``output_dir``), ``self.branch``
-        is used for everything.
+        All artifacts (scratch and output) use ``self.branch``. ``main`` is kept
+        as an empty anchor by ``_ensure_root_group``; every versioned branch
+        forks from that clean snapshot so different branches never share ancestry.
         """
-        if self._scratch_store == self._output_store:
-            return self.branch
-        return "main" if loc.store_path == self._scratch_store else self.branch
+        return self.branch
 
     # ── existence check ───────────────────────────────────────────────────────
 
@@ -262,8 +250,8 @@ class ArtifactCache:
         Check if an artifact exists by scanning the icechunk commit ancestry.
 
         A commit is present iff a snapshot with message equal to ``loc.group``
-        exists on the appropriate branch (scratch → ``"main"``, output →
-        ``self.branch``). This is atomic — partial writes leave no matching commit.
+        exists on ``self.branch`` of the store. This is atomic — partial writes
+        leave no matching commit.
 
         Parameters
         ----------
@@ -277,15 +265,9 @@ class ArtifactCache:
         """
         import icechunk
 
-        branch = self._branch_for(loc)
+        branch = self._branch_for()
         try:
-            if loc.store_path.startswith("s3://"):
-                path_no_scheme = loc.store_path[len("s3://") :]
-                bucket, _, prefix = path_no_scheme.partition("/")
-                storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
-            else:
-                storage = icechunk.local_filesystem_storage(path=loc.store_path)
-
+            storage = _icechunk_storage_for_path(loc.store_path)
             repo = icechunk.Repository.open(storage)
             result = any(snapshot.message == loc.group for snapshot in repo.ancestry(branch=branch))
             if result:
@@ -314,12 +296,7 @@ class ArtifactCache:
         import icechunk
 
         def _tag_store(store_path: str, branch: str) -> None:
-            if store_path.startswith("s3://"):
-                path_no_scheme = store_path[len("s3://") :]
-                bucket, _, prefix = path_no_scheme.partition("/")
-                storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
-            else:
-                storage = icechunk.local_filesystem_storage(path=store_path)
+            storage = _icechunk_storage_for_path(store_path)
             repo = icechunk.Repository.open(storage)
             snapshot_id = repo.lookup_branch(branch)
             repo.create_tag(tag, snapshot_id)
@@ -327,7 +304,7 @@ class ArtifactCache:
 
         _tag_store(self._output_store, self.branch)
         if self._scratch_store != self._output_store:
-            _tag_store(self._scratch_store, "main")
+            _tag_store(self._scratch_store, self.branch)
 
     # ── dependency helpers ────────────────────────────────────────────────────
 

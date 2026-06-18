@@ -521,8 +521,7 @@ def _print_paths_summary(
     for store, groups in stores.items():
         branch = ""
         if cache is not None:
-            b = "main" if store == cache._scratch_store else cache.branch
-            branch = f" [dim](branch: {b})[/dim]"
+            branch = f" [dim](branch: {cache.branch})[/dim]"
         tree = Tree(f"[cyan]{store}[/cyan]{branch}")
         for group in groups:
             if group:
