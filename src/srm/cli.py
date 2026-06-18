@@ -15,6 +15,7 @@ from rich import box
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
+from rich.tree import Tree
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
@@ -439,29 +440,33 @@ def run(
 
     orchestrator = BCSDOrchestrator(options)
 
+    cache = orchestrator._get_cache()
+
     if stage == "obs" or stage == "prepare_observations":
         paths = orchestrator.submit_stage(
             "prepare_observations", configs, force=force, use_coiled=coiled
         )
-        _print_paths_summary(paths, configs, "prepare_observations")
+        _print_paths_summary(paths, configs, "prepare_observations", cache)
 
     elif stage == "historical" or stage == "fit_historical":
         paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
-        _print_paths_summary(paths, configs, "fit_historical")
+        _print_paths_summary(paths, configs, "fit_historical", cache)
 
     elif stage == "scenario" or stage == "transform_scenario":
         paths = orchestrator.submit_stage(
             "transform_scenario", configs, force=force, use_coiled=coiled
         )
-        _print_paths_summary(paths, configs, "transform_scenario")
+        _print_paths_summary(paths, configs, "transform_scenario", cache)
 
     elif stage == "all" or stage is None:
         all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
         obs_configs = orchestrator._deduplicate_obs_configs(configs)
         hist_configs = orchestrator._deduplicate_historical_configs(configs)
-        _print_paths_summary(all_paths["prepare_observations"], obs_configs, "prepare_observations")
-        _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical")
-        _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario")
+        _print_paths_summary(
+            all_paths["prepare_observations"], obs_configs, "prepare_observations", cache
+        )
+        _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical", cache)
+        _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario", cache)
 
     else:
         raise ValueError(f"Unknown stage: {stage}")
@@ -469,17 +474,62 @@ def run(
     logger.info("✓ Complete!")
 
 
-def _print_paths_summary(paths: list[str], _configs: list[BCSDConfig], stage: str) -> None:
-    """Print output paths produced by a stage, one per line."""
+def _insert_group_path(node: Tree, segments: list[str]) -> None:
+    """Recursively insert path segments into a Rich Tree, reusing existing nodes."""
+    if not segments:
+        return
+    label = segments[0]
+    for child in node.children:
+        if child.label == label:
+            _insert_group_path(child, segments[1:])
+            return
+    _insert_group_path(node.add(label), segments[1:])
+
+
+def _print_paths_summary(
+    paths: list[str],
+    _configs: list[BCSDConfig],
+    stage: str,
+    cache: ArtifactCache | None = None,
+) -> None:
+    """Print output paths produced by a stage as a nested tree grouped by store."""
     stage_label = {
         "prepare_observations": "Obs Regridded",
         "fit_historical": "Historical",
         "transform_scenario": "Scenario",
     }.get(stage, stage)
 
-    console.print(f"\n{stage_label} ({len(paths)} artifact(s)):")
+    n_artifacts = sum(1 for p in paths if p is not None)
+    n_failed = sum(1 for p in paths if p is None)
+    label = f"\n[bold]{stage_label}[/bold] ({n_artifacts} artifact(s)"
+    if n_failed:
+        label += f", [red]{n_failed} FAILED[/red]"
+    label += ")"
+    console.print(label)
+
+    # Group groups by store path, preserving insertion order.
+    stores: dict[str, list[str]] = {}
     for path in paths:
-        console.print(path or "FAILED")
+        if path is None:
+            stores.setdefault("FAILED", []).append("")
+        elif "::" in path:
+            store, group = path.split("::", 1)
+            stores.setdefault(store, []).append(group)
+        else:
+            stores.setdefault(path, []).append("")
+
+    for store, groups in stores.items():
+        branch = ""
+        if cache is not None:
+            b = "main" if store == cache._scratch_store else cache.branch
+            branch = f" [dim](branch: {b})[/dim]"
+        tree = Tree(f"[cyan]{store}[/cyan]{branch}")
+        for group in groups:
+            if group:
+                _insert_group_path(tree, group.split("/"))
+            else:
+                tree.add("[red]FAILED[/red]")
+        console.print(tree)
 
 
 @app.command()

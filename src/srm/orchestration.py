@@ -133,7 +133,7 @@ class BCSDOrchestrator:
             if cache.exists(loc) and not force:
                 if self.options.verbose:
                     logger.info(f"⊙ Skipping {config.run_id} - output exists: {loc.store_path}")
-                output_paths.append(loc.store_path)
+                output_paths.append(f"{loc.store_path}::{loc.group}")
             else:
                 configs_to_run.append(config)
                 output_paths.append(None)  # Placeholder
@@ -297,17 +297,18 @@ class BCSDOrchestrator:
         logger.info(f"✓ All {len(configs)} {stage} tasks completed")
 
         # Collect and return all output paths (now guaranteed to exist)
-        return [
-            self._stage_loc(
+        result = []
+        for config in configs:
+            loc = self._stage_loc(
                 cache,
                 stage,
                 config,
                 hist_member=self._resolve_hist_member(config)
                 if stage == "fit_historical"
                 else None,
-            ).store_path
-            for config in configs
-        ]
+            )
+            result.append(f"{loc.store_path}::{loc.group}")
+        return result
 
     def _run_local(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
         """
@@ -326,20 +327,23 @@ class BCSDOrchestrator:
             Output paths from completed tasks
         """
         completed_paths = []
+        cache = self._get_cache()
 
         for config in configs:
             pipeline = BCSDPipeline(config, self.options)
 
             if stage == "prepare_observations":
-                path = pipeline.prepare_observations()
+                pipeline.prepare_observations()
             elif stage == "fit_historical":
-                path = pipeline.fit_historical()
+                pipeline.fit_historical()
             elif stage == "transform_scenario":
-                path = pipeline.transform_scenario()
+                pipeline.transform_scenario()
             else:
                 raise ValueError(f"Unknown stage: {stage}")
 
-            completed_paths.append(path)
+            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
+            loc = self._stage_loc(cache, stage, config, hist_member=hist_member)
+            completed_paths.append(f"{loc.store_path}::{loc.group}")
 
         return completed_paths
 

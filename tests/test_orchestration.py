@@ -210,7 +210,7 @@ class TestSubmitStage:
             result = orchestrator.submit_stage("prepare_observations", [config], use_coiled=False)
 
         mock_local.assert_not_called()
-        assert result == [loc.store_path]
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_calls_run_local_for_uncached_task(self, orchestrator, config):
         computed_path = "computed_obs_path"
@@ -261,8 +261,8 @@ class TestSubmitStage:
                 use_coiled=False,
             )
 
-        # cached config returns its path; uncached goes through _run_local
-        assert loc_cached.store_path in result
+        # cached config returns its qualified path; uncached goes through _run_local
+        assert f"{loc_cached.store_path}::{loc_cached.group}" in result
         assert computed_path in result
         mock_local.assert_called_once_with("prepare_observations", [cfg_uncached])
 
@@ -293,7 +293,7 @@ class TestSubmitToCoiled:
         with patch.dict("sys.modules", {"coiled": mock_coiled}):
             result = orchestrator._submit_to_coiled("prepare_observations", [config])
 
-        assert result == [loc.store_path]
+        assert result == [f"{loc.store_path}::{loc.group}"]
         assert mock_coiled.batch.run.call_count == 1
 
     def test_retries_only_failed_tasks(self, orchestrator, multi_configs):
@@ -334,8 +334,8 @@ class TestSubmitToCoiled:
 
         retry_configs = [json.loads(d["CONFIG_JSON"]) for d in batch_run_calls[1]]
         assert all(c["variable"] == cfg_fail.variable for c in retry_configs)
-        assert loc_ok.store_path in result
-        assert loc_fail.store_path in result
+        assert f"{loc_ok.store_path}::{loc_ok.group}" in result
+        assert f"{loc_fail.store_path}::{loc_fail.group}" in result
 
     def test_raises_after_max_retries_exhausted(self, orchestrator, config):
         """RuntimeError is raised when all retries are exhausted."""
@@ -378,7 +378,7 @@ class TestSubmitToCoiled:
             result = orchestrator._submit_to_coiled("prepare_observations", [config], max_retries=3)
 
         assert mock_coiled.batch.run.call_count == 2
-        assert result == [loc.store_path]
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
 
 # ---------------------------------------------------------------------------
@@ -391,35 +391,40 @@ class TestRunLocal:
         with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
-            mock_instance.prepare_observations.return_value = "obs_path"
 
             result = orchestrator._run_local("prepare_observations", [config])
 
         MockPipeline.assert_called_once_with(config, orchestrator.options)
         mock_instance.prepare_observations.assert_called_once()
-        assert result == ["obs_path"]
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_fit_historical(self, orchestrator, config):
         with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
-            mock_instance.fit_historical.return_value = "hist_path"
 
             result = orchestrator._run_local("fit_historical", [config])
 
         mock_instance.fit_historical.assert_called_once()
-        assert result == ["hist_path"]
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(
+            cache, "fit_historical", config, hist_member=config.ensemble_member
+        )
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_transform_scenario(self, orchestrator, config):
         with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
-            mock_instance.transform_scenario.return_value = "scenario_path"
 
             result = orchestrator._run_local("transform_scenario", [config])
 
         mock_instance.transform_scenario.assert_called_once()
-        assert result == ["scenario_path"]
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_unknown_stage_raises(self, orchestrator, config):
         with pytest.raises(ValueError, match="Unknown stage"):
@@ -436,15 +441,14 @@ class TestRunLocal:
         assert MockPipeline.call_count == len(multi_configs)
 
     def test_returns_path_per_config(self, orchestrator, multi_configs):
-        paths = [f"path_{i}" for i in range(len(multi_configs))]
         with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
-            mock_instance.prepare_observations.side_effect = paths
 
             result = orchestrator._run_local("prepare_observations", multi_configs)
 
-        assert result == paths
+        assert len(result) == len(multi_configs)
+        assert all("::" in r for r in result)
 
     def test_all_stage_names_route_correctly(self, orchestrator, config, subtests):
         stage_to_method = {
@@ -462,7 +466,7 @@ class TestRunLocal:
                     result = orchestrator._run_local(stage, [config])
 
                 getattr(mock_instance, method_name).assert_called_once()
-                assert result == [f"{stage}_path"]
+                assert len(result) == 1 and "::" in result[0]
 
 
 # ---------------------------------------------------------------------------
