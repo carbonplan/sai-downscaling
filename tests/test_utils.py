@@ -1,6 +1,6 @@
 import numpy as np
-from validators import DatasetValidator
 
+from srm.qaqc import DatasetChecker as DatasetValidator
 from srm.utils import lon_to_180
 
 
