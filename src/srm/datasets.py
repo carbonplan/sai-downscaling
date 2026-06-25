@@ -491,7 +491,13 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"time": 1, "lat": 720, "lon": 1440},
                 expected_shards={"time": 30, "lat": 720, "lon": 1440},
-                expected_vars=[VarStandards.TAS],
+                expected_vars=[
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.PR,
+                    VarStandards.RLDS,
+                ],
             ),
             "ocean-mask": VectorDataset(
                 name="ocean-mask",
