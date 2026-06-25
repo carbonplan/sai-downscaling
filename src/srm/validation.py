@@ -7,6 +7,7 @@ Use :func:`validate_output_store` to run checks against a post-consolidation out
 
 import enum
 import hashlib
+import inspect
 import traceback
 from typing import get_args
 
@@ -611,7 +612,9 @@ def validate_output_store(
                 target_var = kwargs.get("var")
                 if target_var is not None and target_var != leaf_var:
                     continue
-                vr: ValidationResult = getattr(checker, method)(**kwargs)
+                sig = inspect.signature(getattr(checker, method))
+                call_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+                vr: ValidationResult = getattr(checker, method)(**call_kwargs)
                 results.append(
                     CheckResult(
                         check_id=check_id,
