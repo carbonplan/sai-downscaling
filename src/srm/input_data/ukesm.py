@@ -120,7 +120,7 @@ TIME_RANGE: dict[str, str] = {
     "G6-1.5K": "2035-2084",
 }
 
-ALL_SCENARIOS = list(SCENARIO_TO_GROUP.keys())
+ALL_SCENARIOS = list(ENSEMBLE_MEMBERS.keys())
 
 # --- Historical fetch (CEDA -> S3) ---
 

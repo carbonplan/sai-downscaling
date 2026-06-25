@@ -31,8 +31,12 @@ SCENARIO_TO_GROUP: dict[str, str] = {
     "historical": "historical",
     "pangeo-historical": "historical",  # ETL alias: pangeo CMIP6 members merged into historical group
     "SSP245": "ssp245",
+    "ssp245": "ssp245",  # lowercase alias used by MIROC ETL
     "G6-1.5K": "g6_1p5k",
+    "g6_1p5k": "g6_1p5k",  # pass-through when callers already hold the group name
     "esgf-SSP245": "esgf_ssp245",
+    "esgf-ssp245": "esgf_ssp245",  # lowercase alias used by MIROC ETL
+    "esgf_ssp245": "esgf_ssp245",  # group-name pass-through
 }
 
 
