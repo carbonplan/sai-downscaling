@@ -13,7 +13,7 @@ import logging
 from typing import Literal
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import ArtifactCache
+from srm.cache import ArtifactCache, StoreLocation
 from srm.pipeline import BCSDPipeline
 
 logger = logging.getLogger(__name__)
@@ -68,10 +68,28 @@ class BCSDOrchestrator:
             self._cache = ArtifactCache(
                 scratch_dir=self.options.scratch_dir,
                 environment=self.options.environment,
-                version=self.options.version,
+                branch=self.options.branch,
                 output_dir=self.options.output_dir,
             )
         return self._cache
+
+    def _stage_loc(
+        self,
+        cache: ArtifactCache,
+        stage: str,
+        config: BCSDConfig,
+        hist_member: str | None = None,
+    ) -> StoreLocation:
+        """Return the StoreLocation for a stage/config, binding config to cache."""
+        cache.config = config
+        if stage == "prepare_observations":
+            return cache.obs_loc
+        elif stage == "fit_historical":
+            return cache.historical_loc(hist_member or config.ensemble_member)
+        elif stage == "transform_scenario":
+            return cache.scenario_loc
+        else:
+            raise ValueError(f"Unknown stage: {stage}")
 
     def submit_stage(
         self,
@@ -110,12 +128,14 @@ class BCSDOrchestrator:
 
         for config in configs:
             hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
-            output_path = cache.get_output_path(stage, config, hist_member=hist_member)
+            loc = self._stage_loc(cache, stage, config, hist_member=hist_member)
 
-            if cache.exists(output_path) and not force:
-                if self.options.verbose:
-                    logger.info(f"⊙ Skipping {config.run_id} - output exists: {output_path}")
-                output_paths.append(output_path)
+            if cache.exists(loc) and not force:
+                branch = cache._branch_for()
+                logger.info(
+                    f"⊙ Skipping {config.run_id} - {loc.group} already cached (branch: {branch})"
+                )
+                output_paths.append(f"{loc.store_path}::{loc.group}")
             else:
                 configs_to_run.append(config)
                 output_paths.append(None)  # Placeholder
@@ -227,6 +247,7 @@ class BCSDOrchestrator:
                 region="us-west-2",
                 map_over_task_var_dicts=task_var_dicts,
                 forward_aws_credentials=False,
+                spot_policy="spot_with_fallback",
                 logger=logger,
                 tag={"Project": "SRM"},
                 disk_size="100GB",
@@ -246,7 +267,8 @@ class BCSDOrchestrator:
                 config
                 for config in remaining
                 if not cache.exists(
-                    cache.get_output_path(
+                    self._stage_loc(
+                        cache,
                         stage,
                         config,
                         hist_member=self._resolve_hist_member(config)
@@ -278,16 +300,18 @@ class BCSDOrchestrator:
         logger.info(f"✓ All {len(configs)} {stage} tasks completed")
 
         # Collect and return all output paths (now guaranteed to exist)
-        return [
-            cache.get_output_path(
+        result = []
+        for config in configs:
+            loc = self._stage_loc(
+                cache,
                 stage,
                 config,
                 hist_member=self._resolve_hist_member(config)
                 if stage == "fit_historical"
                 else None,
             )
-            for config in configs
-        ]
+            result.append(f"{loc.store_path}::{loc.group}")
+        return result
 
     def _run_local(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
         """
@@ -306,20 +330,23 @@ class BCSDOrchestrator:
             Output paths from completed tasks
         """
         completed_paths = []
+        cache = self._get_cache()
 
         for config in configs:
             pipeline = BCSDPipeline(config, self.options)
 
             if stage == "prepare_observations":
-                path = pipeline.prepare_observations()
+                pipeline.prepare_observations()
             elif stage == "fit_historical":
-                path = pipeline.fit_historical()
+                pipeline.fit_historical()
             elif stage == "transform_scenario":
-                path = pipeline.transform_scenario()
+                pipeline.transform_scenario()
             else:
                 raise ValueError(f"Unknown stage: {stage}")
 
-            completed_paths.append(path)
+            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
+            loc = self._stage_loc(cache, stage, config, hist_member=hist_member)
+            completed_paths.append(f"{loc.store_path}::{loc.group}")
 
         return completed_paths
 
@@ -492,8 +519,8 @@ class BCSDOrchestrator:
         obs_configs = self._deduplicate_obs_configs(configs)
         status["prepare_observations"]["total"] = len(obs_configs)
         for config in obs_configs:
-            path = cache.get_obs_path(config)
-            if cache.exists(path):
+            loc = self._stage_loc(cache, "prepare_observations", config)
+            if cache.exists(loc):
                 status["prepare_observations"]["cached"] += 1
             else:
                 status["prepare_observations"]["missing"].append(config.run_id)
@@ -502,8 +529,10 @@ class BCSDOrchestrator:
         hist_configs = self._deduplicate_historical_configs(configs)
         status["fit_historical"]["total"] = len(hist_configs)
         for config in hist_configs:
-            path = cache.get_historical_path(config, hist_member=self._resolve_hist_member(config))
-            if cache.exists(path):
+            loc = self._stage_loc(
+                cache, "fit_historical", config, hist_member=self._resolve_hist_member(config)
+            )
+            if cache.exists(loc):
                 status["fit_historical"]["cached"] += 1
             else:
                 status["fit_historical"]["missing"].append(config.run_id)
@@ -512,8 +541,8 @@ class BCSDOrchestrator:
         status["transform_scenario"]["total"] = len(configs)
         for config in configs:
             if config.scenario:
-                path = cache.get_scenario_path(config)
-                if cache.exists(path):
+                loc = self._stage_loc(cache, "transform_scenario", config)
+                if cache.exists(loc):
                     status["transform_scenario"]["cached"] += 1
                 else:
                     status["transform_scenario"]["missing"].append(config.run_id)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from packaging.version import Version
 from pydantic import ValidationError
 
 from srm.bcsd_config import (
@@ -183,10 +182,10 @@ class TestBCSDConfigConstruction:
         assert minimal_config.train_period_start == 1978
         assert minimal_config.train_period_end == 2014
 
-    def test_default_environment_and_version(self):
+    def test_default_environment_and_branch(self):
         opts = PipelineOptions()
         assert opts.environment == "qa"
-        assert opts.version == _cache_version
+        assert opts.branch == _cache_version
 
     def test_explicit_variable_config_not_overwritten(self):
         """Explicitly supplied variable_config must survive post-init."""
@@ -247,11 +246,11 @@ class TestBCSDConfigConstruction:
         opts = PipelineOptions(clip_bounds={"pr": VariableClipBounds(min=0.0, max=500.0)})
         assert opts.clip_bounds["pr"].max == 500.0
 
-    def test_model_copy_version_override(self):
+    def test_model_copy_branch_override(self):
         opts = PipelineOptions()
-        v2 = opts.model_copy(update={"version": "my-custom-version"})
-        assert v2.version == "my-custom-version"
-        assert opts.version == _cache_version
+        v2 = opts.model_copy(update={"branch": "v2"})
+        assert v2.branch == "v2"
+        assert opts.branch == _cache_version
 
 
 # ---------------------------------------------------------------------------
@@ -419,37 +418,33 @@ class TestBCSDConfigValidation:
 
 
 # ---------------------------------------------------------------------------
-# BCSDConfig – version defaulting
+# PipelineOptions – branch defaulting
 # ---------------------------------------------------------------------------
 
 
-class TestVersionDefaulting:
-    """Version defaults to the installed package's public version string."""
+class TestBranchDefaulting:
+    """Branch defaults to the installed package version; each release gets a clean slate."""
 
-    def test_default_version_matches_cache_version(self):
-        assert PipelineOptions().version == _cache_version
+    def test_default_branch_is_package_version(self):
+        assert PipelineOptions().branch == _cache_version
 
-    def test_default_version_has_no_local_segment(self):
-        assert "+" not in PipelineOptions().version
+    def test_default_branch_has_no_local_segment(self):
+        assert "+" not in PipelineOptions().branch
 
-    def test_default_version_is_valid_pep440(self):
-        v = Version(PipelineOptions().version)
-        assert v.local is None
+    def test_explicit_branch_override(self):
+        opts = PipelineOptions(branch="v2")
+        assert opts.branch == "v2"
 
-    def test_explicit_version_override(self):
-        opts = PipelineOptions(version="custom-v99")
-        assert opts.version == "custom-v99"
-
-    def test_env_var_overrides_version(self, monkeypatch):
-        monkeypatch.setenv("BCSD_VERSION", "env-override")
+    def test_env_var_overrides_branch(self, monkeypatch):
+        monkeypatch.setenv("BCSD_BRANCH", "v3")
         opts = PipelineOptions()
-        assert opts.version == "env-override"
+        assert opts.branch == "v3"
 
-    def test_cache_config_default_version_has_no_local_segment(self):
-        assert "+" not in CacheConfig().version
+    def test_cache_config_default_branch_is_package_version(self):
+        assert CacheConfig().branch == _cache_version
 
     def test_pipeline_options_and_cache_config_share_same_default(self):
-        assert PipelineOptions().version == CacheConfig().version
+        assert PipelineOptions().branch == CacheConfig().branch
 
 
 # ---------------------------------------------------------------------------
@@ -466,14 +461,14 @@ class TestCacheConfig:
     def test_defaults(self):
         cfg = CacheConfig()
         assert cfg.environment == "qa"
-        assert cfg.version == _cache_version
+        assert cfg.branch == _cache_version
         assert cfg.force_recompute is False
         assert cfg.check_integrity is True
 
     def test_custom_values(self):
-        cfg = CacheConfig(environment="production", version="v3", force_recompute=True)
+        cfg = CacheConfig(environment="production", branch="v3", force_recompute=True)
         assert cfg.environment == "production"
-        assert cfg.version == "v3"
+        assert cfg.branch == "v3"
         assert cfg.force_recompute is True
 
 
