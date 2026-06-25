@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-import pint_xarray
-import xarray as xr
 import boto3
 import icechunk
+import pint_xarray
+import xarray as xr
 
 
 def lon_to_180(ds: xr.Dataset, lon_name: str = "lon") -> xr.Dataset:
@@ -118,6 +118,7 @@ def resolve_s3_glob(path):
         raise ValueError(f"Multiple matches: {matches}")
 
     return matches[0]
+
 
 def open_icechunk(path):
     bucket, prefix = path.replace("s3://", "").split("/", 1)
