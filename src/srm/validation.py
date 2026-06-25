@@ -524,7 +524,9 @@ class DatasetValidator(pydantic.BaseModel):
         results: list[CheckResult] = []
 
         for check_id, method, kwargs in _DS_CHECKER_CHECKS:
-            vr: ValidationResult = getattr(checker, method)(**kwargs)
+            m = getattr(checker, method)
+            call_kwargs = {k: v for k, v in kwargs.items() if k in inspect.signature(m).parameters}
+            vr: ValidationResult = m(**call_kwargs)
             results.append(self._vr_to_cr(check_id, vr))
 
         for bespoke_check, check_id in (
