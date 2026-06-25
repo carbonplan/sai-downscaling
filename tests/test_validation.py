@@ -461,7 +461,8 @@ def test_validate_output_store():
     )
     results = validate_output_store(tree)
     assert {r.scenario for r in results} == {"/ssp245/tasmax/006", "/ssp245/tasmax/007"}
-    assert len(results) == len(OUTPUT_CHECKS) * 2
+    applicable = [c for c in OUTPUT_CHECKS if c[2].get("var") in (None, "tasmax")]
+    assert len(results) == len(applicable) * 2
     assert all(r.gcm == "output" for r in results)
     # Single-variable leaves with valid coords/data must produce no failures.
     assert [r for r in results if r.status == CheckStatus.FAIL] == []

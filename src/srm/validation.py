@@ -14,6 +14,7 @@ import pydantic
 import xarray as xr
 
 from srm.bcsd_config import VariableName
+from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
 from srm.qaqc import DatasetChecker, ValidationResult
 
@@ -39,12 +40,6 @@ GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 # On-disk variable group names; canonical (lowercase), so no translation needed.
 VARIABLE_OPTIONS = get_args(VariableName)
-
-_SCENARIO_TO_GROUP: dict[str, str] = {
-    "historical": "historical",
-    "SSP245": "ssp245",
-    "G6-1.5K": "g6_1p5k",
-}
 
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
 # CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
@@ -78,7 +73,7 @@ _DS_CHECKER_CHECKS: list[tuple[str, str, dict]] = [
     ("lon_valid", "validate_lon", {}),
     ("time_axis", "validate_time_axis", {}),
     ("calendar", "validate_calendar", {}),
-    ("negative_precip", "validate_negative_precip", _FAST),
+    ("negative_precip", "validate_negative_precip", {"var": "pr", **_FAST}),
     ("spatial_range_tas", "validate_spatial_range", {"var": "tas", **_FAST}),
     ("spatial_range_tasmax", "validate_spatial_range", {"var": "tasmax", **_FAST}),
     ("spatial_range_tasmin", "validate_spatial_range", {"var": "tasmin", **_FAST}),
@@ -230,7 +225,7 @@ class DatasetValidator(pydantic.BaseModel):
         if err:
             return None, err
         assert dt is not None
-        group = _SCENARIO_TO_GROUP.get(self.scenario)
+        group = SCENARIO_TO_GROUP.get(self.scenario)
         if group is None:
             return None, self._result(
                 CheckStatus.SKIP, f"No group mapping for scenario {self.scenario!r}"
@@ -353,19 +348,21 @@ class DatasetValidator(pydantic.BaseModel):
             return err
         assert dt is not None
 
-        if "g6_1p5k" not in dt.children:
+        g6_group = SCENARIO_TO_GROUP["G6-1.5K"]
+        ssp245_group = SCENARIO_TO_GROUP["SSP245"]
+        if g6_group not in dt.children:
             return self._result(
                 CheckStatus.SKIP,
-                f"Group 'g6_1p5k' not present in datatree for {self.gcm}.",
+                f"Group {g6_group!r} not present in datatree for {self.gcm}.",
             )
-        if "ssp245" not in dt.children:
+        if ssp245_group not in dt.children:
             return self._result(
                 CheckStatus.SKIP,
-                f"Group 'ssp245' not present in datatree for {self.gcm}.",
+                f"Group {ssp245_group!r} not present in datatree for {self.gcm}.",
             )
 
-        g6_ds = dt["g6_1p5k"].to_dataset()
-        ssp245_ds = dt["ssp245"].to_dataset()
+        g6_ds = dt[g6_group].to_dataset()
+        ssp245_ds = dt[ssp245_group].to_dataset()
 
         g6_vars = {str(v) for v in g6_ds.data_vars}
         ssp245_vars = {str(v) for v in ssp245_ds.data_vars}
@@ -616,9 +613,13 @@ def validate_output_store(
 
     results: list[CheckResult] = []
     for variable_node in variable_nodes:
+        leaf_var = variable_node.name
         for node in variable_node.leaves:
             checker = DatasetChecker(node.to_dataset())
             for check_id, method, kwargs in OUTPUT_CHECKS:
+                target_var = kwargs.get("var")
+                if target_var is not None and target_var != leaf_var:
+                    continue
                 vr: ValidationResult = getattr(checker, method)(**kwargs)
                 results.append(
                     CheckResult(
