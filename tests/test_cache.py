@@ -1,11 +1,12 @@
-"""Tests for cache.py: ArtifactCache path generation, existence checks, and cache management."""
+"""Tests for cache.py: ArtifactCache StoreLocation generation, existence checks, and helpers."""
 
 from __future__ import annotations
 
 import pytest
+from conftest import make_icechunk_group
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
-from srm.cache import ArtifactCache, CacheCheckError
+from srm.cache import ArtifactCache, StoreLocation
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -18,7 +19,6 @@ def local_cache(tmp_path) -> ArtifactCache:
     return ArtifactCache(
         scratch_dir=str(tmp_path / "cache"),
         environment="qa",
-        version="v1",
     )
 
 
@@ -28,19 +28,18 @@ def local_cache_with_output(tmp_path) -> ArtifactCache:
     return ArtifactCache(
         scratch_dir=str(tmp_path / "cache"),
         environment="qa",
-        version="v1",
         output_dir=str(tmp_path / "outputs"),
     )
 
 
 @pytest.fixture
 def base_config() -> BCSDConfig:
-    """Standard non-SAI scenario config."""
+    """Standard SSP245 scenario config."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
         variable="tas",
         ensemble_member="r1i1p1f1",
-        scenario="ssp245",
+        scenario="SSP245",
         predict_period_start=2015,
         predict_period_end=2100,
     )
@@ -66,26 +65,58 @@ def regional_config() -> BCSDConfig:
         gcm="MIROC-ES2H",
         variable="tasmax",
         ensemble_member="01",
-        scenario="ssp245",
+        scenario="SSP245",
         predict_period_start=2015,
         predict_period_end=2100,
         subset_bounds=(-35.0, -22.0, 16.0, 33.0),
     )
 
 
-def make_icechunk_store(path: str) -> None:
-    """Create a minimal icechunk store with a 'write complete' commit."""
-    import icechunk
-    import numpy as np
-    import xarray as xr
-    from icechunk.xarray import to_icechunk
+@pytest.fixture
+def bound_cache(tmp_path, base_config) -> ArtifactCache:
+    """ArtifactCache with base_config bound, backed by local filesystem, no output_dir."""
+    cache = ArtifactCache(
+        scratch_dir=str(tmp_path / "cache"),
+        environment="qa",
+        output_dir=None,
+    )
+    cache.config = base_config
+    return cache
 
-    storage = icechunk.local_filesystem_storage(path=path)
-    repo = icechunk.Repository.open_or_create(storage)
-    session = repo.writable_session("main")
-    ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
-    to_icechunk(ds, session, mode="w")
-    session.commit("write complete")
+
+@pytest.fixture
+def bound_cache_with_output(tmp_path, base_config) -> ArtifactCache:
+    """ArtifactCache with base_config bound and separate output_dir."""
+    return ArtifactCache.from_config(
+        base_config,
+        PipelineOptions(
+            scratch_dir=str(tmp_path / "cache"),
+            environment="qa",
+            output_dir=str(tmp_path / "outputs"),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# StoreLocation
+# ---------------------------------------------------------------------------
+
+
+class TestStoreLocation:
+    def test_frozen(self):
+        loc = StoreLocation("s3://bucket/path.icechunk", "obs/tas")
+        with pytest.raises(Exception):
+            loc.store_path = "other"  # type: ignore[misc]
+
+    def test_equality(self):
+        a = StoreLocation("s3://bucket/path.icechunk", "obs/tas")
+        b = StoreLocation("s3://bucket/path.icechunk", "obs/tas")
+        assert a == b
+
+    def test_inequality_on_group(self):
+        a = StoreLocation("s3://bucket/path.icechunk", "obs/tas")
+        b = StoreLocation("s3://bucket/path.icechunk", "obs/pr")
+        assert a != b
 
 
 # ---------------------------------------------------------------------------
@@ -108,16 +139,16 @@ class TestArtifactCacheInit:
     def test_output_dir_is_none_by_default(self, local_cache):
         assert local_cache.output_dir is None
 
-    def test_environment_and_version_stored(self, subtests):
-        for env, ver in [("qa", "v1"), ("production", "v2")]:
-            with subtests.test(environment=env, version=ver):
-                cache = ArtifactCache(scratch_dir="/tmp/cache", environment=env, version=ver)
+    def test_environment_and_branch_stored(self, subtests):
+        for env, branch in [("qa", "v1.0"), ("production", "v2.0")]:
+            with subtests.test(environment=env, branch=branch):
+                cache = ArtifactCache(scratch_dir="/tmp/cache", environment=env, branch=branch)
                 assert cache.environment == env
-                assert cache.version == ver
+                assert cache.branch == branch
 
 
 # ---------------------------------------------------------------------------
-# from_config / bound path properties
+# from_config / bound location properties
 # ---------------------------------------------------------------------------
 
 
@@ -126,19 +157,11 @@ class TestFromConfig:
         cache = ArtifactCache.from_config(base_config, PipelineOptions())
         assert cache.config is base_config
 
-    def test_path_properties_match_explicit_methods(self, base_config):
-        cache = ArtifactCache.from_config(base_config, PipelineOptions())
-        assert cache.obs_path == cache.get_obs_path(base_config)
-        assert cache.historical_path == cache.get_historical_path(base_config)
-        assert cache.scenario_path == cache.get_scenario_path(base_config)
-
-    def test_path_properties_raise_without_bound_config(self, local_cache):
+    def test_loc_properties_raise_without_bound_config(self, local_cache):
         with pytest.raises(RuntimeError, match="No config bound"):
-            _ = local_cache.obs_path
+            _ = local_cache.obs_loc
         with pytest.raises(RuntimeError, match="No config bound"):
-            _ = local_cache.historical_path
-        with pytest.raises(RuntimeError, match="No config bound"):
-            _ = local_cache.scenario_path
+            _ = local_cache.scenario_loc
 
     def test_config_is_none_on_plain_init(self, local_cache):
         assert local_cache.config is None
@@ -169,201 +192,166 @@ class TestGetSubsetId:
 
 
 # ---------------------------------------------------------------------------
-# Path generation
+# Store path formula
 # ---------------------------------------------------------------------------
 
 
-class TestObsPath:
-    def test_contains_environment_and_version(self, local_cache, base_config):
-        path = local_cache.get_obs_path(base_config)
-        assert "/qa/" in path
-        assert "/v1/" in path
+class TestStorePaths:
+    def test_scratch_store_ends_with_icechunk(self, bound_cache):
+        assert bound_cache._scratch_store.endswith(".icechunk")
 
-    def test_contains_obs_stage_directory(self, local_cache, base_config):
-        path = local_cache.get_obs_path(base_config)
-        assert "/obs/" in path
+    def test_scratch_store_contains_env(self, bound_cache):
+        assert "/qa/" in bound_cache._scratch_store
 
-    def test_global_subset_id_in_filename(self, local_cache, base_config):
-        path = local_cache.get_obs_path(base_config)
-        assert "/CESM2-WACCM/tas/global/era5/obs_regridded.icechunk" in path
+    def test_scratch_store_encodes_gcm_obs_subset(self, bound_cache):
+        assert "CESM2-WACCM-ERA5-global.icechunk" in bound_cache._scratch_store
 
-    def test_regional_subset_id_in_filename(self, local_cache, regional_config):
-        path = local_cache.get_obs_path(regional_config)
-        assert "/lat-35.0to-22.0_lon16.0to33.0/era5/obs_regridded.icechunk" in path
+    def test_output_store_uses_output_dir_when_set(self, bound_cache_with_output):
+        assert bound_cache_with_output.output_dir in bound_cache_with_output._output_store
+        assert bound_cache_with_output.scratch_dir not in bound_cache_with_output._output_store
 
-    def test_paths_differ_per_environment(self, subtests, tmp_path, base_config):
+    def test_output_store_falls_back_to_scratch_when_no_output_dir(self, bound_cache):
+        assert bound_cache.scratch_dir in bound_cache._output_store
+
+    def test_regional_subset_id_in_store_path(self, tmp_path, regional_config):
+        cache = ArtifactCache.from_config(
+            regional_config,
+            PipelineOptions(scratch_dir=str(tmp_path / "cache")),
+        )
+        assert "lat-35.0to-22.0_lon16.0to33.0" in cache._scratch_store
+
+    def test_different_environments_produce_different_stores(self, subtests, tmp_path, base_config):
         for env in ("qa", "production"):
             with subtests.test(environment=env):
-                cache = ArtifactCache(scratch_dir=str(tmp_path), environment=env, version="v1")
-                assert f"/{env}/" in cache.get_obs_path(base_config)
-
-    def test_paths_differ_per_version(self, subtests, tmp_path, base_config):
-        for version in ("v1", "v2", "v3"):
-            with subtests.test(version=version):
-                cache = ArtifactCache(scratch_dir=str(tmp_path), environment="qa", version=version)
-                assert f"/{version}/" in cache.get_obs_path(base_config)
+                cache = ArtifactCache.from_config(
+                    base_config,
+                    PipelineOptions(scratch_dir=str(tmp_path), environment=env),
+                )
+                assert f"/{env}/" in cache._scratch_store
 
 
-class TestHistoricalPath:
-    def test_goes_to_cache_when_no_output_dir(self, local_cache, base_config):
-        path = local_cache.get_historical_path(base_config)
-        assert local_cache.scratch_dir in path
-        assert "/historical/" in path
-
-    def test_goes_to_output_dir_when_specified(self, local_cache_with_output, base_config):
-        path = local_cache_with_output.get_historical_path(base_config)
-        assert local_cache_with_output.output_dir in path
-        assert local_cache_with_output.scratch_dir not in path
-
-    def test_ensemble_label_in_path(self, subtests, local_cache, base_config):
-        for label in ("r1i1p1f1", "r12i1p1f2", "01", "r10i1p1f2"):
-            with subtests.test(label=label):
-                config = base_config.model_copy(update={"ensemble_member": label})
-                path = local_cache.get_historical_path(config)
-                assert f"/{label}/" in path
-
-    def test_path_structure(self, local_cache, base_config):
-        path = local_cache.get_historical_path(base_config)
-        assert "/CESM2-WACCM/tas/r1i1p1f1/global/" in path
-        assert path.endswith("historical.icechunk")
-
-    def test_different_varconfig_produces_different_path(self, local_cache, base_config):
-        vc_no_window = VariableConfig.for_variable("tas").model_copy(update={"do_windowing": False})
-        config_custom = base_config.model_copy(update={"variable_config": vc_no_window})
-        path_default = local_cache.get_historical_path(base_config)
-        path_custom = local_cache.get_historical_path(config_custom)
-        assert path_default != path_custom
-
-    def test_different_mapping_type_produces_different_path(self, local_cache, base_config):
-        config_nonparam = base_config.model_copy(update={"mapping_type": "nonparametric"})
-        path_param = local_cache.get_historical_path(base_config)
-        path_nonparam = local_cache.get_historical_path(config_nonparam)
-        assert path_param != path_nonparam
+# ---------------------------------------------------------------------------
+# obs_loc
+# ---------------------------------------------------------------------------
 
 
-class TestScenarioPath:
-    def test_goes_to_cache_scenarios_when_no_output_dir(self, local_cache, base_config):
-        path = local_cache.get_scenario_path(base_config)
-        assert local_cache.scratch_dir in path
-        assert "/ssp245/" in path
+class TestObsLoc:
+    def test_store_path_ends_with_icechunk(self, bound_cache):
+        assert bound_cache.obs_loc.store_path.endswith(".icechunk")
 
-    def test_goes_to_output_dir_when_specified(self, local_cache_with_output, base_config):
-        path = local_cache_with_output.get_scenario_path(base_config)
-        assert local_cache_with_output.output_dir in path
-        assert "/scenarios/" not in path
+    def test_store_path_encodes_gcm_obs_subset(self, bound_cache):
+        assert "CESM2-WACCM-ERA5-global.icechunk" in bound_cache.obs_loc.store_path
 
-    def test_path_structure(self, local_cache, base_config):
-        path = local_cache.get_scenario_path(base_config)
-        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
-        assert path.endswith("ssp245.icechunk")
+    def test_group_encodes_obs_and_variable(self, bound_cache):
+        assert bound_cache.obs_loc.group == "obs/tas"
 
-    def test_sai_scenario_name_lowercased_in_filename(self, local_cache, sai_config):
-        path = local_cache.get_scenario_path(sai_config)
-        assert "g6-1.5k.icechunk" in path
+    def test_store_path_contains_env(self, bound_cache):
+        assert "/qa/" in bound_cache.obs_loc.store_path
 
-    def test_different_varconfig_produces_different_path(self, local_cache, base_config):
-        vc_no_window = VariableConfig.for_variable("tas").model_copy(update={"do_windowing": False})
-        config_custom = base_config.model_copy(update={"variable_config": vc_no_window})
-        path_default = local_cache.get_scenario_path(base_config)
-        path_custom = local_cache.get_scenario_path(config_custom)
-        assert path_default != path_custom
-
-
-class TestIntermediatePaths:
-    """Tests for intermediate artifact paths (detrended, trend, debiased variants)."""
-
-    def test_detrended_scenario_in_scratch_dir(self, local_cache, base_config):
-        path = local_cache.get_detrended_scenario_path(base_config)
-        assert local_cache.scratch_dir in path
-
-    def test_detrended_scenario_path_structure(self, local_cache, base_config):
-        path = local_cache.get_detrended_scenario_path(base_config)
-        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
-        assert path.endswith("detrended.icechunk")
-
-    def test_trend_scenario_path_structure(self, local_cache, base_config):
-        path = local_cache.get_trend_scenario_path(base_config)
-        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
-        assert path.endswith("trend.icechunk")
-
-    def test_debiased_historical_path_structure(self, local_cache, base_config):
-        path = local_cache.get_debiased_historical_path(base_config)
-        assert "/historical/CESM2-WACCM/tas/r1i1p1f1/global/" in path
-        assert path.endswith("debiased_coarse.icechunk")
-
-    def test_debiased_scenario_path_structure(self, local_cache, base_config):
-        path = local_cache.get_debiased_scenario_path(base_config)
-        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
-        assert path.endswith("debiased_coarse.icechunk")
-
-    def test_debiased_retrended_scenario_path_structure(self, local_cache, base_config):
-        path = local_cache.get_debiased_retrended_scenario_path(base_config)
-        assert "/ssp245/CESM2-WACCM/tas/r1i1p1f1/global/" in path
-        assert path.endswith("debiased_retrended_coarse.icechunk")
-
-    def test_intermediate_paths_all_contain_varconfig_id(self, local_cache, base_config):
-        """All intermediate paths include the varconfig hash for reproducibility."""
-        varconfig_id = local_cache._get_varconfig_id(
-            base_config.variable_config, base_config.mapping_type
+    def test_regional_subset_id_in_store_path(self, tmp_path, regional_config):
+        cache = ArtifactCache.from_config(
+            regional_config,
+            PipelineOptions(scratch_dir=str(tmp_path / "cache")),
         )
-        for method in (
-            local_cache.get_detrended_scenario_path,
-            local_cache.get_trend_scenario_path,
-            local_cache.get_debiased_scenario_path,
-            local_cache.get_debiased_retrended_scenario_path,
-        ):
-            assert varconfig_id in method(base_config)
-        assert varconfig_id in local_cache.get_debiased_historical_path(base_config)
+        assert "lat-35.0to-22.0_lon16.0to33.0" in cache.obs_loc.store_path
 
-    def test_different_varconfig_produces_different_intermediate_paths(
-        self, local_cache, base_config, subtests
-    ):
-        vc_no_window = VariableConfig.for_variable("tas").model_copy(update={"do_windowing": False})
-        config_custom = base_config.model_copy(update={"variable_config": vc_no_window})
-        methods = [
-            "get_detrended_scenario_path",
-            "get_trend_scenario_path",
-            "get_debiased_historical_path",
-            "get_debiased_scenario_path",
-            "get_debiased_retrended_scenario_path",
+
+# ---------------------------------------------------------------------------
+# historical_loc
+# ---------------------------------------------------------------------------
+
+
+class TestHistoricalLoc:
+    def test_group_encodes_historical_variable_member(self, bound_cache):
+        loc = bound_cache.historical_loc("r1i1p1f1")
+        assert loc.group == "historical/tas/r1i1p1f1"
+
+    def test_group_changes_with_member(self, bound_cache, subtests):
+        for member in ("r1i1p1f1", "r12i1p1f2", "001"):
+            with subtests.test(member=member):
+                loc = bound_cache.historical_loc(member)
+                assert loc.group == f"historical/tas/{member}"
+
+    def test_uses_scratch_store(self, bound_cache):
+        loc = bound_cache.historical_loc("r1i1p1f1")
+        assert loc.store_path == bound_cache._scratch_store
+
+    def test_store_path_encodes_gcm_obs_subset(self, bound_cache):
+        loc = bound_cache.historical_loc("r1i1p1f1")
+        assert "CESM2-WACCM-ERA5-global.icechunk" in loc.store_path
+
+
+# ---------------------------------------------------------------------------
+# scenario_loc
+# ---------------------------------------------------------------------------
+
+
+class TestScenarioLoc:
+    def test_group_encodes_scenario_variable_member(self, bound_cache):
+        assert bound_cache.scenario_loc.group == "ssp245/tas/r1i1p1f1"
+
+    def test_sai_scenario_group(self, tmp_path, sai_config):
+        cache = ArtifactCache.from_config(sai_config, PipelineOptions(scratch_dir=str(tmp_path)))
+        assert cache.scenario_loc.group == "g6_1p5k/pr/r2i1p1f1"
+
+    def test_uses_output_store_when_set(self, bound_cache_with_output):
+        loc = bound_cache_with_output.scenario_loc
+        assert bound_cache_with_output.output_dir in loc.store_path
+
+    def test_uses_scratch_store_when_no_output_dir(self, bound_cache):
+        loc = bound_cache.scenario_loc
+        assert bound_cache.scratch_dir in loc.store_path
+
+
+# ---------------------------------------------------------------------------
+# intermediate locs
+# ---------------------------------------------------------------------------
+
+
+class TestIntermediateLocs:
+    def test_debiased_historical_group(self, bound_cache):
+        loc = bound_cache.debiased_historical_loc("r1i1p1f1")
+        assert loc.group == "debiased_historical/tas/r1i1p1f1"
+
+    def test_detrended_scenario_group(self, bound_cache):
+        loc = bound_cache.detrended_scenario_loc()
+        assert loc.group == "detrended_scenario/ssp245/tas/r1i1p1f1"
+
+    def test_trend_scenario_group(self, bound_cache):
+        loc = bound_cache.trend_scenario_loc()
+        assert loc.group == "trend_scenario/ssp245/tas/r1i1p1f1"
+
+    def test_debiased_scenario_group(self, bound_cache):
+        loc = bound_cache.debiased_scenario_loc()
+        assert loc.group == "debiased_scenario/ssp245/tas/r1i1p1f1"
+
+    def test_debiased_retrended_scenario_group(self, bound_cache):
+        loc = bound_cache.debiased_retrended_scenario_loc()
+        assert loc.group == "debiased_retrended_scenario/ssp245/tas/r1i1p1f1"
+
+    def test_all_intermediate_use_scratch_store(self, bound_cache):
+        locs = [
+            bound_cache.debiased_historical_loc("r1i1p1f1"),
+            bound_cache.detrended_scenario_loc(),
+            bound_cache.trend_scenario_loc(),
+            bound_cache.debiased_scenario_loc(),
+            bound_cache.debiased_retrended_scenario_loc(),
         ]
-        for name in methods:
-            with subtests.test(method=name):
-                method = getattr(local_cache, name)
-                assert method(base_config) != method(config_custom)
+        for loc in locs:
+            assert loc.store_path == bound_cache._scratch_store
 
-    def test_sai_scenario_lowercased_in_intermediate_paths(self, local_cache, sai_config, subtests):
-        for name in (
-            "get_detrended_scenario_path",
-            "get_trend_scenario_path",
-            "get_debiased_scenario_path",
-            "get_debiased_retrended_scenario_path",
-        ):
-            with subtests.test(method=name):
-                path = getattr(local_cache, name)(sai_config)
-                assert "/g6-1.5k/" in path
+    def test_sai_scenario_intermediate_group(self, tmp_path, sai_config):
+        cache = ArtifactCache.from_config(sai_config, PipelineOptions(scratch_dir=str(tmp_path)))
+        assert cache.detrended_scenario_loc().group == "detrended_scenario/g6_1p5k/pr/r2i1p1f1"
 
-    def test_detrended_and_trend_paths_differ(self, local_cache, base_config):
-        assert local_cache.get_detrended_scenario_path(
-            base_config
-        ) != local_cache.get_trend_scenario_path(base_config)
-
-    def test_debiased_scenario_and_retrended_paths_differ(self, local_cache, base_config):
-        assert local_cache.get_debiased_scenario_path(
-            base_config
-        ) != local_cache.get_debiased_retrended_scenario_path(base_config)
-
-    def test_regional_subset_id_in_intermediate_paths(self, local_cache, regional_config, subtests):
-        for name in (
-            "get_detrended_scenario_path",
-            "get_trend_scenario_path",
-            "get_debiased_historical_path",
-            "get_debiased_scenario_path",
-            "get_debiased_retrended_scenario_path",
-        ):
-            with subtests.test(method=name):
-                path = getattr(local_cache, name)(regional_config)
-                assert "/lat-35.0to-22.0_lon16.0to33.0/" in path
+    def test_intermediate_groups_all_differ(self, bound_cache):
+        groups = [
+            bound_cache.detrended_scenario_loc().group,
+            bound_cache.trend_scenario_loc().group,
+            bound_cache.debiased_scenario_loc().group,
+            bound_cache.debiased_retrended_scenario_loc().group,
+        ]
+        assert len(groups) == len(set(groups))
 
 
 # ---------------------------------------------------------------------------
@@ -400,21 +388,6 @@ class TestVarconfigId:
             vc, "nonparametric"
         )
 
-    def test_same_hash_across_variable_types(self, subtests):
-        """Each variable produces a stable, 8-char hash; variables with identical
-        VariableConfig (tas == tasmax) legitimately share a hash."""
-        for var in ("tas", "tasmax", "pr", "rsds"):
-            vc = VariableConfig.for_variable(var)
-            with subtests.test(variable=var):
-                h = ArtifactCache._get_varconfig_id(vc, "parametric")
-                assert len(h) == 8
-        # Variables with different VariableConfig produce different hashes
-        vc_tas = VariableConfig.for_variable("tas")
-        vc_pr = VariableConfig.for_variable("pr")
-        assert ArtifactCache._get_varconfig_id(
-            vc_tas, "parametric"
-        ) != ArtifactCache._get_varconfig_id(vc_pr, "parametric")
-
 
 # ---------------------------------------------------------------------------
 # exists() – local filesystem
@@ -422,63 +395,51 @@ class TestVarconfigId:
 
 
 class TestExists:
-    def test_nonexistent_path_returns_false(self, local_cache, tmp_path):
-        assert local_cache.exists(str(tmp_path / "missing.icechunk")) is False
+    def test_nonexistent_store_returns_false(self, bound_cache, tmp_path):
+        loc = StoreLocation(str(tmp_path / "missing.icechunk"), "obs/tas")
+        assert bound_cache.exists(loc) is False
 
-    def test_empty_directory_returns_false(self, local_cache, tmp_path):
-        empty_store = tmp_path / "empty.icechunk"
-        empty_store.mkdir()
-        assert local_cache.exists(str(empty_store)) is False
-
-    def test_icechunk_store_with_write_commit_returns_true(self, local_cache, tmp_path):
-        store = tmp_path / "valid.icechunk"
-        make_icechunk_store(str(store))
-        assert local_cache.exists(str(store)) is True
-
-    def test_icechunk_store_without_write_commit_returns_false(self, local_cache, tmp_path):
+    def test_store_without_matching_commit_returns_false(self, bound_cache, tmp_path):
         import icechunk
 
-        store = tmp_path / "empty_repo.icechunk"
-        storage = icechunk.local_filesystem_storage(path=str(store))
+        store_path = str(tmp_path / "empty_repo.icechunk")
+        storage = icechunk.local_filesystem_storage(path=store_path)
         icechunk.Repository.open_or_create(storage)
-        assert local_cache.exists(str(store)) is False
+        loc = StoreLocation(store_path, "obs/tas")
+        assert bound_cache.exists(loc) is False
 
-    def test_non_icechunk_exception_raises_cache_check_error(
-        self, local_cache, tmp_path, monkeypatch
-    ):
+    def test_store_with_matching_group_commit_returns_true(self, bound_cache, tmp_path):
+        loc = StoreLocation(str(tmp_path / "valid.icechunk"), "obs/tas")
+        make_icechunk_group(loc, branch=bound_cache.branch)
+        assert bound_cache.exists(loc) is True
+
+    def test_store_with_different_commit_message_returns_false(self, bound_cache, tmp_path):
+        loc = StoreLocation(str(tmp_path / "other.icechunk"), "obs/tas")
+        wrong_loc = StoreLocation(str(tmp_path / "other.icechunk"), "obs/pr")
+        make_icechunk_group(wrong_loc, branch=bound_cache.branch)
+        assert bound_cache.exists(loc) is False
+
+    def test_exists_returns_false_on_exception(self, bound_cache, tmp_path, monkeypatch):
         import icechunk
 
-        def raise_os_error(*a, **kw):
-            raise OSError("simulated network timeout")
+        def raise_error(*a, **kw):
+            raise RuntimeError("connection refused")
 
-        monkeypatch.setattr(icechunk.Repository, "open", raise_os_error)
-        with pytest.raises(CacheCheckError):
-            local_cache.exists(str(tmp_path / "any.icechunk"))
+        monkeypatch.setattr(icechunk.Repository, "open", raise_error)
+        loc = StoreLocation(str(tmp_path / "any.icechunk"), "obs/tas")
+        assert bound_cache.exists(loc) is False
 
-    def test_icechunk_error_without_not_found_message_raises_cache_check_error(
-        self, local_cache, tmp_path, monkeypatch
-    ):
-        import icechunk
+    def test_exists_via_ancestry_after_write(self, bound_cache, tmp_path):
+        loc = StoreLocation(str(tmp_path / "test.icechunk"), "obs/tas")
+        assert bound_cache.exists(loc) is False
+        make_icechunk_group(loc, branch=bound_cache.branch)
+        assert bound_cache.exists(loc) is True
 
-        def raise_other_icechunk_error(*a, **kw):
-            raise icechunk.IcechunkError("chunk read failure")
-
-        monkeypatch.setattr(icechunk.Repository, "open", raise_other_icechunk_error)
-        with pytest.raises(CacheCheckError):
-            local_cache.exists(str(tmp_path / "any.icechunk"))
-
-    def test_cache_check_error_chains_original_exception(self, local_cache, tmp_path, monkeypatch):
-        import icechunk
-
-        original = OSError("disk full")
-
-        def raise_original(*a, **kw):
-            raise original
-
-        monkeypatch.setattr(icechunk.Repository, "open", raise_original)
-        with pytest.raises(CacheCheckError) as exc_info:
-            local_cache.exists(str(tmp_path / "any.icechunk"))
-        assert exc_info.value.__cause__ is original
+    def test_sibling_group_does_not_satisfy_different_group_check(self, bound_cache, tmp_path):
+        obs_loc = StoreLocation(str(tmp_path / "store.icechunk"), "obs/tas")
+        hist_loc = StoreLocation(str(tmp_path / "store.icechunk"), "historical/tas/r1i1p1f1")
+        make_icechunk_group(obs_loc, branch=bound_cache.branch)
+        assert bound_cache.exists(hist_loc) is False
 
 
 # ---------------------------------------------------------------------------
@@ -487,58 +448,54 @@ class TestExists:
 
 
 class TestCheckDependencies:
-    def test_prepare_observations_has_no_deps(self, local_cache, base_config):
-        deps = local_cache.check_dependencies("prepare_observations", base_config)
+    def test_prepare_observations_has_no_deps(self, bound_cache, base_config):
+        deps = bound_cache.check_dependencies("prepare_observations", base_config)
         assert deps == {}
 
-    def test_fit_historical_requires_obs_only(self, local_cache, base_config):
-        deps = local_cache.check_dependencies("fit_historical", base_config)
+    def test_fit_historical_requires_obs_only(self, bound_cache, base_config):
+        deps = bound_cache.check_dependencies("fit_historical", base_config)
         assert set(deps.keys()) == {"obs_regridded"}
 
-    def test_transform_scenario_requires_obs_and_historical(self, local_cache, base_config):
-        deps = local_cache.check_dependencies("transform_scenario", base_config)
+    def test_transform_scenario_requires_obs_and_historical(self, bound_cache, base_config):
+        deps = bound_cache.check_dependencies("transform_scenario", base_config)
         assert set(deps.keys()) == {"obs_regridded", "historical"}
 
-    def test_dependency_values_are_bool_path_tuples(self, local_cache, base_config):
-        deps = local_cache.check_dependencies("transform_scenario", base_config)
-        for name, (exists, path) in deps.items():
+    def test_dependency_values_are_bool_storelocation_tuples(self, bound_cache, base_config):
+        deps = bound_cache.check_dependencies("transform_scenario", base_config)
+        for name, (exists, loc) in deps.items():
             assert isinstance(exists, bool), f"{name}: exists should be bool"
-            assert isinstance(path, str), f"{name}: path should be str"
+            assert isinstance(loc, StoreLocation), f"{name}: loc should be StoreLocation"
 
-    def test_unknown_stage_raises(self, local_cache, base_config):
+    def test_unknown_stage_raises(self, bound_cache, base_config):
         with pytest.raises(ValueError, match="Unknown stage"):
-            local_cache.check_dependencies("nonexistent_stage", base_config)
+            bound_cache.check_dependencies("nonexistent_stage", base_config)
 
-    def test_missing_deps_reported_as_false(self, local_cache, base_config):
-        deps = local_cache.check_dependencies("fit_historical", base_config)
-        exists, _path = deps["obs_regridded"]
-        assert exists is False  # nothing has been written to the local cache yet
+    def test_missing_deps_reported_as_false(self, bound_cache, base_config):
+        deps = bound_cache.check_dependencies("fit_historical", base_config)
+        exists, _loc = deps["obs_regridded"]
+        assert exists is False
 
 
 class TestValidateDependencies:
-    def test_raises_missing(self, local_cache, base_config):
+    def test_raises_missing(self, bound_cache, base_config):
         with pytest.raises(ValueError, match="Missing dependencies"):
-            local_cache.validate_dependencies("fit_historical", base_config)
+            bound_cache.validate_dependencies("fit_historical", base_config)
 
-    def test_passes_when_obs_store_exists(self, local_cache, base_config):
-        obs_path = local_cache.get_obs_path(base_config)
-        make_icechunk_store(obs_path)
-        # Should not raise
-        local_cache.validate_dependencies("fit_historical", base_config)
+    def test_passes_when_obs_group_exists(self, bound_cache, base_config):
+        make_icechunk_group(bound_cache.obs_loc, branch=bound_cache.branch)
+        bound_cache.validate_dependencies("fit_historical", base_config)
 
-    def test_raises_when_only_obs_present_for_scenario_stage(self, local_cache, base_config):
-        obs_path = local_cache.get_obs_path(base_config)
-        make_icechunk_store(obs_path)
+    def test_raises_when_only_obs_present_for_scenario_stage(self, bound_cache, base_config):
+        make_icechunk_group(bound_cache.obs_loc, branch=bound_cache.branch)
         with pytest.raises(ValueError, match="Missing dependencies"):
-            local_cache.validate_dependencies("transform_scenario", base_config)
+            bound_cache.validate_dependencies("transform_scenario", base_config)
 
-    def test_passes_when_all_scenario_deps_present(self, local_cache, base_config):
-        obs_path = local_cache.get_obs_path(base_config)
-        hist_path = local_cache.get_historical_path(base_config)
-        make_icechunk_store(obs_path)
-        make_icechunk_store(hist_path)
-        # Should not raise
-        local_cache.validate_dependencies("transform_scenario", base_config)
+    def test_passes_when_all_scenario_deps_present(self, bound_cache, base_config):
+        make_icechunk_group(bound_cache.obs_loc, branch=bound_cache.branch)
+        make_icechunk_group(
+            bound_cache.historical_loc(base_config.ensemble_member), branch=bound_cache.branch
+        )
+        bound_cache.validate_dependencies("transform_scenario", base_config)
 
 
 # ---------------------------------------------------------------------------
@@ -547,115 +504,33 @@ class TestValidateDependencies:
 
 
 class TestGetOutputPath:
-    def test_prepare_observations_returns_obs_path(self, local_cache, base_config):
-        expected = local_cache.get_obs_path(base_config)
-        assert local_cache.get_output_path("prepare_observations", base_config) == expected
+    def test_prepare_observations_returns_scratch_store_path(self, bound_cache):
+        path = bound_cache.get_output_path("prepare_observations", bound_cache.config)
+        assert path == bound_cache.obs_loc.store_path
 
-    def test_fit_historical_returns_historical_path(self, local_cache, base_config):
-        expected = local_cache.get_historical_path(base_config)
-        assert local_cache.get_output_path("fit_historical", base_config) == expected
+    def test_fit_historical_returns_scratch_store_path(self, bound_cache):
+        path = bound_cache.get_output_path(
+            "fit_historical", bound_cache.config, hist_member="r1i1p1f1"
+        )
+        assert path == bound_cache.historical_loc("r1i1p1f1").store_path
 
-    def test_transform_scenario_returns_scenario_path(self, local_cache, base_config):
-        expected = local_cache.get_scenario_path(base_config)
-        assert local_cache.get_output_path("transform_scenario", base_config) == expected
+    def test_transform_scenario_returns_output_store_path(self, bound_cache):
+        path = bound_cache.get_output_path("transform_scenario", bound_cache.config)
+        assert path == bound_cache.scenario_loc.store_path
 
-    def test_transform_scenario_without_scenario_field_raises(self, local_cache):
+    def test_transform_scenario_without_scenario_field_raises(self, tmp_path):
         config = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        cache = ArtifactCache.from_config(config, PipelineOptions(scratch_dir=str(tmp_path)))
         with pytest.raises(ValueError, match="scenario must be specified"):
-            local_cache.get_output_path("transform_scenario", config)
+            cache.get_output_path("transform_scenario", config)
 
-    def test_unknown_stage_raises(self, local_cache, base_config):
+    def test_unknown_stage_raises(self, bound_cache):
         with pytest.raises(ValueError, match="Unknown stage"):
-            local_cache.get_output_path("bad_stage", base_config)
+            bound_cache.get_output_path("bad_stage", bound_cache.config)
 
-    def test_all_valid_stages_return_strings(self, subtests, local_cache, base_config):
+    def test_all_valid_stages_return_icechunk_strings(self, subtests, bound_cache):
         for stage in ("prepare_observations", "fit_historical", "transform_scenario"):
             with subtests.test(stage=stage):
-                path = local_cache.get_output_path(stage, base_config)
+                path = bound_cache.get_output_path(stage, bound_cache.config)
                 assert isinstance(path, str)
                 assert path.endswith(".icechunk")
-
-
-# ---------------------------------------------------------------------------
-# list_artifacts & clear_cache – integration tests on local filesystem
-# ---------------------------------------------------------------------------
-
-
-class TestListAndClearArtifacts:
-    """Integration-style tests that populate a real local directory tree."""
-
-    @pytest.fixture
-    def populated_cache(
-        self, local_cache, base_config, sai_config, regional_config
-    ) -> ArtifactCache:
-        """Create one obs/historical/scenario artifact for each of three configs."""
-        for cfg in (base_config, sai_config, regional_config):
-            make_icechunk_store(local_cache.get_obs_path(cfg))
-            make_icechunk_store(local_cache.get_historical_path(cfg))
-            make_icechunk_store(local_cache.get_scenario_path(cfg))
-        return local_cache
-
-    def test_list_all_artifacts_returns_nine(self, populated_cache):
-        # scenarios are stored under their scenario name (e.g. ssp245/) not scenarios/,
-        # so list_artifacts() only discovers obs and historical stages (3 + 3 = 6)
-        assert len(populated_cache.list_artifacts()) == 6
-
-    def test_list_filters_by_stage(self, subtests, populated_cache):
-        # obs and historical stages each have 3 artifacts;
-        # scenarios are stored under their scenario name dir (e.g. ssp245/) not scenarios/
-        expected = {"obs": 3, "historical": 3, "scenarios": 0}
-        for stage, count in expected.items():
-            with subtests.test(stage=stage):
-                artifacts = populated_cache.list_artifacts(stage=stage)
-                assert len(artifacts) == count
-
-    def test_list_filters_by_gcm(self, populated_cache):
-        artifacts = populated_cache.list_artifacts(gcm="CESM2-WACCM")
-        # base_config + sai_config each contribute obs + historical = 4
-        # (scenario artifacts stored under ssp245/ / g6-1.5k/, not discoverable via stage filter)
-        assert len(artifacts) == 4
-        assert all("CESM2-WACCM" in a for a in artifacts)
-
-    def test_list_filters_by_variable(self, populated_cache):
-        artifacts = populated_cache.list_artifacts(variable="tas")
-        assert (
-            len(artifacts) == 2
-        )  # only base_config obs + historical (scenario not in stages search)
-        for path in artifacts:
-            assert "/tas/" in path
-
-    def test_list_filters_gcm_and_variable_combined(self, populated_cache):
-        artifacts = populated_cache.list_artifacts(gcm="CESM2-WACCM", variable="pr")
-        assert (
-            len(artifacts) == 2
-        )  # only sai_config obs + historical (scenario not in stages search)
-
-    def test_list_nonexistent_gcm_returns_empty(self, populated_cache):
-        assert populated_cache.list_artifacts(gcm="NONEXISTENT-GCM") == []
-
-    def test_list_is_sorted(self, populated_cache):
-        artifacts = populated_cache.list_artifacts()
-        assert artifacts == sorted(artifacts)
-
-    def test_clear_all_deletes_nine_artifacts(self, populated_cache):
-        deleted = populated_cache.clear_cache()
-        assert deleted == 9
-        assert populated_cache.list_artifacts() == []
-
-    def test_clear_single_stage_leaves_others_intact(self, populated_cache):
-        obs_count = len(populated_cache.list_artifacts(stage="obs"))
-        deleted = populated_cache.clear_cache(stage="obs")
-        assert deleted == obs_count
-        assert populated_cache.list_artifacts(stage="obs") == []
-        # historical untouched; scenarios stored under scenario-name dirs, not found via stage filter
-        assert len(populated_cache.list_artifacts(stage="historical")) == 3
-        assert len(populated_cache.list_artifacts(stage="scenarios")) == 0
-
-    def test_clear_filters_by_gcm(self, populated_cache):
-        deleted = populated_cache.clear_cache(gcm="MIROC-ES2H")
-        assert deleted == 3  # regional_config only
-        # CESM2-WACCM obs + historical remain (4); scenario artifacts not found via stage filter
-        assert len(populated_cache.list_artifacts(gcm="CESM2-WACCM")) == 4
-
-    def test_clear_returns_zero_for_empty_cache(self, local_cache):
-        assert local_cache.clear_cache() == 0
