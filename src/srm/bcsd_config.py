@@ -363,7 +363,7 @@ class PipelineOptions(pydantic_settings.BaseSettings):
     """
     Operational settings for the BCSD pipeline.
 
-    Covers infrastructure (storage paths, environment, version) and runtime
+    Covers infrastructure (storage paths, environment, branch) and runtime
     flags (verbosity, rechunking, post-processing). These do not affect
     computation results and are separate from BCSDConfig run identity.
 
@@ -381,9 +381,9 @@ class PipelineOptions(pydantic_settings.BaseSettings):
         default="qa",
         description="Environment name (qa, production). Separates cache/outputs by deployment stage.",
     )
-    version: str = Field(
+    branch: str = Field(
         default=_cache_version,
-        description="Version identifier for cache/output path namespacing. Defaults to the installed package version (e.g. '1.0.post3'). Override with BCSD_VERSION env var.",
+        description="icechunk branch for output writes. Defaults to the installed package version (e.g. 'v1.2.0'). Each version starts a fresh branch; bump the package to get a clean slate. Override with BCSD_BRANCH env var.",
     )
     verbose: bool = Field(True, description="Enable verbose logging")
     rechunk_workflow: bool = Field(
@@ -422,9 +422,9 @@ class CacheConfig(BaseModel):
         False, description="Force recomputation even if cached artifacts exist"
     )
     environment: str = Field("qa", description="Environment for cache namespace (qa, production)")
-    version: str = Field(
+    branch: str = Field(
         _cache_version,
-        description="Version identifier for cache path namespacing. Defaults to the installed package version.",
+        description="icechunk branch for output writes. Defaults to the installed package version.",
     )
     check_integrity: bool = Field(
         True, description="Verify cached artifacts are valid before using"

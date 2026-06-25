@@ -15,6 +15,7 @@ import traceback
 import pydantic
 import xarray as xr
 
+from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
 from srm.qaqc import DatasetChecker, ValidationResult
 
@@ -48,12 +49,6 @@ XFAIL_CHECKS: dict[tuple[str, str, str], str] = {}
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
-
-_SCENARIO_TO_GROUP: dict[str, str] = {
-    "historical": "historical",
-    "SSP245": "ssp245",
-    "G6-1.5K": "g6_1p5k",
-}
 
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
 # CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
@@ -237,7 +232,7 @@ class DatasetValidator(pydantic.BaseModel):
         if err:
             return None, err
         assert dt is not None
-        group = _SCENARIO_TO_GROUP.get(self.scenario)
+        group = SCENARIO_TO_GROUP.get(self.scenario)
         if group is None:
             return None, self._result(
                 CheckStatus.SKIP, f"No group mapping for scenario {self.scenario!r}"
@@ -370,19 +365,21 @@ class DatasetValidator(pydantic.BaseModel):
             return err
         assert dt is not None
 
-        if "g6_1p5k" not in dt.children:
+        g6_group = SCENARIO_TO_GROUP["G6-1.5K"]
+        ssp245_group = SCENARIO_TO_GROUP["SSP245"]
+        if g6_group not in dt.children:
             return self._result(
                 CheckStatus.SKIP,
-                f"Group 'g6_1p5k' not present in datatree for {self.gcm}.",
+                f"Group {g6_group!r} not present in datatree for {self.gcm}.",
             )
-        if "ssp245" not in dt.children:
+        if ssp245_group not in dt.children:
             return self._result(
                 CheckStatus.SKIP,
-                f"Group 'ssp245' not present in datatree for {self.gcm}.",
+                f"Group {ssp245_group!r} not present in datatree for {self.gcm}.",
             )
 
-        g6_ds = dt["g6_1p5k"].to_dataset()
-        ssp245_ds = dt["ssp245"].to_dataset()
+        g6_ds = dt[g6_group].to_dataset()
+        ssp245_ds = dt[ssp245_group].to_dataset()
 
         g6_vars = {str(v) for v in g6_ds.data_vars}
         ssp245_vars = {str(v) for v in ssp245_ds.data_vars}

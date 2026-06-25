@@ -14,7 +14,7 @@ import xarray as xr
 import zarr
 from obstore.store import from_url
 
-from srm.config import VarSpec, VarStandards, init_repo
+from srm.config import SCENARIO_TO_GROUP, VarSpec, VarStandards, init_repo
 from srm.input_data.etl_utils import (
     CMORIZE_hurs,
     _display_dry_run_result,
@@ -50,12 +50,6 @@ MIROC_VARIABLES = ["hurs", "pr", "rsds", "tas", "tasmax", "tasmin"]
 BUCKET = "carbonplan-srm"
 UNIFIED_PREFIX = "input/processed/miroc-es2h.icechunk"
 
-SCENARIO_TO_GROUP: dict[str, str] = {
-    "historical": "historical",
-    "esgf-ssp245": "esgf_ssp245",
-    "ssp245": "ssp245",
-    "G6-1.5K": "g6_1p5k",
-}
 
 NETCDF_PREFIX: dict[str, str] = {
     "historical": "input/tensor/MIROC-ES2H/historical/netcdf",
