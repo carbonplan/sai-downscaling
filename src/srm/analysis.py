@@ -11,7 +11,7 @@ from srm.cache import ArtifactCache
 from srm.utils import lon_to_180
 
 
-def load_cached_data(s3_uri: str) -> xr.Dataset:
+def load_cached_data(s3_uri: str, branch: str = "main") -> xr.Dataset:
     """
     Load an icechunk-backed xarray Dataset from an S3 URI.
 
@@ -20,6 +20,8 @@ def load_cached_data(s3_uri: str) -> xr.Dataset:
     s3_uri : str
         Full S3 URI to an icechunk repository, e.g.
         ``s3://my-bucket/path/to/repo``.
+    branch : str
+        icechunk branch to read from. Defaults to ``"main"``.
 
     Returns
     -------
@@ -29,7 +31,7 @@ def load_cached_data(s3_uri: str) -> xr.Dataset:
     parts = s3_uri.split("/")
     storage = icechunk.s3_storage(bucket=parts[2], prefix="/".join(parts[3:]), from_env=True)
     repo = icechunk.Repository.open(storage)
-    session = repo.readonly_session(branch="main")
+    session = repo.readonly_session(branch=branch)
     ds = xr.open_dataset(session.store, engine="zarr", chunks={})
     return ds
 
@@ -72,15 +74,18 @@ class BCSDRun:
 
     @cached_property
     def obs(self) -> xr.Dataset:
-        return load_cached_data(self._cache.obs_loc.store_path)
+        return load_cached_data(self._cache.obs_loc.store_path, branch=self._cache.branch)
 
     @cached_property
     def historical(self) -> xr.Dataset:
-        return load_cached_data(self._cache.historical_loc(self._hist_member).store_path)
+        return load_cached_data(
+            self._cache.historical_loc(self._hist_member).store_path,
+            branch=self._cache.branch,
+        )
 
     @cached_property
     def scenario(self) -> xr.Dataset:
-        return load_cached_data(self._cache.scenario_loc.store_path)
+        return load_cached_data(self._cache.scenario_loc.store_path, branch=self._cache.branch)
 
     def get_location_data(self, lat, lon):
         """
