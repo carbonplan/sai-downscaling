@@ -9,9 +9,8 @@ import xarray as xr
 
 from srm import catalog
 from srm.cache import StoreLocation
-from srm.config import _ensure_root_group
+from srm.config import SCENARIO_TO_GROUP, _ensure_root_group
 from srm.datasets import BaseDataset, Datatree
-from srm.validation import _SCENARIO_TO_GROUP
 
 
 def make_icechunk_group(loc: StoreLocation, branch: str = "main") -> None:
@@ -72,7 +71,7 @@ _DATATREE_PARAMS = [
     )
     for entry in catalog.datasets.values()
     if isinstance(entry, Datatree)
-    for group in _SCENARIO_TO_GROUP.values()
+    for group in SCENARIO_TO_GROUP.values()
 ]
 
 

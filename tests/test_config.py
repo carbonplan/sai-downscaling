@@ -19,6 +19,10 @@ def test_scenario_to_group_completeness():
         "historical",
         "pangeo-historical",
         "SSP245",
+        "ssp245",
         "G6-1.5K",
+        "g6_1p5k",
         "esgf-SSP245",
+        "esgf-ssp245",
+        "esgf_ssp245",
     }

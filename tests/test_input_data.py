@@ -7,10 +7,10 @@ import pytest
 if TYPE_CHECKING:
     from srm.catalog import Dataset
 
+from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import Datatree, VirtualDataset, catalog
 from srm.qaqc import VAR_SPATIAL_RANGES, DatasetChecker as DatasetValidator
 from srm.validation import (
-    _SCENARIO_TO_GROUP,
     GCM_OPTIONS,
     SCENARIO_OPTIONS,
     CheckStatus,
@@ -204,7 +204,7 @@ class TestSpatialConsistency:
             pytest.skip(f"No unified datatree found for {gcm}")
 
         dt = entry.to_xarray()
-        available_groups = [g for g in _SCENARIO_TO_GROUP.values() if g in dt.children]
+        available_groups = [g for g in SCENARIO_TO_GROUP.values() if g in dt.children]
         if len(available_groups) < 2:
             pytest.skip(f"Fewer than 2 scenario groups found for {gcm}")
 
@@ -235,7 +235,7 @@ class TestEnsembleSpread:
         if gcm_entry is None or not isinstance(gcm_entry, Datatree):
             pytest.skip(f"No unified datatree found for {gcm}")
 
-        group = _SCENARIO_TO_GROUP.get(scenario)
+        group = SCENARIO_TO_GROUP.get(scenario)
         if group is None:
             pytest.skip(f"No group mapping for scenario {scenario}")
 
