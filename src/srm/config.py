@@ -39,6 +39,13 @@ SCENARIO_TO_GROUP: dict[str, str] = {
     "esgf_ssp245": "esgf_ssp245",  # group-name pass-through
 }
 
+GROUP_TO_SCENARIO: dict[str, str] = {
+    "historical": "historical",
+    "ssp245": "SSP245",
+    "g6_1p5k": "G6-1.5K",
+    "esgf_ssp245": "esgf-SSP245",
+}
+
 
 @dataclass
 class ClusterConfig:
