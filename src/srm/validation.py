@@ -548,13 +548,8 @@ OUTPUT_CHECKS: list[tuple[str, str, dict]] = [
 ]
 
 
-def _open_output_datatree(
-    uri: str,
-    branch: str = "main",
-    tag: str | None = None,
-    snapshot_id: str | None = None,
-) -> xr.DataTree:
-    """Open an icechunk output store as a DataTree at a given branch, tag, or snapshot."""
+def _open_output_datatree(uri: str, branch: str = "main", tag: str | None = None) -> xr.DataTree:
+    """Open an icechunk output store as a DataTree at a given branch or tag."""
     import icechunk
     from cloudpathlib import S3Path
 
@@ -565,8 +560,6 @@ def _open_output_datatree(
     repo = icechunk.Repository.open(storage)
     if tag is not None:
         session = repo.readonly_session(tag=tag)
-    elif snapshot_id is not None:
-        session = repo.readonly_session(snapshot_id=snapshot_id)
     else:
         session = repo.readonly_session(branch=branch)
     return xr.open_datatree(session.store, engine="zarr", chunks="auto", consolidated=False)
@@ -576,14 +569,12 @@ def validate_output_store(
     store: str | xr.DataTree,
     branch: str = "main",
     tag: str | None = None,
-    snapshot_id: str | None = None,
     scenarios: list[str] | None = None,
     variables: list[str] | None = None,
 ) -> list[CheckResult]:
     """Run OUTPUT_CHECKS against every populated leaf of an output datatree store.
 
-    ``store`` may be an S3 URI string or an already-open DataTree. ``branch``, ``tag``,
-    and ``snapshot_id`` mirror icechunk's ``readonly_session`` parameters and are ignored
+    ``store`` may be an S3 URI string or an already-open DataTree. ``branch`` or ``tag`` mirror icechunk's ``readonly_session`` parameters and are ignored
     when ``store`` is a DataTree. Each CheckResult reuses the ``gcm`` field for the store
     label and the ``scenario`` field for the leaf path.
 
@@ -594,7 +585,7 @@ def validate_output_store(
     if isinstance(store, str):
         from cloudpathlib import S3Path
 
-        tree = _open_output_datatree(store, branch=branch, tag=tag, snapshot_id=snapshot_id)
+        tree = _open_output_datatree(store, branch=branch, tag=tag)
         label = S3Path(store).name or store
     else:
         tree = store

@@ -1072,9 +1072,6 @@ def validate_output(
     ),
     branch: str | None = typer.Option(None, "--branch", help="Icechunk branch to read."),
     tag: str | None = typer.Option(None, "--tag", help="Icechunk tag to read."),
-    snapshot_id: str | None = typer.Option(
-        None, "--snapshot-id", help="Icechunk snapshot ID to read."
-    ),
     scenario: list[str] | None = typer.Option(
         None, "--scenario", help="Scenario(s) to validate (repeatable). Defaults to all."
     ),
@@ -1101,11 +1098,11 @@ def validate_output(
         validate_output_store,
     )
 
-    provided = sum(x is not None for x in [branch, tag, snapshot_id])
+    provided = sum(x is not None for x in [branch, tag])
     if provided != 1:
         raise typer.BadParameter(
-            "Exactly one of --branch, --tag, or --snapshot-id is required.",
-            param_hint="'--branch' / '--tag' / '--snapshot-id'",
+            "Exactly one of --branch or --tag is required.",
+            param_hint="'--branch' / '--tag'",
         )
 
     # Translate/validate filters to on-disk group names (SSP245 -> ssp245; variables are
@@ -1120,7 +1117,6 @@ def validate_output(
             store_uri,
             branch=branch,
             tag=tag,
-            snapshot_id=snapshot_id,
             scenarios=scenarios,
             variables=variables,
         )
