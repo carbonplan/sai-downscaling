@@ -206,8 +206,6 @@ class BCSDConfig(pydantic_settings.BaseSettings):
 
     def model_post_init(self, __context) -> None:
         """Post-initialization validation and auto-population"""
-        if self.obs_dataset == "GDEX-GMF-icechunk" and self.variable != "tas":
-            raise ValueError(f"GDEX-GMF-icechunk only supports 'tas'. Got '{self.variable}'.")
         if self.variable_config is None:
             self.variable_config = VariableConfig.for_variable(self.variable)
 
