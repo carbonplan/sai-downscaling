@@ -25,8 +25,9 @@ from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import ArtifactCache
-from srm.datasets import BaseDataset, catalog as _catalog
+from srm.cache import ArtifactCache, StoreLocation
+from srm.config import _ensure_root_group, _icechunk_storage_for_path
+from srm.datasets import catalog as _catalog
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
     detrend,
@@ -40,6 +41,7 @@ from srm.downscaling_utils import (
     subset_space,
 )
 from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_encoding
+from srm.utils import get_variable
 
 logger = logging.getLogger(__name__)
 
@@ -350,61 +352,103 @@ class BCSDPipeline:
                 parts.append(f"ssp245_bridge={self._ssp245_member!r}")
             logger.info("Lineage resolved — %s", "  ".join(parts))
 
-    @staticmethod
-    def _icechunk_storage(path: str):
-        """Create icechunk Storage from an S3 or local path."""
-        if path.startswith("s3://"):
-            path_no_scheme = path[len("s3://") :]
-            bucket, _, prefix = path_no_scheme.partition("/")
-            return icechunk.s3_storage(bucket=bucket, prefix=prefix)
-        else:
-            return icechunk.local_filesystem_storage(path=path)
-
-    def _build_output_attrs(
-        self,
-        source_dataset: BaseDataset | None,
-    ) -> dict:
-        """Adds attrs to output datasets"""
-        dataset_attrs = {
-            "author": "CarbonPlan",
-            "processing": "BCSD (quantile mapping bias correction + spatial downscaling)",
-            "bias_correction_method": self.config.mapping_type,
-            "downscaling_method": self.config.downscaling_method,
-            "train_period": f"{self.config.train_period_start}-{self.config.train_period_end}",
-            "observation_dataset": "ERA5",
-            "creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
-            "srm_version": importlib.metadata.version("srm"),
-            "model": self.config.gcm,
-            "scenario": self.config.scenario or "historical",
-            "variable": self.config.variable,
-            "ensemble_member": self.config.ensemble_member,
-            "historical_ensemble_member": self._hist_member,
-            "ssp245_ensemble_member": self._ssp245_member,
+    def _build_output_attrs(self) -> dict:
+        """Build dataset-level attributes for pipeline output artifacts."""
+        version = importlib.metadata.version("srm")
+        return {
+            # CF-standard — flat
+            "Conventions": "CF-1.8",
+            "institution": "CarbonPlan",
+            "history": (
+                f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}: "
+                f"BCSD downscaling by srm v{version}"
+            ),
+            # Pipeline provenance — namespaced
+            "srm_downscaling:version": version,
+            "srm_downscaling:gcm": self.config.gcm,
+            "srm_downscaling:scenario": self.config.scenario or "historical",
+            "srm_downscaling:variable": self.config.variable,
+            "srm_downscaling:ensemble_member": self.config.ensemble_member,
+            "srm_downscaling:historical_ensemble_member": self._hist_member,
+            "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
+            "srm_downscaling:observation_dataset": self.config.obs_dataset,
+            "srm_downscaling:bias_correction_method": self.config.mapping_type,
+            "srm_downscaling:downscaling_method": self.config.downscaling_method,
+            "srm_downscaling:train_period": (
+                f"{self.config.train_period_start}-{self.config.train_period_end}"
+            ),
+            "srm_downscaling:config_hash": self.config.config_hash,
+            "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
-
-        return dataset_attrs
 
     def _write_to_icechunk(
         self,
         da: xr.DataArray,
-        path: str,
-        commit_message: str,
+        loc: StoreLocation,
         encoding: dict | None = None,
         dataset_attrs: dict | None = None,
+        force: bool = False,
     ) -> str:
-        """Write a DataArray to an icechunk store and commit atomically."""
-        storage = self._icechunk_storage(path)
-        repo = icechunk.Repository.open_or_create(storage)
-        session = repo.writable_session("main")
-        ds = da.to_dataset()
-        if dataset_attrs is not None:
-            ds.attrs = dataset_attrs
-        # fix incompatable dask chunk sizes in encoding
-        for coord in list(ds.coords):
-            ds[coord].encoding.pop("chunks", None)
-            ds[coord].encoding.pop("shards", None)
-        to_icechunk(ds, session, mode="w", encoding=encoding or {})
-        return session.commit(commit_message, rebase_with=icechunk.ConflictDetector())
+        """Write a DataArray to an icechunk group and commit atomically.
+
+        Retries up to 3 times on RebaseFailedError. Concurrent VMs writing to
+        sibling groups race to create their shared parent zarr group for the
+        first time, producing a structural conflict. On retry the parent exists
+        and the commit succeeds cleanly.
+        """
+        branch = self.cache._branch_for()
+        storage = _icechunk_storage_for_path(loc.store_path)
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                repo = icechunk.Repository.open_or_create(storage)
+                root_snapshot_id = _ensure_root_group(repo)
+                if branch not in repo.list_branches():
+                    repo.create_branch(branch, root_snapshot_id)
+                session = repo.writable_session(branch)
+                ds = da.to_dataset()
+                if dataset_attrs is not None:
+                    ds.attrs = dataset_attrs
+                # Drop non-index auxiliary coords that leak from intermediate ops:
+                # dayofyear - broadcast residual from .sel(dayofyear=...) in bias correction
+                # ensemble_member - string scalar from raw GCM source (already in attrs),
+                #   causes NotImplementedError when opening with chunks="auto" (object dtype)
+                _drop = [c for c in ("dayofyear", "ensemble_member") if c in ds.coords]
+                if _drop:
+                    ds = ds.drop_vars(_drop)
+                # fix incompatible dask chunk sizes in encoding
+                for coord in list(ds.coords):
+                    ds[coord].encoding.pop("chunks", None)
+                    ds[coord].encoding.pop("shards", None)
+                to_icechunk(ds, session, mode="w", encoding=encoding or {}, group=loc.group)
+                commit_id = session.commit(loc.group, rebase_with=icechunk.ConflictDetector())
+                break
+            except icechunk.RebaseFailedError:
+                if attempt == max_attempts - 1:
+                    raise
+                logger.warning(
+                    "Rebase conflict on %s (attempt %d/%d), retrying",
+                    loc.group,
+                    attempt + 1,
+                    max_attempts,
+                )
+                time.sleep(0.5 * (attempt + 1))
+
+        if force:
+            history = list(repo.ancestry(branch=branch))
+            if len(history) > 2:
+                keep_from = history[1].written_at
+                n_expired = len(repo.expire_snapshots(older_than=keep_from))
+                gc_result = repo.garbage_collect(keep_from)
+                logger.info(
+                    "GC after force overwrite of %s: expired %d snapshots, collected %s",
+                    loc.group,
+                    n_expired,
+                    gc_result,
+                )
+
+        return commit_id
 
     @staticmethod
     def _build_ocean_mask(da: xr.DataArray) -> xr.DataArray:
@@ -428,18 +472,21 @@ class BCSDPipeline:
             template, coast[["geom"]], all_touched=True, engine="rusterize", xdim="lon", ydim="lat"
         ).drop_vars("spatial_ref", errors="ignore")
 
-    def _open_from_icechunk(self, path: str) -> xr.Dataset:
-        """Open a dataset from an icechunk store."""
-        storage = self._icechunk_storage(path)
+    def _open_from_icechunk(self, loc: StoreLocation) -> xr.Dataset:
+        """Open a zarr group from an icechunk store."""
+        branch = self.cache._branch_for()
+        storage = _icechunk_storage_for_path(loc.store_path)
         repo = icechunk.Repository.open(storage)
-        session = repo.readonly_session("main")
-        return xr.open_dataset(session.store, engine="zarr", consolidated=False, chunks="auto")
+        session = repo.readonly_session(branch=branch)
+        return xr.open_dataset(
+            session.store, engine="zarr", consolidated=False, chunks="auto", group=loc.group
+        )
 
     def prepare_observations(self, force: bool = False) -> str:
         """
         Stage 1: Regrid observations to GCM grid.
 
-        This stage loads ERA5 observations and regrids them to the coarse GCM
+        This stage loads observations and regrids them to the coarse GCM
         grid using local area averaging. The result is cached and reused across
         all ensemble members and scenarios for this GCM/variable combination.
 
@@ -457,25 +504,25 @@ class BCSDPipeline:
         Notes
         -----
         This stage does not depend on prior stage artifacts. Cache-hit behavior
-        is based on artifact existence at ``self.cache.obs_path``.
+        is based on artifact existence at ``self.cache.obs_loc``.
         """
-        output_path = self.cache.obs_path
+        loc = self.cache.obs_loc
 
         # Check whether regridded dataset already exists, if so (and you don't
         # have the force flag enabled which allows overwrite) use the existing dataset.
         # Note: this does not check anything about the data at the output_path -
         # if it is corrupted in any way or doesn't match the attributes of the
         # config it won't fail.
-        if self.cache.exists(output_path) and not force:
-            logger.info("✓ Using cached observations: %s", output_path)
-            return output_path
+        if self.cache.exists(loc) and not force:
+            logger.info("✓ Using cached observations: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
 
         logger.info(
             "Computing observation regridding for %s/%s", self.config.gcm, self.config.variable
         )
 
         t0 = time.perf_counter()
-        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
         model_grid = get_experiment(
             gcm=self.config.gcm, scenario="historical", var=self.config.variable
@@ -503,23 +550,28 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         obs_coarse.name = self.config.variable
-        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
-        dataset_attrs = self._build_output_attrs(hist_dataset)
         self._write_to_icechunk(
-            obs_coarse, output_path, "write complete", dataset_attrs=dataset_attrs
+            obs_coarse, loc, dataset_attrs=self._build_output_attrs(), force=force
         )
-        logger.info("✓ Cached observations: %s (%.2fs)", output_path, time.perf_counter() - t0)
+        logger.info(
+            "✓ Cached observations: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
 
-        return output_path
+        return loc.store_path
 
     def _load_gcm_obs(self) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
         """Load obs_coarse (from cache), obs_fine, and model_hist, subsetted to training period."""
         deps = self.cache.check_dependencies(
             "fit_historical", self.config, hist_member=self._hist_member
         )
-        obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
+        obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[
+            self.config.variable
+        ]  # [1] is StoreLocation
 
-        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
         model_hist = get_historical_experiment(
@@ -615,11 +667,11 @@ class BCSDPipeline:
         which is then spatially disaggregated to fine resolution.
         """
 
-        output_path = self.cache.get_historical_path(self.config, hist_member=self._hist_member)
+        loc = self.cache.historical_loc(self._hist_member)
 
-        if self.cache.exists(output_path) and not force:
-            logger.info("✓ Using cached historical: %s", output_path)
-            return output_path
+        if self.cache.exists(loc) and not force:
+            logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
 
         logger.info(
             "Computing historical downscaling for %s/%s/%s",
@@ -633,18 +685,21 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        dtr_config = self.config.make_config_for_variable("dtr")
-        tasmax_config = self.config.make_config_for_variable("tasmax")
-        debiased_dtr_path = self.cache.get_debiased_historical_path(dtr_config)
-        debiased_tasmax_path = self.cache.get_debiased_historical_path(tasmax_config)
+        debiased_dtr_loc = self.cache.debiased_historical_loc(self._hist_member, variable="dtr")
+        debiased_tasmax_loc = self.cache.debiased_historical_loc(
+            self._hist_member, variable="tasmax"
+        )
         missing = [
-            (var, path)
-            for var, path in [("dtr", debiased_dtr_path), ("tasmax", debiased_tasmax_path)]
-            if not self.cache.exists(path)
+            (var, dep_loc)
+            for var, dep_loc in [
+                ("dtr", debiased_dtr_loc),
+                ("tasmax", debiased_tasmax_loc),
+            ]
+            if not self.cache.exists(dep_loc)
         ]
         if missing:
             missing_vars = " and ".join(v for v, _ in missing)
-            missing_paths = "\n  ".join(f"{v}: {p}" for v, p in missing)
+            missing_paths = "\n  ".join(f"{v}: {l.store_path}/{l.group}" for v, l in missing)
             raise ValueError(
                 f"fit_historical_tasmin requires debiased historical outputs for dtr and tasmax, "
                 f"but the following are missing: {missing_vars}.\n"
@@ -652,19 +707,22 @@ class BCSDPipeline:
                 f"Run fit_historical with save_intermediate=True for dtr and tasmax "
                 f"before running fit_historical_tasmin."
             )
-        debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
-        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_path)[tasmax_config.variable]
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
         model_hist_debiased = debiased_tasmax - debiased_dtr
         logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
 
         if self.options.save_intermediate:
             t0 = time.perf_counter()
-            debiased_path = self.cache.get_debiased_historical_path(self.config)
+            debiased_loc = self.cache.debiased_historical_loc(self._hist_member)
             model_hist_debiased.name = self.config.variable
             model_hist_debiased.attrs = model_hist.attrs
-            self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
+            self._write_to_icechunk(model_hist_debiased, debiased_loc)
             logger.info(
-                "✓ Saved debiased historical: %s (%.2fs)", debiased_path, time.perf_counter() - t0
+                "✓ Saved debiased historical: %s/%s (%.2fs)",
+                debiased_loc.store_path,
+                debiased_loc.group,
+                time.perf_counter() - t0,
             )
 
         t0 = time.perf_counter()
@@ -675,18 +733,21 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         model_hist_downscaled.name = self.config.variable
-        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
-        dataset_attrs = self._build_output_attrs(hist_dataset)
         self._write_to_icechunk(
             da=model_hist_downscaled,
-            path=output_path,
-            commit_message="write complete",
+            loc=loc,
             encoding=make_encoding(self.config.variable),
-            dataset_attrs=dataset_attrs,
+            dataset_attrs=self._build_output_attrs(),
+            force=force,
         )
-        logger.info("✓ Cached historical: %s (%.2fs)", output_path, time.perf_counter() - t0)
+        logger.info(
+            "✓ Cached historical: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
 
-        return output_path
+        return loc.store_path
 
     def fit_historical(self, force: bool = False) -> str:
         """
@@ -731,11 +792,11 @@ class BCSDPipeline:
         """
         self.cache.validate_dependencies("fit_historical", self.config)
 
-        output_path = self.cache.get_historical_path(self.config, hist_member=self._hist_member)
+        loc = self.cache.historical_loc(self._hist_member)
 
-        if self.cache.exists(output_path) and not force:
-            logger.info("✓ Using cached historical: %s", output_path)
-            return output_path
+        if self.cache.exists(loc) and not force:
+            logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
 
         logger.info(
             "Computing historical downscaling for %s/%s/%s",
@@ -754,12 +815,15 @@ class BCSDPipeline:
 
         if self.options.save_intermediate:
             t0 = time.perf_counter()
-            debiased_path = self.cache.get_debiased_historical_path(self.config)
+            debiased_loc = self.cache.debiased_historical_loc(self._hist_member)
             model_hist_debiased.name = self.config.variable
             model_hist_debiased.attrs = model_hist.attrs
-            self._write_to_icechunk(model_hist_debiased, debiased_path, "write complete")
+            self._write_to_icechunk(model_hist_debiased, debiased_loc)
             logger.info(
-                "✓ Saved debiased historical: %s (%.2fs)", debiased_path, time.perf_counter() - t0
+                "✓ Saved debiased historical: %s/%s (%.2fs)",
+                debiased_loc.store_path,
+                debiased_loc.group,
+                time.perf_counter() - t0,
             )
 
         t0 = time.perf_counter()
@@ -770,18 +834,21 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         model_hist_downscaled.name = self.config.variable
-        hist_dataset = _catalog.datasets.get(f"{self.config.gcm}-historical-icechunk")
-        dataset_attrs = self._build_output_attrs(hist_dataset)
         self._write_to_icechunk(
             da=model_hist_downscaled,
-            path=output_path,
-            commit_message="write complete",
+            loc=loc,
             encoding=make_encoding(self.config.variable),
-            dataset_attrs=dataset_attrs,
+            dataset_attrs=self._build_output_attrs(),
+            force=force,
         )
-        logger.info("✓ Cached historical: %s (%.2fs)", output_path, time.perf_counter() - t0)
+        logger.info(
+            "✓ Cached historical: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
 
-        return output_path
+        return loc.store_path
 
     def _load_ssp245_bridge(self) -> xr.DataArray:
         """Load the SSP245 bridge timeseries for SAI detrending.
@@ -792,9 +859,8 @@ class BCSDPipeline:
         GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
         dataset is converted via to_proleptic_gregorian before concat.
         """
-        ssp245_cat_key = f"{self.config.gcm}-SSP245-icechunk"
-        primary_ds = _catalog.get(ssp245_cat_key).to_xarray()
-        primary = primary_ds[self.config.variable].sel(ensemble_member=self._ssp245_member)
+        primary = get_experiment(self.config.gcm, "SSP245", self.config.variable)
+        primary = primary.sel(ensemble_member=self._ssp245_member)
 
         if self._ssp245_esgf_member is None:
             return primary
@@ -808,9 +874,11 @@ class BCSDPipeline:
         from srm.utils import to_proleptic_gregorian
 
         esgf_ds = to_proleptic_gregorian(
-            _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
+            _catalog.get(self.config.gcm).to_xarray(group="esgf_ssp245")
         )
-        esgf_bridge = esgf_ds[self.config.variable].sel(ensemble_member=self._ssp245_esgf_member)
+        esgf_bridge = get_variable(esgf_ds, self.config.variable).sel(
+            ensemble_member=self._ssp245_esgf_member
+        )
         esgf_gap = esgf_bridge.isel(time=(esgf_bridge.time.dt.year < primary_start_year).values)
 
         if esgf_gap.time.size == 0:
@@ -866,9 +934,11 @@ class BCSDPipeline:
         deps = self.cache.check_dependencies(
             "transform_scenario", self.config, hist_member=self._hist_member
         )
-        obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[self.config.variable]
+        obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[
+            self.config.variable
+        ]  # [1] is StoreLocation
 
-        obs_fine = get_obs(var=self.config.variable)
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
         obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
 
         model_hist = get_historical_experiment(
@@ -890,9 +960,9 @@ class BCSDPipeline:
                 from srm.utils import to_proleptic_gregorian
 
                 esgf_ds = to_proleptic_gregorian(
-                    _catalog.get(f"{self.config.gcm}-esgf-SSP245-icechunk").to_xarray()
+                    _catalog.get(self.config.gcm).to_xarray(group="esgf_ssp245")
                 )
-                esgf_data = esgf_ds[self.config.variable].sel(
+                esgf_data = get_variable(esgf_ds, self.config.variable).sel(
                     ensemble_member=self._ssp245_esgf_member
                 )
                 esgf_pre = esgf_data.isel(
@@ -939,7 +1009,11 @@ class BCSDPipeline:
         train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
         obs_coarse = obs_coarse.sel(time=train_slice)
         obs_fine = obs_fine.sel(time=train_slice)
-        model_hist = model_hist.sel(time=train_slice)
+        model_hist = model_hist.sel(
+            time=slice(
+                f"{self.config.train_period_start}", f"{self.config.predict_period_start - 1}"
+            )
+        )
         model_scenario = model_scenario.sel(
             time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
         )
@@ -1002,27 +1076,33 @@ class BCSDPipeline:
 
         if self.options.save_intermediate:
             t0 = time.perf_counter()
-            detrended_path = self.cache.get_detrended_scenario_path(self.config)
+            detrended_loc = self.cache.detrended_scenario_loc()
             scenario_detrended.name = self.config.variable
             self._write_to_icechunk(
                 rechunk(scenario_detrended, pattern="full_space"),
-                detrended_path,
-                "write complete",
+                detrended_loc,
             )
             logger.info(
-                "✓ Saved detrended scenario: %s (%.2fs)", detrended_path, time.perf_counter() - t0
+                "✓ Saved detrended scenario: %s/%s (%.2fs)",
+                detrended_loc.store_path,
+                detrended_loc.group,
+                time.perf_counter() - t0,
             )
 
             t0 = time.perf_counter()
-            trend_path = self.cache.get_trend_scenario_path(self.config)
+            trend_loc = self.cache.trend_scenario_loc()
             scenario_trend.name = self.config.variable
             scenario_trend.attrs = model_scenario.attrs
             self._write_to_icechunk(
                 rechunk(scenario_trend, pattern="full_space"),
-                trend_path,
-                "write complete",
+                trend_loc,
             )
-            logger.info("✓ Saved scenario trend: %s (%.2fs)", trend_path, time.perf_counter() - t0)
+            logger.info(
+                "✓ Saved scenario trend: %s/%s (%.2fs)",
+                trend_loc.store_path,
+                trend_loc.group,
+                time.perf_counter() - t0,
+            )
 
         return scenario_detrended, scenario_trend
 
@@ -1123,11 +1203,11 @@ class BCSDPipeline:
                 "mapping_type must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
 
-        # remove any negative values introduced by the bias correction
-        if self.config.variable in ["pr", "rsds"]:
-            debiased_np = np.clip(debiased_np, min=0)
-        elif self.config.variable in ["hurs"]:
-            debiased_np = np.clip(debiased_np, min=0, max=105)
+        if self.options.clip_values:
+            var = self.config.variable
+            if var in self.options.clip_bounds:
+                bounds = self.options.clip_bounds[var]
+                debiased_np = np.clip(debiased_np, a_min=bounds.min, a_max=bounds.max)
 
         return xr.DataArray(
             data=debiased_np,
@@ -1154,11 +1234,11 @@ class BCSDPipeline:
             "transform_scenario", self.config, hist_member=self._hist_member
         )
 
-        output_path = self.cache.scenario_path
+        loc = self.cache.scenario_loc
 
-        if self.cache.exists(output_path) and not force:
-            logger.info("✓ Using cached scenario: %s", output_path)
-            return output_path
+        if self.cache.exists(loc) and not force:
+            logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
 
         logger.info(
             "Computing scenario downscaling for %s/%s/%s/%s",
@@ -1175,18 +1255,19 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        dtr_config = self.config.make_config_for_variable("dtr")
-        tasmax_config = self.config.make_config_for_variable("tasmax")
-        debiased_dtr_path = self.cache.get_debiased_retrended_scenario_path(dtr_config)
-        debiased_tasmax_path = self.cache.get_debiased_retrended_scenario_path(tasmax_config)
+        debiased_dtr_loc = self.cache.debiased_retrended_scenario_loc(variable="dtr")
+        debiased_tasmax_loc = self.cache.debiased_retrended_scenario_loc(variable="tasmax")
         missing = [
-            (var, path)
-            for var, path in [("dtr", debiased_dtr_path), ("tasmax", debiased_tasmax_path)]
-            if not self.cache.exists(path)
+            (var, dep_loc)
+            for var, dep_loc in [
+                ("dtr", debiased_dtr_loc),
+                ("tasmax", debiased_tasmax_loc),
+            ]
+            if not self.cache.exists(dep_loc)
         ]
         if missing:
             missing_vars = " and ".join(v for v, _ in missing)
-            missing_paths = "\n  ".join(f"{v}: {p}" for v, p in missing)
+            missing_paths = "\n  ".join(f"{v}: {l.store_path}/{l.group}" for v, l in missing)
             raise ValueError(
                 f"transform_scenario_tasmin requires debiased retrended scenario outputs for dtr and tasmax, "
                 f"but the following are missing: {missing_vars}.\n"
@@ -1194,20 +1275,21 @@ class BCSDPipeline:
                 f"Run transform_scenario with save_intermediate=True for dtr and tasmax "
                 f"before running transform_scenario_tasmin."
             )
-        debiased_dtr = self._open_from_icechunk(debiased_dtr_path)[dtr_config.variable]
-        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_path)[tasmax_config.variable]
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
         scenario_debiased = debiased_tasmax - debiased_dtr
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 
         if self.options.save_intermediate:
             t0 = time.perf_counter()
-            debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
+            debiased_loc = self.cache.debiased_retrended_scenario_loc()
             scenario_debiased.name = self.config.variable
             scenario_debiased.attrs = model_scenario.attrs
-            self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+            self._write_to_icechunk(scenario_debiased, debiased_loc)
             logger.info(
-                "✓ Saved debiased retrended scenario: %s (%.2fs)",
-                debiased_path,
+                "✓ Saved debiased retrended scenario: %s/%s (%.2fs)",
+                debiased_loc.store_path,
+                debiased_loc.group,
                 time.perf_counter() - t0,
             )
 
@@ -1223,20 +1305,21 @@ class BCSDPipeline:
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
         scenario_downscaled.name = self.config.variable
-        scenario_dataset = _catalog.datasets.get(
-            f"{self.config.gcm}-{self.config.scenario}-icechunk"
-        )
-        dataset_attrs = self._build_output_attrs(scenario_dataset)
         self._write_to_icechunk(
             scenario_downscaled,
-            output_path,
-            "write complete",
-            dataset_attrs=dataset_attrs,
+            loc,
+            dataset_attrs=self._build_output_attrs(),
             encoding=make_encoding(self.config.variable),
+            force=force,
         )
-        logger.info("✓ Saved scenario output: %s (%.2fs)", output_path, time.perf_counter() - t0)
+        logger.info(
+            "✓ Saved scenario output: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
 
-        return output_path
+        return loc.store_path
 
     def transform_scenario(self, force: bool = False) -> str:
         """
@@ -1279,11 +1362,11 @@ class BCSDPipeline:
             "transform_scenario", self.config, hist_member=self._hist_member
         )
 
-        output_path = self.cache.scenario_path
+        loc = self.cache.scenario_loc
 
-        if self.cache.exists(output_path) and not force:
-            logger.info("✓ Using cached scenario: %s", output_path)
-            return output_path
+        if self.cache.exists(loc) and not force:
+            logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
 
         logger.info(
             "Computing scenario downscaling for %s/%s/%s/%s",
@@ -1311,11 +1394,14 @@ class BCSDPipeline:
 
         if self.options.save_intermediate:
             t0 = time.perf_counter()
-            debiased_path = self.cache.get_debiased_scenario_path(self.config)
+            debiased_loc = self.cache.debiased_scenario_loc()
             scenario_debiased.name = self.config.variable
-            self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+            self._write_to_icechunk(scenario_debiased, debiased_loc)
             logger.info(
-                "✓ Saved debiased scenario: %s (%.2fs)", debiased_path, time.perf_counter() - t0
+                "✓ Saved debiased scenario: %s/%s (%.2fs)",
+                debiased_loc.store_path,
+                debiased_loc.group,
+                time.perf_counter() - t0,
             )
 
         if scenario_trend is not None:
@@ -1329,13 +1415,14 @@ class BCSDPipeline:
 
         if self.options.save_intermediate:
             t0 = time.perf_counter()
-            debiased_path = self.cache.get_debiased_retrended_scenario_path(self.config)
+            debiased_retrended_loc = self.cache.debiased_retrended_scenario_loc()
             scenario_debiased.name = self.config.variable
             scenario_debiased.attrs = model_scenario.attrs
-            self._write_to_icechunk(scenario_debiased, debiased_path, "write complete")
+            self._write_to_icechunk(scenario_debiased, debiased_retrended_loc)
             logger.info(
-                "✓ Saved debiased retrended scenario: %s (%.2fs)",
-                debiased_path,
+                "✓ Saved debiased retrended scenario: %s/%s (%.2fs)",
+                debiased_retrended_loc.store_path,
+                debiased_retrended_loc.group,
                 time.perf_counter() - t0,
             )
 
@@ -1351,20 +1438,21 @@ class BCSDPipeline:
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
         scenario_downscaled.name = self.config.variable
-        scenario_dataset = _catalog.datasets.get(
-            f"{self.config.gcm}-{self.config.scenario}-icechunk"
-        )
-        dataset_attrs = self._build_output_attrs(scenario_dataset)
         self._write_to_icechunk(
             scenario_downscaled,
-            output_path,
-            "write complete",
-            dataset_attrs=dataset_attrs,
+            loc,
+            dataset_attrs=self._build_output_attrs(),
             encoding=make_encoding(self.config.variable),
+            force=force,
         )
-        logger.info("✓ Saved scenario output: %s (%.2fs)", output_path, time.perf_counter() - t0)
+        logger.info(
+            "✓ Saved scenario output: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
 
-        return output_path
+        return loc.store_path
 
     def run_full_pipeline(self, force: bool = False) -> str:
         """

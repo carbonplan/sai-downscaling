@@ -1,17 +1,116 @@
 import json
 import logging
+from collections.abc import Callable, Iterable
+from concurrent.futures import CancelledError
+from typing import Any
 
+import boto3
 import click
 import dask
 import icechunk
 import xarray as xr
-from obspec_utils.readers import EagerStoreReader
+from obspec_utils.readers import BlockStoreReader
 from obspec_utils.registry import ObjectStoreRegistry
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 from virtualizarr.parsers import HDFParser
 
 from srm.config import VarSpec
 
 logger = logging.getLogger(__name__)
+console = Console()
+
+
+def setup_logging() -> None:
+    """Configure root logger with a Rich handler backed by the shared console."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=console, show_path=False, rich_tracebacks=True)],
+    )
+
+
+def get_aws_creds() -> dict:
+    """Return AWS credentials and region from the active boto3 session."""
+    sesh = boto3.Session()
+    creds = sesh.get_credentials().get_frozen_credentials()
+    result = {
+        "region": sesh.region_name,
+        "aws_access_key_id": creds.access_key,
+        "aws_secret_access_key": creds.secret_key,
+    }
+    if creds.token:
+        result["aws_session_token"] = creds.token
+    return result
+
+
+def run_with_cluster_retry[T](
+    make_client: Callable[[], Any],
+    process_one: Callable[[T], None],
+    items: Iterable[T],
+    *,
+    max_retries: int = 3,
+    log: logging.Logger | None = None,
+) -> None:
+    """Call ``process_one`` for each item, recreating the cluster on connection loss.
+
+    If the dask scheduler connection is lost mid-computation (e.g. a spot
+    instance reclaim), ``CancelledError`` propagates from ``process_one``.
+    On that error the cluster is recreated via ``make_client`` and the same
+    item is retried, up to ``max_retries`` attempts.
+    """
+    log = log or logger
+    client = make_client()
+    try:
+        for item in items:
+            for attempt in range(1, max_retries + 1):
+                try:
+                    process_one(item)
+                    break
+                except CancelledError:
+                    if attempt == max_retries:
+                        raise
+                    log.warning(
+                        "%s attempt=%d/%d: cluster connection lost, "
+                        "recreating cluster and retrying",
+                        item,
+                        attempt,
+                        max_retries,
+                    )
+                    try:
+                        client.shutdown()
+                    except OSError:
+                        pass
+                    client = make_client()
+    finally:
+        try:
+            client.shutdown()
+        except OSError:
+            pass
+
+
+def make_fixed_ensemble_preprocess(member: str):
+    """Return a preprocess function that stamps a known ensemble member onto every file."""
+
+    def fn(ds: xr.Dataset, url: str | None = None) -> xr.Dataset:  # noqa: ARG001
+        return ds.expand_dims({"ensemble_member": [member]})
+
+    return fn
+
+
+def compute_wind_speed(
+    ds_u: xr.Dataset, ds_v: xr.Dataset, u_var_name: str, v_var_name: str
+) -> xr.Dataset:
+    import xclim
+
+    winds = xclim.indicators.convert.wind_speed_from_vector(
+        uas=ds_u[u_var_name], vas=ds_v[v_var_name]
+    )
+    return xr.merge(winds)[["sfcWind"]]
 
 
 def get_var_specs(catalog_entry) -> dict[str, VarSpec]:
@@ -36,7 +135,23 @@ def trim_negative_precipitation(ds: xr.Dataset) -> xr.Dataset:
     return ds
 
 
-def determine_write_mode(repo: icechunk.Repository, branch: str = "main") -> str:
+def determine_write_mode(
+    repo: icechunk.Repository, branch: str = "main", group: str | None = None
+) -> str:
+    """Pick "w" for a fresh target, "a" otherwise.
+
+    With group: "w" only when the group does not exist yet (never "w" on an
+    existing group — that would clobber it while sibling groups share the repo).
+    """
+    if group is not None:
+        import zarr
+
+        session = repo.readonly_session(branch)
+        try:
+            zarr.open_group(session.store, path=group, mode="r")
+            return "a"
+        except (FileNotFoundError, KeyError):
+            return "w"
     history = list(repo.ancestry(branch=branch))
     if len(history) <= 1:
         return "w"
@@ -117,37 +232,81 @@ def update_variable_attrs(ds: xr.Dataset, var_specs: dict[str, VarSpec]) -> xr.D
 def write_dataset_to_icechunk(
     ds: xr.Dataset,
     session,
-    encoding: dict = None,
-    shards: dict = None,
-    commit_message: str = None,
+    encoding: dict | None = None,
+    shards: dict | None = None,
+    commit_message: str | None = None,
     write_mode: str = "a",
+    repo: icechunk.Repository | None = None,
+    group: str | None = None,
 ):
     """
     Write dataset to icechunk with optional rechunking.
 
     For virtual datasets: set encoding=None and shards=None
     For materialized datasets: provide encoding and shards for rechunking
+
+    If repo is provided, old snapshots are expired and garbage collected after
+    each commit, keeping storage bounded when variables are rewritten.
+
+    group, if given, writes into a zarr sub-group (e.g. ``"ssp245"``).
     """
+    import zarr
     from icechunk.xarray import to_icechunk
 
     if shards is not None:
         ds = ds.chunk(shards)
-    to_icechunk(ds, session, encoding=encoding, mode=write_mode)
+
+    is_overwrite = False
+    if write_mode == "a" and encoding:
+        # zarr rejects encoding specs for arrays that already exist in append mode;
+        # existing arrays keep the encoding they were written with.
+        target = zarr.open_group(session.store, path=group)
+        existing = set(target.array_keys())
+        is_overwrite = bool(set(encoding.keys()) & existing)
+        encoding = {k: v for k, v in encoding.items() if k not in existing}
+
+    to_icechunk(ds, session, encoding=encoding, mode=write_mode, group=group)
 
     if commit_message:
-        session.commit(commit_message)
+        # Concurrent jobs (e.g. coiled batch, one per scenario) writing disjoint
+        # groups/arrays to the same repo race on commit; rebase resolves
+        # non-overlapping changes. True overlaps raise after max_commit_attempts.
+        max_commit_attempts = 5
+        for attempt in range(1, max_commit_attempts + 1):
+            try:
+                session.commit(commit_message)
+                break
+            except icechunk.ConflictError:
+                if attempt == max_commit_attempts:
+                    raise
+                logger.info(
+                    "commit conflict (attempt %d/%d), rebasing", attempt, max_commit_attempts
+                )
+                session.rebase(icechunk.ConflictDetector())
+
+    if repo is not None and commit_message and is_overwrite:
+        console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
+        history = list(repo.ancestry(branch="main"))
+        if len(history) > 2:
+            # keep one rollback point: expire everything older than the second-to-last commit
+            keep_from = history[1].written_at
+            n_expired = len(repo.expire_snapshots(older_than=keep_from))
+            gc_result = repo.garbage_collect(keep_from)
+            logger.info("GC: expired %d snapshots, collected %s", n_expired, gc_result)
+    if repo is not None:
+        console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
 
 
 def open_netcdf_from_s3(store, path: str, drop_variables: list[str] | None = None) -> xr.Dataset:
-    """Open a NetCDF file on S3 by reading it fully into memory."""
-    reader = EagerStoreReader(store, path)
+    """Open a NetCDF file on S3 via a block-cached reader (64 × 4 MB LRU, no full-file load)."""
+    reader = BlockStoreReader(store, path, block_size=4_194_304)
     return xr.open_dataset(reader, engine="h5netcdf", chunks="auto", drop_variables=drop_variables)
 
 
-def variable_in_store(repo: icechunk.Repository, variable: str) -> bool:
+def variable_in_store(repo: icechunk.Repository, variable: str, group: str | None = None) -> bool:
     try:
         session = repo.readonly_session("main")
-        existing = xr.open_dataset(session.store, engine="zarr", decode_times=False)
+        existing = xr.open_dataset(session.store, engine="zarr", group=group, decode_times=False)
         return variable in existing.data_vars
     except Exception:
         return False
@@ -180,11 +339,15 @@ def write_variable_to_icechunk(
     shards: dict,
     overwrite: bool,
     var_in_store: bool,
+    group: str | None = None,
+    commit_message: str | None = None,
 ) -> None:
     """Write one variable to icechunk with shared overwrite semantics.
 
     overwrite + existing variable -> in-place r+ update (no encoding change);
     otherwise append/write with fresh chunk/shard encoding.
+    group, if given, targets a zarr sub-group within the repo (e.g. ``"ssp245"``).
+    commit_message, if given, overrides the default ``"{scenario}: {variable}"`` message.
     """
     session = repo.writable_session("main")
     if overwrite and var_in_store:
@@ -192,16 +355,21 @@ def write_variable_to_icechunk(
     elif overwrite:
         write_mode = "a"
     else:
-        write_mode = determine_write_mode(repo)
+        write_mode = determine_write_mode(repo, group=group)
     encoding = build_encoding_dict(ds, chunks, shards)
-    logger.info("variable=%s writing to icechunk write_mode=%s", variable, write_mode)
+    logger.info(
+        "variable=%s group=%s writing to icechunk write_mode=%s", variable, group, write_mode
+    )
     write_dataset_to_icechunk(
         ds,
         session,
         encoding=None if overwrite else encoding,
         shards=shards,
-        commit_message=f"{scenario}: {variable}" + (" (overwrite)" if overwrite else ""),
+        commit_message=commit_message
+        or (f"{scenario}: {variable}" + (" (overwrite)" if overwrite else "")),
         write_mode=write_mode,
+        repo=repo,
+        group=group,
     )
 
 
@@ -260,18 +428,73 @@ def virtualize_and_combine(
     )
 
 
-def load_dtr_from_store(bucket: str, prefix: str, region: str = "us-west-2") -> xr.Dataset:
-    """Load DTR (diurnal temperature range) from an existing icechunk store.
+def _init_repo_from_uri(uri: str):
+    """Open or create an icechunk repository at a local path or ``s3://`` URI.
 
-    Computes dtr = tasmax - tasmin. tasmax and tasmin must already be present
-    in the store before calling this.
+    Parameters
+    ----------
+    uri : str
+        Either a local filesystem path (e.g. ``/tmp/test``) or an S3 URI
+        of the form ``s3://bucket/prefix``.
+
+    Returns
+    -------
+    tuple[icechunk.Repository, icechunk.Session]
+        The repository and a writable session on ``main``.
     """
-    storage = icechunk.s3_storage(bucket=bucket, prefix=prefix, region=region)
-    repo = icechunk.Repository.open(storage)
-    session = repo.readonly_session("main")
-    ds = xr.open_dataset(session.store, engine="zarr", chunks="auto")
-    if "tasmax" not in ds or "tasmin" not in ds:
-        raise ValueError("tasmax and tasmin must be processed before dtr")
-    dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")
-    dtr.attrs["units"] = "K"
-    return dtr.to_dataset()
+    if uri.startswith("s3://"):
+        parts = uri[len("s3://") :].split("/", 1)
+        bucket, prefix = parts[0], parts[1] if len(parts) > 1 else ""
+        storage = icechunk.s3_storage(bucket=bucket, prefix=prefix, region="us-west-2")
+    else:
+        storage = icechunk.local_filesystem_storage(uri)
+    repo = icechunk.Repository.open_or_create(storage)
+    return repo, repo.writable_session("main")
+
+
+def _display_dry_run_result(ds: xr.Dataset, variable: str, store: str | None = None) -> None:
+    """Compute a dry-run dataset and render a summary panel to the console.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        The (possibly lazy) dataset to compute and summarise.
+    variable : str
+        Label used in the panel title.
+    store : str or None, optional
+        Destination URI shown in the panel subtitle. When ``None`` the subtitle
+        reads ``(display only, no write)``.
+    """
+    logger.info("Computing sample result for %s...", variable)
+    ds = ds.compute()
+
+    table = Table(show_header=True, header_style="bold green")
+    table.add_column("Variable", style="cyan")
+    table.add_column("Shape")
+    table.add_column("Dims")
+    table.add_column("Units", style="yellow")
+    table.add_column("Min", justify="right", style="blue")
+    table.add_column("Max", justify="right", style="blue")
+
+    for var_name in ds.data_vars:
+        da = ds[var_name]
+        table.add_row(
+            var_name,
+            str(da.shape),
+            " × ".join(da.dims),
+            da.attrs.get("units", "—"),
+            f"{float(da.min()):.4g}",
+            f"{float(da.max()):.4g}",
+        )
+
+    time_start = str(ds.time.values[0])[:10]
+    time_end = str(ds.time.values[-1])[:10]
+    subtitle = f"[dim]→ {store}[/dim]" if store else "[dim](display only, no write)[/dim]"
+    console.print(
+        Panel(
+            table,
+            title=f"[bold green]✓ {variable}[/] | {time_start} → {time_end}",
+            subtitle=subtitle,
+            border_style="green",
+        )
+    )

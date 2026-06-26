@@ -5,8 +5,18 @@ import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio access
 import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 
-from srm import catalog
 from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
+from srm.config import SCENARIO_TO_GROUP
+from srm.datasets import catalog
+from srm.utils import get_variable
+
+_dt_cache: dict[str, xr.DataTree] = {}
+
+
+def _gcm_datatree(gcm: str) -> xr.DataTree:
+    if gcm not in _dt_cache:
+        _dt_cache[gcm] = catalog.get(gcm).to_xarray()
+    return _dt_cache[gcm]
 
 
 def subset_space(
@@ -147,7 +157,7 @@ def get_experiment(
     ensemble_member: str | None = None,
 ):
     """
-    Load in a GCM simulation.
+    Load a GCM simulation variable from the unified per-GCM icechunk store.
 
     Parameters
     ----------
@@ -157,57 +167,43 @@ def get_experiment(
         Scenario of experiment, e.g. "SSP245"
     var : str
         Variable to load, e.g. "tas"
+    coord_bounds_list : list, optional
+        Spatial subset bounds [lat_min, lat_max, lon_min, lon_max].
+    ensemble_member : str, optional
+        Ensemble member to select.
 
     Returns
     -------
     xr.DataArray
-        Xarray data array for requested simulation
-
-    Raises
-    ------
-    ValueError
-        If invalid ensemble member requested
-
+        Xarray data array for the requested simulation.
     """
-    cat_name = gcm + "-" + scenario + "-icechunk"
-    dataset = catalog.get(cat_name)
-    # confirm that the requested ensemble member is available
-    if ensemble_member is not None and dataset.ensemble_members is not None:
-        if ensemble_member not in dataset.ensemble_members:
-            raise ValueError(
-                f"Invalid ensemble_member '{ensemble_member}' for '{cat_name}'. "
-                f"Valid options: {dataset.ensemble_members}"
-            )
-
-    ds_scenario = dataset.to_xarray()
-
-    ds_scenario = ds_scenario.proj.assign_crs(spatial_ref="epsg:4326")
-
-    da = ds_scenario[var]
-
+    group = SCENARIO_TO_GROUP[scenario]
+    ds = _gcm_datatree(gcm)[group].to_dataset()
+    ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
+    da = get_variable(ds, var)
+    if ensemble_member is not None:
+        da = da.sel(ensemble_member=ensemble_member)
     if coord_bounds_list is not None:
-        print("Subsetting spatial domain")
         da = subset_space(da, coord_bounds_list)
-
     return da
 
 
 def get_historical_experiment(gcm: str, member: str, var: str) -> xr.DataArray:
-    """Load a single historical ensemble member, routing to the correct source dataset.
-    CESM2-WACCM has a two historical dataset options, so we route to the pangeo-prefixed store for r*i*p*f* members,
-    while others use the standard store path."""
-    use_pangeo = gcm == "CESM2-WACCM" and member.startswith("r")
-    key = f"pangeo-{gcm}-historical-icechunk" if use_pangeo else f"{gcm}-historical-icechunk"
-    ds = catalog.get(key).to_xarray()
+    """Load a single historical ensemble member from the unified per-GCM icechunk store.
+
+    The unified historical group merges both NCAR and pangeo member families for CESM2-WACCM,
+    so no per-member routing is needed.
+    """
+    ds = _gcm_datatree(gcm)["historical"].to_dataset()
     ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
-    return ds[var].sel(ensemble_member=member)
+    return get_variable(ds, var).sel(ensemble_member=member)
 
 
-def get_obs(var: str = "tas", coord_bounds_list: list | None = None):
-    era5 = catalog.get("ERA5").to_xarray()
-    era5 = era5.proj.assign_crs(spatial_ref="epsg:4326")
+def get_obs(var: str = "tas", coord_bounds_list: list | None = None, dataset_name: str = "ERA5"):
+    obs = catalog.get(dataset_name).to_xarray()
+    obs = obs.proj.assign_crs(spatial_ref="epsg:4326")
 
-    da = era5[var]
+    da = get_variable(obs, var)
 
     if coord_bounds_list is not None:
         da = subset_space(da, coord_bounds_list)

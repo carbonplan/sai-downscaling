@@ -192,6 +192,11 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         description="Quantile mapping method for bias correction. See MappingType for valid values.",
     )
 
+    obs_dataset: str = Field(
+        "ERA5",
+        description="Catalog key for observation dataset (e.g. 'ERA5', 'GDEX-GMF-icechunk').",
+    )
+
     model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 
     # Variable-specific settings (auto-populated)
@@ -201,7 +206,8 @@ class BCSDConfig(pydantic_settings.BaseSettings):
 
     def model_post_init(self, __context) -> None:
         """Post-initialization validation and auto-population"""
-        # Auto-populate variable_config if not provided
+        if self.obs_dataset == "GDEX-GMF-icechunk" and self.variable != "tas":
+            raise ValueError(f"GDEX-GMF-icechunk only supports 'tas'. Got '{self.variable}'.")
         if self.variable_config is None:
             self.variable_config = VariableConfig.for_variable(self.variable)
 
@@ -350,11 +356,16 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         )
 
 
+class VariableClipBounds(BaseModel):
+    min: float | None = None
+    max: float | None = None
+
+
 class PipelineOptions(pydantic_settings.BaseSettings):
     """
     Operational settings for the BCSD pipeline.
 
-    Covers infrastructure (storage paths, environment, version) and runtime
+    Covers infrastructure (storage paths, environment, branch) and runtime
     flags (verbosity, rechunking, post-processing). These do not affect
     computation results and are separate from BCSDConfig run identity.
 
@@ -372,9 +383,9 @@ class PipelineOptions(pydantic_settings.BaseSettings):
         default="qa",
         description="Environment name (qa, production). Separates cache/outputs by deployment stage.",
     )
-    version: str = Field(
+    branch: str = Field(
         default=_cache_version,
-        description="Version identifier for cache/output path namespacing. Defaults to the installed package version (e.g. '1.0.post3'). Override with BCSD_VERSION env var.",
+        description="icechunk branch for output writes. Defaults to the installed package version (e.g. 'v1.2.0'). Each version starts a fresh branch; bump the package to get a clean slate. Override with BCSD_BRANCH env var.",
     )
     verbose: bool = Field(True, description="Enable verbose logging")
     rechunk_workflow: bool = Field(
@@ -386,6 +397,18 @@ class PipelineOptions(pydantic_settings.BaseSettings):
     save_intermediate: bool = Field(
         False,
         description="Save intermediate artifacts (e.g. detrended data, quantile mapping results) to cache for debugging and analysis",
+    )
+    clip_values: bool = Field(
+        True,
+        description="Apply post-bias-correction clipping",
+    )
+    clip_bounds: dict[str, VariableClipBounds] = Field(
+        default={
+            "pr": VariableClipBounds(min=0.0),
+            "rsds": VariableClipBounds(min=0.0),
+            "hurs": VariableClipBounds(min=0.0, max=105.0),
+        },
+        description="Per-variable clip bounds applied when clip_values=True.",
     )
 
     model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
@@ -401,9 +424,9 @@ class CacheConfig(BaseModel):
         False, description="Force recomputation even if cached artifacts exist"
     )
     environment: str = Field("qa", description="Environment for cache namespace (qa, production)")
-    version: str = Field(
+    branch: str = Field(
         _cache_version,
-        description="Version identifier for cache path namespacing. Defaults to the installed package version.",
+        description="icechunk branch for output writes. Defaults to the installed package version.",
     )
     check_integrity: bool = Field(
         True, description="Verify cached artifacts are valid before using"

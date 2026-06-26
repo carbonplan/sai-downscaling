@@ -1,59 +1,62 @@
 """
-Input data validation checks for BCSD pipeline datasets.
-
-Checks are organized into the following groups:
-- integrity: checks for data completeness and correctness, such as missing values, duplicates
-- lineage: verifies that all lineage-resolved parent members exist in their stores
+Input data and output store validation checks for the BCSD pipeline.
 
 Use :class:`DatasetValidator` to run checks for a given (gcm, scenario) pair.
+Use :func:`validate_output_store` to run checks against a post-consolidation output datatree.
 """
 
 import enum
 import hashlib
+import inspect
 import traceback
-from typing import ClassVar
+from typing import get_args
 
 import pydantic
 import xarray as xr
 
+from srm.bcsd_config import VariableName
+from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
+from srm.qaqc import DatasetChecker, ValidationResult
 
-# Blocking: crash or silent wrong output — abort the pipeline run.
-# Warning:  wrong data ingested — emit a warning but continue.
-# Info:     incomplete provenance — informational only.
 BLOCKING_CHECKS = {
     "ensemble_member_dim",
     "g6_not_identical_to_ssp245",
     "lineage_member_availability",
     "temporal_coverage",
+    "lat_valid",
+    "lon_valid",
+    "time_axis",
+    "calendar",
+    "negative_precip",
+    "spatial_range_tas",
+    "spatial_range_tasmax",
+    "spatial_range_tasmin",
+    "spatial_range_pr",
+    "spatial_range_rsds",
 }
-WARNING_CHECKS: set[str] = set()
-INFO_CHECKS: set[str] = set()
-
-# (gcm, scenario, check_id) → human-readable reason for the expected failure.
-# A FAIL result for a key present here is downgraded to XFAIL (non-blocking).
-# If the check unexpectedly passes it becomes XPASS (also non-blocking, but flagged).
-XFAIL_CHECKS: dict[tuple[str, str, str], str] = {}
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
+# On-disk variable group names; canonical (lowercase), so no translation needed.
+VARIABLE_OPTIONS = get_args(VariableName)
 
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
 # CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
 # as the first day of the month following the final data month.
-# The standard CESM2-WACCM historical store only covers 1978–2015; the full 1850–2014 CMIP6
-# range lives in the pangeo-prefixed store (see _PANGEO_HISTORICAL_TIME_BOUNDS below).
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     "CESM2-WACCM": {
-        "historical": ("1978-01-01", "2015-01-16"),
-        "SSP245": ("2015-01-01", "2101-01-01"),
+        # historical merges ESGF '001' (1978–2015) + Pangeo r*i1p1f1 (1850–2015);
+        # the union time axis starts at 1850. End is first-of-next-month encoded.
+        "historical": ("1850-01-01", "2015-01-16"),
+        "SSP245": ("2015-01-01", "2099-12-31"),
         "G6-1.5K": ("2035-01-01", "2085-01-01"),
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
-        # GeoMIP baseline data starts 2020; 2015-2019 gap is an upstream data limitation.
-        "SSP245": ("2020-01-01", "2084-12-31"),
+        # Unified store stitches 2015–2019 gap-fill data together with the GeoMIP baseline.
+        "SSP245": ("2015-01-01", "2084-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
     },
     "UKESM": {
@@ -63,11 +66,21 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     },
 }
 
-# Expected bounds for pangeo-prefixed historical stores (full CMIP6 1850–2014 period).
-# CESM2-WACCM first-of-next-month convention: last time step is 2015-01-01.
-_PANGEO_HISTORICAL_TIME_BOUNDS: dict[str, tuple[str, str]] = {
-    "CESM2-WACCM": ("1850-01-01", "2015-01-01"),
-}
+_FAST: dict = {"isel_kwargs": {"time": slice(0, 5)}}
+
+_DS_CHECKER_CHECKS: list[tuple[str, str, dict]] = [
+    ("ensemble_member_dim", "validate_ensemble_member_dim", {}),
+    ("lat_valid", "validate_lat", {}),
+    ("lon_valid", "validate_lon", {}),
+    ("time_axis", "validate_time_axis", {}),
+    ("calendar", "validate_calendar", {}),
+    ("negative_precip", "validate_negative_precip", {"var": "pr", **_FAST}),
+    ("spatial_range_tas", "validate_spatial_range", {"var": "tas", **_FAST}),
+    ("spatial_range_tasmax", "validate_spatial_range", {"var": "tasmax", **_FAST}),
+    ("spatial_range_tasmin", "validate_spatial_range", {"var": "tasmin", **_FAST}),
+    ("spatial_range_pr", "validate_spatial_range", {"var": "pr", **_FAST}),
+    ("spatial_range_rsds", "validate_spatial_range", {"var": "rsds", **_FAST}),
+]
 
 
 def _parse_catalog_value(label: str, value: str, options: tuple[str, ...]) -> str:
@@ -86,13 +99,15 @@ def parse_scenario(value: str) -> str:
     return _parse_catalog_value("scenario", value, SCENARIO_OPTIONS)
 
 
+def parse_variable(value: str) -> str:
+    """Parse a user-provided variable string to a canonical on-disk group name."""
+    return _parse_catalog_value("variable", value, VARIABLE_OPTIONS)
+
+
 class CheckStatus(enum.StrEnum):
     PASS = "pass"
     FAIL = "fail"
     SKIP = "skip"  # not applicable for this (gcm, scenario) pair
-    UNKNOWN = "unknown"  # check could not be determined
-    XFAIL = "xfail"  # expected to fail, and did — not blocking
-    XPASS = "xpass"  # expected to fail, but passed — flag for investigation
 
 
 class CheckResult(pydantic.BaseModel):
@@ -143,15 +158,8 @@ class DatasetValidator(pydantic.BaseModel):
     gcm: str
     scenario: str
 
-    _dataset_cache: dict[str, xr.Dataset | None] = pydantic.PrivateAttr(default_factory=dict)
-    _load_errors: dict[str, tuple[str, str]] = pydantic.PrivateAttr(default_factory=dict)
-
-    _CHECKS: ClassVar[list[str]] = [
-        "check_ensemble_member_dim",
-        "check_g6_not_identical_to_ssp245",
-        "check_temporal_coverage",
-        "check_lineage_member_availability",
-    ]
+    # Keyed by GCM name. Stores xr.DataTree on success or CheckResult on load failure.
+    _datatree_cache: dict = pydantic.PrivateAttr(default_factory=dict)
 
     @pydantic.field_validator("gcm")
     @classmethod
@@ -180,75 +188,75 @@ class DatasetValidator(pydantic.BaseModel):
             detail=detail or {},
         )
 
-    def _open_dataset(
-        self, key: str, *, on_missing: CheckStatus = CheckStatus.FAIL
-    ) -> tuple[xr.Dataset | None, CheckResult | None]:
-        """
-        Catalog lookup + ``to_xarray()`` with unified error handling.
+    def _open_datatree(self) -> tuple[xr.DataTree | None, CheckResult | None]:
+        """Open the unified GCM datatree store, cached per instance."""
+        if self.gcm in self._datatree_cache:
+            cached = self._datatree_cache[self.gcm]
+            if isinstance(cached, CheckResult):
+                return None, cached
+            return cached, None
 
-        Returns ``(dataset, None)`` on success or ``(None, CheckResult)`` on any failure.
-        The ``on_missing`` status controls what is returned when the key is absent from
-        the catalog (typically ``SKIP`` for optional datasets, ``FAIL`` for required ones).
-        Load errors always produce a ``FAIL`` result regardless of ``on_missing``.
-        """
-        if key in self._load_errors:
-            msg, tb = self._load_errors[key]
-            return None, self._result(CheckStatus.FAIL, msg, {"traceback": tb})
-
-        if key not in self._dataset_cache:
-            catalog_ds = catalog.datasets.get(key)
-            if catalog_ds is None:
-                self._dataset_cache[key] = None
-            else:
-                try:
-                    self._dataset_cache[key] = catalog_ds.to_xarray()
-                except Exception as exc:
-                    tb = traceback.format_exc()
-                    self._load_errors[key] = (f"Failed to load dataset {key}: {exc}", tb)
-                    return None, self._result(
-                        CheckStatus.FAIL,
-                        f"Failed to load dataset {key}: {exc}",
-                        {"traceback": tb},
-                    )
-
-        ds = self._dataset_cache[key]
-        if ds is None:
-            detail = (
-                {"available_keys": sorted(catalog.datasets.keys())}
-                if on_missing == CheckStatus.FAIL
-                else {}
+        catalog_entry = catalog.datasets.get(self.gcm)
+        if catalog_entry is None:
+            err = self._result(
+                CheckStatus.FAIL,
+                f"Dataset not found in catalog: {self.gcm}",
+                {"available_keys": sorted(catalog.datasets.keys())},
             )
-            return None, self._result(on_missing, f"Dataset not found in catalog: {key}", detail)
-        return ds, None
+            self._datatree_cache[self.gcm] = err
+            return None, err
+
+        try:
+            dt: xr.DataTree = catalog_entry.to_xarray()  # type: ignore[assignment]
+            self._datatree_cache[self.gcm] = dt
+            return dt, None
+        except Exception as exc:
+            tb = traceback.format_exc()
+            err = self._result(
+                CheckStatus.FAIL,
+                f"Failed to load dataset {self.gcm}: {exc}",
+                {"traceback": tb},
+            )
+            self._datatree_cache[self.gcm] = err
+            return None, err
+
+    def _open_scenario_ds(self) -> tuple[xr.Dataset | None, CheckResult | None]:
+        """Extract this scenario's group from the GCM datatree as a flat xr.Dataset."""
+        dt, err = self._open_datatree()
+        if err:
+            return None, err
+        assert dt is not None
+        group = SCENARIO_TO_GROUP.get(self.scenario)
+        if group is None:
+            return None, self._result(
+                CheckStatus.SKIP, f"No group mapping for scenario {self.scenario!r}"
+            )
+        if group not in dt.children:
+            return None, self._result(
+                CheckStatus.SKIP,
+                f"Group {group!r} not present in datatree for {self.gcm}",
+            )
+        return dt[group].to_dataset(), None
+
+    def _vr_to_cr(self, check_id: str, vr: ValidationResult) -> CheckResult:
+        """Map ValidationResult → CheckResult."""
+        return CheckResult(
+            check_id=check_id,
+            gcm=self.gcm,
+            scenario=self.scenario,
+            status=CheckStatus.PASS if vr else CheckStatus.FAIL,
+            message="; ".join(vr.issues) if not vr else "",
+        )
 
     # ── public check methods ─────────────────────────────────────────────────────
 
     def check_ensemble_member_dim(self) -> CheckResult:
-        """
-        Check that the ensemble member dimension is present and correctly named in the dataset.
-        """
-        key = f"{self.gcm}-{self.scenario}-icechunk"
-        ds, err = self._open_dataset(key, on_missing=CheckStatus.FAIL)
+        """Check that the ensemble_member dimension is present and non-empty."""
+        ds, err = self._open_scenario_ds()
         if err is not None:
-            return err
-        assert ds is not None
-
-        detail = {
-            "dims": dict(ds.sizes),
-            "coords": list(ds.coords),
-            "data_vars": list(ds.data_vars),
-        }
-        if "ensemble_member" in ds.dims and ds.sizes["ensemble_member"] >= 1:
-            return self._result(
-                CheckStatus.PASS,
-                "Ensemble member dimension is present and correctly named.",
-                detail,
-            )
-        return self._result(
-            CheckStatus.FAIL,
-            "Ensemble member dimension is missing or incorrectly named.",
-            detail,
-        )
+            return err.model_copy(update={"check_id": "ensemble_member_dim"})
+        vr = DatasetChecker(ds).validate_ensemble_member_dim()
+        return self._vr_to_cr("ensemble_member_dim", vr)
 
     def check_lineage_member_availability(self) -> CheckResult:
         """
@@ -256,7 +264,7 @@ class DatasetValidator(pydantic.BaseModel):
 
         For each (member, variable) pair registered in the lineage table, resolves the
         historical_member and (for G6-1.5K) the ssp245_member, then checks those exist
-        in the respective icechunk stores.
+        in the respective groups of the unified GCM datatree.
 
         Skipped when no lineage is registered for this (gcm, scenario).
         """
@@ -276,64 +284,35 @@ class DatasetValidator(pydantic.BaseModel):
             if ssp245 is not None:
                 ssp245_members_needed.add(ssp245)
 
-        # Route historical members: only GCMs that have a pangeo-prefixed store use it.
-        # CESM2-WACCM r1i1p1f1 (public CMIP6) → pangeo store; MIROC r1i1p4f2 (JAMSTEC,
-        # non-standard p4f2 tag) has no pangeo mirror and uses the standard store.
-        has_pangeo = f"pangeo-{self.gcm}-historical-icechunk" in catalog.datasets
-        standard_hist_needed = (
-            hist_members_needed
-            if not has_pangeo
-            else {m for m in hist_members_needed if not m.startswith("r")}
-        )
-        pangeo_hist_needed = (
-            set() if not has_pangeo else {m for m in hist_members_needed if m.startswith("r")}
-        )
+        dt, err = self._open_datatree()
+        if err is not None:
+            return err
+        assert dt is not None
 
         issues: list[str] = []
         detail: dict = {}
-        missing_hist: list[str] = []
 
-        if standard_hist_needed:
-            hist_ds, err = self._open_dataset(
-                f"{self.gcm}-historical-icechunk", on_missing=CheckStatus.FAIL
+        if "historical" not in dt.children:
+            return self._result(
+                CheckStatus.FAIL,
+                f"'historical' group not present in datatree for {self.gcm}",
             )
-            if err is not None:
-                return err
-            assert hist_ds is not None
-            hist_available = set(_get_ensemble_members(hist_ds) or [])
-            detail["historical_needed"] = sorted(standard_hist_needed)
-            detail["historical_available"] = sorted(hist_available)
-            missing = sorted(standard_hist_needed - hist_available)
-            if missing:
-                missing_hist.extend(missing)
-                detail["missing_historical"] = missing
-
-        if pangeo_hist_needed:
-            pangeo_ds, err = self._open_dataset(
-                f"pangeo-{self.gcm}-historical-icechunk", on_missing=CheckStatus.FAIL
-            )
-            if err is not None:
-                return err
-            assert pangeo_ds is not None
-            pangeo_available = set(_get_ensemble_members(pangeo_ds) or [])
-            detail["pangeo_historical_needed"] = sorted(pangeo_hist_needed)
-            detail["pangeo_historical_available"] = sorted(pangeo_available)
-            missing = sorted(pangeo_hist_needed - pangeo_available)
-            if missing:
-                missing_hist.extend(missing)
-                detail["missing_pangeo_historical"] = missing
-
+        hist_ds = dt["historical"].to_dataset()
+        hist_available = set(_get_ensemble_members(hist_ds) or [])
+        detail["historical_needed"] = sorted(hist_members_needed)
+        detail["historical_available"] = sorted(hist_available)
+        missing_hist = sorted(hist_members_needed - hist_available)
         if missing_hist:
             issues.append(f"{len(missing_hist)} resolved historical member(s) missing")
-            detail["missing_historical_combined"] = sorted(missing_hist)
+            detail["missing_historical"] = missing_hist
 
         if ssp245_members_needed:
-            ssp245_ds, err = self._open_dataset(
-                f"{self.gcm}-SSP245-icechunk", on_missing=CheckStatus.FAIL
-            )
-            if err is not None:
-                return err
-            assert ssp245_ds is not None
+            if "ssp245" not in dt.children:
+                return self._result(
+                    CheckStatus.FAIL,
+                    f"'ssp245' group not present in datatree for {self.gcm}",
+                )
+            ssp245_ds = dt["ssp245"].to_dataset()
             ssp245_available = set(_get_ensemble_members(ssp245_ds) or [])
             detail["ssp245_needed"] = sorted(ssp245_members_needed)
             detail["ssp245_available"] = sorted(ssp245_available)
@@ -345,12 +324,7 @@ class DatasetValidator(pydantic.BaseModel):
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
 
-        hist_labels = []
-        if standard_hist_needed:
-            hist_labels.append("historical")
-        if pangeo_hist_needed:
-            hist_labels.append(f"pangeo-{self.gcm}-historical")
-        store_labels = ", ".join(hist_labels) + (" and SSP245" if ssp245_members_needed else "")
+        store_labels = "historical" + (" and SSP245" if ssp245_members_needed else "")
         return self._result(
             CheckStatus.PASS,
             f"All {len(entries)} lineage entries resolve to available members "
@@ -370,18 +344,26 @@ class DatasetValidator(pydantic.BaseModel):
         if self.scenario != "G6-1.5K":
             return self._result(CheckStatus.SKIP, "Only applicable to G6-1.5K scenario.")
 
-        g6_key = f"{self.gcm}-G6-1.5K-icechunk"
-        ssp245_key = f"{self.gcm}-SSP245-icechunk"
-
-        g6_ds, err = self._open_dataset(g6_key, on_missing=CheckStatus.SKIP)
+        dt, err = self._open_datatree()
         if err is not None:
             return err
-        assert g6_ds is not None
+        assert dt is not None
 
-        ssp245_ds, err = self._open_dataset(ssp245_key, on_missing=CheckStatus.SKIP)
-        if err is not None:
-            return err
-        assert ssp245_ds is not None
+        g6_group = SCENARIO_TO_GROUP["G6-1.5K"]
+        ssp245_group = SCENARIO_TO_GROUP["SSP245"]
+        if g6_group not in dt.children:
+            return self._result(
+                CheckStatus.SKIP,
+                f"Group {g6_group!r} not present in datatree for {self.gcm}.",
+            )
+        if ssp245_group not in dt.children:
+            return self._result(
+                CheckStatus.SKIP,
+                f"Group {ssp245_group!r} not present in datatree for {self.gcm}.",
+            )
+
+        g6_ds = dt[g6_group].to_dataset()
+        ssp245_ds = dt[ssp245_group].to_dataset()
 
         g6_vars = {str(v) for v in g6_ds.data_vars}
         ssp245_vars = {str(v) for v in ssp245_ds.data_vars}
@@ -397,7 +379,7 @@ class DatasetValidator(pydantic.BaseModel):
         sample_kwargs = {"time": slice(0, 5), "lat": slice(0, 10), "lon": slice(0, 10)}
 
         def _checksum(arr: xr.DataArray) -> str:
-            return hashlib.sha256(arr.isel(**sample_kwargs).values.tobytes()).hexdigest()
+            return hashlib.sha256(arr.isel(**sample_kwargs).values.tobytes()).hexdigest()  # type: ignore[call-overload]
 
         g6_members = _get_ensemble_members(g6_ds)
         ssp245_members = _get_ensemble_members(ssp245_ds)
@@ -500,13 +482,11 @@ class DatasetValidator(pydantic.BaseModel):
         E2: Time axis must be gapless with correct first and last dates.
 
         Bounds are looked up per GCM from ``_SCENARIO_TIME_BOUNDS`` (explicit observed date
-        strings). For historical scenarios, also checks the pangeo-prefixed store when
-        bounds are registered in ``_PANGEO_HISTORICAL_TIME_BOUNDS``.
+        strings). Checks the scenario's group in the unified GCM datatree.
         """
-        key = f"{self.gcm}-{self.scenario}-icechunk"
-        ds, err = self._open_dataset(key, on_missing=CheckStatus.SKIP)
+        ds, err = self._open_scenario_ds()
         if err is not None:
-            return err
+            return err.model_copy(update={"check_id": "temporal_coverage"})
         assert ds is not None
 
         if "time" not in ds.dims:
@@ -522,19 +502,6 @@ class DatasetValidator(pydantic.BaseModel):
 
         issues, detail = self._check_store_temporal(ds, expected_start, expected_end)
 
-        # For historical scenarios, also check the pangeo-prefixed store.
-        if self.scenario == "historical" and self.gcm in _PANGEO_HISTORICAL_TIME_BOUNDS:
-            pangeo_key = f"pangeo-{self.gcm}-historical-icechunk"
-            pangeo_ds, pangeo_err = self._open_dataset(pangeo_key, on_missing=CheckStatus.SKIP)
-            if pangeo_err is not None and pangeo_err.status == CheckStatus.FAIL:
-                issues.append(f"pangeo-historical store failed to load: {pangeo_err.message}")
-                detail["pangeo_load_error"] = pangeo_err.detail.get("traceback", "")
-            elif pangeo_ds is not None and "time" in pangeo_ds.dims:
-                p_start, p_end = _PANGEO_HISTORICAL_TIME_BOUNDS[self.gcm]
-                p_issues, p_detail = self._check_store_temporal(pangeo_ds, p_start, p_end)
-                issues.extend(f"pangeo-historical: {i}" for i in p_issues)
-                detail.update({f"pangeo_{k}": v for k, v in p_detail.items()})
-
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
 
@@ -548,24 +515,115 @@ class DatasetValidator(pydantic.BaseModel):
     # ── orchestration ────────────────────────────────────────────────────────────
 
     def run_checks(self) -> list[CheckResult]:
-        """Run all applicable checks and return results stamped with ``check_id``.
+        """Run all applicable checks and return results stamped with ``check_id``."""
+        ds, err = self._open_scenario_ds()
+        if err:
+            return [err]
 
-        Results whose (gcm, scenario, check_id) key appears in :data:`XFAIL_CHECKS` are
-        downgraded from ``FAIL`` → ``XFAIL`` (non-blocking expected failure) or upgraded
-        from ``PASS`` → ``XPASS`` (unexpected pass — worth investigating).
-        """
-        results = []
-        for check_name in self._CHECKS:
-            result = getattr(self, check_name)()
-            check_id = check_name.removeprefix("check_")
-            result = result.model_copy(update={"check_id": check_id})
+        checker = DatasetChecker(ds)
+        results: list[CheckResult] = []
 
-            xfail_key = (self.gcm, self.scenario, check_id)
-            if xfail_key in XFAIL_CHECKS:
-                if result.status == CheckStatus.FAIL:
-                    result = result.model_copy(update={"status": CheckStatus.XFAIL})
-                elif result.status == CheckStatus.PASS:
-                    result = result.model_copy(update={"status": CheckStatus.XPASS})
+        for check_id, method, kwargs in _DS_CHECKER_CHECKS:
+            m = getattr(checker, method)
+            call_kwargs = {k: v for k, v in kwargs.items() if k in inspect.signature(m).parameters}
+            vr: ValidationResult = m(**call_kwargs)
+            results.append(self._vr_to_cr(check_id, vr))
 
+        for bespoke_check, check_id in (
+            (self.check_temporal_coverage, "temporal_coverage"),
+            (self.check_lineage_member_availability, "lineage_member_availability"),
+            (self.check_g6_not_identical_to_ssp245, "g6_not_identical_to_ssp245"),
+        ):
+            result = bespoke_check()
+            if not result.check_id:
+                result = result.model_copy(update={"check_id": check_id})
             results.append(result)
+
         return results
+
+
+# ── output store validation ──────────────────────────────────────────────────────
+
+# Output leaves are /scenario/variable/member single-variable datasets with no
+# ensemble_member dim, so reuse the input primitives but drop the ensemble check.
+OUTPUT_CHECKS: list[tuple[str, str, dict]] = [
+    c for c in _DS_CHECKER_CHECKS if c[0] != "ensemble_member_dim"
+]
+
+
+def _open_output_datatree(uri: str, branch: str = "main", tag: str | None = None) -> xr.DataTree:
+    """Open an icechunk output store as a DataTree at a given branch or tag."""
+    import icechunk
+    from cloudpathlib import S3Path
+
+    if not uri.startswith(S3Path.cloud_prefix):
+        raise ValueError(f"Output store must be an {S3Path.cloud_prefix} URI, got: {uri}")
+    path = S3Path(uri)
+    storage = icechunk.s3_storage(bucket=path.bucket, prefix=path.key, from_env=True)
+    repo = icechunk.Repository.open(storage)
+    if tag is not None:
+        session = repo.readonly_session(tag=tag)
+    else:
+        session = repo.readonly_session(branch=branch)
+    return xr.open_datatree(session.store, engine="zarr", chunks="auto", consolidated=False)
+
+
+def validate_output_store(
+    store: str | xr.DataTree,
+    branch: str = "main",
+    tag: str | None = None,
+    scenarios: list[str] | None = None,
+    variables: list[str] | None = None,
+) -> list[CheckResult]:
+    """Run OUTPUT_CHECKS against every populated leaf of an output datatree store.
+
+    ``store`` may be an S3 URI string or an already-open DataTree. ``branch`` or ``tag`` mirror icechunk's ``readonly_session`` parameters and are ignored
+    when ``store`` is a DataTree. Each CheckResult reuses the ``gcm`` field for the store
+    label and the ``scenario`` field for the leaf path.
+
+    ``scenarios`` and ``variables`` restrict validation to matching leaves of the
+    ``/scenario/variable/member`` tree; they take the on-disk group names (e.g. ``"ssp245"``,
+    ``"tas"``). ``None`` means no filter.
+    """
+    if isinstance(store, str):
+        from cloudpathlib import S3Path
+
+        tree = _open_output_datatree(store, branch=branch, tag=tag)
+        label = S3Path(store).name or store
+    else:
+        tree = store
+        label = "output"
+
+    def _select(node: xr.DataTree, names: list[str] | None) -> list[xr.DataTree]:
+        """Child nodes to descend into: all children, or only the named ones present."""
+        if names is None:
+            return list(node.children.values())
+        return [node[name] for name in names if name in node.children]
+
+    # Descend the /scenario/variable/member tree one level at a time; member nodes are
+    # the leaves we validate. Filtering uses the tree structure, not path parsing.
+    scenario_nodes = _select(tree, scenarios)
+    variable_nodes = [vn for sn in scenario_nodes for vn in _select(sn, variables)]
+
+    results: list[CheckResult] = []
+    for variable_node in variable_nodes:
+        leaf_var = variable_node.name
+        for node in variable_node.leaves:
+            checker = DatasetChecker(node.to_dataset())
+            for check_id, method, kwargs in OUTPUT_CHECKS:
+                target_var = kwargs.get("var")
+                if target_var is not None and target_var != leaf_var:
+                    continue
+                sig = inspect.signature(getattr(checker, method))
+                call_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+                vr: ValidationResult = getattr(checker, method)(**call_kwargs)
+                results.append(
+                    CheckResult(
+                        check_id=check_id,
+                        gcm=label,
+                        scenario=node.path,
+                        status=CheckStatus.PASS if vr else CheckStatus.FAIL,
+                        message="" if vr else "; ".join(vr.issues),
+                    )
+                )
+    return results
