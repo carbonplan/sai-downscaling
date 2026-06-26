@@ -3,16 +3,8 @@
 import os
 import sys
 
+from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
-
-# Maps CLI scenario names to zarr group names within the unified per-GCM store.
-_SCENARIO_TO_GROUP: dict[str, str] = {
-    "historical": "historical",
-    "ssp245": "ssp245",
-    "SSP245": "ssp245",
-    "G6-1.5K": "g6_1p5k",
-    "g6_1p5k": "g6_1p5k",
-}
 
 _GCM_TO_KEY: dict[str, str] = {
     "CESM2-WACCM": "CESM2-WACCM-unified-icechunk",
@@ -25,7 +17,7 @@ def main() -> None:
     gcm, scenario = sys.argv[1], sys.argv[2]
 
     key = _GCM_TO_KEY.get(gcm)
-    group = _SCENARIO_TO_GROUP.get(scenario)
+    group = SCENARIO_TO_GROUP.get(scenario)
     if key is None or group is None:
         print(f"No unified store mapping for ({gcm!r}, {scenario!r}) — skipping summary")
         return

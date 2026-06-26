@@ -136,21 +136,25 @@ class TestBCSDRunDataProperties:
         fake_ds = _fake_ds()
         with self._patch_load(fake_ds) as mock_load:
             ds = run.obs
-        mock_load.assert_called_once_with(run._cache.obs_path)
+        mock_load.assert_called_once_with(run._cache.obs_loc.store_path, branch=run._cache.branch)
         assert ds is fake_ds
 
     def test_historical_calls_load_with_historical_path(self, run):
         fake_ds = _fake_ds()
         with self._patch_load(fake_ds) as mock_load:
             ds = run.historical
-        mock_load.assert_called_once_with(run._cache.historical_path)
+        mock_load.assert_called_once_with(
+            run._cache.historical_loc(run._hist_member).store_path, branch=run._cache.branch
+        )
         assert ds is fake_ds
 
     def test_scenario_calls_load_with_scenario_path(self, run):
         fake_ds = _fake_ds()
         with self._patch_load(fake_ds) as mock_load:
             ds = run.scenario
-        mock_load.assert_called_once_with(run._cache.scenario_path)
+        mock_load.assert_called_once_with(
+            run._cache.scenario_loc.store_path, branch=run._cache.branch
+        )
         assert ds is fake_ds
 
     def test_obs_is_cached_property(self, run):
