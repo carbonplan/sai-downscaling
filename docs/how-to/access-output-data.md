@@ -19,10 +19,10 @@ right branch, and load data.
 
 ## Anatomy of an output store
 
-Output stores live under `s3://carbonplan-scratch/srm/outputs/` and follow this path pattern:
+Output stores live under `s3://carbonplan-srm/output/` and follow this path pattern:
 
 ```
-s3://carbonplan-scratch/srm/outputs/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+s3://carbonplan-srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
 ```
 
 | Component | Values | Example |
@@ -42,10 +42,10 @@ Within each store, data is organised in zarr groups:
 | --- | --- | --- |
 | `scenario_group` | `ssp245`, `g6_1p5k`, `esgf_ssp245` | `ssp245` |
 | `variable` | `tas`, `tasmax`, `pr`, `rsds`, … | `tas` |
-| `ensemble_member` | e.g. `r1i1p1f1`, `001`, `002` | `r1i1p1f1` |
+| `ensemble_member` | e.g. `001`, `002`, `r1i1p1f1` | `001` |
 
 A fully-populated global CESM2-WACCM store would contain groups like
-`ssp245/tas/r1i1p1f1`, `ssp245/tas/r2i1p1f1`, `g6_1p5k/pr/001`, and so on.
+`ssp245/tas/001`, `ssp245/tas/002`, `g6_1p5k/pr/003`, and so on.
 
 ## Choosing the right branch
 
@@ -69,15 +69,15 @@ import xarray as xr
 
 storage = icechunk.s3_storage(
     bucket="carbonplan-scratch",
-    prefix="srm/outputs/production/CESM2-WACCM-ERA5-global.icechunk",
+    prefix="srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk",
     from_env=True,
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v1.2.3")  # replace with the actual release branch
+session = repo.readonly_session(branch="v2026.6.25.0")  # replace with the actual release branch
 
 ds = xr.open_zarr(
     session.store,
-    group="ssp245/tas/r1i1p1f1",
+    group="g6_1p5k/tasmax/002",
     consolidated=False,
     zarr_format=3,
     chunks="auto",
@@ -97,21 +97,20 @@ import xarray as xr
 
 storage = icechunk.s3_storage(
     bucket="carbonplan-scratch",
-    prefix="srm/outputs/production/CESM2-WACCM-ERA5-global.icechunk",
+    prefix="srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk",
     from_env=True,
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v1.2.3")
+session = repo.readonly_session(branch="v2026.6.25.0")  # replace with the actual release branch
 
 dt = xr.open_datatree(
     session.store,
     engine="zarr",
     consolidated=False,
     zarr_format=3,
-    chunks="auto",
 )
 # Access a specific subtree or dataset
-ssp245_tas = dt["ssp245/tas/r1i1p1f1"].to_dataset()
+g6_tasmax = dt["g6_1p5k/tasmax/002"].to_dataset()
 ```
 
 ## Discovering what is in a store
@@ -123,16 +122,15 @@ If you are unsure which groups have been written, construct the store path and u
 
 from srm.cache import ArtifactCache
 
-store_path = "s3://carbonplan-scratch/srm/outputs/production/CESM2-WACCM-ERA5-global.icechunk"
+store_path = "s3://carbonplan-scratch/srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk"
 cache = ArtifactCache(
     scratch_dir="s3://carbonplan-scratch/srm/cache/",
-    environment="production",
-    branch="v1.2.3",
-    output_dir="s3://carbonplan-scratch/srm/outputs/",
+    environment="qa",
+    branch="v2026.6.25.0",
+    output_dir="s3://carbonplan-scratch/srm/output/",
 )
 groups = cache.list_groups_on_branch(store_path)
 print(groups)
-# ['g6_1p5k/tas/r1i1p1f1', 'ssp245/tas/r1i1p1f1', ...]
 ```
 
 ## See Also
