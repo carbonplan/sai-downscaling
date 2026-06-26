@@ -60,9 +60,10 @@ autodoc_default_flags = ["members", "show-inheritance"]
 
 autosummary_generate = True
 
-nb_execution_mode = "off"
+nb_execution_mode = "cache"
 nb_execution_timeout = 600
 nb_execution_raise_on_error = False
+nb_execution_excludepatterns = ["**/*.ipynb"]
 
 # Mermaid configuration
 mermaid_output_format = "raw"
