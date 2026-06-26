@@ -32,6 +32,9 @@ jobs:
 
       - uses: ./.github/actions/setup
 
+      - name: deps
+        run: uv sync --group docs
+
       - name: build docs
         run: uv run sphinx-build docs docs/_build/html
 
