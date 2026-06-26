@@ -70,7 +70,9 @@ how-to/run-pipeline
 how-to/manage-cache
 how-to/compare-outputs-across-versions
 how-to/run-multi-model-ensemble
+how-to/access-output-data
 how-to/deploy
 how-to/regenerate-input-data
+how-to/validate-input-data-stores
 how-to/ensemble-member-lineage
 ```

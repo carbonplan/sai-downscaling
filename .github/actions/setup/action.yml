@@ -7,7 +7,7 @@ runs:
     - uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: arn:aws:iam::631969445205:role/github-action-role
-        role-session-name: ocr-etl-role-session
+        role-session-name: srm-downscaling-role-session
         aws-region: us-west-2
 
     - uses: astral-sh/setup-uv@v7

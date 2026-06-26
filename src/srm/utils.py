@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from typing import Literal
+
+import boto3
+import icechunk
 import pint_xarray
 import xarray as xr
 
@@ -65,11 +69,19 @@ def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
                   on ~6 missing days per year, then linearly interpolates
     - gregorian / standard : type-cast only, no data change
     """
+    # Drop time/lat/lon bounds vars: their cftime dtype combined with chunking only the
+    # "time" dim triggers an xarray bug (zip() length mismatch in `_get_chunk`), and
+    # they aren't needed downstream.
+    bnds_vars = [
+        v for v in list(ds.data_vars) + list(ds.coords) if str(v).endswith(("_bnds", "_bounds"))
+    ]
+    ds = ds.drop_vars(bnds_vars, errors="ignore")
+
     calendar = ds.time.dt.calendar
     if calendar in ("proleptic_gregorian", "gregorian", "standard"):
         return ds.convert_calendar("proleptic_gregorian", use_cftime=False)
-    align = "year" if calendar == "360_day" else None
-    ds = (
+    align: Literal["year"] | None = "year" if calendar == "360_day" else None
+    return (
         ds.convert_calendar(
             "proleptic_gregorian", align_on=align, missing=float("nan"), use_cftime=False
         )
@@ -78,3 +90,41 @@ def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
     )
     # enforce numpy datetime64, not some mixed float/cftime
     return ds.assign_coords(time=ds.time.values)
+
+
+def get_variable(ds: xr.Dataset, variable: str) -> xr.DataArray:
+    """Return a variable from ds, deriving dtr = tasmax - tasmin when not stored."""
+    if variable == "dtr" and "dtr" not in ds:
+        dtr = (ds["tasmax"] - ds["tasmin"]).rename("dtr")
+        dtr.attrs.update({"units": "K", "long_name": "Diurnal Temperature Range"})
+        return dtr
+    return ds[variable]
+
+
+def resolve_s3_glob(path):
+    """Resolve a single * wildcard in an S3 path to a real path."""
+    bucket, prefix = path.replace("s3://", "").split("/", 1)
+
+    before, after = prefix.split("*/", 1)
+
+    s3 = boto3.client("s3")
+    response = s3.list_objects_v2(Bucket=bucket, Prefix=before, Delimiter="/")
+
+    matches = [f"s3://{bucket}/{cp['Prefix']}{after}" for cp in response.get("CommonPrefixes", [])]
+
+    if not matches:
+        raise ValueError(f"No S3 paths matched: {path}")
+    if len(matches) > 1:
+        raise ValueError(f"Multiple matches: {matches}")
+
+    return matches[0]
+
+
+def open_icechunk(path):
+    bucket, prefix = path.replace("s3://", "").split("/", 1)
+    storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
+    repo = icechunk.Repository.open(storage)
+    session = repo.readonly_session("main")
+
+    ds = xr.open_dataset(session.store, engine="zarr", chunks={})
+    return ds

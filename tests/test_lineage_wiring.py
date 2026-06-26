@@ -287,16 +287,16 @@ class TestHistoricalPathSharedParent:
     ):
         """G6 members 001 and 002 (tasmax) both map to historical member '001'.
 
-        They must produce identical historical_path values so the cached artifact
+        They must produce identical historical_loc values so the cached artifact
         is reused without recomputing.
         """
         p1 = BCSDPipeline(g6_001_tasmax_config, pipeline_options)
         p2 = BCSDPipeline(g6_002_tasmax_config, pipeline_options)
         assert p1._hist_member == "001"
         assert p2._hist_member == "001"
-        path_001 = p1.cache.get_historical_path(g6_001_tasmax_config, hist_member=p1._hist_member)
-        path_002 = p2.cache.get_historical_path(g6_002_tasmax_config, hist_member=p2._hist_member)
-        assert path_001 == path_002
+        loc_001 = p1.cache.historical_loc(p1._hist_member)
+        loc_002 = p2.cache.historical_loc(p2._hist_member)
+        assert loc_001 == loc_002
 
     def test_g6_members_with_different_historical_parents_produce_different_paths(
         self, g6_001_tas_config, g6_002_tas_config, pipeline_options
@@ -304,36 +304,34 @@ class TestHistoricalPathSharedParent:
         """G6 tas members 001 and 002 map to r1i1p1f1 and r2i1p1f1 respectively."""
         p1 = BCSDPipeline(g6_001_tas_config, pipeline_options)
         p2 = BCSDPipeline(g6_002_tas_config, pipeline_options)
-        path_001 = p1.cache.get_historical_path(g6_001_tas_config, hist_member=p1._hist_member)
-        path_002 = p2.cache.get_historical_path(g6_002_tas_config, hist_member=p2._hist_member)
-        assert path_001 != path_002
+        loc_001 = p1.cache.historical_loc(p1._hist_member)
+        loc_002 = p2.cache.historical_loc(p2._hist_member)
+        assert loc_001 != loc_002
 
     def test_historical_path_contains_resolved_hist_member(
         self, g6_001_tas_config, pipeline_options
     ):
-        """historical_path must embed the resolved historical member label."""
+        """historical group must embed the resolved historical member label."""
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
         assert pipeline._hist_member == "r1i1p1f1"
-        path = pipeline.cache.get_historical_path(
-            g6_001_tas_config, hist_member=pipeline._hist_member
-        )
-        assert "/r1i1p1f1/" in path
-        assert "/001/" not in path
+        loc = pipeline.cache.historical_loc(pipeline._hist_member)
+        assert "r1i1p1f1" in loc.group
+        assert "001" not in loc.group
 
     def test_historical_path_fallback_uses_ensemble_member(self, pipeline_options):
-        """When no lineage is registered, ensemble_member fills the path."""
+        """When no lineage is registered, ensemble_member fills the group."""
         config = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
-            scenario="ssp245",
+            scenario="SSP245",
             predict_period_start=2015,
             predict_period_end=2100,
         )
         pipeline = BCSDPipeline(config, pipeline_options)
         assert pipeline._hist_member == "r1i1p1f1"
-        path = pipeline.cache.get_historical_path(config, hist_member=pipeline._hist_member)
-        assert "/r1i1p1f1/" in path
+        loc = pipeline.cache.historical_loc(pipeline._hist_member)
+        assert "r1i1p1f1" in loc.group
 
 
 # ---------------------------------------------------------------------------
@@ -344,34 +342,34 @@ class TestHistoricalPathSharedParent:
 class TestBuildOutputAttrs:
     def test_historical_ensemble_member_in_attrs(self, g6_001_tas_config, pipeline_options):
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
-        attrs = pipeline._build_output_attrs(source_dataset=None)
-        assert attrs["historical_ensemble_member"] == "r1i1p1f1"
+        attrs = pipeline._build_output_attrs()
+        assert attrs["srm_downscaling:historical_ensemble_member"] == "r1i1p1f1"
 
     def test_ssp245_ensemble_member_in_attrs(self, g6_001_tas_config, pipeline_options):
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
-        attrs = pipeline._build_output_attrs(source_dataset=None)
-        assert attrs["ssp245_ensemble_member"] == "001"
+        attrs = pipeline._build_output_attrs()
+        assert attrs["srm_downscaling:ssp245_ensemble_member"] == "001"
 
     def test_attrs_fall_back_to_ensemble_member_when_no_lineage(self, pipeline_options):
         config = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
-            scenario="ssp245",  # lowercase — not in lineage table
+            scenario="SSP245",
             predict_period_start=2015,
             predict_period_end=2100,
         )
         pipeline = BCSDPipeline(config, pipeline_options)
-        attrs = pipeline._build_output_attrs(source_dataset=None)
-        assert attrs["historical_ensemble_member"] == "r1i1p1f1"
-        assert attrs["ssp245_ensemble_member"] == "r1i1p1f1"
+        attrs = pipeline._build_output_attrs()
+        assert attrs["srm_downscaling:historical_ensemble_member"] == "r1i1p1f1"
+        assert attrs["srm_downscaling:ssp245_ensemble_member"] == "r1i1p1f1"
 
     def test_tasmax_g6_002_attrs(self, g6_002_tasmax_config, pipeline_options):
         """tasmax G6-002: historical=001, ssp245=007."""
         pipeline = BCSDPipeline(g6_002_tasmax_config, pipeline_options)
-        attrs = pipeline._build_output_attrs(source_dataset=None)
-        assert attrs["historical_ensemble_member"] == "001"
-        assert attrs["ssp245_ensemble_member"] == "007"
+        attrs = pipeline._build_output_attrs()
+        assert attrs["srm_downscaling:historical_ensemble_member"] == "001"
+        assert attrs["srm_downscaling:ssp245_ensemble_member"] == "007"
 
 
 # ---------------------------------------------------------------------------
@@ -401,10 +399,6 @@ class TestMirocG6Wiring:
         p1 = BCSDPipeline(miroc_g6_r01_tas_config, pipeline_options)
         p4 = BCSDPipeline(miroc_g6_r04_tas_config, pipeline_options)
         assert p1._hist_member == p4._hist_member == "r1i1p4f2"
-        path_r01 = p1.cache.get_historical_path(
-            miroc_g6_r01_tas_config, hist_member=p1._hist_member
-        )
-        path_r04 = p4.cache.get_historical_path(
-            miroc_g6_r04_tas_config, hist_member=p4._hist_member
-        )
-        assert path_r01 == path_r04
+        loc_r01 = p1.cache.historical_loc(p1._hist_member)
+        loc_r04 = p4.cache.historical_loc(p4._hist_member)
+        assert loc_r01 == loc_r04
