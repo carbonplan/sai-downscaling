@@ -1,73 +1,44 @@
 # How to Manage the Cache
 
-The pipeline provides intelligent caching at multiple levels to enable efficient reuse and resumability. This guide covers how to inspect, resume, force-recompute, and clear cached artifacts.
+The pipeline uses two icechunk stores per `(GCM, obs-dataset, spatial-subset)` combination — one
+for intermediate artifacts and one for final outputs. All artifacts within a store are written as
+zarr groups on a named branch (by default the installed package version).
 
-## Cache Strategy
-
-**Two-Tier Storage:**
-
-1. **scratch_dir**: intermediate artifacts that are reused across multiple runs
-   - observations regridded to GCM grid (shared across all ensembles/scenarios)
-   - historical downscaling (shared across all scenarios for an ensemble)
-
-2. **output_dir**: final scenario outputs
-   - downscaled scenario data with full metadata
-   - organized by environment for clear separation
-
-## Cache Locations
+## Cache Store Locations
 
 ```
-s3://carbonplan-scratch/srm/bcsd-cache/
-├── qa/                                    # QA environment (testing)
-│   ├── v1/                                # Version 1 artifacts
-│   │   └── obs/
-│   │       └── CESM2-WACCM/
-│   │           └── tas/
-│   │               ├── global/
-│   │               │   └── obs_regridded.icechunk
-│   │               └── lat-35.0to-22.0_lon16.0to33.0/
-│   │                   └── obs_regridded.icechunk
-│   └── v2/                                # Version 2 (after methodological changes)
-│       └── ...
-└── production/
-    └── ...
+# Scratch store — obs regridded + historical + optional intermediates
+s3://carbonplan-scratch/srm/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+  branch: v1.2.3   ← defaults to installed package version
 
-s3://carbonplan-scratch/srm/outputs/
-├── qa/
-│   ├── v1/
-│   │   ├── historical/
-│   │   │   └── CESM2-WACCM/
-│   │   │       └── tas/
-│   │   │           └── r1i1p1f1/
-│   │   │               └── global/
-│   │   │                   └── {varconfig_hash}/
-│   │   │                       └── historical.icechunk
-│   │   ├── ssp245/
-│   │   │   └── CESM2-WACCM/
-│   │   │       └── tas/
-│   │   │           └── r1i1p1f1/
-│   │   │               ├── global/
-│   │   │               │   └── {varconfig_hash}/
-│   │   │               │       └── ssp245.icechunk
-│   │   │               └── lat-35.0to-22.0_lon16.0to33.0/
-│   │   │                   └── {varconfig_hash}/
-│   │   │                       └── ssp245.icechunk
-│   │   └── g6-1.5k/
-│   │       └── CESM2-WACCM/
-│   │           └── tas/
-│   │               └── r1i1p1f1/
-│   │                   └── global/
-│   │                       └── {varconfig_hash}/
-│   │                           └── g6-1.5k.icechunk
-│   └── v2/
-│       └── ...
-└── production/
-    └── ...
+# Output store — final downscaled scenario results
+s3://carbonplan-scratch/srm/outputs/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+  branch: v1.2.3
+
+# Examples for CESM2-WACCM, ERA5, global run:
+s3://carbonplan-scratch/srm/cache/qa/CESM2-WACCM-ERA5-global.icechunk
+s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-global.icechunk
+
+# Regional subset (South Africa):
+s3://carbonplan-scratch/srm/cache/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
 ```
+
+Within each store the zarr groups are:
+
+| Store | Group pattern | Stage |
+|-------|---------------|-------|
+| scratch | `obs/{variable}` | Stage 1 |
+| scratch | `historical/{variable}/{member}` | Stage 2 |
+| output | `{scenario_group}/{variable}/{member}` | Stage 3 |
+
+Intermediate groups (`debiased_historical/`, `detrended_scenario/`, etc.) appear in the scratch
+store only when `save_intermediate: true` is set in your config.
 
 ## Resumability
 
-If you interrupt a run and restart with the same config:
+If you interrupt a run and restart with the same config, the pipeline automatically skips completed
+stages by checking whether the corresponding zarr group already exists in the branch ancestry:
 
 ```bash
 # Start run
@@ -76,53 +47,39 @@ uv run bcsd run --config-path configs/example.yaml
 
 # Check what's cached
 uv run bcsd status --config-path configs/example.yaml
-# Shows: prepare_observations ✓, fit_historical ✗, transform_scenario ✗
 
 # Resume (automatically skips completed stages)
 uv run bcsd run --config-path configs/example.yaml
 # Only runs stages 2 and 3
 ```
 
-## Cache Dependencies
-
-The cache system validates dependencies before each stage:
-
-```python
-Stage 2 (fit_historical):
-  - requires: obs_regridded
-  - if missing: Raises ValueError with clear message
-  
-Stage 3 (transform_scenario):
-  - requires: obs_regridded AND historical
-  - if either missing: Raises ValueError
-```
-
 ## Force Recompute
 
-To force recomputation (ignoring cache):
+To force recomputation (ignoring the cache):
 
 ```bash
 # Force all stages
 uv run bcsd run --config-path configs/example.yaml --force
 
-# Force only scenario stage (keeps obs and historical cache)
+# Force only the scenario stage (keeps obs and historical in cache)
 uv run bcsd run --config-path configs/example.yaml --stage transform_scenario --force
 ```
 
 ## Check Cache Status
 
-Use `bcsd status` to see which artifacts are complete:
+Use `bcsd status` to see which artifacts are complete for your configs:
 
 ```bash
 uv run bcsd status --config-path configs/example.yaml --verbose
 ```
 
-See [CLI reference — bcsd status](../reference/cli.md#bcsd-status--check-cache-status) for the full output format.
+See [CLI reference — bcsd status](../reference/cli.md#bcsd-status--check-cache-status) for the
+full output format.
 
 ## List Cached Artifacts
 
 ```bash
-# List all cached artifacts
+# List all groups on the current branch for all stores
 uv run bcsd cache-list --config-path configs/example.yaml
 
 # Filter by stage
@@ -132,12 +89,13 @@ uv run bcsd cache-list --config-path configs/example.yaml --stage obs
 uv run bcsd cache-list --config-path configs/example.yaml --gcm CESM2-WACCM --variable tas
 ```
 
-See [CLI reference — bcsd cache-list](../reference/cli.md#bcsd-cache-list--list-cached-artifacts) for all options.
+See [CLI reference — bcsd cache-list](../reference/cli.md#bcsd-cache-list--list-cached-artifacts)
+for all options.
 
 ## Clear Cache
 
 ```bash
-# Clear all cache for the environment/version in the config (prompts for confirmation)
+# Clear all cache for the environment/branch in the config (prompts for confirmation)
 uv run bcsd cache-clear --config-path configs/example.yaml
 
 # Clear a specific stage without prompting
@@ -150,38 +108,49 @@ uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --y
 :::{admonition} Environment-scoped clearing
 :class: warning
 
-Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.
+Cache clearing respects the `environment` setting in your config. A config with
+`environment: "production"` will only clear production cache, not qa.
 :::
 
-See [CLI reference — bcsd cache-clear](../reference/cli.md#bcsd-cache-clear--clear-cache) for all options.
+See [CLI reference — bcsd cache-clear](../reference/cli.md#bcsd-cache-clear--clear-cache) for all
+options.
 
 ## Programmatic Cache Inspection
 
-You can inspect cached artifacts programmatically:
+You can inspect cached artifacts programmatically using `ArtifactCache`:
 
 ```python
-from srm.bcsd_config import BCSDConfig
+import yaml
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache
 
-config = BCSDConfig(**yaml.safe_load(open("configs/example.yaml")))
-cache = ArtifactCache(
-    scratch_dir=config.scratch_dir,
-    environment=config.environment,
-    version=config.version,
-    output_dir=config.output_dir,
-)
+raw = yaml.safe_load(open("configs/example.yaml"))
+config = BCSDConfig(**raw)
+options = PipelineOptions(**raw)
+cache = ArtifactCache.from_config(config, options)
 
-# Check if specific artifact exists
-obs_path = cache.get_obs_path(config)
-print(f"Observations cached: {cache.exists(obs_path)}")
+# Check whether the obs artifact exists for this config
+obs_loc = cache.obs_loc
+print(f"Obs cached: {cache.exists(obs_loc)}")
+print(f"Store: {obs_loc.store_path}")
+print(f"Group: {obs_loc.group}")
 
-# List all artifacts
-artifacts = cache.list_artifacts(stage="obs")
-print(f"Cached observation artifacts: {len(artifacts)}")
+# List all groups committed on the current branch of this store
+groups = cache.list_groups_on_branch(obs_loc.store_path)
+print(f"All cached groups: {groups}")
+
+# Inspect both scratch and output stores at once
+intermediates = cache.list_intermediate_groups()
+for store_path, group_list in intermediates.items():
+    print(store_path)
+    for g in group_list:
+        print(f"  {g}")
 ```
 
 ## See Also
 
-- [Pipeline architecture](../explanation/pipeline-architecture.md) — how the cache system is designed and why
-- [Compare outputs across code versions](compare-outputs-across-versions.md) — using `version` to track multiple datasets
+- [Pipeline architecture](../explanation/pipeline-architecture.md) — how the cache system is
+  designed and why
+- [Compare outputs across code versions](compare-outputs-across-versions.md) — using `--branch` to
+  track multiple datasets
 - [CLI reference](../reference/cli.md) — full option listings for status, cache-list, cache-clear

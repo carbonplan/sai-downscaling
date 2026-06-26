@@ -1,78 +1,90 @@
 # Regenerate Input Data
 
-The `process input data` workflow re-processes raw GCM NetCDF files into the icechunk stores that the BCSD pipeline reads from. You'd run this when:
+Re-process raw source files into the icechunk stores the BCSD pipeline reads from. Run this when:
 
-- New ensemble members or variables have been added to an existing scenario
-- A raw source file was corrected upstream and needs to be re-ingested
-- The icechunk store got corrupted or accidentally deleted
+- New ensemble members or variables were added to an existing scenario
+- A raw source file was corrected upstream and needs re-ingestion
+- An icechunk store is corrupted or accidentally deleted
 
-The workflow is a thin wrapper around the per-GCM processing scripts in `src/srm/input_data/tensor/CMIP6/`. It supports CESM2-WACCM, MIROC-ES2H, UKESM, and NASA-NEX.
+There are two workflows: one for GCM datasets (CESM2-WACCM, MIROC-ES2H, UKESM, NASA-NEX)
+and one for ERA5. Use the appropriate workflow for the dataset you want to regenerate.
 
-## Triggering the workflow
+---
+
+## GCM datasets — `process input data`
+
+### Triggering the workflow
 
 1. Go to **Actions → process input data → Run workflow**
 2. Select a **GCM** from the dropdown
-3. Enter a **scenario** (see valid values below)
-4. Optionally provide an **S3 cleanup path** if you want to wipe the existing store before reprocessing
+3. Enter one or more **scenarios** as a comma-separated string (see valid values below)
+4. Optionally provide an **S3 cleanup path** to wipe the existing store before reprocessing
 5. Click **Run workflow**
 
-## Inputs
+### Inputs
 
 | Input | Required | Description |
 |-------|----------|-------------|
 | `gcm` | yes | GCM to process. One of `CESM2-WACCM`, `MIROC-ES2H`, `UKESM`, `NASA-NEX` |
-| `scenario` | yes | Scenario name. Must match exactly — see the table below |
-| `s3_cleanup_path` | no | S3 prefix to delete before processing. If left empty, the existing store is left in place and the script will overwrite it. See [When to use S3 cleanup](#when-to-use-s3-cleanup) |
-| `extra_flags` | no | Additional flags passed through to the processing script (e.g. `--subset`) |
+| `scenario` | yes | Comma-separated scenario(s). See valid values below |
+| `extra_flags` | no | Additional flags passed to the processing script (e.g. `--subset`) |
 
 ### Valid scenarios
 
 | GCM | Valid scenarios |
 |-----|----------------|
-| `CESM2-WACCM` | `pangeo-historical`, `historical`, `ssp245`, `G6-1.5K` |
-| `MIROC-ES2H` | `historical`, `ssp245`, `G6-1.5K`, `baseline` |
-| `UKESM` | `historical`, `SSP245`, `SSP245-t-pr`, `G6-1.5K`, `G6-1.5K-t-pr` |
+| `CESM2-WACCM` | `historical`, `ssp245`, `G6-1.5K` |
+| `MIROC-ES2H` | `historical`, `esgf-ssp245`, `ssp245`, `G6-1.5K` |
+| `UKESM` | `historical`, `SSP245`, `G6-1.5K` |
 | `NASA-NEX` | `historical`, `SSP245` |
 
-Scenario names are case-sensitive and must match the values in the table above exactly.
+Scenario names are case-sensitive and must match the values above exactly. To process multiple
+scenarios in one trigger, pass them comma-separated: e.g. `historical,ssp245`.
 
-## When to use S3 cleanup
+---
 
-The `s3_cleanup_path` field accepts an S3 prefix. When provided, the workflow runs `aws s3 rm <path> --recursive` before processing. This is useful when the existing icechunk store is in a bad state and you want a clean start rather than an overwrite.
+## ERA5 — `process ERA5 input data`
 
-Common paths:
+ERA5 has its own dedicated workflow with variable- and time-range controls.
 
-| GCM | Scenario | S3 cleanup path |
-|-----|----------|-----------------|
-| CESM2-WACCM | `pangeo-historical` | `s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/pangeo-CESM2-WACCM-historical.icechunk/` |
-| CESM2-WACCM | `historical` | `s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-historical.icechunk/` |
-| CESM2-WACCM | `ssp245` | `s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2_WACCM_SSP245.icechunk/` |
-| CESM2-WACCM | `G6-1.5K` | `s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k.icechunk/` |
+### Triggering the workflow
 
-:::{admonition} S3 cleanup is irreversible
-:class: warning
+1. Go to **Actions → process ERA5 input data → Run workflow**
+2. Fill in the inputs below and click **Run workflow**
 
-The workflow does not create a backup before deleting. Double-check the path before triggering — a trailing `/` is required to avoid accidentally deleting adjacent stores.
-:::
+### Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `variables` | yes | `all` | Comma-separated CMIP6 variable names, or `all`. Valid: `tas`, `tasmin`, `tasmax`, `pr`, `rsds`, `rlds`, `ps`, `hurs` |
+| `start_year` | no | `1950` | First year to include (inclusive) |
+| `end_year` | no | `2014` | Last year to include (inclusive) |
+| `dry_run` | no | `false` | Run transforms on a short sample and print results without writing |
+| `commit_message` | no | _(variable name)_ | Custom icechunk commit message |
+
+---
 
 ## Job summary
 
-Once processing completes, the workflow opens the written icechunk store via the `srm.datasets` catalog and appends the xarray `repr` to the [job summary](https://github.blog/news-insights/product-news/supercharging-github-actions-with-job-summaries/). It looks something like this:
+Once processing completes, the workflow opens the written icechunk store and appends the
+xarray `repr` to the [job summary](https://github.blog/news-insights/product-news/supercharging-github-actions-with-job-summaries/).
+It looks something like this:
 
-```
-<xarray.Dataset> Size: 625GB
-Dimensions:          (ensemble_member: 10, time: 31391, lat: 192, lon: 288)
-Coordinates:
-  * ensemble_member  (ensemble_member) object '001' '002' ... '009' '010'
-  * time             (time) datetime64[ns] 2015-01-01 ... 2101-01-01
-  * lat              (lat) float64 -90.0 -89.06 ... 89.06 90.0
-  * lon              (lon) float64 -180.0 -178.8 ... 178.8
-Data variables:
-    hurs             (ensemble_member, time, lat, lon) float32 dask.array
-    pr               (ensemble_member, time, lat, lon) float32 dask.array
-    rsds             (ensemble_member, time, lat, lon) float32 dask.array
-    tas              (ensemble_member, time, lat, lon) float32 dask.array
+```text
+<xarray.DataTree>
+Group: /
+├── Group: historical
+│   Dimensions: (ensemble_member: 3, time: 23741, lat: 192, lon: 288)
+│   Coordinates:
+│     * ensemble_member  (ensemble_member) <U10 'r1i1p1f1' 'r2i1p1f1' 'r3i1p1f1'
+│     * time             (time) datetime64[ns] 1950-01-01 ... 2014-12-31
+│   Data variables:
+│       tas, pr, rsds, ...
+├── Group: ssp245
+│   ...
+└── Group: g6_1p5k
     ...
 ```
 
-This gives you a quick sanity check on dimensions, ensemble members, and variables without having to open the store manually. NASA-NEX does not produce a summary (its output is a virtual store only).
+This gives a quick sanity check on dimensions, ensemble members, and group structure without
+opening the store manually. NASA-NEX does not produce a summary (its output is a virtual store).

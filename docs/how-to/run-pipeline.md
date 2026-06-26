@@ -48,8 +48,8 @@ For a **single run** or when you already have a config file, use `bcsd run`:
 # Run from a config file
 uv run bcsd run --config-path configs/example.yaml
 
-# Override version without editing the file
-uv run bcsd run --config-path configs/example.yaml --version v2
+# Override branch without editing the file
+uv run bcsd run --config-path configs/example.yaml --branch v2
 
 # Override environment via environment variable
 BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
@@ -119,7 +119,7 @@ predict_period_end: 2100
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/outputs"
 environment: "qa"
-# version defaults to installed package version; omit unless pinning a specific cache namespace
+# branch defaults to installed package version; omit unless pinning a specific cache namespace
 EOF
 done
 

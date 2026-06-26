@@ -99,40 +99,46 @@ graph TB
 - **stage 1 (prepare_observations)**: runs once per (GCM, variable, spatial_subset) combination
 - **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination
 - **stage 3 (transform_scenario)**: runs for each scenario configuration
-- **green boxes**: cached intermediate artifacts in `scratch_dir/{environment}/{version}/`
-- **gold box**: final output in `output_dir/{environment}/{version}/`
+- **green boxes**: cached intermediate artifacts in the scratch icechunk store, on the active branch
+- **gold box**: final output in the output icechunk store, on the active branch
 - **dotted arrows**: cache dependencies (automatic validation)
 
-## Cache Path Structure
+## Cache Store Structure
 
-```
-scratch_dir/{environment}/{version}/
-├── obs/
-│   └── {gcm}_{variable}_{subset_id}_obs_regridded.icechunk
-└── historical/
-    └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk
+Each `(GCM, obs-dataset, spatial-subset)` combination gets exactly two icechunk repositories — one
+for scratch intermediates, one for final outputs. All artifact groups live inside those repos as
+zarr group paths on a named branch (defaulting to the installed package version):
 
-output_dir/{environment}/{version}/
-├── historical/
-│   └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk
-└── {scenario_lower}/
-    └── {gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk
+```text
+# Scratch store — intermediate artifacts
+s3://carbonplan-scratch/srm/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+  branch: v1.2.3        ← installed package version (BCSD_BRANCH to override)
+    obs/{variable}
+    historical/{variable}/{ensemble_member}
+    debiased_historical/{variable}/{ensemble_member}      # only if save_intermediate=True
+    detrended_scenario/{scenario_group}/{variable}/{ensemble_member}
+    trend_scenario/{scenario_group}/{variable}/{ensemble_member}
+    debiased_scenario/{scenario_group}/{variable}/{ensemble_member}
+    debiased_retrended_scenario/{scenario_group}/{variable}/{ensemble_member}
+
+# Output store — final downscaled results
+s3://carbonplan-scratch/srm/outputs/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+  branch: v1.2.3
+    {scenario_group}/{variable}/{ensemble_member}
 ```
 
 Where:
 
 - `{environment}`: `qa` or `production`
-- `{version}`: `v1`, `v2`, etc. (default: `v1`)
+- `{obs_dataset}`: `ERA5` or `GDEX-GMF`
 - `{subset_id}`: `global` or `lat{min}to{max}_lon{min}to{max}` (e.g., `lat-35.0to-22.0_lon16.0to33.0`)
-- `{ensemble:03d}`: Zero-padded ensemble member (e.g., `000`, `001`)
-- `{scenario_lower}`: Scenario name in lowercase (e.g., `ssp245`, `g6-1.5k`)
+- `{scenario_group}`: `ssp245`, `g6_1p5k`, or `esgf_ssp245`
+- `{ensemble_member}`: member label as stored in the GCM (e.g., `r1i1p1f1`, `001`)
 
-This structure ensures complete isolation between:
-
-- different environments (no accidental production overwrites during testing)
-- different versions (bump `version` to invalidate all cached artifacts without changing environment)
-- different spatial subsets (regional vs global runs don't conflict)
-- different ensemble members and scenarios
+This design concentrates all artifacts for a GCM into two stores instead of scattering them across
+dozens of separate icechunk repositories. Branching — rather than path segments — provides version
+isolation: bumping the package version (or setting `BCSD_BRANCH`) starts a fresh branch with no
+inherited ancestry, so the existence checks never find stale artifacts from a previous run.
 
 ## Coiled Execution
 
@@ -184,7 +190,7 @@ sequenceDiagram
 VM types are selected per pipeline stage to match resource requirements:
 
 | Stage | Instance type | Notes |
-|-------|---------------|-------|
+| --- | --- | --- |
 | `prepare_observations` | `r8g.4xlarge` | Light data processing |
 | `fit_historical` | `r8g.12xlarge` | Memory-intensive QM fitting |
 | `transform_scenario` | `r8g.24xlarge` | 768GB RAM, 96 vCPUs, AWS Graviton |
@@ -199,7 +205,7 @@ The CLI is built on several key components:
 
 1. **BCSDConfig** + **PipelineOptions** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
    - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `mapping_type`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `detrend_data`, etc.
-   - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `version`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`, `clip_values`, `clip_bounds`. 
+   - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `branch`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`, `clip_values`, `clip_bounds`. The `branch` field (default: installed package version) names the icechunk branch all artifacts are written to and read from.
    - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 
 2. **ArtifactCache** ([src/srm/cache.py](../../src/srm/cache.py))
@@ -282,46 +288,16 @@ flowchart TD
     Z --> AA[CLI: Display summary]
 ```
 
-## Cache Path Generation Logic
+## Artifact Location and Existence Checks
 
-The cache system generates deterministic paths based on configuration:
+`ArtifactCache` translates a `BCSDConfig` into a `StoreLocation` — a pairing of an icechunk
+repository path and a zarr group path within it. The store path is derived from
+`(environment, gcm, obs_dataset, subset_id)`; the group path encodes the stage and the specific
+run parameters (variable, ensemble member, scenario group). Because both components are
+deterministic given the config, the same config always maps to the same `StoreLocation` on every
+run and across machines.
 
-```python
-def _get_subset_id(subset_bounds):
-    """Generate spatial subset identifier"""
-    if subset_bounds is None:
-        return "global"
-    lat_min, lat_max, lon_min, lon_max = subset_bounds
-    return f"lat{lat_min}to{lat_max}_lon{lon_min}to{lon_max}"
-
-# Examples:
-# global → "global"
-# [-35, -22, 16, 33] → "lat-35.0to-22.0_lon16.0to33.0"
-# [31, 49, -125, -102] → "lat31.0to49.0_lon-125.0to-102.0"
-
-def get_obs_path(gcm, variable, subset_bounds):
-    subset_id = _get_subset_id(subset_bounds)
-    return f"{scratch_dir}/{environment}/{version}/obs/{gcm}_{variable}_{subset_id}_obs_regridded.icechunk"
-
-def get_historical_path(gcm, variable, ensemble, subset_bounds):
-    subset_id = _get_subset_id(subset_bounds)
-    if output_dir:
-        return f"{output_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
-    else:
-        return f"{scratch_dir}/{environment}/{version}/historical/{gcm}_{variable}_{ensemble:03d}_{subset_id}_historical.icechunk"
-
-def get_scenario_path(gcm, variable, ensemble, scenario, subset_bounds):
-    subset_id = _get_subset_id(subset_bounds)
-    scenario_lower = scenario.lower()
-    if output_dir:
-        return f"{output_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
-    else:
-        return f"{scratch_dir}/{environment}/{version}/{scenario_lower}/{gcm}_{variable}_{ensemble:03d}_{subset_id}_{scenario_lower}.icechunk"
-```
-
-This ensures:
-
-- **environment isolation**: qa/production never mix
-- **spatial subset separation**: Global vs regional runs have different paths
-- **deterministic lookups**: Same config always produces same path
-- **human-readable**: Paths are self-documenting
+Existence is checked by walking the icechunk commit ancestry on the current branch and looking for
+a commit whose message equals the group path. This is atomic: a partially-written group (whose
+commit was never finalised) is invisible to the check, so interrupted runs can safely resume by
+writing the group again without risking a false cache hit.

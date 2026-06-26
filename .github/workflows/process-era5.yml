@@ -30,12 +30,6 @@ on:
                 required: false
                 type: string
                 default: ""
-            s3_cleanup_path:
-                description: "S3 prefix to delete before processing (e.g. s3://carbonplan-srm/input/tensor/era5.icechunk/). Leave empty to skip."
-                required: false
-                type: string
-                default: ""
-
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
@@ -52,12 +46,6 @@ jobs:
         steps:
             - uses: actions/checkout@v6
             - uses: ./.github/actions/setup
-
-            - name: Clean S3 icechunk store
-              if: inputs.s3_cleanup_path != ''
-              env:
-                  S3_CLEANUP_PATH: ${{ inputs.s3_cleanup_path }}
-              run: aws s3 rm "$S3_CLEANUP_PATH" --recursive
 
             - name: Process ERA5 variables
               env:
