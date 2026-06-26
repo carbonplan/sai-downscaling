@@ -65,6 +65,7 @@ reference/configuration
 :maxdepth: 2
 :caption: How-to guides
 
+how-to/pipeline-stage-debugger
 how-to/demo-new-pipeline
 how-to/run-pipeline
 how-to/manage-cache
