@@ -6,7 +6,9 @@ resumability, and Coiled integration for distributed execution.
 """
 
 import itertools
+import json
 import logging
+from collections import defaultdict
 from pathlib import Path
 
 import typer
@@ -20,6 +22,7 @@ from rich.tree import Tree
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
+from srm.validation import CheckResult, CheckStatus
 
 console = Console()
 logging.basicConfig(
@@ -30,7 +33,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_STATUS_SYMBOL = {
+    CheckStatus.PASS: "[green]✓[/green]",
+    CheckStatus.FAIL: "[red]✗[/red]",
+    CheckStatus.SKIP: "-",
+}
+
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
+
+
+def _build_check_matrix_table(
+    check_ids: list[str],
+    columns: list[str],
+    index: dict[tuple[str, str], CheckResult],
+) -> Table:
+    tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+    tbl.add_column("check", style="dim", no_wrap=True)
+    for col in columns:
+        tbl.add_column(col, justify="center")
+    for cid in check_ids:
+        row = [cid]
+        for col in columns:
+            r = index.get((cid, col))
+            row.append(_STATUS_SYMBOL[r.status] if r else " ")
+        tbl.add_row(*row)
+    return tbl
 
 
 _MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
@@ -928,16 +955,12 @@ def validate(
     When --config-path is given, GCMs and scenarios are derived from those configs.
     Otherwise, --gcm and --scenario filter the check matrix (defaulting to all known values).
     """
-    import json
-
     import pydantic
 
     from srm.validation import (
         BLOCKING_CHECKS,
         GCM_OPTIONS,
         SCENARIO_OPTIONS,
-        XFAIL_CHECKS,
-        CheckStatus,
         DatasetValidator,
     )
 
@@ -949,15 +972,6 @@ def validate(
             dict.fromkeys(c.scenario if c.scenario is not None else "historical" for c in configs)
         )
         logger.info("Validating %d GCM(s) x %d scenario(s) from configs", len(gcm), len(scenario))
-
-    _STATUS_SYMBOL = {
-        CheckStatus.PASS: "[green]✓[/green]",
-        CheckStatus.FAIL: "[red]✗[/red]",
-        CheckStatus.UNKNOWN: "[yellow]?[/yellow]",
-        CheckStatus.SKIP: "-",
-        CheckStatus.XFAIL: "[yellow]x[/yellow]",  # expected failure — not blocking
-        CheckStatus.XPASS: "[cyan]✓?[/cyan]",  # unexpected pass — worth investigating
-    }
 
     pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
 
@@ -1002,17 +1016,7 @@ def validate(
                 table_checks.append(cid)
 
         if table_checks:
-            tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
-            tbl.add_column("check", style="dim", no_wrap=True)
-            for s in scenarios:
-                tbl.add_column(s, justify="center")
-            for cid in table_checks:
-                row = [cid]
-                for s in scenarios:
-                    r = index.get((cid, s))
-                    row.append(_STATUS_SYMBOL[r.status] if r else " ")
-                tbl.add_row(*row)
-            console.print(tbl)
+            console.print(_build_check_matrix_table(table_checks, scenarios, index))
 
         if scoped_checks:
             scoped_tbl = Table(
@@ -1057,19 +1061,129 @@ def validate(
                 )
                 console.print_json(json.dumps(r.detail))
 
-    xfail_results = [r for r in all_results if r.status == CheckStatus.XFAIL]
-    xpass_results = [r for r in all_results if r.status == CheckStatus.XPASS]
-
-    if xfail_results:
-        logger.warning("--- Expected failures (xfail, non-blocking) ---")
-        for r in xfail_results:
-            reason = XFAIL_CHECKS.get((r.gcm, r.scenario, r.check_id), "")
-            logger.warning("x %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, reason)
-
-    if xpass_results:
-        logger.warning("--- Unexpected passes (xpass) — verify xfail entries are still needed ---")
-        for r in xpass_results:
-            logger.warning("✓? %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, r.message)
-
     if blocking_failures:
         raise typer.Exit(1)
+
+
+@app.command()
+def validate_output(
+    store_uris: list[str] = typer.Argument(
+        ..., help="One or more output datatree icechunk store URIs."
+    ),
+    branch: str | None = typer.Option(None, "--branch", help="Icechunk branch to read."),
+    tag: str | None = typer.Option(None, "--tag", help="Icechunk tag to read."),
+    scenario: list[str] | None = typer.Option(
+        None, "--scenario", help="Scenario(s) to validate (repeatable). Defaults to all."
+    ),
+    variable: list[str] | None = typer.Option(
+        None, "--variable", help="Variable(s) to validate (repeatable). Defaults to all."
+    ),
+) -> None:
+    """Validate output datatree store(s), one leaf (scenario/variable/member) at a time.
+
+    Renders a single table per store. Exits with code 1 if any blocking check fails in any
+    store, otherwise exits with code 0. --scenario and --variable restrict validation to
+    matching subtrees (defaulting to the whole store).
+
+    Runs locally or with coiled batch.
+    local: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
+    coiled batch: uv run coiled batch run --region us-west-2 "bcsd validate-output <store_uri> [<store_uri> ...]"
+
+    """
+    from srm.config import SCENARIO_TO_GROUP
+    from srm.validation import (
+        BLOCKING_CHECKS,
+        parse_scenario,
+        parse_variable,
+        validate_output_store,
+    )
+
+    provided = sum(x is not None for x in [branch, tag])
+    if provided != 1:
+        raise typer.BadParameter(
+            "Exactly one of --branch or --tag is required.",
+            param_hint="'--branch' / '--tag'",
+        )
+
+    # Translate/validate filters to on-disk group names (SSP245 -> ssp245; variables are
+    # already canonical). parse_* raise on unknown values.
+    scenarios = [SCENARIO_TO_GROUP[parse_scenario(s)] for s in scenario] if scenario else None
+    variables = [parse_variable(v) for v in variable] if variable else None
+    filtered = bool(scenarios or variables)
+
+    any_blocking = False
+    for store_uri in store_uris:
+        results = validate_output_store(
+            store_uri,
+            branch=branch,
+            tag=tag,
+            scenarios=scenarios,
+            variables=variables,
+        )
+        if not results:
+            # An explicit filter matching nothing is an error, not an empty success.
+            log = logger.error if filtered else logger.warning
+            log("No populated leaves found in %s", store_uri)
+            if filtered:
+                any_blocking = True
+            continue
+
+        console.rule(f"[bold]{store_uri}[/bold]")
+
+        # Group results by leaf (scenario path).
+        leaf_results: dict[str, list[CheckResult]] = defaultdict(list)
+        for r in results:
+            leaf_results[r.scenario].append(r)
+
+        tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+        tbl.add_column("leaf", no_wrap=True)
+        tbl.add_column("status", justify="center")
+        tbl.add_column("checks", justify="right", style="dim")
+        for leaf, leaf_rs in sorted(leaf_results.items()):
+            n_total = len(leaf_rs)
+            n_pass = sum(1 for r in leaf_rs if r.status != CheckStatus.FAIL)
+            any_fail = any(r.status == CheckStatus.FAIL for r in leaf_rs)
+            status_sym = "[red]✗[/red]" if any_fail else "[green]✓[/green]"
+            checks_str = f"{n_pass}/{n_total}"
+            tbl.add_row(leaf, status_sym, checks_str)
+        console.print(tbl)
+
+        failures_by_leaf: dict[str, list[CheckResult]] = {
+            leaf: [r for r in leaf_rs if r.status == CheckStatus.FAIL]
+            for leaf, leaf_rs in leaf_results.items()
+            if any(r.status == CheckStatus.FAIL for r in leaf_rs)
+        }
+        blocking_failures = [
+            r
+            for leaf_rs in failures_by_leaf.values()
+            for r in leaf_rs
+            if r.check_id in BLOCKING_CHECKS
+        ]
+        if blocking_failures:
+            any_blocking = True
+
+        if failures_by_leaf:
+            n_fail_leaves = len(failures_by_leaf)
+            n_fail_checks = sum(len(v) for v in failures_by_leaf.values())
+            console.print(
+                f"\n[bold]Failures[/bold] ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, {n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
+            )
+            for leaf, fail_rs in sorted(failures_by_leaf.items()):
+                console.print(f"  [bold]{leaf}[/bold]")
+                for r in fail_rs:
+                    blocking_marker = (
+                        " [dim](blocking)[/dim]" if r.check_id in BLOCKING_CHECKS else ""
+                    )
+                    console.print(
+                        f"    [red]✗[/red] [dim]{r.check_id}[/dim]{blocking_marker}    {r.message}"
+                    )
+                    if r.detail:
+                        console.print_json(json.dumps(r.detail))
+                console.print()
+
+    if any_blocking:
+        raise typer.Exit(1)
+
+
+if __name__ == "__main__":
+    app()

@@ -12,7 +12,13 @@ import pydantic
 import pytest
 import xarray as xr
 
-from srm.validation import _DS_CHECKER_CHECKS, CheckStatus, DatasetValidator
+from srm.validation import (
+    _DS_CHECKER_CHECKS,
+    OUTPUT_CHECKS,
+    CheckStatus,
+    DatasetValidator,
+    validate_output_store,
+)
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -403,11 +409,105 @@ class TestValidate:
         assert "temporal_coverage" in check_ids
         assert "lineage_member_availability" in check_ids
         assert "g6_not_identical_to_ssp245" in check_ids
-        assert "ssp245_hist_member_pairing" not in check_ids
-        assert "g6_ssp245_member_pairing" not in check_ids
 
     def test_all_results_have_correct_gcm_scenario(self, mock_datasets):
         results = DatasetValidator(gcm="MIROC-ES2H", scenario="historical").run_checks()
         for r in results:
             assert r.gcm == "MIROC-ES2H"
             assert r.scenario == "historical"
+
+
+# ── output store validation ──────────────────────────────────────────────────
+
+
+# In-range fill values per variable so validate_spatial_range passes on the dummy leaf.
+_VAR_FILL = {"tas": 280.0, "tasmax": 290.0, "tasmin": 270.0, "pr": 0.001, "rsds": 200.0}
+
+
+def _ds_single_var(var: str) -> xr.Dataset:
+    """Minimal single-variable dataset matching a /scenario/variable/member leaf."""
+    time = xr.date_range("2015-01-01", periods=3, freq="D", calendar="proleptic_gregorian")
+    ds = xr.Dataset(
+        {var: (["time", "lat", "lon"], np.full((3, 2, 2), _VAR_FILL.get(var, 1.0)))},
+        coords={"time": time, "lat": [0.0, 1.0], "lon": [0.0, 1.0]},
+    )
+    ds.time.encoding["calendar"] = "proleptic_gregorian"
+    return ds
+
+
+def _make_output_datatree(
+    scenarios: list[str], variables: list[str], members: list[str]
+) -> xr.DataTree:
+    """Build a DataTree mirroring the real /scenario/variable/member output store structure.
+
+    Intermediate nodes (/scenario, /scenario/variable) have no data_vars — only member
+    leaves do.
+    """
+    return xr.DataTree.from_dict(
+        {
+            f"/{scenario}/{var}/{member}": _ds_single_var(var)
+            for scenario in scenarios
+            for var in variables
+            for member in members
+        }
+    )
+
+
+def test_validate_output_store():
+    tree = _make_output_datatree(
+        scenarios=["ssp245"],
+        variables=["tasmax"],
+        members=["006", "007"],
+    )
+    results = validate_output_store(tree)
+    assert {r.scenario for r in results} == {"/ssp245/tasmax/006", "/ssp245/tasmax/007"}
+    applicable = [c for c in OUTPUT_CHECKS if c[2].get("var") in (None, "tasmax")]
+    assert len(results) == len(applicable) * 2
+    assert all(r.gcm == "output" for r in results)
+    # Single-variable leaves with valid coords/data must produce no failures.
+    assert [r for r in results if r.status == CheckStatus.FAIL] == []
+
+
+def test_validate_output_store_filters():
+    tree = _make_output_datatree(
+        scenarios=["ssp245", "historical"],
+        variables=["tas", "pr"],
+        members=["006", "007"],
+    )
+
+    def leaves(results):
+        return sorted({r.scenario for r in results})
+
+    assert leaves(validate_output_store(tree, scenarios=["ssp245"])) == [
+        "/ssp245/pr/006",
+        "/ssp245/pr/007",
+        "/ssp245/tas/006",
+        "/ssp245/tas/007",
+    ]
+    assert leaves(validate_output_store(tree, variables=["tas"])) == [
+        "/historical/tas/006",
+        "/historical/tas/007",
+        "/ssp245/tas/006",
+        "/ssp245/tas/007",
+    ]
+    assert leaves(validate_output_store(tree, scenarios=["ssp245"], variables=["pr"])) == [
+        "/ssp245/pr/006",
+        "/ssp245/pr/007",
+    ]
+    # Unknown filter values match nothing rather than erroring.
+    assert validate_output_store(tree, scenarios=["nope"]) == []
+
+
+def test_parse_variable():
+    from srm.validation import parse_variable
+
+    assert parse_variable("tas") == "tas"
+    with pytest.raises(ValueError, match="Unknown variable"):
+        parse_variable("TAS")
+
+
+def test_open_output_datatree_rejects_non_s3():
+    from srm.validation import _open_output_datatree
+
+    with pytest.raises(ValueError, match="must be an s3:// URI"):
+        _open_output_datatree("gs://bucket/key")
