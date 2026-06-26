@@ -30,6 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: ./.github/actions/setup
+
       - name: install uv
         uses: astral-sh/setup-uv@v7
         with:
