@@ -268,21 +268,8 @@ def write_dataset_to_icechunk(
     to_icechunk(ds, session, encoding=encoding, mode=write_mode, group=group)
 
     if commit_message:
-        # Concurrent jobs (e.g. coiled batch, one per scenario) writing disjoint
-        # groups/arrays to the same repo race on commit; rebase resolves
-        # non-overlapping changes. True overlaps raise after max_commit_attempts.
-        max_commit_attempts = 5
-        for attempt in range(1, max_commit_attempts + 1):
-            try:
-                session.commit(commit_message)
-                break
-            except icechunk.ConflictError:
-                if attempt == max_commit_attempts:
-                    raise
-                logger.info(
-                    "commit conflict (attempt %d/%d), rebasing", attempt, max_commit_attempts
-                )
-                session.rebase(icechunk.ConflictDetector())
+        # BasicConflictSolver is the icechunk 2 way: auto-resolves non-overlapping concurrent writes.
+        session.commit(commit_message, rebase_with=icechunk.BasicConflictSolver())
 
     if repo is not None and commit_message and is_overwrite:
         console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
