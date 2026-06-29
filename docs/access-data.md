@@ -49,16 +49,10 @@ A fully-populated global CESM2-WACCM store would contain groups like
 
 ## Choosing the right branch
 
-Each pipeline run writes to an icechunk branch named after the installed package version (e.g.
-`v1.2.3`). To read data produced by a specific run, you need the branch name that was active when
-the run completed. The branch defaults to the `srm` package version at deploy time; production
-runs use the version tied to the GitHub release tag.
-
-Use `bcsd status` to check which branches and groups are populated for a given config:
-
-```bash
-uv run bcsd status --config-path configs/production/cesm2-waccm.yaml --verbose
-```
+Each pipeline run writes to an icechunk branch whose name matches the GitHub release tag that
+triggered it (e.g. `v2026.6.25.0`). To read a specific run's output, use the corresponding
+release tag as the branch name. Production releases are listed at
+[github.com/carbonplan/srm-downscaling/releases](https://github.com/carbonplan/srm-downscaling/releases).
 
 ## Opening a single variable/member/scenario
 
@@ -115,22 +109,25 @@ g6_tasmax = dt["g6_1p5k/tasmax/002"].to_dataset()
 
 ## Discovering what is in a store
 
-If you are unsure which groups have been written, construct the store path and use
-`ArtifactCache.list_groups_on_branch()`:
+If you are unsure which groups have been written, open the store as a `DataTree` and inspect it.
+Printing the tree shows all available scenario groups, variables, and ensemble members without
+loading any data.
 
 ```{code-cell} python
 
-from srm.cache import ArtifactCache
+import icechunk
+import xarray as xr
 
-store_path = "s3://carbonplan-scratch/srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk"
-cache = ArtifactCache(
-    scratch_dir="s3://carbonplan-scratch/srm/cache/",
-    environment="qa",
-    branch="v2026.6.25.0",
-    output_dir="s3://carbonplan-scratch/srm/output/",
+storage = icechunk.s3_storage(
+    bucket="carbonplan-scratch",
+    prefix="srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk",
+    from_env=True,
 )
-groups = cache.list_groups_on_branch(store_path)
-print(groups)
+repo = icechunk.Repository.open(storage)
+session = repo.readonly_session(branch="v2026.6.25.0")
+
+dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_format=3)
+print(dt)
 ```
 
 ## See Also
