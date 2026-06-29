@@ -10,106 +10,132 @@ kernelspec:
   name: python3
 ---
 
-# Input Data Catalog
+# How to Access Downscaled Output Data
 
-Input datasets are stored as [icechunk](https://icechunk.io) stores on S3 and exposed through the
-built-in catalog. The catalog holds three dataset types: `Datatree` (unified per-GCM stores
-organised as zarr group trees), `Dataset` (flat icechunk stores), and `VirtualDataset` (virtual
-icechunk stores that reference external chunks).
+The pipeline writes downscaled output into icechunk stores on S3. Each store holds all scenarios,
+variables, and ensemble members for a single GCM/obs-dataset/spatial-subset combination, organised
+as zarr groups. This guide shows how to construct the correct store path, open a session on the
+right branch, and load data.
 
-## Listing available datasets
+## Anatomy of an output store
 
-```{code-cell} python
-from srm import catalog
+Output stores live under `s3://carbonplan-srm/output/` and follow this path pattern:
 
-catalog.list()
+```
+s3://carbonplan-srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
 ```
 
-## Dataset types and paths
-
-| Name | Type | S3 path |
+| Component | Values | Example |
 | --- | --- | --- |
-| `CESM2-WACCM` | `Datatree` | `s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk` |
-| `MIROC-ES2H` | `Datatree` | `s3://carbonplan-srm/input/processed/miroc-es2h.icechunk` |
-| `UKESM` | `Datatree` | `s3://carbonplan-srm/input/processed/ukesm.icechunk` |
-| `ERA5` | `Dataset` | `s3://carbonplan-srm/input/processed/era5.icechunk` |
-| `NASA-NEX-SSP245` | `VirtualDataset` | `s3://carbonplan-srm/input/processed/nasa-nex/ssp245/virtual.icechunk` |
-| `NASA-NEX-historical` | `VirtualDataset` | `s3://carbonplan-srm/input/processed/nasa-nex/historical/virtual.icechunk` |
-| `GDEX-GMF` | `Dataset` | `s3://carbonplan-srm/input/processed/gdex-gmf.icechunk` |
-| `ocean-mask` | `VectorDataset` | `s3://carbonplan-srm/input/vector/GSHHS/GSHHS.parquet` |
+| `environment` | `qa`, `production` | `production` |
+| `gcm` | `CESM2-WACCM`, `MIROC-ES2H`, `UKESM` | `CESM2-WACCM` |
+| `obs_dataset` | `ERA5`, `GDEX-GMF` | `ERA5` |
+| `subset_id` | `global` or `lat{min}to{max}_lon{min}to{max}` | `global` |
 
-## Opening a Datatree dataset (CESM2-WACCM, MIROC-ES2H, UKESM)
+Within each store, data is organised in zarr groups:
 
-`Datatree` entries hold multiple scenarios as zarr group nodes within a single icechunk store.
-Calling `.to_xarray()` with no arguments returns the full `xr.DataTree`; passing a `group`
-returns a flat `xr.Dataset` for that node only.
-
-```{code-cell} python
-from srm import catalog
-
-cesm2_waccm = catalog.get("CESM2-WACCM").to_xarray()
-cesm2_waccm
+```
+{scenario_group}/{variable}/{ensemble_member}
 ```
 
-```{code-cell} python
-cesm2_waccm_historical = catalog.get("CESM2-WACCM").to_xarray(group="historical")
-cesm2_waccm_historical
+| Component | Values | Example |
+| --- | --- | --- |
+| `scenario_group` | `ssp245`, `g6_1p5k`, `esgf_ssp245` | `ssp245` |
+| `variable` | `tas`, `tasmax`, `pr`, `rsds`, … | `tas` |
+| `ensemble_member` | e.g. `001`, `002`, `r1i1p1f1` | `001` |
+
+A fully-populated global CESM2-WACCM store would contain groups like
+`ssp245/tas/001`, `ssp245/tas/002`, `g6_1p5k/pr/003`, and so on.
+
+## Choosing the right branch
+
+Each pipeline run writes to an icechunk branch named after the installed package version (e.g.
+`v1.2.3`). To read data produced by a specific run, you need the branch name that was active when
+the run completed. The branch defaults to the `srm` package version at deploy time; production
+runs use the version tied to the GitHub release tag.
+
+Use `bcsd status` to check which branches and groups are populated for a given config:
+
+```bash
+uv run bcsd status --config-path configs/production/cesm2-waccm.yaml --verbose
 ```
 
-```{code-cell} python
-cesm2_waccm_ssp245 = catalog.get("CESM2-WACCM").to_xarray(group="ssp245")
-cesm2_waccm_ssp245
-```
+## Opening a single variable/member/scenario
 
 ```{code-cell} python
-cesm2_waccm_g6 = catalog.get("CESM2-WACCM").to_xarray(group="g6_1p5k")
-cesm2_waccm_g6
-```
 
-## Opening a flat Dataset (ERA5, GDEX-GMF)
-
-```{code-cell} python
-era5 = catalog.get("ERA5").to_xarray()
-era5
-```
-
-```{code-cell} python
-gdex = catalog.get("GDEX-GMF").to_xarray()
-gdex
-```
-
-## Opening a VirtualDataset (NASA-NEX)
-
-NASA-NEX stores are virtual: the icechunk store holds chunk references that point at the public
-`s3://nex-gddp-cmip6/` bucket. No credentials are needed to read NASA-NEX data; the virtual
-chunk container is configured for anonymous access automatically.
-
-```{code-cell} python
-nex_ssp245 = catalog.get("NASA-NEX-SSP245").to_xarray()
-nex_ssp245
-```
-
-```{code-cell} python
-nex_historical = catalog.get("NASA-NEX-historical").to_xarray()
-nex_historical
-```
-
-## Opening a dataset with lower-level icechunk control
-
-If you need direct control over the icechunk session (e.g. to pin a specific snapshot or branch):
-
-```{code-cell} python
 import icechunk
 import xarray as xr
 
-entry = catalog.get("CESM2-WACCM")
-storage = icechunk.s3_storage(bucket=entry.bucket, prefix=entry.prefix, from_env=True)
+storage = icechunk.s3_storage(
+    bucket="carbonplan-scratch",
+    prefix="srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk",
+    from_env=True,
+)
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session("main")
+session = repo.readonly_session(branch="v2026.6.25.0")  # replace with the actual release branch
 
-dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_format=3, chunks="auto")
-dt
+ds = xr.open_zarr(
+    session.store,
+    group="g6_1p5k/tasmax/002",
+    consolidated=False,
+    zarr_format=3,
+    chunks="auto",
+)
+print(ds)
 ```
 
-See the [subsetting and exporting notebook](data-access-notebooks/subsetting-and-exporting.ipynb)
-for examples of loading spatial subsets and exporting to NetCDF.
+## Opening all scenarios as a DataTree
+
+If you want a unified view across scenario groups, open the full store as an `xr.DataTree`. Each
+scenario group becomes a node in the tree, and you can navigate or select across them.
+
+```{code-cell} python
+
+import icechunk
+import xarray as xr
+
+storage = icechunk.s3_storage(
+    bucket="carbonplan-scratch",
+    prefix="srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk",
+    from_env=True,
+)
+repo = icechunk.Repository.open(storage)
+session = repo.readonly_session(branch="v2026.6.25.0")  # replace with the actual release branch
+
+dt = xr.open_datatree(
+    session.store,
+    engine="zarr",
+    consolidated=False,
+    zarr_format=3,
+)
+# Access a specific subtree or dataset
+g6_tasmax = dt["g6_1p5k/tasmax/002"].to_dataset()
+```
+
+## Discovering what is in a store
+
+If you are unsure which groups have been written, construct the store path and use
+`ArtifactCache.list_groups_on_branch()`:
+
+```{code-cell} python
+
+from srm.cache import ArtifactCache
+
+store_path = "s3://carbonplan-scratch/srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk"
+cache = ArtifactCache(
+    scratch_dir="s3://carbonplan-scratch/srm/cache/",
+    environment="qa",
+    branch="v2026.6.25.0",
+    output_dir="s3://carbonplan-scratch/srm/output/",
+)
+groups = cache.list_groups_on_branch(store_path)
+print(groups)
+```
+
+## See Also
+
+- [Pipeline architecture](explanation/pipeline-architecture.md) — how output stores are structured and written
+- [Compare outputs across versions](how-to/compare-outputs-across-versions.md) — using branches to validate pipeline changes
+- [Run the pipeline](how-to/run-pipeline.md) — producing output data from scratch
+- [Input data catalog](input-data.md) — raw GCM, ERA5, and NASA-NEX input datasets

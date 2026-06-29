@@ -11,17 +11,18 @@
 :::{tab-item} Using SRM Downscaled Data
 If you want to **access and analyze the downscaled data**:
 
-1. Visit [Access data](./access-data.md) for an overview of all available datasets and how to access them.
-2. Check out the [Subsetting and exporting data](./data-access-notebooks/subsetting-and-exporting.ipynb) guide to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
+1. Visit [Access data](./access-data.md) for how to open downscaled output stores, navigate scenarios, and discover available groups.
+2. Visit [Input data catalog](./input-data.md) for an overview of the raw GCM, ERA5, and NASA-NEX datasets fed into the pipeline.
+3. Check out the [Subsetting and exporting data](./data-access-notebooks/subsetting-and-exporting.ipynb) guide to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
 :::
 :::{tab-item} Running the Pipeline
 If you want to **run the downscaling pipeline**:
 
-3. Start with the [Interactive pipeline demo](./how-to/demo-new-pipeline.ipynb) notebook for a hands-on walkthrough with visualizations.
-4. Follow the [Run the pipeline](./how-to/run-pipeline.md) guide for installation, quick start, and batch processing.
-5. See the [CLI reference](./reference/cli.md) for all commands and options.
-6. See the [Configuration reference](./reference/configuration.md) for all config fields and validation rules.
-7. See [Deploy the pipeline](./how-to/deploy.md) for QA and production deployment via GitHub Actions.
+4. Start with the [Interactive pipeline demo](./how-to/demo-new-pipeline.ipynb) notebook for a hands-on walkthrough with visualizations.
+5. Follow the [Run the pipeline](./how-to/run-pipeline.md) guide for installation, quick start, and batch processing.
+6. See the [CLI reference](./reference/cli.md) for all commands and options.
+7. See the [Configuration reference](./reference/configuration.md) for all config fields and validation rules.
+8. See [Deploy the pipeline](./how-to/deploy.md) for QA and production deployment via GitHub Actions.
 :::
 ::::
 
@@ -32,12 +33,13 @@ If you want to **run the downscaling pipeline**:
 
 ## License
 
-SRM Downscaling code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/srm-downscaling/blob/main/LICENSE) for details. See [Access data](./access-data.md) for information about data licensing.
+SRM Downscaling code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/srm-downscaling/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
 
 ```{toctree}
 :hidden:
 :maxdepth: 2
 access-data
+input-data
 terms-of-data-access
 data-access-notebooks/subsetting-and-exporting
 contributing
@@ -72,7 +74,6 @@ how-to/run-pipeline
 how-to/manage-cache
 how-to/compare-outputs-across-versions
 how-to/run-multi-model-ensemble
-how-to/access-output-data
 how-to/deploy
 how-to/regenerate-input-data
 how-to/validate-input-data-stores
