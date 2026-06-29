@@ -1,9 +1,10 @@
 """
-Batch job runner for BCSD pipeline stages.
+Batch job runner for individual BCSD pipeline stages on Coiled VMs.
 
-This module provides a CLI entry point for running individual BCSD pipeline stages
-from within Coiled batch jobs. It reads configuration from the CONFIG_JSON
-environment variable set by coiled.batch.run().
+Reads configuration from the ``CONFIG_JSON`` environment variable set by
+:func:`coiled.batch.run` and invokes the requested stage via
+:class:`~srm.pipeline.BCSDPipeline`. This is the entry point for all distributed
+remote execution.
 """
 
 import json

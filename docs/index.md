@@ -58,6 +58,7 @@ explanation/pipeline-architecture
 
 reference/cli
 reference/configuration
+reference/api/index
 ```
 
 ```{toctree}

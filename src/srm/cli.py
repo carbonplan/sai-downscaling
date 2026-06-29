@@ -1,8 +1,9 @@
 """
-Command-line interface for BCSD downscaling pipeline.
+Command-line interface for the BCSD downscaling pipeline.
 
-Provides typer-based CLI for running BCSD downscaling with automatic caching,
-resumability, and Coiled integration for distributed execution.
+Provides a typer-based ``bcsd`` command with subcommands for running, validating, and
+inspecting the pipeline. Supports both single-config and matrix-expansion execution
+with automatic caching and optional Coiled integration.
 """
 
 import itertools

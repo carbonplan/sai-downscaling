@@ -1,3 +1,11 @@
+"""
+Canonical variable specifications, units, and icechunk client configuration.
+
+Defines :class:`VarStandards` with per-variable metadata (:class:`VarSpec`) and the
+:data:`SCENARIO_TO_GROUP` mapping used to derive S3 output path segments from scenario
+names.
+"""
+
 from dataclasses import dataclass, field
 
 import icechunk

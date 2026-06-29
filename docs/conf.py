@@ -59,6 +59,7 @@ autodoc_typehints_description_target = "documented"
 autodoc_default_flags = ["members", "show-inheritance"]
 
 autosummary_generate = True
+autosummary_generate_overwrite = False
 
 nb_execution_mode = "cache"
 nb_execution_timeout = 600
