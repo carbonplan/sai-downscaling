@@ -21,11 +21,6 @@ on:
                     NASA-NEX: historical,SSP245
                 required: true
                 type: string
-            s3_cleanup_path:
-                description: "S3 prefix to delete before processing (e.g. s3://carbonplan-srm/input/tensor/CESM2-WACCM/cesm2_waccm.icechunk/). Leave empty to skip."
-                required: false
-                type: string
-                default: ""
             extra_flags:
                 description: "Additional flags for the process command (e.g. --subset)"
                 required: false
@@ -44,12 +39,6 @@ jobs:
         steps:
             - uses: actions/checkout@v6
             - uses: ./.github/actions/setup
-
-            - name: Clean S3 icechunk store
-              if: inputs.s3_cleanup_path != ''
-              env:
-                  S3_CLEANUP_PATH: ${{ inputs.s3_cleanup_path }}
-              run: aws s3 rm "$S3_CLEANUP_PATH" --recursive
 
             - name: Process ${{ inputs.gcm }} / ${{ inputs.scenario }}
               env:

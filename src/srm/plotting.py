@@ -1,3 +1,10 @@
+"""
+Visualization utilities for comparing BCSD downscaling outputs.
+
+Provides functions for plotting raw vs. debiased vs. observed distributions and
+spatial maps across pipeline stages. Intended for use in QA and diagnostic notebooks.
+"""
+
 import calendar
 import random
 

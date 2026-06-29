@@ -1,3 +1,11 @@
+"""
+Zarr chunk, shard, and encoding settings for pipeline output arrays.
+
+Chunk and shard sizes are tuned for time-series access patterns on icechunk stores.
+Use :func:`make_encoding` to obtain the correct zarr encoding dict for a named
+variable.
+"""
+
 # ~4MB per chunk, time-series biased dumplings
 # 8000 × 8 × 16 × 4 bytes is about 4MB
 CHUNK_TIME = 8000

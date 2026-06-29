@@ -41,7 +41,7 @@ uv run bcsd run-matrix \
   --predict-period-start 2015 --predict-period-end 2100 \
   --scratch-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/" \
-  --environment production --version v1 \
+  --environment production --branch v1 \
   --coiled
 ```
 

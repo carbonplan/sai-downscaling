@@ -1,3 +1,11 @@
+"""
+Ensemble member lineage resolution for GCM scenarios.
+
+Maps ``(gcm, scenario, ensemble_member, variable)`` tuples to the corresponding
+historical and SSP245 bridge members required by the BCSD detrending workflow. All
+lineage logic belongs here; no other module should encode member relationships.
+"""
+
 from __future__ import annotations
 
 # Lineage lookup: (gcm, scenario, ensemble_member, variable) -> (historical_member, ssp245_member, ssp245_esgf_member)

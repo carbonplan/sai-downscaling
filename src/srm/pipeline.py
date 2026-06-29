@@ -1,10 +1,10 @@
 """
 BCSD pipeline with three-stage architecture and automatic caching.
 
-Stages:
-1. prepare_observations: Regrid observations to GCM grid (once per GCM/variable)
-2. fit_historical: Downscale historical period (once per GCM/variable/ensemble)
-3. transform_scenario: Downscale future scenario (many times, reuses cached artifacts)
+Implements the full bias-correction spatial disaggregation workflow via
+:class:`BCSDPipeline`. Stages run in order: ``prepare_observations`` (once per
+GCM/variable), ``fit_historical`` (once per GCM/variable/ensemble), and
+``transform_scenario`` (once per GCM/variable/ensemble/scenario).
 """
 
 from __future__ import annotations
