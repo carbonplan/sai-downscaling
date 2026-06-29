@@ -26,14 +26,70 @@ s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0t
 
 Within each store the zarr groups are:
 
-| Store | Group pattern | Stage |
-|-------|---------------|-------|
-| scratch | `obs/{variable}` | Stage 1 |
-| scratch | `historical/{variable}/{member}` | Stage 2 |
-| output | `{scenario_group}/{variable}/{member}` | Stage 3 |
+| Store | Group pattern | Stage | Always written |
+|-------|---------------|-------|----------------|
+| scratch | `obs/{variable}` | Stage 1 | yes |
+| scratch | `historical/{variable}/{member}` | Stage 2 | yes |
+| output | `{scenario_group}/{variable}/{member}` | Stage 3 | yes |
 
-Intermediate groups (`debiased_historical/`, `detrended_scenario/`, etc.) appear in the scratch
-store only when `save_intermediate: true` is set in your config.
+These three are the primary artifacts — written unconditionally on every run.
+
+## Intermediate Artifacts
+
+Five additional groups appear in the scratch store only when `save_intermediate: true` is set in
+your config. They capture the pipeline state between computation steps and are useful for
+debugging bias-correction or detrending behaviour without re-running the full stage.
+
+| Group pattern | Written by | Contents |
+|---------------|------------|----------|
+| `debiased_historical/{variable}/{member}` | `fit_historical` | GCM historical after quantile-mapping bias correction, before spatial disaggregation |
+| `detrended_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | Scenario data after detrending (9-year running mean removed) |
+| `trend_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | The trend signal extracted during detrending (added back after bias correction) |
+| `debiased_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | Scenario after bias correction, before re-trending |
+| `debiased_retrended_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | Scenario after bias correction and re-trending, before spatial disaggregation |
+
+**Which intermediates are written per variable** (all require `save_intermediate: true`):
+
+| Variable | `debiased_historical` | `detrended_scenario` | `trend_scenario` | `debiased_scenario` | `debiased_retrended_scenario` |
+|----------|-----------------------|----------------------|------------------|---------------------|-------------------------------|
+| `tas`    | ✓                     | ✓                    | ✓                | ✓                   | ✓                             |
+| `tasmax` | ✓                     | ✓                    | ✓                | ✓                   | ✓                             |
+| `tasmin` | ✓ ‡                   | —                    | —                | —                   | ✓ ‡                           |
+| `pr`     | ✓                     | —                    | —                | ✓                   | ✓ †                           |
+| `rsds`   | ✓                     | —                    | —                | ✓                   | ✓ †                           |
+| `dtr`    | ✓                     | —                    | —                | ✓                   | ✓ †                           |
+| `hurs`   | ✓                     | —                    | —                | ✓                   | ✓ †                           |
+
+† No retrend applied; `debiased_retrended_scenario` contains identical data to `debiased_scenario`.
+
+‡ `tasmin` uses a derived pathway (`fit_historical_tasmin` / `transform_scenario_tasmin`): it is
+computed as `tasmax − dtr` from those variables' cached intermediates. Only `debiased_historical`
+and `debiased_retrended_scenario` are written; the detrend and standalone debiased groups are not.
+
+:::{admonition} `tasmin` stages require `save_intermediate: true` for `dtr` and `tasmax`
+:class: important
+
+`fit_historical_tasmin` and `transform_scenario_tasmin` derive `tasmin` as `tasmax − dtr`
+(diurnal temperature range). They read the following groups as **hard dependencies** — if either
+is missing the stage fails with a `ValueError`:
+
+| Stage | Reads |
+|-------|-------|
+| `fit_historical_tasmin` | `debiased_historical/dtr/{member}`, `debiased_historical/tasmax/{member}` |
+| `transform_scenario_tasmin` | `debiased_retrended_scenario/{group}/dtr/{member}`, `debiased_retrended_scenario/{group}/tasmax/{member}` |
+
+Always run the prerequisite stages first with `save_intermediate: true`:
+
+```bash
+# 1. Run dtr and tasmax with save_intermediate enabled
+BCSD_SAVE_INTERMEDIATE=true uv run bcsd run --config-path configs/dtr.yaml
+BCSD_SAVE_INTERMEDIATE=true uv run bcsd run --config-path configs/tasmax.yaml
+
+# 2. Now run tasmin (reads the debiased intermediate groups written above)
+uv run bcsd run --config-path configs/tasmin.yaml
+```
+
+:::
 
 ## Resumability
 
