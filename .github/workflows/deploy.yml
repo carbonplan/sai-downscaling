@@ -63,9 +63,19 @@ jobs:
                     EXTRA_ARGS="$EXTRA_ARGS --force"
                   fi
                   if [[ -n "$VERSION" ]]; then
-                    EXTRA_ARGS="$EXTRA_ARGS --version $VERSION"
+                    EXTRA_ARGS="$EXTRA_ARGS --branch $VERSION"
                   fi
                   uv run bcsd run --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
+
+            - name: Validate output datasets (QA)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: |
+                  EXTRA_ARGS=""
+                  if [[ -n "$VERSION" ]]; then
+                    EXTRA_ARGS="--branch $VERSION"
+                  fi
+                  uv run bcsd validate-output --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
 
     production:
         name: Production run
@@ -90,3 +100,8 @@ jobs:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
               run: |
                   uv run bcsd run --config-path configs/production/
+
+            - name: Validate output datasets (production)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd validate-output --config-path configs/production/
