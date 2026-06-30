@@ -378,6 +378,7 @@ class BCSDPipeline:
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
             ),
             "srm_downscaling:config_hash": self.config.config_hash,
+            "srm_downscaling:config_json": self.config.model_dump_json(),
             "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
 
