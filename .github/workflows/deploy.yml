@@ -4,7 +4,9 @@ on:
     workflow_dispatch:
         inputs:
             model:
-                description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm). Leave blank to run all models."
+                description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm), or a single
+                    config file relative to configs/qa/ (e.g. cesm2-waccm/cesm2-waccm-g6-southafrica.yaml).
+                    Leave blank to run all models."
                 required: false
                 default: ""
                 type: string
@@ -40,7 +42,7 @@ jobs:
         environment:
             name: qa
         env:
-            QA_CONFIG_PATH: ${{ inputs.model != '' && format('configs/qa/{0}/', inputs.model) || 'configs/qa/' }}
+            QA_CONFIG_PATH: ${{ inputs.model == '' && 'configs/qa/' || endsWith(inputs.model, '.yaml') && format('configs/qa/{0}', inputs.model) || format('configs/qa/{0}/', inputs.model) }}
             FORCE: ${{ inputs.force }}
             VERSION: ${{ inputs.version }}
         steps:
