@@ -309,10 +309,6 @@ class TestScenarioLoc:
 
 
 class TestIntermediateLocs:
-    def test_debiased_historical_group(self, bound_cache):
-        loc = bound_cache.debiased_historical_loc("r1i1p1f1")
-        assert loc.group == "debiased_historical/tas/r1i1p1f1"
-
     def test_detrended_scenario_group(self, bound_cache):
         loc = bound_cache.detrended_scenario_loc()
         assert loc.group == "detrended_scenario/ssp245/tas/r1i1p1f1"
@@ -325,17 +321,11 @@ class TestIntermediateLocs:
         loc = bound_cache.debiased_scenario_loc()
         assert loc.group == "debiased_scenario/ssp245/tas/r1i1p1f1"
 
-    def test_debiased_retrended_scenario_group(self, bound_cache):
-        loc = bound_cache.debiased_retrended_scenario_loc()
-        assert loc.group == "debiased_retrended_scenario/ssp245/tas/r1i1p1f1"
-
     def test_all_intermediate_use_scratch_store(self, bound_cache):
         locs = [
-            bound_cache.debiased_historical_loc("r1i1p1f1"),
             bound_cache.detrended_scenario_loc(),
             bound_cache.trend_scenario_loc(),
             bound_cache.debiased_scenario_loc(),
-            bound_cache.debiased_retrended_scenario_loc(),
         ]
         for loc in locs:
             assert loc.store_path == bound_cache._scratch_store
@@ -349,9 +339,71 @@ class TestIntermediateLocs:
             bound_cache.detrended_scenario_loc().group,
             bound_cache.trend_scenario_loc().group,
             bound_cache.debiased_scenario_loc().group,
-            bound_cache.debiased_retrended_scenario_loc().group,
         ]
         assert len(groups) == len(set(groups))
+
+    def test_debiased_historical_absent_from_intermediate_prefixes(self):
+        assert "debiased_historical/" not in ArtifactCache.INTERMEDIATE_PREFIXES
+
+    def test_debiased_retrended_scenario_absent_from_intermediate_prefixes(self):
+        assert "debiased_retrended_scenario/" not in ArtifactCache.INTERMEDIATE_PREFIXES
+
+
+# ---------------------------------------------------------------------------
+# debiased_coarse locs (output store)
+# ---------------------------------------------------------------------------
+
+
+class TestDebiasedCoarseLocs:
+    def test_historical_group(self, bound_cache):
+        loc = bound_cache.debiased_coarse_historical_loc("r1i1p1f1")
+        assert loc.group == "debiased_coarse/historical/tas/r1i1p1f1"
+
+    def test_historical_group_changes_with_member(self, bound_cache, subtests):
+        for member in ("r1i1p1f1", "r12i1p1f2", "001"):
+            with subtests.test(member=member):
+                loc = bound_cache.debiased_coarse_historical_loc(member)
+                assert loc.group == f"debiased_coarse/historical/tas/{member}"
+
+    def test_historical_variable_override(self, bound_cache):
+        loc = bound_cache.debiased_coarse_historical_loc("r1i1p1f1", variable="dtr")
+        assert loc.group == "debiased_coarse/historical/dtr/r1i1p1f1"
+
+    def test_historical_uses_output_store(self, bound_cache_with_output):
+        loc = bound_cache_with_output.debiased_coarse_historical_loc("r1i1p1f1")
+        assert bound_cache_with_output.output_dir in loc.store_path
+        assert bound_cache_with_output.scratch_dir not in loc.store_path
+
+    def test_historical_falls_back_to_scratch_when_no_output_dir(self, bound_cache):
+        loc = bound_cache.debiased_coarse_historical_loc("r1i1p1f1")
+        assert bound_cache.scratch_dir in loc.store_path
+
+    def test_scenario_group(self, bound_cache):
+        loc = bound_cache.debiased_coarse_scenario_loc()
+        assert loc.group == "debiased_coarse/ssp245/tas/r1i1p1f1"
+
+    def test_scenario_sai_group(self, tmp_path, sai_config):
+        cache = ArtifactCache.from_config(sai_config, PipelineOptions(scratch_dir=str(tmp_path)))
+        loc = cache.debiased_coarse_scenario_loc()
+        assert loc.group == "debiased_coarse/g6_1p5k/pr/r2i1p1f1"
+
+    def test_scenario_variable_override(self, bound_cache):
+        loc = bound_cache.debiased_coarse_scenario_loc(variable="dtr")
+        assert loc.group == "debiased_coarse/ssp245/dtr/r1i1p1f1"
+
+    def test_scenario_uses_output_store(self, bound_cache_with_output):
+        loc = bound_cache_with_output.debiased_coarse_scenario_loc()
+        assert bound_cache_with_output.output_dir in loc.store_path
+        assert bound_cache_with_output.scratch_dir not in loc.store_path
+
+    def test_scenario_falls_back_to_scratch_when_no_output_dir(self, bound_cache):
+        loc = bound_cache.debiased_coarse_scenario_loc()
+        assert bound_cache.scratch_dir in loc.store_path
+
+    def test_historical_and_scenario_groups_differ(self, bound_cache):
+        hist = bound_cache.debiased_coarse_historical_loc("r1i1p1f1")
+        scen = bound_cache.debiased_coarse_scenario_loc()
+        assert hist.group != scen.group
 
 
 # ---------------------------------------------------------------------------
