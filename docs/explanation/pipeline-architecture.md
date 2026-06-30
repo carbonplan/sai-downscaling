@@ -33,11 +33,13 @@ graph TB
         S2D[Apply spatial subset if specified]
         S2E[Time subset to training period<br/>1978-2014]
         S2F[Quantile mapping bias correction<br/>GCM historical → observations]
+        S2FC[Write debiased_coarse/historical<br/>to output store]
         S2G[Spatial disaggregation<br/>coarse → fine resolution]
         S2H[Cache: historical<br/>Reused across all scenarios]
         
         S2A --> S2B --> S2C --> S2D --> S2E
-        S2E --> S2F --> S2G --> S2H
+        S2E --> S2F --> S2FC
+        S2F --> S2G --> S2H
     end
 
     subgraph "Stage 3: transform_scenario"
@@ -60,6 +62,7 @@ graph TB
         
         S3N{Re-trend needed?}
         S3O[Add saved trend back]
+        S3OC[Write debiased_coarse/scenario<br/>to output store]
         
         S3P[Spatial disaggregation<br/>coarse → fine resolution]
         S3Q[Add variable name and metadata]
@@ -71,8 +74,9 @@ graph TB
         S3H -->|Yes| S3I --> S3J --> S3K --> S3L --> S3M
         S3H -->|No| S3M
         S3M --> S3N
-        S3N -->|Yes| S3O --> S3P
-        S3N -->|No| S3P
+        S3N -->|Yes| S3O --> S3OC
+        S3N -->|No| S3OC
+        S3OC --> S3P
         S3P --> S3Q --> S3R
     end
 
@@ -97,10 +101,10 @@ graph TB
 **Key points:**
 
 - **stage 1 (prepare_observations)**: runs once per (GCM, variable, spatial_subset) combination
-- **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination
-- **stage 3 (transform_scenario)**: runs for each scenario configuration
+- **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination; writes fine-res historical to scratch store **and** debiased coarse historical to the output store
+- **stage 3 (transform_scenario)**: runs for each scenario configuration; writes fine-res scenario and debiased coarse scenario to the output store
 - **green boxes**: cached intermediate artifacts in the scratch icechunk store, on the active branch
-- **gold box**: final output in the output icechunk store, on the active branch
+- **gold box**: final outputs in the output icechunk store, on the active branch (fine-res scenario + debiased coarse data)
 - **dotted arrows**: cache dependencies (automatic validation)
 
 ## Cache Store Structure
@@ -115,16 +119,16 @@ s3://carbonplan-scratch/srm/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.
   branch: v1.2.3        ← installed package version (BCSD_BRANCH to override)
     obs/{variable}
     historical/{variable}/{ensemble_member}
-    debiased_historical/{variable}/{ensemble_member}      # only if save_intermediate=True
-    detrended_scenario/{scenario_group}/{variable}/{ensemble_member}
-    trend_scenario/{scenario_group}/{variable}/{ensemble_member}
-    debiased_scenario/{scenario_group}/{variable}/{ensemble_member}
-    debiased_retrended_scenario/{scenario_group}/{variable}/{ensemble_member}
+    detrended_scenario/{scenario_group}/{variable}/{ensemble_member}  # only if save_intermediate=True
+    trend_scenario/{scenario_group}/{variable}/{ensemble_member}      # only if save_intermediate=True
+    debiased_scenario/{scenario_group}/{variable}/{ensemble_member}   # only if save_intermediate=True
 
-# Output store — final downscaled results
-s3://carbonplan-scratch/srm/outputs/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+# Output store — fine-res scenario results + debiased coarse data
+s3://carbonplan-scratch/srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
     {scenario_group}/{variable}/{ensemble_member}
+    debiased_coarse/historical/{variable}/{hist_member}
+    debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 ```
 
 Where:

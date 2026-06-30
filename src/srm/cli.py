@@ -486,12 +486,18 @@ def run(
     elif stage == "historical" or stage == "fit_historical":
         paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
         _print_paths_summary(paths, configs, "fit_historical", cache)
+        _print_paths_summary(
+            _coarse_hist_paths(configs, cache), configs, "debiased_coarse_historical", cache
+        )
 
     elif stage == "scenario" or stage == "transform_scenario":
         paths = orchestrator.submit_stage(
             "transform_scenario", configs, force=force, use_coiled=coiled
         )
         _print_paths_summary(paths, configs, "transform_scenario", cache)
+        _print_paths_summary(
+            _coarse_scenario_paths(configs, cache), configs, "debiased_coarse_scenario", cache
+        )
 
     elif stage == "all" or stage is None:
         all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
@@ -501,7 +507,16 @@ def run(
             all_paths["prepare_observations"], obs_configs, "prepare_observations", cache
         )
         _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical", cache)
+        _print_paths_summary(
+            _coarse_hist_paths(hist_configs, cache),
+            hist_configs,
+            "debiased_coarse_historical",
+            cache,
+        )
         _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario", cache)
+        _print_paths_summary(
+            _coarse_scenario_paths(configs, cache), configs, "debiased_coarse_scenario", cache
+        )
         if options.save_intermediate:
             _print_intermediate_summary(cache)
 
@@ -538,6 +553,27 @@ def _insert_group_path(node: Tree, segments: list[str]) -> None:
     _insert_group_path(node.add(label), segments[1:])
 
 
+def _coarse_hist_paths(configs: list[BCSDConfig], cache: ArtifactCache) -> list[str]:
+    """Compute debiased_coarse_historical StoreLocation paths for each config."""
+    paths = []
+    for config in configs:
+        cache.config = config
+        hist_member = BCSDOrchestrator._resolve_hist_member(config)
+        loc = cache.debiased_coarse_historical_loc(hist_member)
+        paths.append(f"{loc.store_path}::{loc.group}")
+    return paths
+
+
+def _coarse_scenario_paths(configs: list[BCSDConfig], cache: ArtifactCache) -> list[str]:
+    """Compute debiased_coarse_scenario StoreLocation paths for each config."""
+    paths = []
+    for config in configs:
+        cache.config = config
+        loc = cache.debiased_coarse_scenario_loc()
+        paths.append(f"{loc.store_path}::{loc.group}")
+    return paths
+
+
 def _print_paths_summary(
     paths: list[str],
     _configs: list[BCSDConfig],
@@ -549,6 +585,8 @@ def _print_paths_summary(
         "prepare_observations": "Obs Regridded",
         "fit_historical": "Historical",
         "transform_scenario": "Scenario",
+        "debiased_coarse_historical": "Debiased Coarse Historical",
+        "debiased_coarse_scenario": "Debiased Coarse Scenario",
     }.get(stage, stage)
 
     n_artifacts = sum(1 for p in paths if p is not None)

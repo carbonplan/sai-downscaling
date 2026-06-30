@@ -360,7 +360,9 @@ class TestFitHistoricalBehavior:
     def test_returns_cached_historical_path(self, all_deps_present):
         pipeline = all_deps_present
         hist_loc = pipeline.cache.historical_loc(pipeline._hist_member)
+        coarse_loc = pipeline.cache.debiased_coarse_historical_loc(pipeline._hist_member)
         _make_icechunk_group(hist_loc, branch=pipeline.cache.branch)
+        _make_icechunk_group(coarse_loc, branch=pipeline.cache.branch)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
             result = pipeline.fit_historical()
@@ -430,7 +432,9 @@ class TestTransformScenarioBehavior:
     def test_returns_cached_scenario_path(self, all_deps_present):
         pipeline = all_deps_present
         scenario_loc = pipeline.cache.scenario_loc
+        coarse_loc = pipeline.cache.debiased_coarse_scenario_loc()
         _make_icechunk_group(scenario_loc, branch=pipeline.cache.branch)
+        _make_icechunk_group(coarse_loc, branch=pipeline.cache.branch)
 
         with patch("srm.pipeline.get_obs") as mock_get_obs:
             result = pipeline.transform_scenario()
@@ -941,3 +945,276 @@ class TestMakeDebiaser:
         with patch("srm.pipeline.QuantileMapping") as mock_qm:
             _make_debiaser(variable="tas", mapping_type="parametric")
             assert mock_qm.call_args.kwargs["distribution"] is scipy.stats.norm
+
+
+# ---------------------------------------------------------------------------
+# Debiased coarse output — unconditional writes and dual-key cache hits
+# ---------------------------------------------------------------------------
+
+
+class TestFitHistoricalCoarseOutput:
+    def test_coarse_write_is_unconditional(self, all_deps_present):
+        """fit_historical writes coarse output regardless of save_intermediate."""
+        pipeline = all_deps_present
+        write_calls: list = []
+
+        def capture_write(da, loc, **kwargs):
+            write_calls.append(loc)
+            return "snapshot"
+
+        with _mock_fit_historical_compute():
+            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+                pipeline.fit_historical()
+
+        coarse_loc = pipeline.cache.debiased_coarse_historical_loc(pipeline._hist_member)
+        assert any(loc.group == coarse_loc.group for loc in write_calls)
+
+    def test_coarse_write_uses_coarse_encoding(self, all_deps_present):
+        """fit_historical uses make_coarse_encoding for the coarse write."""
+        from srm.encoding import CHUNK_TIME_COARSE, SHARD_TIME_COARSE
+
+        pipeline = all_deps_present
+        write_calls: list = []
+
+        def capture_write(da, loc, **kwargs):
+            write_calls.append((loc, kwargs))
+            return "snapshot"
+
+        with _mock_fit_historical_compute():
+            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+                pipeline.fit_historical()
+
+        coarse_loc = pipeline.cache.debiased_coarse_historical_loc(pipeline._hist_member)
+        coarse_call = next((kw for loc, kw in write_calls if loc.group == coarse_loc.group), None)
+        assert coarse_call is not None
+        var = pipeline.config.variable
+        assert coarse_call["encoding"][var]["chunks"][0] == CHUNK_TIME_COARSE
+        assert coarse_call["encoding"][var]["shards"][0] == SHARD_TIME_COARSE
+
+    def test_cache_hit_requires_coarse_loc(self, all_deps_present):
+        """Cache hit does not fire when only the fine-res loc exists (coarse loc absent)."""
+        pipeline = all_deps_present
+        hist_loc = pipeline.cache.historical_loc(pipeline._hist_member)
+        _make_icechunk_group(hist_loc, branch=pipeline.cache.branch)
+        # No coarse loc — stage must rerun (not short-circuit)
+
+        with _mock_fit_historical_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+            ) as mock_write:
+                pipeline.fit_historical()
+
+        mock_write.assert_called()
+
+    def test_cache_hit_fires_when_both_locs_present(self, all_deps_present):
+        """Cache hit fires when both fine-res and coarse locs exist."""
+        pipeline = all_deps_present
+        hist_loc = pipeline.cache.historical_loc(pipeline._hist_member)
+        coarse_loc = pipeline.cache.debiased_coarse_historical_loc(pipeline._hist_member)
+        _make_icechunk_group(hist_loc, branch=pipeline.cache.branch)
+        _make_icechunk_group(coarse_loc, branch=pipeline.cache.branch)
+
+        with patch("srm.pipeline.get_obs") as mock_get_obs:
+            pipeline.fit_historical()
+
+        mock_get_obs.assert_not_called()
+
+
+class TestTransformScenarioCoarseOutput:
+    def test_coarse_write_is_unconditional(self, pipeline_pr):
+        """transform_scenario writes coarse output regardless of save_intermediate."""
+        p = pipeline_pr
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        write_calls: list = []
+
+        def capture_write(da, loc, **kwargs):
+            write_calls.append(loc)
+            return "snapshot"
+
+        with _mock_transform_scenario_compute():
+            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+                p.transform_scenario()
+
+        coarse_loc = p.cache.debiased_coarse_scenario_loc()
+        assert any(loc.group == coarse_loc.group for loc in write_calls)
+
+    def test_coarse_write_uses_coarse_encoding(self, pipeline_pr):
+        """transform_scenario uses make_coarse_encoding for the coarse write."""
+        from srm.encoding import CHUNK_TIME_COARSE, SHARD_TIME_COARSE
+
+        p = pipeline_pr
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        write_calls: list = []
+
+        def capture_write(da, loc, **kwargs):
+            write_calls.append((loc, kwargs))
+            return "snapshot"
+
+        with _mock_transform_scenario_compute():
+            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+                p.transform_scenario()
+
+        coarse_loc = p.cache.debiased_coarse_scenario_loc()
+        coarse_call = next((kw for loc, kw in write_calls if loc.group == coarse_loc.group), None)
+        assert coarse_call is not None
+        var = p.config.variable
+        assert coarse_call["encoding"][var]["chunks"][0] == CHUNK_TIME_COARSE
+        assert coarse_call["encoding"][var]["shards"][0] == SHARD_TIME_COARSE
+
+    def test_cache_hit_requires_coarse_loc(self, pipeline_pr):
+        """Cache hit does not fire when only the fine-res scenario loc exists (coarse absent)."""
+        p = pipeline_pr
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        scenario_loc = p.cache.scenario_loc
+        _make_icechunk_group(scenario_loc, branch=p.cache.branch)
+        # No coarse loc — stage must rerun
+
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+            ) as mock_write:
+                p.transform_scenario()
+
+        mock_write.assert_called()
+
+    def test_cache_hit_fires_when_both_locs_present(self, all_deps_present):
+        """Cache hit fires when both fine-res scenario and coarse locs exist."""
+        pipeline = all_deps_present
+        scenario_loc = pipeline.cache.scenario_loc
+        coarse_loc = pipeline.cache.debiased_coarse_scenario_loc()
+        _make_icechunk_group(scenario_loc, branch=pipeline.cache.branch)
+        _make_icechunk_group(coarse_loc, branch=pipeline.cache.branch)
+
+        with patch("srm.pipeline.get_obs") as mock_get_obs:
+            pipeline.transform_scenario()
+
+        mock_get_obs.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tasmin dependency read-path — coarse output locs
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tasmin_config() -> BCSDConfig:
+    return BCSDConfig(
+        gcm="CESM2-WACCM",
+        variable="tasmin",
+        ensemble_member="r1i1p1f1",
+        scenario="SSP245",
+        predict_period_start=2015,
+        predict_period_end=2100,
+    )
+
+
+@pytest.fixture
+def tasmin_pipeline(tasmin_config, pipeline_options) -> BCSDPipeline:
+    return BCSDPipeline(tasmin_config, pipeline_options)
+
+
+class TestFitHistoricalTasminCoarseDeps:
+    def test_reads_dtr_and_tasmax_from_coarse_output_locs(self, tasmin_pipeline):
+        """fit_historical_tasmin reads dtr/tasmax from debiased_coarse_historical_loc."""
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        opened_groups: list = []
+
+        def capture_open(loc):
+            opened_groups.append(loc.group)
+            return MagicMock()
+
+        with _mock_fit_historical_compute():
+            with patch.object(BCSDPipeline, "_open_from_icechunk", side_effect=capture_open):
+                with patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snap"):
+                    try:
+                        p.fit_historical_tasmin()
+                    except Exception:
+                        pass
+
+        expected_dtr = p.cache.debiased_coarse_historical_loc(p._hist_member, variable="dtr").group
+        expected_tasmax = p.cache.debiased_coarse_historical_loc(
+            p._hist_member, variable="tasmax"
+        ).group
+        assert expected_dtr in opened_groups
+        assert expected_tasmax in opened_groups
+
+    def test_coarse_historical_loc_uses_output_store(self, tasmin_pipeline):
+        """debiased_coarse_historical_loc for tasmin points at the output store."""
+        p = tasmin_pipeline
+        loc = p.cache.debiased_coarse_historical_loc(p._hist_member)
+        assert p.cache.output_dir in loc.store_path
+
+    def test_cache_hit_requires_coarse_loc(self, tasmin_pipeline):
+        """fit_historical_tasmin cache hit requires both fine-res and coarse locs."""
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        hist_loc = p.cache.historical_loc(p._hist_member)
+        _make_icechunk_group(hist_loc, branch=p.cache.branch)
+        # No coarse loc — stage must rerun (not short-circuit)
+
+        with _mock_fit_historical_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+            ) as mock_write:
+                try:
+                    p.fit_historical_tasmin()
+                except Exception:
+                    pass
+
+        mock_write.assert_called()
+
+
+class TestTransformScenarioTasminCoarseDeps:
+    def test_reads_dtr_and_tasmax_from_coarse_scenario_locs(self, tasmin_pipeline):
+        """transform_scenario_tasmin reads dtr/tasmax from debiased_coarse_scenario_loc."""
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        opened_groups: list = []
+
+        def capture_open(loc):
+            opened_groups.append(loc.group)
+            return MagicMock()
+
+        with _mock_transform_scenario_compute():
+            with patch.object(BCSDPipeline, "_open_from_icechunk", side_effect=capture_open):
+                with patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snap"):
+                    try:
+                        p.transform_scenario_tasmin()
+                    except Exception:
+                        pass
+
+        expected_dtr = p.cache.debiased_coarse_scenario_loc(variable="dtr").group
+        expected_tasmax = p.cache.debiased_coarse_scenario_loc(variable="tasmax").group
+        assert expected_dtr in opened_groups
+        assert expected_tasmax in opened_groups
+
+    def test_coarse_scenario_loc_uses_output_store(self, tasmin_pipeline):
+        """debiased_coarse_scenario_loc for tasmin points at the output store."""
+        p = tasmin_pipeline
+        loc = p.cache.debiased_coarse_scenario_loc()
+        assert p.cache.output_dir in loc.store_path
+
+    def test_cache_hit_requires_coarse_loc(self, tasmin_pipeline):
+        """transform_scenario_tasmin cache hit requires both fine-res and coarse locs."""
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        scenario_loc = p.cache.scenario_loc
+        _make_icechunk_group(scenario_loc, branch=p.cache.branch)
+        # No coarse loc — stage must rerun (not short-circuit)
+
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+            ) as mock_write:
+                try:
+                    p.transform_scenario_tasmin()
+                except Exception:
+                    pass
+
+        mock_write.assert_called()
