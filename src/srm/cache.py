@@ -54,11 +54,9 @@ class ArtifactCache:
     """
 
     INTERMEDIATE_PREFIXES: tuple[str, ...] = (
-        "debiased_historical/",
         "detrended_scenario/",
         "trend_scenario/",
         "debiased_scenario/",
-        "debiased_retrended_scenario/",
     )
 
     def __init__(
@@ -201,13 +199,39 @@ class ArtifactCache:
             f"{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
         )
 
-    def debiased_historical_loc(
+    def debiased_coarse_historical_loc(
         self, hist_member: str, variable: str | None = None
     ) -> StoreLocation:
-        """StoreLocation for intermediate debiased-historical artifact."""
+        """StoreLocation for the debiased coarse historical artifact in the output store.
+
+        Parameters
+        ----------
+        hist_member : str
+            Resolved historical ensemble member ID.
+        variable : str, optional
+            Override the variable from config. Used by tasmin to read dtr/tasmax outputs.
+        """
         config = self._require_config()
         var = variable or config.variable
-        return StoreLocation(self._scratch_store, f"debiased_historical/{var}/{hist_member}")
+        return StoreLocation(
+            self._output_store,
+            f"debiased_coarse/historical/{var}/{hist_member}",
+        )
+
+    def debiased_coarse_scenario_loc(self, variable: str | None = None) -> StoreLocation:
+        """StoreLocation for the debiased coarse scenario artifact in the output store.
+
+        Parameters
+        ----------
+        variable : str, optional
+            Override the variable from config. Used by tasmin to read dtr/tasmax outputs.
+        """
+        config = self._require_config()
+        var = variable or config.variable
+        return StoreLocation(
+            self._output_store,
+            f"debiased_coarse/{self._scenario_group()}/{var}/{config.ensemble_member}",
+        )
 
     def detrended_scenario_loc(self) -> StoreLocation:
         """StoreLocation for intermediate detrended-scenario artifact."""
@@ -231,15 +255,6 @@ class ArtifactCache:
         return StoreLocation(
             self._scratch_store,
             f"debiased_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
-        )
-
-    def debiased_retrended_scenario_loc(self, variable: str | None = None) -> StoreLocation:
-        """StoreLocation for intermediate debiased-retrended-scenario artifact."""
-        config = self._require_config()
-        var = variable or config.variable
-        return StoreLocation(
-            self._scratch_store,
-            f"debiased_retrended_scenario/{self._scenario_group()}/{var}/{config.ensemble_member}",
         )
 
     # ── branch helpers ────────────────────────────────────────────────────────
