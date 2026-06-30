@@ -1,16 +1,17 @@
-# BCSD configuration: CESM2-WACCM / tas / SSP245 / all members / global (production)
+# BCSD configuration: CESM2-WACCM / tas / SSP245 / full-length members 001-005 / global (production)
+# Members 006-010 are truncated (~2069/2070); see cesm2-waccm-ssp245-tas-global-trunc.yaml.
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
 variables: ["tas"]
-ensemble_members: ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"]
+ensemble_members: ["001", "002", "003", "004", "005"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2100
+predict_period_end: 2099
 
 # === Storage ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"

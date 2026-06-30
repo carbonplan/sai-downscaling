@@ -963,6 +963,7 @@ def validate(
         GCM_OPTIONS,
         SCENARIO_OPTIONS,
         DatasetValidator,
+        check_config_time_domain,
     )
 
     if config_path:
@@ -982,6 +983,11 @@ def validate(
             all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
         except pydantic.ValidationError as exc:
             logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
+
+    # Per-member config time-domain checks (only when configs are supplied). Kept out of
+    # the gcm/scenario matrix below since they have member granularity; merged into
+    # all_results after rendering so blocking-failure aggregation picks them up.
+    config_results = [check_config_time_domain(c) for c in configs] if config_path else []
 
     def _scenario_order(s: str) -> tuple[int, str]:
         if s == "historical":
@@ -1039,6 +1045,32 @@ def validate(
                 console.print(scoped_tbl)
 
         _print_validate_lineage_summary(gcm_name, scenarios)
+
+    if config_results:
+        cfg_tbl = Table(
+            title="Config time-domain checks (per ensemble member)",
+            show_header=True,
+            header_style="dim",
+            box=box.SIMPLE_HEAD,
+            padding=(0, 1),
+        )
+        cfg_tbl.add_column("gcm", style="dim", no_wrap=True)
+        cfg_tbl.add_column("scenario", style="dim")
+        cfg_tbl.add_column("member", style="dim")
+        cfg_tbl.add_column("result", justify="center")
+        cfg_tbl.add_column("message", style="dim")
+        for r in config_results:
+            cfg_tbl.add_row(
+                r.gcm,
+                r.scenario,
+                r.ensemble_member or "",
+                _STATUS_SYMBOL[r.status],
+                r.message,
+            )
+        console.print(cfg_tbl)
+
+    # Merge after rendering so the gcm/scenario matrix above is unaffected.
+    all_results.extend(config_results)
 
     blocking_failures = [
         r for r in all_results if r.status == CheckStatus.FAIL and r.check_id in BLOCKING_CHECKS

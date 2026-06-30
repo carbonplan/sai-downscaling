@@ -14,13 +14,14 @@ from typing import get_args
 import pydantic
 import xarray as xr
 
-from srm.bcsd_config import VariableName
+from srm.bcsd_config import BCSDConfig, VariableName
 from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
 from srm.qaqc import DatasetChecker, ValidationResult
 
 BLOCKING_CHECKS = {
     "ensemble_member_dim",
+    "config_time_domain",
     "g6_not_identical_to_ssp245",
     "lineage_member_availability",
     "temporal_coverage",
@@ -65,6 +66,100 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
     },
 }
+
+# Per-member valid daily extent, keyed gcm -> scenario -> ensemble_member -> (start, end).
+# First/last non-NaN day per member. Members not listed fall back to _SCENARIO_TIME_BOUNDS.
+# Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069-2070) while 001-005 reach 2099.
+_MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
+    "CESM2-WACCM": {
+        "G6-1.5K": {
+            "001": ("2035-01-01", "2085-12-31"),
+            "002": ("2035-01-01", "2085-12-31"),
+            "003": ("2035-01-01", "2085-12-31"),
+        },
+        "historical": {
+            "001": ("1978-01-01", "2015-12-31"),
+            "r1i1p1f1": ("1850-01-01", "2015-12-31"),
+            "r2i1p1f1": ("1850-01-01", "2015-12-31"),
+            "r3i1p1f1": ("1850-01-01", "2015-12-31"),
+        },
+        "SSP245": {
+            "001": ("2015-01-01", "2099-12-31"),
+            "002": ("2015-01-01", "2099-12-31"),
+            "003": ("2015-01-01", "2099-12-31"),
+            "004": ("2015-01-01", "2099-12-31"),
+            "005": ("2015-01-01", "2099-12-31"),
+            "006": ("2015-01-01", "2069-12-31"),
+            "007": ("2015-01-01", "2070-12-31"),
+            "008": ("2015-01-01", "2070-12-31"),
+            "009": ("2015-01-01", "2070-12-31"),
+            "010": ("2015-01-01", "2070-12-31"),
+        },
+    },
+    "MIROC-ES2H": {
+        "G6-1.5K": {
+            "r01": ("2035-01-01", "2084-12-31"),
+            "r02": ("2035-01-01", "2084-12-31"),
+            "r03": ("2035-01-01", "2084-12-31"),
+            "r04": ("2035-01-01", "2084-12-31"),
+            "r05": ("2035-01-01", "2084-12-31"),
+            "r06": ("2035-01-01", "2084-12-31"),
+            "r07": ("2035-01-01", "2084-12-31"),
+            "r08": ("2035-01-01", "2084-12-31"),
+            "r09": ("2035-01-01", "2084-12-31"),
+            "r10": ("2035-01-01", "2084-12-31"),
+        },
+        "SSP245": {
+            "r01": ("2015-01-01", "2084-12-31"),
+            "r02": ("2015-01-01", "2084-12-31"),
+            "r03": ("2015-01-01", "2084-12-31"),
+            "r04": ("2015-01-01", "2084-12-31"),
+            "r05": ("2015-01-01", "2084-12-31"),
+            "r06": ("2015-01-01", "2084-12-31"),
+            "r07": ("2015-01-01", "2084-12-31"),
+            "r08": ("2015-01-01", "2084-12-31"),
+            "r09": ("2015-01-01", "2084-12-31"),
+            "r10": ("2015-01-01", "2084-12-31"),
+        },
+        "historical": {
+            "r1i1p4f2": ("1850-01-01", "2014-12-31"),
+            "r2i1p4f2": ("1850-01-01", "2014-12-31"),
+            "r3i1p4f2": ("1850-01-01", "2014-12-31"),
+        },
+    },
+    "UKESM": {
+        "G6-1.5K": {
+            "r12i1p1f2": ("2035-01-01", "2084-12-31"),
+            "r2i1p1f2": ("2035-01-01", "2084-12-31"),
+            "r3i1p1f2": ("2035-01-01", "2084-12-31"),
+        },
+        "SSP245": {
+            "r12i1p1f2": ("2015-01-01", "2099-12-31"),
+            "r2i1p1f2": ("2015-01-01", "2099-12-31"),
+            "r3i1p1f2": ("2015-01-01", "2099-12-31"),
+        },
+        "historical": {
+            "r12i1p1f2": ("1850-01-01", "2014-12-31"),
+            "r2i1p1f2": ("1850-01-01", "2014-12-31"),
+            "r3i1p1f2": ("1850-01-01", "2014-12-31"),
+        },
+    },
+}
+
+
+def resolve_member_time_bounds(
+    gcm: str, scenario: str, ensemble_member: str
+) -> tuple[str, str] | None:
+    """Resolve the valid daily time bounds for a (gcm, scenario, ensemble_member).
+
+    Returns a member-specific override when present, else the scenario nominal bounds,
+    else None when no bounds are known for the (gcm, scenario).
+    """
+    member = _MEMBER_TIME_BOUNDS.get(gcm, {}).get(scenario, {}).get(ensemble_member)
+    if member is not None:
+        return member
+    return _SCENARIO_TIME_BOUNDS.get(gcm, {}).get(scenario)
+
 
 _FAST: dict = {"isel_kwargs": {"time": slice(0, 5)}}
 
@@ -122,6 +217,81 @@ class CheckResult(pydantic.BaseModel):
     status: CheckStatus
     message: str = ""
     detail: dict = pydantic.Field(default_factory=dict)
+    ensemble_member: str | None = None
+
+
+def check_config_time_domain(config: BCSDConfig) -> CheckResult:
+    """C1: config predict period must fit the member's valid data extent.
+
+    Guards against configs whose ``predict_period`` extends past (or starts before) the
+    real time coverage of a specific ensemble member — e.g. CESM2-WACCM SSP245 member
+    007 ends 2070 but is NaN-padded to the scenario end in the unified store. Without
+    this guard the pipeline slices the padded range and the downscaler emits garbage for
+    years with no real input.
+
+    Returns a blocking FAIL when the requested predict period falls outside the member's
+    valid bounds, PASS when it fits, and SKIP when no bounds are known for the member or
+    the config has no scenario/predict period (historical-only).
+    """
+    base = {
+        "check_id": "config_time_domain",
+        "gcm": config.gcm,
+        "scenario": config.scenario or "historical",
+        "ensemble_member": config.ensemble_member,
+    }
+
+    if config.scenario is None or config.predict_period_start is None:
+        return CheckResult(
+            **base,
+            status=CheckStatus.SKIP,
+            message="No scenario/predict period to check (historical-only config).",
+        )
+
+    bounds = resolve_member_time_bounds(config.gcm, config.scenario, config.ensemble_member)
+    if bounds is None:
+        return CheckResult(
+            **base,
+            status=CheckStatus.SKIP,
+            message=f"No time bounds known for {config.gcm}/{config.scenario}/"
+            f"{config.ensemble_member}; cannot validate predict period.",
+        )
+
+    # Bounds are first-of-month/first-of-next-month encoded for some GCMs; comparing the
+    # leading year is sufficient to catch member truncation and scenario-start violations.
+    valid_start_year = int(bounds[0][:4])
+    valid_end_year = int(bounds[1][:4])
+    detail = {
+        "predict_period_start": config.predict_period_start,
+        "predict_period_end": config.predict_period_end,
+        "valid_start": bounds[0],
+        "valid_end": bounds[1],
+    }
+
+    issues: list[str] = []
+    # SAI/G6 runs intentionally start before the scenario data (predict_period_start may
+    # be 2015 while G6 data begins 2035); the pipeline bridges that gap with SSP245. Only
+    # enforce the start bound for non-SAI scenarios.
+    if not config.is_sai_scenario and config.predict_period_start < valid_start_year:
+        issues.append(
+            f"predict_period_start {config.predict_period_start} is before data start "
+            f"{valid_start_year}"
+        )
+    if config.predict_period_end is not None and config.predict_period_end > valid_end_year:
+        issues.append(
+            f"predict_period_end {config.predict_period_end} is past data end {valid_end_year}"
+        )
+
+    if issues:
+        return CheckResult(
+            **base, status=CheckStatus.FAIL, message="; ".join(issues), detail=detail
+        )
+    return CheckResult(
+        **base,
+        status=CheckStatus.PASS,
+        message=f"predict period {config.predict_period_start}–{config.predict_period_end} "
+        f"within data extent {valid_start_year}–{valid_end_year}.",
+        detail=detail,
+    )
 
 
 def _get_ensemble_members(ds: xr.Dataset) -> list[str] | None:
