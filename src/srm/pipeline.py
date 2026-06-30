@@ -40,7 +40,7 @@ from srm.downscaling_utils import (
     retrend,
     subset_space,
 )
-from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_encoding
+from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_coarse_encoding, make_encoding
 from srm.utils import get_variable
 
 logger = logging.getLogger(__name__)
@@ -378,6 +378,7 @@ class BCSDPipeline:
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
             ),
             "srm_downscaling:config_hash": self.config.config_hash,
+            "srm_downscaling:config_json": self.config.model_dump_json(),
             "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
 
@@ -664,8 +665,9 @@ class BCSDPipeline:
         """
 
         loc = self.cache.historical_loc(self._hist_member)
+        coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
 
-        if self.cache.exists(loc) and not force:
+        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
             logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
@@ -681,45 +683,31 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        debiased_dtr_loc = self.cache.debiased_historical_loc(self._hist_member, variable="dtr")
-        debiased_tasmax_loc = self.cache.debiased_historical_loc(
+        debiased_dtr_loc = self.cache.debiased_coarse_historical_loc(
+            self._hist_member, variable="dtr"
+        )
+        debiased_tasmax_loc = self.cache.debiased_coarse_historical_loc(
             self._hist_member, variable="tasmax"
         )
-        missing = [
-            (var, dep_loc)
-            for var, dep_loc in [
-                ("dtr", debiased_dtr_loc),
-                ("tasmax", debiased_tasmax_loc),
-            ]
-            if not self.cache.exists(dep_loc)
-        ]
-        if missing:
-            missing_vars = " and ".join(v for v, _ in missing)
-            missing_paths = "\n  ".join(f"{v}: {l.store_path}/{l.group}" for v, l in missing)
-            raise ValueError(
-                f"fit_historical_tasmin requires debiased historical outputs for dtr and tasmax, "
-                f"but the following are missing: {missing_vars}.\n"
-                f"  {missing_paths}\n"
-                f"Run fit_historical with save_intermediate=True for dtr and tasmax "
-                f"before running fit_historical_tasmin."
-            )
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
         model_hist_debiased = debiased_tasmax - debiased_dtr
         logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
 
-        if self.options.save_intermediate:
-            t0 = time.perf_counter()
-            debiased_loc = self.cache.debiased_historical_loc(self._hist_member)
-            model_hist_debiased.name = self.config.variable
-            model_hist_debiased.attrs = model_hist.attrs
-            self._write_to_icechunk(model_hist_debiased, debiased_loc)
-            logger.info(
-                "✓ Saved debiased historical: %s/%s (%.2fs)",
-                debiased_loc.store_path,
-                debiased_loc.group,
-                time.perf_counter() - t0,
-            )
+        t0 = time.perf_counter()
+        model_hist_debiased.name = self.config.variable
+        self._write_to_icechunk(
+            model_hist_debiased,
+            coarse_loc,
+            encoding=make_coarse_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+        )
+        logger.info(
+            "✓ Saved debiased coarse historical: %s/%s (%.2fs)",
+            coarse_loc.store_path,
+            coarse_loc.group,
+            time.perf_counter() - t0,
+        )
 
         t0 = time.perf_counter()
         model_hist_downscaled = self._apply_spatial_downscaling(
@@ -789,8 +777,9 @@ class BCSDPipeline:
         self.cache.validate_dependencies("fit_historical", self.config)
 
         loc = self.cache.historical_loc(self._hist_member)
+        coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
 
-        if self.cache.exists(loc) and not force:
+        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
             logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
@@ -809,18 +798,20 @@ class BCSDPipeline:
         model_hist_debiased = self._apply_bias_correction(obs_coarse, model_hist)
         logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
 
-        if self.options.save_intermediate:
-            t0 = time.perf_counter()
-            debiased_loc = self.cache.debiased_historical_loc(self._hist_member)
-            model_hist_debiased.name = self.config.variable
-            model_hist_debiased.attrs = model_hist.attrs
-            self._write_to_icechunk(model_hist_debiased, debiased_loc)
-            logger.info(
-                "✓ Saved debiased historical: %s/%s (%.2fs)",
-                debiased_loc.store_path,
-                debiased_loc.group,
-                time.perf_counter() - t0,
-            )
+        t0 = time.perf_counter()
+        model_hist_debiased.name = self.config.variable
+        self._write_to_icechunk(
+            model_hist_debiased,
+            coarse_loc,
+            encoding=make_coarse_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+        )
+        logger.info(
+            "✓ Saved debiased coarse historical: %s/%s (%.2fs)",
+            coarse_loc.store_path,
+            coarse_loc.group,
+            time.perf_counter() - t0,
+        )
 
         t0 = time.perf_counter()
         model_hist_downscaled = self._apply_spatial_downscaling(
@@ -1231,8 +1222,9 @@ class BCSDPipeline:
         )
 
         loc = self.cache.scenario_loc
+        coarse_loc = self.cache.debiased_coarse_scenario_loc()
 
-        if self.cache.exists(loc) and not force:
+        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
             logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
@@ -1251,43 +1243,27 @@ class BCSDPipeline:
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        debiased_dtr_loc = self.cache.debiased_retrended_scenario_loc(variable="dtr")
-        debiased_tasmax_loc = self.cache.debiased_retrended_scenario_loc(variable="tasmax")
-        missing = [
-            (var, dep_loc)
-            for var, dep_loc in [
-                ("dtr", debiased_dtr_loc),
-                ("tasmax", debiased_tasmax_loc),
-            ]
-            if not self.cache.exists(dep_loc)
-        ]
-        if missing:
-            missing_vars = " and ".join(v for v, _ in missing)
-            missing_paths = "\n  ".join(f"{v}: {l.store_path}/{l.group}" for v, l in missing)
-            raise ValueError(
-                f"transform_scenario_tasmin requires debiased retrended scenario outputs for dtr and tasmax, "
-                f"but the following are missing: {missing_vars}.\n"
-                f"  {missing_paths}\n"
-                f"Run transform_scenario with save_intermediate=True for dtr and tasmax "
-                f"before running transform_scenario_tasmin."
-            )
+        debiased_dtr_loc = self.cache.debiased_coarse_scenario_loc(variable="dtr")
+        debiased_tasmax_loc = self.cache.debiased_coarse_scenario_loc(variable="tasmax")
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
         scenario_debiased = debiased_tasmax - debiased_dtr
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 
-        if self.options.save_intermediate:
-            t0 = time.perf_counter()
-            debiased_loc = self.cache.debiased_retrended_scenario_loc()
-            scenario_debiased.name = self.config.variable
-            scenario_debiased.attrs = model_scenario.attrs
-            self._write_to_icechunk(scenario_debiased, debiased_loc)
-            logger.info(
-                "✓ Saved debiased retrended scenario: %s/%s (%.2fs)",
-                debiased_loc.store_path,
-                debiased_loc.group,
-                time.perf_counter() - t0,
-            )
+        t0 = time.perf_counter()
+        scenario_debiased.name = self.config.variable
+        self._write_to_icechunk(
+            scenario_debiased,
+            coarse_loc,
+            encoding=make_coarse_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+        )
+        logger.info(
+            "✓ Saved debiased coarse scenario: %s/%s (%.2fs)",
+            coarse_loc.store_path,
+            coarse_loc.group,
+            time.perf_counter() - t0,
+        )
 
         t0 = time.perf_counter()
         scenario_downscaled = self._apply_spatial_downscaling(
@@ -1359,8 +1335,9 @@ class BCSDPipeline:
         )
 
         loc = self.cache.scenario_loc
+        coarse_loc = self.cache.debiased_coarse_scenario_loc()
 
-        if self.cache.exists(loc) and not force:
+        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
             logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
@@ -1409,18 +1386,20 @@ class BCSDPipeline:
             )
             logger.info("Re-trended scenario (%.2fs)", time.perf_counter() - t0)
 
-        if self.options.save_intermediate:
-            t0 = time.perf_counter()
-            debiased_retrended_loc = self.cache.debiased_retrended_scenario_loc()
-            scenario_debiased.name = self.config.variable
-            scenario_debiased.attrs = model_scenario.attrs
-            self._write_to_icechunk(scenario_debiased, debiased_retrended_loc)
-            logger.info(
-                "✓ Saved debiased retrended scenario: %s/%s (%.2fs)",
-                debiased_retrended_loc.store_path,
-                debiased_retrended_loc.group,
-                time.perf_counter() - t0,
-            )
+        t0 = time.perf_counter()
+        scenario_debiased.name = self.config.variable
+        self._write_to_icechunk(
+            scenario_debiased,
+            coarse_loc,
+            encoding=make_coarse_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+        )
+        logger.info(
+            "✓ Saved debiased coarse scenario: %s/%s (%.2fs)",
+            coarse_loc.store_path,
+            coarse_loc.group,
+            time.perf_counter() - t0,
+        )
 
         t0 = time.perf_counter()
         scenario_downscaled = self._apply_spatial_downscaling(
