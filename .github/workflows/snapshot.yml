@@ -1,0 +1,92 @@
+name: snapshot
+
+on:
+    workflow_dispatch:
+        inputs:
+            scope:
+                description: "southafrica (cheap gate) or global (full comparison)"
+                required: true
+                default: "southafrica"
+                type: choice
+                options:
+                    - southafrica
+                    - global
+            update:
+                description: "Bless the new output as the snapshot (--snapshot-update)"
+                required: false
+                type: boolean
+                default: false
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope }}
+    cancel-in-progress: true
+
+permissions:
+    id-token: write
+    contents: read
+
+env:
+    SNAPSHOT_STORAGE_PATH_BASE: "s3://carbonplan-srm/snapshots"
+
+jobs:
+    south-africa:
+        name: South Africa snapshot gate
+        if: ${{ inputs.scope == 'southafrica' }}
+        timeout-minutes: 180
+        runs-on: ubuntu-latest
+        environment:
+            name: qa
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+            - uses: ./.github/actions/setup
+
+            - name: Produce SA output (Coiled)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
+
+            - name: Resolve snapshot storage path
+              run: |
+                  VERSION="$(uv run python -c 'import importlib.metadata as m; print(m.version("srm"))')"
+                  echo "SNAPSHOT_STORAGE_PATH=${SNAPSHOT_STORAGE_PATH_BASE}/${VERSION}" >> "$GITHUB_ENV"
+
+            - name: Assert against snapshot
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: |
+                  EXTRA=""
+                  if [[ "${{ inputs.update }}" == "true" ]]; then
+                    EXTRA="--snapshot-update"
+                  fi
+                  uv run pytest -m snapshot tests/test_snapshot_gate.py $EXTRA -v
+
+    global:
+        name: Global snapshot comparison
+        if: ${{ inputs.scope == 'global' }}
+        timeout-minutes: 480
+        runs-on: ubuntu-latest
+        environment:
+            name: qa
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+            - uses: ./.github/actions/setup
+
+            - name: Produce global output (Coiled)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd run --config-path configs/production/cesm2-waccm/
+
+            - name: Compare global output vs baseline (Coiled, in-region)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: |
+                  BASELINE="$(uv run python -c 'from srm.snapshot.baselines import CESM2_WACCM_GLOBAL as b; print(b.uri)')"
+                  BRANCH="$(uv run python -c 'from srm.snapshot.baselines import CESM2_WACCM_GLOBAL as b; print(b.branch)')"
+                  CANDIDATE="$(uv run python -c 'from srm.cli import load_configs; from srm.cache import ArtifactCache; cs, o = load_configs("configs/production/cesm2-waccm/"); c = ArtifactCache.from_config(cs[0], o); print(c._output_store)')"
+                  CANDIDATE_BRANCH="$(uv run python -c 'from srm.cli import load_configs; from srm.cache import ArtifactCache; cs, o = load_configs("configs/production/cesm2-waccm/"); c = ArtifactCache.from_config(cs[0], o); print(c.branch)')"
+                  uv run coiled batch run --region us-west-2 \
+                    "bcsd compare $CANDIDATE $BASELINE --branch $CANDIDATE_BRANCH"
