@@ -411,7 +411,10 @@ class BCSDOrchestrator:
 
     def _deduplicate_obs_configs(self, configs: list[BCSDConfig]) -> list[BCSDConfig]:
         """
-        Extract unique (GCM, variable) combinations for obs regridding.
+        Extract unique (GCM, obs_dataset, variable) combinations for obs regridding.
+
+        obs_dataset is part of the key because the obs artifact store path embeds
+        it; two configs differing only in obs_dataset must each regrid.
 
         Parameters
         ----------
@@ -426,7 +429,7 @@ class BCSDOrchestrator:
         seen = set()
         unique = []
         for config in configs:
-            key = (config.gcm, config.variable)
+            key = (config.gcm, config.obs_dataset, config.variable)
             if key not in seen:
                 seen.add(key)
                 unique.append(config)
@@ -438,7 +441,9 @@ class BCSDOrchestrator:
 
         Deduplication uses the resolved historical ensemble member so that multiple
         scenario configs that share the same lineage parent are not submitted as
-        separate historical tasks.
+        separate historical tasks. obs_dataset is part of the key because the
+        historical artifact store path embeds it and fit_historical bias-corrects
+        against obs; different obs_datasets require separate historical fits.
 
         Parameters
         ----------
@@ -453,7 +458,12 @@ class BCSDOrchestrator:
         seen = set()
         unique = []
         for config in configs:
-            key = (config.gcm, config.variable, self._resolve_hist_member(config))
+            key = (
+                config.gcm,
+                config.obs_dataset,
+                config.variable,
+                self._resolve_hist_member(config),
+            )
             if key not in seen:
                 seen.add(key)
                 unique.append(config)
