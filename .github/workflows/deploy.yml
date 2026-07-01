@@ -46,7 +46,7 @@ jobs:
             FORCE: ${{ inputs.force }}
             VERSION: ${{ inputs.version }}
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
               with:
                   fetch-depth: 0
             - uses: ./.github/actions/setup
@@ -87,7 +87,7 @@ jobs:
         environment:
             name: production
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
               with:
                   ref: ${{ github.event.release.tag_name }}
             - uses: ./.github/actions/setup
