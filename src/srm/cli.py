@@ -9,6 +9,7 @@ with automatic caching and optional Coiled integration.
 import itertools
 import json
 import logging
+import os
 from collections import defaultdict
 from pathlib import Path
 
@@ -1106,8 +1107,15 @@ def validate(
 
 @app.command()
 def validate_output(
-    store_uris: list[str] = typer.Argument(
-        ..., help="One or more output datatree icechunk store URIs."
+    store_uris: list[str] | None = typer.Argument(
+        None, help="One or more output datatree icechunk store URIs."
+    ),
+    config_path: list[str] | None = typer.Option(
+        None,
+        "--config-path",
+        "-c",
+        help="Path to YAML config or directory of configs (can be specified multiple times). "
+        "Output store URIs are derived from the configs instead of passing store_uris directly.",
     ),
     branch: str | None = typer.Option(None, "--branch", help="Icechunk branch to read."),
     tag: str | None = typer.Option(None, "--tag", help="Icechunk tag to read."),
@@ -1124,6 +1132,13 @@ def validate_output(
     store, otherwise exits with code 0. --scenario and --variable restrict validation to
     matching subtrees (defaulting to the whole store).
 
+    Store URIs can be given explicitly, or derived from the same config(s) used for
+    `bcsd run` via --config-path; in the latter case --branch defaults to the branch
+    those configs resolve to (the same branch `run` would write).
+
+    When $GITHUB_STEP_SUMMARY is set, a markdown report is appended there in addition
+    to the console tables.
+
     Runs locally or with coiled batch.
     local: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
     coiled batch: uv run coiled batch run --region us-west-2 "bcsd validate-output <store_uri> [<store_uri> ...]"
@@ -1136,6 +1151,22 @@ def validate_output(
         parse_variable,
         validate_output_store,
     )
+
+    if bool(store_uris) == bool(config_path):
+        raise typer.BadParameter(
+            "Exactly one of store_uris or --config-path is required.",
+            param_hint="'store_uris' / '--config-path'",
+        )
+
+    if config_path:
+        loaded = [load_configs(p) for p in config_path]
+        configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
+        options = loaded[0][1] if loaded else PipelineOptions()
+        store_uris = sorted(
+            {ArtifactCache.from_config(cfg, options).scenario_loc.store_path for cfg in configs}
+        )
+        if branch is None and tag is None:
+            branch = options.branch
 
     provided = sum(x is not None for x in [branch, tag])
     if provided != 1:
@@ -1150,6 +1181,7 @@ def validate_output(
     variables = [parse_variable(v) for v in variable] if variable else None
     filtered = bool(scenarios or variables)
 
+    summary_lines: list[str] = []
     any_blocking = False
     for store_uri in store_uris:
         results = validate_output_store(
@@ -1168,6 +1200,7 @@ def validate_output(
             continue
 
         console.rule(f"[bold]{store_uri}[/bold]")
+        md_lines = [f"## {store_uri}\n", "| leaf | status | checks |", "| --- | --- | --- |"]
 
         # Group results by leaf (scenario path).
         leaf_results: dict[str, list[CheckResult]] = defaultdict(list)
@@ -1185,6 +1218,7 @@ def validate_output(
             status_sym = "[red]✗[/red]" if any_fail else "[green]✓[/green]"
             checks_str = f"{n_pass}/{n_total}"
             tbl.add_row(leaf, status_sym, checks_str)
+            md_lines.append(f"| {leaf} | {'❌' if any_fail else '✅'} | {checks_str} |")
         console.print(tbl)
 
         failures_by_leaf: dict[str, list[CheckResult]] = {
@@ -1207,8 +1241,13 @@ def validate_output(
             console.print(
                 f"\n[bold]Failures[/bold] ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, {n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
             )
+            md_lines.append(
+                f"\n**Failures** ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, "
+                f"{n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
+            )
             for leaf, fail_rs in sorted(failures_by_leaf.items()):
                 console.print(f"  [bold]{leaf}[/bold]")
+                md_lines.append(f"- **{leaf}**")
                 for r in fail_rs:
                     blocking_marker = (
                         " [dim](blocking)[/dim]" if r.check_id in BLOCKING_CHECKS else ""
@@ -1216,9 +1255,18 @@ def validate_output(
                     console.print(
                         f"    [red]✗[/red] [dim]{r.check_id}[/dim]{blocking_marker}    {r.message}"
                     )
+                    md_blocking_marker = " (blocking)" if r.check_id in BLOCKING_CHECKS else ""
+                    md_lines.append(f"  - `{r.check_id}`{md_blocking_marker}: {r.message}")
                     if r.detail:
                         console.print_json(json.dumps(r.detail))
                 console.print()
+
+        summary_lines.append("\n".join(md_lines))
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path and summary_lines:
+        with open(summary_path, "a") as f:
+            f.write("\n\n".join(summary_lines) + "\n")
 
     if any_blocking:
         raise typer.Exit(1)
