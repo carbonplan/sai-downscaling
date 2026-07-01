@@ -1,0 +1,24 @@
+# Snapshot proxy: CESM2-WACCM / SSP245 / temperature extremes / South Africa.
+# Mirrors configs/production/cesm2-waccm/cesm2-waccm-ssp245-tmx.yaml with SA
+# bounds + qa env. Corrected tasmax/tasmin (and derived dtr) only exist for SSP245
+# members 006-010 (CMIP6 bug); member 008 is the tmx bridge for G6-1.5K/003.
+# Standard variables live in cesm2-waccm-ssp245-std-southafrica.yaml.
+gcm: "CESM2-WACCM"
+variables: ["tasmax", "tasmin", "dtr"]
+ensemble_members: ["008"]
+scenarios: ["SSP245"]
+
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+
+mapping_type: "nonparametric_hybrid"
+
+subset_bounds: [-35, -22, 16, 33]
+
+scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+output_dir: "s3://carbonplan-scratch/srm/output"
+environment: "qa"
+verbose: true
+save_intermediate: true

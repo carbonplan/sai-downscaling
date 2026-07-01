@@ -53,6 +53,9 @@ def test_snapshot_config_dir_loads_expected_scope():
     assert set(by_scenario) == {"G6-1.5K", "SSP245"}
     assert by_scenario["G6-1.5K"]["members"] == {"003"}
     assert by_scenario["G6-1.5K"]["vars"] == all_vars
-    assert by_scenario["SSP245"]["members"] == {"008"}
+    # SSP245 is split std/tmx: std vars exist for members 003/008, but corrected
+    # tasmax/tasmin/dtr only exist for member 008 (CMIP6 bug), so the union covers
+    # both members and all seven variables.
+    assert by_scenario["SSP245"]["members"] == {"003", "008"}
     assert by_scenario["SSP245"]["vars"] == all_vars
     assert all(tuple(c.subset_bounds) == (-35.0, -22.0, 16.0, 33.0) for c in configs)
