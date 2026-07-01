@@ -51,6 +51,7 @@ contributing
 :caption: Methods
 explanation/scientific-approach
 explanation/pipeline-architecture
+explanation/snapshot-testing
 ```
 
 ```{toctree}
@@ -73,6 +74,7 @@ how-to/demo-new-pipeline
 how-to/run-pipeline
 how-to/manage-cache
 how-to/compare-outputs-across-versions
+how-to/run-snapshot-tests
 how-to/snapshot-comparison
 how-to/run-multi-model-ensemble
 how-to/deploy

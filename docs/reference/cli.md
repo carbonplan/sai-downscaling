@@ -292,3 +292,49 @@ uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --y
 
 Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.
 :::
+
+---
+
+## `bcsd compare` — Compare Two Output Stores
+
+Compare two output datatree stores leaf by leaf under the pipeline's per-variable snapshot tolerances. Prints a difference table and exits `1` if any `(scenario, variable)` leaf is out of tolerance, otherwise `0`.
+
+```bash
+uv run bcsd compare STORE_A STORE_B [OPTIONS]
+```
+
+**Arguments:**
+
+- `STORE_A` (required): candidate output datatree store URI.
+- `STORE_B` (required): baseline (snapshot) output datatree store URI.
+
+**Options:**
+
+- `--branch TEXT`: icechunk branch to read on both stores (default: `main`).
+- `--scenario TEXT` (repeatable): scenario group(s) to compare (e.g. `g6_1p5k`). Defaults to all groups present.
+- `--variable TEXT` (repeatable): variable(s) to compare (e.g. `tas`). Defaults to all variables present.
+
+**Comparison rule:** a cell is within tolerance when `abs(candidate - snapshot) <= atol + rtol * abs(snapshot)`, with `rtol`/`atol` taken per variable from `srm.snapshot.tolerances`. A leaf passes only when no cell is over tolerance, candidate and snapshot agree on NaN placement, and their shapes match. A leaf present in the candidate but missing from the baseline is reported as out of tolerance.
+
+**Exit codes:**
+
+- `0`: every compared leaf is within tolerance.
+- `1`: at least one leaf is out of tolerance, or a leaf is missing from the baseline.
+
+**Examples:**
+
+```bash
+# Compare a qa candidate against the production global baseline
+uv run bcsd compare \
+  s3://carbonplan-scratch/srm/output/qa/CESM2-WACCM-ERA5-lat-35to-22_lon16to33.icechunk \
+  s3://carbonplan-srm/output/production/CESM2-WACCM-ERA5-global.icechunk \
+  --branch v0.7.0
+
+# Restrict to specific scenario groups and variables
+uv run bcsd compare STORE_A STORE_B --branch v0.7.0 --scenario g6_1p5k --variable tas --variable pr
+
+# Run near the data for a global-scale comparison
+uv run coiled batch run --region us-west-2 "bcsd compare STORE_A STORE_B --branch v0.7.0"
+```
+
+See the [Snapshot Regression Testing](../explanation/snapshot-testing.md) explanation for the tolerance model, and [How to Run the Snapshot Regression Gate](../how-to/run-snapshot-tests.md) for the end-to-end workflow.

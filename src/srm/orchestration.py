@@ -247,7 +247,7 @@ class BCSDOrchestrator:
                 region="us-west-2",
                 map_over_task_var_dicts=task_var_dicts,
                 forward_aws_credentials=False,
-                spot_policy="spot_with_fallback",
+                spot_policy="on-demand",
                 logger=logger,
                 tag={"Project": "SRM"},
                 disk_size="100GB",
