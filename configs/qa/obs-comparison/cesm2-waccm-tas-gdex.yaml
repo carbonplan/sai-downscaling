@@ -1,7 +1,7 @@
 # BCSD comparison config: CESM2-WACCM / tas / GDEX-GMF obs
 
 gcm: "CESM2-WACCM"
-variable: ['pr', 'tasmax', 'tasmin', 'tas', 'rlds']
+variable: ['pr', 'tasmax', 'tasmin', 'tas',]
 ensemble_member: "003"
 scenario: "SSP245"
 obs_dataset: "GDEX-GMF"
