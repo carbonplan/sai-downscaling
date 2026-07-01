@@ -1,0 +1,22 @@
+# BCSD comparison config: CESM2-WACCM / tas+pr / GDEX-GMF obs
+# Standard variables (tas, pr) shared with ERA5, member 003, full-length (2099).
+
+gcm: "CESM2-WACCM"
+variable: ["tas", "pr"]
+ensemble_member: "003"
+scenario: "SSP245"
+obs_dataset: "GDEX-GMF"
+
+subset_bounds: [-35, -22, 16, 33]
+
+train_period_start: 1960
+train_period_end: 2008
+predict_period_start: 2015
+predict_period_end: 2099
+
+scratch_dir: "s3://carbonplan-srm/output/qa/bcsd-cache"
+output_dir: "s3://carbonplan-srm/output/obs-comparison"
+environment: "qa"
+mapping_type: "nonparametric_hybrid"
+verbose: true
+save_intermediate: true

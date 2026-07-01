@@ -1,10 +1,11 @@
-# BCSD comparison config: CESM2-WACCM / tas / GDEX-GMF obs
+# BCSD comparison config: CESM2-WACCM / tas+pr / ERA5 obs
+# Standard variables (tas, pr) shared with GDEX-GMF, member 003, full-length (2099).
 
 gcm: "CESM2-WACCM"
-variable: ['pr', 'tasmax', 'tasmin', 'tas',]
+variable: ["tas", "pr"]
 ensemble_member: "003"
 scenario: "SSP245"
-obs_dataset: "GDEX-GMF"
+obs_dataset: "ERA5"
 
 subset_bounds: [-35, -22, 16, 33]
 
