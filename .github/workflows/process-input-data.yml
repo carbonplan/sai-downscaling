@@ -37,7 +37,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 480
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
             - uses: ./.github/actions/setup
 
             - name: Process ${{ inputs.gcm }} / ${{ inputs.scenario }}
