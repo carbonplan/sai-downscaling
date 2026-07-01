@@ -44,7 +44,7 @@ jobs:
             FORCE: ${{ inputs.force }}
             VERSION: ${{ inputs.version }}
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
               with:
                   fetch-depth: 0
             - uses: ./.github/actions/setup
@@ -75,7 +75,7 @@ jobs:
         environment:
             name: production
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
               with:
                   ref: ${{ github.event.release.tag_name }}
             - uses: ./.github/actions/setup
@@ -83,10 +83,10 @@ jobs:
             - name: Validate input datasets (production)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate --config-path configs/production/
+              run: uv run bcsd validate --config-path configs/production/cesm2-waccm/
 
             - name: Run BCSD pipeline (production)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
               run: |
-                  uv run bcsd run --config-path configs/production/
+                  uv run bcsd run --config-path configs/production/cesm2-waccm/
