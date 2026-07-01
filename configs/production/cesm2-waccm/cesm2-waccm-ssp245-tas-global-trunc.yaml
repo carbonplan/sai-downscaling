@@ -1,16 +1,19 @@
-# BCSD configuration: UKESM / tas / SSP245 / all members / global (production)
+# BCSD configuration: CESM2-WACCM / tas / SSP245 / truncated members 006-010 / global (production)
+# These members end early (006 -> 2069, 007-010 -> 2070); predict_period_end clamped to 2069
+# (group min) so no member is downscaled past its valid data extent. Full-length members
+# 001-005 live in cesm2-waccm-ssp245-tas-global.yaml.
 
 # === Model and Scenario ===
-gcm: "UKESM"
+gcm: "CESM2-WACCM"
 variables: ["tas"]
-ensemble_members: ["r2i1p1f2", "r3i1p1f2", "r12i1p1f2"]
+ensemble_members: ["006", "007", "008", "009", "010"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2099
+predict_period_end: 2069
 
 # === Storage ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"

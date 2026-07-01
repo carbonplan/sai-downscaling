@@ -511,3 +511,83 @@ def test_open_output_datatree_rejects_non_s3():
 
     with pytest.raises(ValueError, match="must be an s3:// URI"):
         _open_output_datatree("gs://bucket/key")
+
+
+class TestCheckConfigTimeDomain:
+    """Per-member config time-domain guard (check_config_time_domain)."""
+
+    @staticmethod
+    def _config(member, predict_end, predict_start=2015, scenario="SSP245"):
+        from srm.bcsd_config import BCSDConfig
+
+        return BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member=member,
+            scenario=scenario,
+            predict_period_start=predict_start,
+            predict_period_end=predict_end,
+        )
+
+    def test_truncated_member_overrun_fails(self):
+        from srm.validation import check_config_time_domain
+
+        r = check_config_time_domain(self._config("007", 2100))
+        assert r.status == CheckStatus.FAIL
+        assert r.check_id == "config_time_domain"
+        assert r.ensemble_member == "007"
+        assert "2070" in r.message
+
+    def test_truncated_member_within_extent_passes(self):
+        from srm.validation import check_config_time_domain
+
+        r = check_config_time_domain(self._config("007", 2070))
+        assert r.status == CheckStatus.PASS
+
+    def test_full_member_passes(self):
+        from srm.validation import check_config_time_domain
+
+        r = check_config_time_domain(self._config("001", 2099))
+        assert r.status == CheckStatus.PASS
+
+    def test_full_member_to_2100_fails(self):
+        # data ends 2099; configs asking for 2100 are flagged.
+        from srm.validation import check_config_time_domain
+
+        r = check_config_time_domain(self._config("003", 2100))
+        assert r.status == CheckStatus.FAIL
+        assert "2099" in r.message
+
+    def test_member_006_ends_2069(self):
+        from srm.validation import check_config_time_domain
+
+        assert check_config_time_domain(self._config("006", 2070)).status == CheckStatus.FAIL
+        assert check_config_time_domain(self._config("006", 2069)).status == CheckStatus.PASS
+
+    def test_sai_early_start_exempt(self):
+        # G6/SAI runs intentionally start before the scenario data (bridged with SSP245),
+        # so an early predict_period_start must not fail.
+        from srm.validation import check_config_time_domain
+
+        r = check_config_time_domain(
+            self._config("001", 2084, predict_start=2015, scenario="G6-1.5K")
+        )
+        assert r.status == CheckStatus.PASS
+
+    def test_sai_end_past_data_fails(self):
+        from srm.validation import check_config_time_domain
+
+        r = check_config_time_domain(
+            self._config("001", 2086, predict_start=2015, scenario="G6-1.5K")
+        )
+        assert r.status == CheckStatus.FAIL
+        assert "2085" in r.message
+
+    def test_historical_only_skips(self):
+        from srm.bcsd_config import BCSDConfig
+        from srm.validation import check_config_time_domain
+
+        cfg = BCSDConfig(
+            gcm="MIROC-ES2H", variable="tas", ensemble_member="r1i1p4f2", scenario=None
+        )
+        assert check_config_time_domain(cfg).status == CheckStatus.SKIP
