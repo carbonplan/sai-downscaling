@@ -11,7 +11,7 @@ subset_bounds: [-35, -22, 16, 33]
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2100
+predict_period_end: 2099
 
 scratch_dir: "s3://carbonplan-srm/output/qa/bcsd-cache"
 output_dir: "s3://carbonplan-srm/output"
