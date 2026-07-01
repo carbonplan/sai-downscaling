@@ -108,6 +108,9 @@ class CheckStatus(enum.StrEnum):
     PASS = "pass"
     FAIL = "fail"
     SKIP = "skip"  # not applicable for this (gcm, scenario) pair
+    UNKNOWN = "unknown"
+    XFAIL = "xfail"  # expected failure
+    XPASS = "xpass"  # unexpected pass
 
 
 class CheckResult(pydantic.BaseModel):

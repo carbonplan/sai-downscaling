@@ -1,9 +1,9 @@
 """
-Orchestration layer for batch BCSD execution with automatic caching and task deduplication.
+Orchestration layer for batch BCSD execution with automatic task deduplication.
 
-This module provides the BCSDOrchestrator class which manages efficient batch
-execution of BCSD runs across multiple configurations using Coiled's batch API.
-It automatically detects cached artifacts and submits only necessary tasks.
+Manages efficient batch execution of BCSD runs across multiple configurations using
+Coiled's batch API. Automatically detects cached artifacts, deduplicates shared stages
+across ensemble members and scenarios, and submits only the necessary tasks.
 """
 
 from __future__ import annotations

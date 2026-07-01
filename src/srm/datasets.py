@@ -1,4 +1,11 @@
-# datasets.py
+"""
+Dataset catalog and abstract base classes for ERA5 and GCM input data.
+
+Provides :class:`BaseDataset` and its concrete subclasses for accessing ERA5
+observations and GCM model output. The :data:`catalog` singleton maps dataset names
+to their accessor objects; all ensemble member lineage logic lives in
+:mod:`srm.lineage`, not here.
+"""
 
 from __future__ import annotations
 

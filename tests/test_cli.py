@@ -1,12 +1,15 @@
 """Tests for CLI helper functions."""
 
 import itertools
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
+from typer.testing import CliRunner
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cli import configs_from_matrix
+from srm.cli import app, configs_from_matrix
+from srm.validation import CheckResult, CheckStatus
 
 
 class TestConfigsFromMatrix:
@@ -145,3 +148,80 @@ class TestConfigsFromMatrix:
         assert cfg.predict_period_start == 2020
         assert cfg.predict_period_end == 2080
         assert isinstance(options, PipelineOptions)
+
+
+class TestValidateOutputConfigPath:
+    """Tests for `bcsd validate-output --config-path`: store discovery + branch default."""
+
+    _CONFIG_YAML = """
+gcm: "CESM2-WACCM"
+variables: ["tas", "pr"]
+ensemble_members: ["001"]
+scenarios: ["SSP245"]
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+output_dir: "s3://bucket/output"
+environment: "qa"
+branch: "v9"
+"""
+
+    def _write_config(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(self._CONFIG_YAML)
+        return config_file
+
+    def test_derives_deduped_store_uri_and_default_branch(self, tmp_path):
+        config_file = self._write_config(tmp_path)
+        passing_result = CheckResult(
+            check_id="lat_valid",
+            gcm="CESM2-WACCM",
+            scenario="ssp245/tas/001",
+            status=CheckStatus.PASS,
+        )
+
+        with patch(
+            "srm.validation.validate_output_store", return_value=[passing_result]
+        ) as mock_validate:
+            result = CliRunner().invoke(app, ["validate-output", "--config-path", str(config_file)])
+
+        assert result.exit_code == 0, result.output
+        # Two configs (tas, pr) share the same gcm/subset → one deduped store URI.
+        mock_validate.assert_called_once()
+        _, kwargs = mock_validate.call_args
+        assert kwargs["branch"] == "v9"
+        assert kwargs["tag"] is None
+
+    def test_explicit_branch_overrides_config_default(self, tmp_path):
+        config_file = self._write_config(tmp_path)
+        passing_result = CheckResult(
+            check_id="lat_valid",
+            gcm="CESM2-WACCM",
+            scenario="ssp245/tas/001",
+            status=CheckStatus.PASS,
+        )
+
+        with patch(
+            "srm.validation.validate_output_store", return_value=[passing_result]
+        ) as mock_validate:
+            result = CliRunner().invoke(
+                app,
+                ["validate-output", "--config-path", str(config_file), "--branch", "override"],
+            )
+
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_validate.call_args
+        assert kwargs["branch"] == "override"
+
+    def test_store_uris_and_config_path_mutually_exclusive(self, tmp_path):
+        config_file = self._write_config(tmp_path)
+        result = CliRunner().invoke(
+            app,
+            ["validate-output", "s3://some/store.icechunk", "--config-path", str(config_file)],
+        )
+        assert result.exit_code != 0
+
+    def test_neither_store_uris_nor_config_path_errors(self):
+        result = CliRunner().invoke(app, ["validate-output"])
+        assert result.exit_code != 0

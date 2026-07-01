@@ -1,14 +1,10 @@
 """
-Quality checks for BCSD pipeline artifact DataArrays.
+Quality checks for in-memory BCSD pipeline artifact arrays.
 
-Provides run_artifact_checks() to inspect intermediate and output arrays
-at any pipeline step — the same three checks (all_nan, out_of_range,
-sporadic_nan_days) that a post-hoc ``bcsd qa`` run would apply to a cached
-artifact, but callable on a live in-memory DataArray before it is written.
-
-Intended for use in the pipeline-stage-debugger notebook; the inspect()
-helper there calls run_artifact_checks() after every pipeline sub-step so
-regressions are caught immediately rather than discovered downstream.
+Provides :func:`run_artifact_checks` to inspect intermediate and output arrays at any
+pipeline step, running NaN, out-of-range, and sporadic-NaN-days checks on a live
+:class:`xarray.DataArray` before it is written to the store. Distinct from
+:mod:`srm.qaqc`, which operates on consolidated output datatrees.
 """
 
 from __future__ import annotations

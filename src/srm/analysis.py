@@ -1,3 +1,11 @@
+"""
+Analysis utilities for loading and comparing cached BCSD pipeline artifacts.
+
+Provides :class:`BCSDRun` for loading intermediate and output arrays from icechunk
+stores and :func:`load_cached_data` for direct S3 access. Intended for use in QA
+notebooks and post-hoc analysis of pipeline outputs.
+"""
+
 from functools import cached_property
 
 import icechunk

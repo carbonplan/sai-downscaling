@@ -1,3 +1,12 @@
+"""
+Configuration classes for BCSD downscaling runs.
+
+Defines :class:`BCSDConfig` (run identity fields that determine the cache key) and
+:class:`PipelineOptions` (operational settings that do not affect computation). Both
+extend :class:`pydantic_settings.BaseSettings` with a ``BCSD_`` env prefix and load
+from the same flat YAML file.
+"""
+
 from __future__ import annotations
 
 import hashlib

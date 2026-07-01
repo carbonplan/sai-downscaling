@@ -1,3 +1,12 @@
+"""
+QA/QC checks for consolidated BCSD output stores.
+
+Runs spatial, temporal, and physical-constraint checks against merged output
+datatrees, including NaN detection, range validation, and temperature monotonicity.
+Distinct from :mod:`srm.qa_checks`, which operates on in-memory arrays during
+pipeline execution.
+"""
+
 from __future__ import annotations
 
 import itertools

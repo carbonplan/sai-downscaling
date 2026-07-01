@@ -1,3 +1,10 @@
+"""
+SRM downscaling package for bias-correcting and spatially disaggregating GCM outputs.
+
+Exposes the dataset :data:`catalog` as the primary public interface. Pipeline
+functionality is accessed through the submodules.
+"""
+
 # flake8: noqa
 import importlib.metadata
 

@@ -1,3 +1,11 @@
+"""
+General-purpose utilities shared across pipeline stages and analysis code.
+
+Provides coordinate normalization (:func:`lon_to_180`), variable extraction
+(:func:`get_variable`), unit conversion helpers, and icechunk store accessors. These
+helpers carry no pipeline-specific logic and no stage dependencies.
+"""
+
 from __future__ import annotations
 
 from typing import Literal

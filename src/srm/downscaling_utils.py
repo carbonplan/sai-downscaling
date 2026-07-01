@@ -1,3 +1,12 @@
+"""
+Pure functions for spatial and statistical downscaling operations.
+
+Contains the core algorithmic building blocks used by
+:class:`~srm.pipeline.BCSDPipeline`: detrending and retrend operations, spatial
+interpolation between coarse and fine grids, FFT climatology smoothing, and helpers
+for loading observation and GCM datasets.
+"""
+
 import typing
 
 import numpy as np

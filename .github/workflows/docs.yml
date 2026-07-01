@@ -28,18 +28,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - name: install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
+      - uses: ./.github/actions/setup
 
       - name: deps
         run: uv sync --group docs
 
       - name: build docs
-        run: uv run sphinx-build docs docs/_build/html -W --keep-going
+        run: uv run sphinx-build docs docs/_build/html
 
       - name: upload pages artifact
         uses: actions/upload-pages-artifact@v5

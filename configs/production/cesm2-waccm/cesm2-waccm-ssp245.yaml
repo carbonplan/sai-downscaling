@@ -6,7 +6,7 @@
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
 variables: ["tas"]
-ensemble_members: ["001", "002", "003"]
+ensemble_members: ["003"]
 scenarios: ["SSP245"]
 
 train_period_start: 1978

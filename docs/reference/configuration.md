@@ -7,7 +7,7 @@ Configuration files use YAML format with Pydantic validation. All fields are val
 Configuration is split across two Pydantic classes loaded from the same flat YAML:
 
 - **`BCSDConfig`** — run identity: the parameters that uniquely identify a BCSD run and affect computation results (model, variable, time periods, bias-correction method). Changes here bust the cache.
-- **`PipelineOptions`** — operational settings: storage paths, environment, version, and runtime flags. Changes here do not affect computation results.
+- **`PipelineOptions`** — operational settings: storage paths, environment, branch, and runtime flags. Changes here do not affect computation results.
 
 Both classes use `extra="ignore"`, so a single flat YAML file is accepted by both — no nested sections required.
 
@@ -72,21 +72,21 @@ output_dir: "s3://bucket/path"         # Directory for final scenario outputs (d
 
 # Environment and versioning
 environment: "qa"                      # Environment: qa, production (default: "qa")
-# version: "v1.0.post12"              # Override to pin a specific cache namespace (default: installed package version)
+# branch: "v1.0.post12"              # Override to pin a specific cache namespace (default: installed package version)
 
 # Runtime flags
 verbose: true                          # Enable verbose logging (default: true)
 rechunk_workflow: true                 # Enable strategic rechunking between stages (default: true)
-apply_ocean_mask: true                 # Mask ocean pixels to NaN in final output (default: true)
+apply_ocean_mask: false                # Mask ocean pixels to NaN in final output (default: false)
 save_intermediate: false               # Save intermediate artifacts for debugging (default: false)
-clip_values: true                      # Clip values in post-bias-correction (default: true). Per-variable ranges can be set in bcsd_config.py
 ```
 
 All `PipelineOptions` fields are optional — defaults are suitable for most runs. Override `scratch_dir` and `output_dir` to point at your own storage.
 
-## Version Defaulting
+## Branch Defaulting
 
-The `version` field defaults to the **public version of the installed `srm` package** (e.g. `1.0.post12`), derived via:
+The `branch` field defaults to the **public version of the installed `srm` package** (e.g. `v1.0.post12`),
+derived via:
 
 ```python
 from packaging.version import Version
@@ -94,7 +94,8 @@ from importlib.metadata import version as pkg_version
 "v" + Version(pkg_version("srm")).public  # e.g. "v1.0.post12", strips local/dirty markers
 ```
 
-This means:
+The branch is an icechunk branch created inside each unified per-GCM store. This means:
+
 - Each commit merged to `main` automatically gets its own cache namespace (via the `post-release` counter).
 - Team members on the same commit share the same cache namespace even if one has a dirty working tree.
 - Cache busts only when you intentionally advance the version (i.e. a new release or new commits on `main`).
@@ -102,32 +103,33 @@ This means:
 To **pin** a specific namespace (e.g. to reuse artifacts across a version bump), override explicitly:
 
 ```yaml
-version: "v1.0.post5"   # pin to an earlier commit's cache
+branch: "v1.0.post5"   # pin to an earlier commit's cache branch
 ```
 
 ## Environment Variable Override
 
-You can override the `environment` field using the `BCSD_ENVIRONMENT` environment variable, and `version` using `BCSD_VERSION`:
+You can override the `environment` field using the `BCSD_ENVIRONMENT` environment variable, and
+`branch` using `BCSD_BRANCH`:
 
 ```bash
 # Override environment for this run
 BCSD_ENVIRONMENT=production bcsd run --config-path configs/example.yaml
 
-# Override version for this run
-BCSD_VERSION=v1.0.post5 bcsd run --config-path configs/example.yaml
+# Override branch for this run
+BCSD_BRANCH=v1.0.post5 bcsd run --config-path configs/example.yaml
 ```
 
-You can also override `version` directly on the CLI without editing the config file:
+You can also override `branch` directly on the CLI without editing the config file:
 
 ```bash
-# Pin to a specific version's cache paths
-uv run bcsd run --config-path configs/example.yaml --version v1.0.post5
+# Pin to a specific branch's cache
+uv run bcsd run --config-path configs/example.yaml --branch v1.0.post5
 ```
 
 This is useful for:
 
 - testing configs locally with `qa` before running in `production`
-- pinning `version` to reuse cached artifacts from a known-good commit
+- pinning `branch` to reuse cached artifacts from a known-good commit
 - running the same config in different environments without editing the file
 - CI/CD pipelines that deploy to different environments
 
@@ -136,11 +138,11 @@ This is useful for:
 The pipeline automatically sets variable-specific parameters based on `BCSD_CONFIG` defaults:
 
 | Variable | detrend_data | do_windowing | downscaling_method | downscaling_clim_method |
-|----------|--------------|--------------|-------------------|------------------------|
-| `tas`    | `true`       | `true`       | `additive`        | `fft`                  |
-| `tasmax` | `true`       | `true`       | `additive`        | `fft`                  |
-| `pr`     | `false`      | `true`       | `multiplicative`  | `simple`               |
-| `rsds`   | `true`       | `true`       | `multiplicative`  | `simple`               |
+| --- | --- | --- | --- | --- |
+| `tas` | `true` | `true` | `additive` | `fft` |
+| `tasmax` | `true` | `true` | `additive` | `fft` |
+| `pr` | `false` | `true` | `multiplicative` | `simple` |
+| `rsds` | `true` | `true` | `multiplicative` | `simple` |
 
 You can override these in the config file if needed.
 
