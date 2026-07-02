@@ -3,7 +3,11 @@
 These seed values are deliberately loose enough to absorb floating-point and
 dask/regrid nondeterminism across library versions, and tight enough to catch a
 real scientific change. They are starting points to be confirmed with Claire and
-Ori; ``pr`` is atol-dominant because relative tolerance is meaningless near zero.
+Ori. Every variable pairs a small ``atol`` floor (which dominates near zero,
+where the relative term vanishes) with a nonzero ``rtol`` slope (which absorbs
+roundoff on large values, since floating-point noise scales with magnitude);
+``pr`` needs a much tighter ``atol`` than the loose seed because its stored
+values are small in ``kg m-2 s-1``.
 """
 
 from __future__ import annotations
@@ -30,13 +34,13 @@ class Tolerance:
     atol: float
 
 
-# Units: tas/tasmax/tasmin/dtr in K, pr in mm/day, rsds in W m-2, hurs in %.
+# Units: tas/tasmax/tasmin/dtr in K, pr in kg m-2 s-1, rsds in W m-2, hurs in %.
 TOLERANCES: dict[str, Tolerance] = {
     "tas": Tolerance(rtol=1e-5, atol=1e-3),
     "tasmax": Tolerance(rtol=1e-5, atol=1e-3),
     "tasmin": Tolerance(rtol=1e-5, atol=1e-3),
     "dtr": Tolerance(rtol=1e-5, atol=1e-3),
-    "pr": Tolerance(rtol=0.0, atol=1e-6),
+    "pr": Tolerance(rtol=1e-5, atol=1e-10),
     "rsds": Tolerance(rtol=1e-5, atol=1e-2),
     "hurs": Tolerance(rtol=1e-5, atol=1e-2),
 }

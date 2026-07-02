@@ -74,7 +74,7 @@ def test_compare_dataset_detects_drift():
 
 
 def test_compare_uses_per_variable_tolerance():
-    # pr is atol-dominant (atol=1e-6); a 1e-3 change must fail for pr...
+    # pr has a tight near-zero floor (atol=1e-10); a 1e-3 change must fail for pr...
     a = _ds([0.0, 0.0, 0.0], name="pr")
     b = _ds([0.0, 0.0, 1e-3], name="pr")
     assert compare(b, a).within_tolerance is False
