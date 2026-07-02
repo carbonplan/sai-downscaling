@@ -64,7 +64,6 @@
         "pytest-cov>=7.0.0",
         "pytest-xdist>=3.8.0",
         "pytest>=9.0.2",
-        "syrupy-geo[icechunk]>=2026.6.29",
     ]
 
     coiled-deploy = [

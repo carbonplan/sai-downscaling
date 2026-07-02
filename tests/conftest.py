@@ -132,11 +132,3 @@ def ds_0_360():
             "lon": np.linspace(0, 360, 20, endpoint=False),
         },
     )
-
-
-@pytest.fixture
-def srm_snapshot(snapshot):
-    """syrupy snapshot bound to srm's tolerance-aware xarray extension."""
-    from srm.snapshot.extension import SrmXarraySnapshotExtension
-
-    return snapshot.use_extension(SrmXarraySnapshotExtension)

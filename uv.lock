@@ -4207,7 +4207,6 @@ dev = [
     { name = "s3fs" },
     { name = "seaborn" },
     { name = "sparse" },
-    { name = "syrupy-geo", extra = ["icechunk"] },
     { name = "virtualizarr" },
     { name = "xclim" },
 ]
@@ -4251,7 +4250,6 @@ test = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
-    { name = "syrupy-geo", extra = ["icechunk"] },
 ]
 
 [package.metadata]
@@ -4320,7 +4318,6 @@ dev = [
     { name = "s3fs", specifier = ">=2026.1.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "sparse", specifier = ">=0.17.0" },
-    { name = "syrupy-geo", extras = ["icechunk"], specifier = ">=2026.6.29" },
     { name = "virtualizarr", specifier = ">=2.6.1" },
     { name = "xclim", specifier = ">=0.59.1" },
 ]
@@ -4364,7 +4361,6 @@ test = [
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "syrupy-geo", extras = ["icechunk"], specifier = ">=2026.6.29" },
 ]
 
 [[package]]
@@ -4412,38 +4408,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/10/b9/fd41f1f6af13a1a1212a06bb377b17762feaa6d656947bf666f76300fc05/statsmodels-0.14.6-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:730f3297b26749b216a06e4327fe0be59b8d05f7d594fb6caff4287b69654589", size = 10324155, upload-time = "2025-12-05T23:12:01.805Z" },
     { url = "https://files.pythonhosted.org/packages/ee/0f/a6900e220abd2c69cd0a07e3ad26c71984be6061415a60e0f17b152ecf08/statsmodels-0.14.6-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:f1c08befa85e93acc992b72a390ddb7bd876190f1360e61d10cf43833463bc9c", size = 10349765, upload-time = "2025-12-05T23:12:18.018Z" },
     { url = "https://files.pythonhosted.org/packages/98/08/b79f0c614f38e566eebbdcff90c0bcacf3c6ba7a5bbb12183c09c29ca400/statsmodels-0.14.6-cp313-cp313-win_amd64.whl", hash = "sha256:8021271a79f35b842c02a1794465a651a9d06ec2080f76ebc3b7adce77d08233", size = 9540043, upload-time = "2025-12-05T23:12:33.887Z" },
-]
-
-[[package]]
-name = "syrupy"
-version = "5.3.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pytest" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/81/17/95753634cd02a892cbc74d8df9c15f5ad053885a913eb11aa6061f278344/syrupy-5.3.4.tar.gz", hash = "sha256:10f192655a2d42473ad5772653e64b281f6823fe5e30458d92f8ca8e882884c1", size = 87078, upload-time = "2026-06-26T10:55:42.522Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/7a/254f95860cebb6d51ddb3e815ee30085e8c8a3ba6df1f44ef4605b385621/syrupy-5.3.4-py3-none-any.whl", hash = "sha256:409348aa20afc4b7dab7c965331de0cd79ab46977877fb189014ce9294e947e5", size = 53103, upload-time = "2026-06-26T10:55:41.007Z" },
-]
-
-[[package]]
-name = "syrupy-geo"
-version = "2026.6.29"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "syrupy" },
-    { name = "universal-pathlib" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/db/5b/d5cce4f896f484534ba19ab6ec66640f1896368eb256ba8ba3dca5b7cd0e/syrupy_geo-2026.6.29.tar.gz", hash = "sha256:1e8d505228d9379b096799e04b0ec5def9994ba128d39e6b4d708c2447641ce9", size = 157216, upload-time = "2026-06-30T00:37:23.071Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/ab/22740470c59fabc45389bec2e7856e8799d0e4dcea54416165731d4ae60e/syrupy_geo-2026.6.29-py3-none-any.whl", hash = "sha256:777d1e19db518e503a3ea7d288fa46d9fd3fc7ce648373faf2a9b002c8c21164", size = 9744, upload-time = "2026-06-30T00:37:21.785Z" },
-]
-
-[package.optional-dependencies]
-icechunk = [
-    { name = "icechunk" },
-    { name = "xarray" },
-    { name = "zarr" },
 ]
 
 [[package]]
