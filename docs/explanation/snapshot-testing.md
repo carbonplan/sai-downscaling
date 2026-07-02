@@ -1,35 +1,32 @@
 # Snapshot Regression Testing
 
-This page explains why the BCSD pipeline has a snapshot regression test, what the test actually protects against, and why it is designed the way it is. It is background reading: for the commands that run and bless a snapshot, see [How to Run the Snapshot Regression Gate](../how-to/run-snapshot-tests.md), and for the exact `bcsd compare` interface, see the [CLI Reference](../reference/cli.md).
+This page explains why the BCSD pipeline has a snapshot regression check, what it actually protects against, and why it is designed the way it is. It is background reading: for the concrete, per-pull-request procedure, see [How to Compare a Run Against the Snapshot](../how-to/run-snapshot-tests.md). The check itself is issue #410's request — catch scientific drift before it merges, without paying for a full global comparison on every change.
 
 ## How it works in action
 
-At a high level, snapshot testing takes a fresh candidate run and a blessed baseline, compares them through a single tolerance-aware engine, and turns the result into a pass-or-investigate verdict. The same `compare()` engine backs the pytest gate, the `bcsd compare` CLI, and the comparison notebook, so every entry point reaches the identical conclusion.
+At a high level, the check takes a cheap candidate run and the canonical global snapshot, aligns the snapshot to the candidate's extent, and diffs them through a single tolerance-aware engine. The result feeds the comparison notebook, whose maps and tables a human reads to decide whether the change is safe to merge.
 
 ```mermaid
 graph TB
     RUN[bcsd run<br/>South Africa configs] -->|produces| CAND[Candidate output store]
-    SNAP[("Blessed snapshot<br/>on carbonplan-srm")]
+    SNAP[("Global snapshot on carbonplan-srm<br/>pointer in baselines.py")]
 
+    SNAP -->|align to candidate extent| ALN[Snapshot on candidate grid]
     CAND --> CMP
-    SNAP --> CMP
+    ALN --> CMP
 
-    subgraph "srm.snapshot.compare: one engine, one verdict"
-        CMP["compare()<br/>per-variable tolerances"] --> REP["DiffReport<br/>max_abs, rmse, frac over tol"]
+    subgraph "srm.snapshot: compare_runs → compare()"
+        CMP["per-variable tolerances"] --> REP["DiffReport<br/>max_abs, rmse, frac over tol"]
     end
 
-    GATE[pytest -m snapshot gate] -.->|invokes| CMP
-    CLI[bcsd compare CLI] -.->|invokes| CMP
-    NB[comparison notebook] -.->|invokes| CMP
-
-    REP --> V{within tolerance?}
-    V -->|yes| PASS["green: safe to merge"]
-    V -->|regression| FIX[fix the code]
-    V -->|intended change| BLESS["re-bless with<br/>--snapshot-update"]
-    BLESS -.->|updates baseline| SNAP
+    REP --> NB[comparison notebook<br/>maps, heatmap, distributions]
+    NB --> V{human decision}
+    V -->|no change| MERGE["merge"]
+    V -->|change or intended| GLOBAL["full global run,<br/>document, get approval,<br/>then repoint baselines.py"]
+    GLOBAL -.->|becomes new baseline| SNAP
 ```
 
-The diagram traces the operational loop: a South Africa run produces candidate output, `compare()` measures it against the blessed snapshot under per-variable tolerances, and the verdict either clears the change to merge or flags drift. When the drift is an intended scientific improvement, re-blessing updates the baseline, which is the only path that overwrites the reference.
+The diagram traces the loop: a South Africa run produces candidate output, `compare_runs` aligns the global snapshot to that regional extent and measures the difference under per-variable tolerances, and the notebook turns the `DiffReport` into visual diagnostics. A human then decides — a clean comparison merges directly, while any change routes to a full global run and a documented, approved baseline update.
 
 ## The problem: silent scientific drift
 
@@ -49,20 +46,14 @@ A single global tolerance cannot fit every variable, because the variables live 
 
 The policy lives in `srm.snapshot.tolerances` as a per-variable table, with a default fallback for anything unlisted. These seed values are deliberately loose enough to absorb cross-version nondeterminism and tight enough to catch a genuine shift; they are starting points, expected to be tuned as the team learns how much each variable actually wanders between blessed runs.
 
-## The two-snapshot model
+## One global snapshot as the source of truth
 
-Comparing full global output on every change would be prohibitively expensive, so the design uses two scopes for two different moments. The cheap scope is a South Africa subset that acts as a proxy gate: it exercises the same code paths as a global run but over a small enough domain to produce and compare quickly, which makes it suitable for guarding pull requests. The expensive scope is the full global comparison, run on demand against a blessed global baseline when a change needs end-to-end confirmation.
+There is a single canonical baseline: the blessed **global** run on the `carbonplan-srm` bucket. Rather than track it out of band, `srm.snapshot.baselines.CESM2_WACCM_GLOBAL` records its store URI and icechunk branch, so "which run is the baseline" is a version-controlled value that the comparison notebook and `compare_runs` both read. Repointing the baseline at a new global run is therefore a reviewed edit to `baselines.py`, not an untracked side effect on a bucket.
 
-The South Africa proxy and the global baseline are stored differently on purpose. The proxy compares against a `syrupy-geo` snapshot store keyed by package version, so blessing is a versioned, first-class artifact. The global baseline is instead a tracked pointer in `srm.snapshot.baselines`, so "repoint the comparison at the new global run" becomes a reviewed pull-request edit rather than an untracked side effect.
+Comparing full global output on every change would be prohibitively expensive, so the routine per-pull-request check runs over a small South Africa subset instead. `compare_runs` makes that regional candidate comparable to the global baseline by aligning the snapshot to the candidate's extent per leaf: for each leaf it selects the snapshot cells nearest the candidate's `lat`/`lon` and relabels them with the candidate's exact coordinates, so the element-wise diff lines up cell for cell. The same function compares global against global when `subset_to_candidate=False`, so the cheap check and the full check share one code path and one tolerance policy.
 
-## One engine, one verdict
+## Human judgment, with the label as the only gate
 
-A subtle failure mode for this kind of tooling is disagreement between the automated gate and the human-facing diagnostics: the test says "pass" while the comparison notebook shows a visible difference, or vice versa. That happens whenever the gate and the notebook compute their verdicts independently, with tolerances that have drifted apart over time.
+The comparison does not merge anything by itself; it produces evidence and a human makes the call. When the notebook shows every leaf within tolerance and no change was intended, the pull request is safe to merge. When a leaf moves — or the change was meant to move the outputs — the cheap subset is not enough: the author produces a full global run, documents what changed and why, and gets sign-off before merging and repointing the baseline. Leaves present on only one side are reported rather than silently skipped, so a scenario or variable that appears or disappears is never mistaken for "no change".
 
-This design avoids that by routing every path through a single `compare()` engine in `srm.snapshot.compare`. The pytest gate reaches it through a `syrupy-geo` extension subclass, the `bcsd compare` CLI calls it directly, and the comparison notebook imports the same function, so all three necessarily agree on what "within tolerance" means. Changing the policy in one place changes it everywhere at once, which keeps the gate and the diagnostics honest with each other.
-
-## The snapshot lifecycle
-
-A baseline is created the first time the gate runs with an explicit blessing flag, which writes the current output to the snapshot store on `carbonplan-srm` under the installed package version. From then on the gate compares against that frozen copy, and it stays frozen until someone deliberately re-blesses it. This is the whole point: a baseline that updated itself automatically would silently launder regressions into the reference.
-
-When a change is an intended scientific improvement rather than a regression, re-blessing is the correct response, and it is an explicit, reviewable act. Because snapshots are versioned like the pipeline itself, a blessed baseline is tied to the code and configuration that produced it, and the history of what "correct" meant at each version is preserved rather than overwritten.
+The only automated enforcement is a label. The `snapshot-required` workflow blocks a pull request that touches modeling code until it carries the `snapshot-verified` label, and it exempts docs-only and Markdown-only changes automatically. That check confirms the human process happened — the comparison notebook was run and committed with its outputs — rather than recomputing a verdict of its own, which keeps the CI cheap and the judgment where it belongs.

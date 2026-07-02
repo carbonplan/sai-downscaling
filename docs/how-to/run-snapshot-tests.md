@@ -1,77 +1,39 @@
-# How to Run the Snapshot Regression Gate
+# How to Compare a Run Against the Snapshot
 
-This guide shows you how to bless a snapshot baseline, run the South Africa regression gate against it, and compare two output stores directly. It assumes you already know what the pipeline does and why snapshot testing exists — for that background, see [Snapshot Regression Testing](../explanation/snapshot-testing.md). For a visual, cell-by-cell diff of two runs, use the [Snapshot comparison notebook](./snapshot-comparison.ipynb) instead.
+This guide shows you how to check a candidate BCSD run against the canonical global snapshot before merging modeling changes. It is the concrete, per-pull-request procedure; for the background on why the snapshot exists and how the comparison works, see [Snapshot Regression Testing](../explanation/snapshot-testing.md). The whole check runs through the [snapshot comparison notebook](./snapshot-comparison.ipynb), which calls `srm.snapshot.compare_runs` under the hood, so you never write bespoke comparison code yourself.
 
-The gate is marked `slow` and `snapshot`, so it is excluded from the default `pytest` run and only executes when you select it with `-m snapshot`. Every step below runs through `uv`, and the produce and blessing steps need access to S3 and Coiled.
+Every command below runs through `uv`, and the produce step needs access to S3 and Coiled. The comparison notebook needs read access to the two output stores it opens.
 
-## Step 0 — Set the shared environment
+## Step 1 — Produce the cheap South Africa run
 
-The produce step and the blessing step must run against the **same** icechunk branch, and `pytest` cannot be told the branch on the command line. `bcsd run --branch …` only configures that one `run` process; the gate resolves its branch from `PipelineOptions`, which reads the `BCSD_BRANCH` environment variable (falling back to the installed package version). Export both variables once so `run`, `--snapshot-update`, and the gate all agree.
-
-```bash
-# The snapshot branch is defined once in src/srm/snapshot/baselines.py; derive it
-# so local runs, CI, and the global baseline all agree.
-export BCSD_BRANCH="$(uv run python -c 'from srm.snapshot.baselines import CESM2_WACCM_GLOBAL as b; print(b.branch)')"
-export SNAPSHOT_STORAGE_PATH="s3://carbonplan-srm/snapshots/${BCSD_BRANCH}"
-```
-
-`BCSD_BRANCH` must be a fixed branch, not the installed package version — the default version changes on every commit (`v0.7.0.post18` → `post19` → …), so the produced output and the gate would read different branches and the gate would fail with `ref not found`. Deriving it from `baselines.py` guarantees a stable value that matches CI. Do **not** pass `--branch` to `bcsd run` instead of exporting `BCSD_BRANCH`: the flag reaches `run` but not `pytest`, which reintroduces the mismatch.
-
-## Step 1 — Produce the South Africa output
-
-The gate reads an existing output store; it does not produce one. Run the South Africa snapshot configs first, which write the `qa` output for the G6-1.5K and SSP245 legs over the South Africa subset.
+The comparison reads existing output stores; it does not produce them. Run the South Africa snapshot configs first, which write the `qa` output for the G6-1.5K and SSP245 legs over the small South Africa subset, so the check is cheap to produce and cheap to diff.
 
 ```bash
 uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
 ```
 
-This runs on Coiled by default and can take a while. Add `--no-coiled` only if you have local source-data access and enough memory.
+This runs on Coiled by default and finishes quickly because the subset is small. Add `--no-coiled` only if you have local source-data access and enough memory.
 
-## Step 2 — Bless the first snapshot
+## Step 2 — Run the comparison notebook
 
-With `BCSD_BRANCH` and `SNAPSHOT_STORAGE_PATH` exported in Step 0, run the gate with `--snapshot-update`, which writes the current output as the baseline instead of comparing against it. It reads the South Africa output on `BCSD_BRANCH` — the same branch Step 1 wrote to.
+Open [`docs/how-to/snapshot-comparison.ipynb`](./snapshot-comparison.ipynb) and run all cells. Keep `subset_to_candidate = True` (the default): the notebook aligns the global snapshot to the South Africa candidate's extent per leaf, so the regional run is compared against the global baseline under the per-variable tolerances. The first cells print an overall PASS/FAIL and a per-leaf table; the remaining cells draw difference maps, a fraction-over-tolerance heatmap, and value distributions.
 
-```bash
-uv run pytest -m snapshot tests/test_snapshot_gate.py --snapshot-update -v
-```
+When the notebook has run, commit it **with its outputs** to your pull request. Those committed outputs are the evidence that the check ran and what it showed, which is what a reviewer reads and what the `snapshot-verified` label attests to.
 
-Blessing overwrites the baseline on the current snapshot branch, so only do it deliberately. Reserve it for the first snapshot, or for when you have confirmed that a change in the output is an intended improvement rather than a regression.
+## Step 3 — Decide whether to merge (issue #410)
 
-### Blessing a new baseline version
+The comparison is a judgment aid, not an automatic pass/fail, so you read the result and decide. Handle the two cases as follows:
 
-The snapshot branch lives in one place: `CESM2_WACCM_GLOBAL.branch` in `src/srm/snapshot/baselines.py`. Re-blessing on the *same* branch (above) is enough for an approved change that supersedes the current baseline. To start a *new* baseline lineage instead — for example a release, per issue #410 — bump `branch` in `baselines.py` in a PR. The `snapshot` workflow derives `BCSD_BRANCH` from that value, so the South Africa gate and the global comparison both follow automatically with no workflow edit. Re-export the Step 0 variables afterward so your local shell picks up the new branch, then bless.
+- **No change, and none expected.** If every leaf is within tolerance and you did not intend to change the outputs, the change is safe: merge the pull request. The committed notebook records the clean comparison.
+- **A change appears, or the change was intended.** If any leaf moves out of tolerance, or your work deliberately changes the outputs, the cheap South Africa check is not enough on its own. Produce a full **global** run, set `subset_to_candidate = False` in the notebook, and expand it with the global-vs-global comparison. Document what changed and why in the pull request, get sign-off from Claire or Ori, then merge. After merging, repoint `CESM2_WACCM_GLOBAL` in `src/srm/snapshot/baselines.py` at the new global run so it becomes the baseline for the next comparison.
 
-## Step 3 — Run the gate
+## Step 4 — Satisfy CI
 
-With a baseline blessed, run the gate without `--snapshot-update`. It must be green: every scenario group present in the output store is compared against the stored snapshot under the per-variable tolerances.
+A pull request that touches modeling code is blocked by the `snapshot-required` check until it carries the `snapshot-verified` label. Add that label once you have committed the comparison notebook and made the merge decision above, and the check turns green.
 
-```bash
-uv run pytest -m snapshot tests/test_snapshot_gate.py -v
-```
-
-A failure prints a per-leaf table showing which `(scenario, variable)` leaves moved out of tolerance, along with their maximum absolute difference and the fraction of cells over tolerance. If the change is a regression, fix it; if it is intended, re-bless with Step 2.
-
-## Step 4 — Compare two output stores directly
-
-To compare any two output stores outside the pytest gate — for example a fresh run against a blessed baseline — use `bcsd compare`. It prints a difference table and exits `1` if any leaf is out of tolerance, so it works both interactively and in scripts.
-
-```bash
-uv run bcsd compare \
-  s3://carbonplan-scratch/srm/output/qa/CESM2-WACCM-ERA5-lat-35to-22_lon16to33.icechunk \
-  s3://carbonplan-srm/output/production/CESM2-WACCM-ERA5-global.icechunk \
-  --branch v0.7.0
-```
-
-The `--branch` value is the snapshot branch defined in `src/srm/snapshot/baselines.py` (here `v0.7.0`), and it applies to both stores. Restrict the comparison with repeatable `--scenario` and `--variable` flags when you only care about specific leaves. For a global-scale comparison, run the same command near the data with `uv run coiled batch run --region us-west-2 "bcsd compare A B --branch v0.7.0"`. See the [`bcsd compare` reference](../reference/cli.md) for the full option list.
-
-## Step 5 — Verify a pull request
-
-A pull request that touches modeling code is blocked by the `snapshot-required` check until it is verified. To satisfy it, dispatch the `snapshot` workflow with `scope: southafrica`, confirm the run is green, then add the `snapshot-verified` label to the pull request.
-
-Pull requests that touch only files under `docs/` or `notebooks/`, or only Markdown, are exempt automatically and need no label. Set the workflow's `update` input to `true` only when you intend to re-bless the baseline as part of the run.
+Pull requests that touch only files under `docs/` or `notebooks/`, or only Markdown, are exempt automatically and need no label. The notebook itself lives under `docs/`, so committing it does not by itself trip the modeling-change detector.
 
 ## See Also
 
-- [Snapshot Regression Testing](../explanation/snapshot-testing.md) — why the gate exists and how the tolerance and two-snapshot models work.
-- [Snapshot comparison notebook](./snapshot-comparison.ipynb) — visual difference maps, drift heatmap, and distributions for two runs.
-- [CLI Reference](../reference/cli.md) — the full `bcsd compare` interface.
+- [Snapshot Regression Testing](../explanation/snapshot-testing.md) — why the snapshot exists, the single-global-snapshot model, and the tolerance model.
+- [Snapshot comparison notebook](./snapshot-comparison.ipynb) — the difference maps, heatmap, and distributions you run in Step 2.
