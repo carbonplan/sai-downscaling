@@ -1,10 +1,9 @@
 """Tolerance-aware comparison of BCSD output datasets and datatrees.
 
-The single :func:`compare` engine is shared by the pytest gate
-(:class:`srm.snapshot.extension.SrmXarraySnapshotExtension`), the ``bcsd compare``
-CLI, and the comparison notebook, so all three reach the same verdict. All
-reductions are chunk-friendly so a few-GB South Africa diff runs on a small
-GitHub Actions runner without loading whole arrays into memory.
+The single :func:`compare` engine backs the comparison notebook (via
+:func:`srm.snapshot.runs.compare_runs`), so the notebook's verdict comes straight
+from this code. All reductions are chunk-friendly so a few-GB South Africa diff runs
+without loading whole arrays into memory.
 """
 
 from __future__ import annotations
@@ -212,7 +211,7 @@ class DiffReport:
         return bool(self.leaves) and all(leaf.within_tol for leaf in self.leaves)
 
     def to_lines(self) -> list[str]:
-        """Render a plain-text summary table (used by the syrupy diff output)."""
+        """Render a plain-text summary table."""
         header = f"{'leaf':40s} {'status':6s} {'max_abs':>12s} {'rmse':>12s} {'frac>tol':>10s}"
         rows = [header, "-" * len(header)]
         for leaf in self.leaves:

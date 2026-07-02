@@ -1,9 +1,10 @@
-"""Snapshot regression testing for BCSD pipeline outputs.
+"""Snapshot comparison core for BCSD pipeline outputs.
 
-Pairs syrupy-geo's snapshot storage and lifecycle with srm's climate-domain
-comparison: per-variable tolerances (:mod:`srm.snapshot.tolerances`) and a
-:func:`srm.snapshot.compare.compare` engine shared by the pytest gate, the
-``bcsd compare`` CLI, and the comparison notebook.
+This package provides the per-variable tolerances (:mod:`srm.snapshot.tolerances`)
+and the :func:`srm.snapshot.compare.compare` engine. The
+:func:`srm.snapshot.runs.compare_runs` wrapper opens two output stores and diffs a
+candidate run against the global snapshot, which is what the comparison notebook
+calls.
 """
 
 from srm.snapshot.compare import DiffReport, LeafDiff, compare
