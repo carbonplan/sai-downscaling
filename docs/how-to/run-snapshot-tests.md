@@ -4,6 +4,19 @@ This guide shows you how to bless a snapshot baseline, run the South Africa regr
 
 The gate is marked `slow` and `snapshot`, so it is excluded from the default `pytest` run and only executes when you select it with `-m snapshot`. Every step below runs through `uv`, and the produce and blessing steps need access to S3 and Coiled.
 
+## Step 0 — Set the shared environment
+
+The produce step and the blessing step must run against the **same** icechunk branch, and `pytest` cannot be told the branch on the command line. `bcsd run --branch …` only configures that one `run` process; the gate resolves its branch from `PipelineOptions`, which reads the `BCSD_BRANCH` environment variable (falling back to the installed package version). Export both variables once so `run`, `--snapshot-update`, and the gate all agree.
+
+```bash
+# The snapshot branch is defined once in src/srm/snapshot/baselines.py; derive it
+# so local runs, CI, and the global baseline all agree.
+export BCSD_BRANCH="$(uv run python -c 'from srm.snapshot.baselines import CESM2_WACCM_GLOBAL as b; print(b.branch)')"
+export SNAPSHOT_STORAGE_PATH="s3://carbonplan-srm/snapshots/${BCSD_BRANCH}"
+```
+
+`BCSD_BRANCH` must be a fixed branch, not the installed package version — the default version changes on every commit (`v0.7.0.post18` → `post19` → …), so the produced output and the gate would read different branches and the gate would fail with `ref not found`. Deriving it from `baselines.py` guarantees a stable value that matches CI. Do **not** pass `--branch` to `bcsd run` instead of exporting `BCSD_BRANCH`: the flag reaches `run` but not `pytest`, which reintroduces the mismatch.
+
 ## Step 1 — Produce the South Africa output
 
 The gate reads an existing output store; it does not produce one. Run the South Africa snapshot configs first, which write the `qa` output for the G6-1.5K and SSP245 legs over the South Africa subset.
@@ -16,14 +29,17 @@ This runs on Coiled by default and can take a while. Add `--no-coiled` only if y
 
 ## Step 2 — Bless the first snapshot
 
-Point `SNAPSHOT_STORAGE_PATH` at the snapshot store on `carbonplan-srm`, versioned to match the installed package. Then run the gate with `--snapshot-update`, which writes the current output as the baseline instead of comparing against it.
+With `BCSD_BRANCH` and `SNAPSHOT_STORAGE_PATH` exported in Step 0, run the gate with `--snapshot-update`, which writes the current output as the baseline instead of comparing against it. It reads the South Africa output on `BCSD_BRANCH` — the same branch Step 1 wrote to.
 
 ```bash
-export SNAPSHOT_STORAGE_PATH="s3://carbonplan-srm/snapshots/$(uv run python -c 'import importlib.metadata as m; print(m.version("srm"))')"
 uv run pytest -m snapshot tests/test_snapshot_gate.py --snapshot-update -v
 ```
 
-Blessing overwrites the baseline for this package version, so only do it deliberately. Reserve it for the first snapshot, or for when you have confirmed that a change in the output is an intended improvement rather than a regression.
+Blessing overwrites the baseline on the current snapshot branch, so only do it deliberately. Reserve it for the first snapshot, or for when you have confirmed that a change in the output is an intended improvement rather than a regression.
+
+### Blessing a new baseline version
+
+The snapshot branch lives in one place: `CESM2_WACCM_GLOBAL.branch` in `src/srm/snapshot/baselines.py`. Re-blessing on the *same* branch (above) is enough for an approved change that supersedes the current baseline. To start a *new* baseline lineage instead — for example a release, per issue #410 — bump `branch` in `baselines.py` in a PR. The `snapshot` workflow derives `BCSD_BRANCH` from that value, so the South Africa gate and the global comparison both follow automatically with no workflow edit. Re-export the Step 0 variables afterward so your local shell picks up the new branch, then bless.
 
 ## Step 3 — Run the gate
 
@@ -46,7 +62,7 @@ uv run bcsd compare \
   --branch v0.7.0
 ```
 
-Restrict the comparison with repeatable `--scenario` and `--variable` flags when you only care about specific leaves. For a global-scale comparison, run the same command near the data with `uv run coiled batch run --region us-west-2 "bcsd compare A B --branch v0.7.0"`. See the [`bcsd compare` reference](../reference/cli.md) for the full option list.
+The `--branch` value is the snapshot branch defined in `src/srm/snapshot/baselines.py` (here `v0.7.0`), and it applies to both stores. Restrict the comparison with repeatable `--scenario` and `--variable` flags when you only care about specific leaves. For a global-scale comparison, run the same command near the data with `uv run coiled batch run --region us-west-2 "bcsd compare A B --branch v0.7.0"`. See the [`bcsd compare` reference](../reference/cli.md) for the full option list.
 
 ## Step 5 — Verify a pull request
 

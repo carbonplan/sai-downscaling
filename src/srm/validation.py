@@ -724,6 +724,20 @@ OUTPUT_CHECKS: list[tuple[str, str, dict]] = [
 ]
 
 
+def _drop_output_encoding(tree: xr.DataTree) -> xr.DataTree:
+    """Drop per-variable encoding on every node of ``tree``.
+
+    Output stores use zarr v3 sharding, so on reopen xarray reports the shard shape
+    as ``encoding['chunks']`` while dask holds the smaller inner chunks. Re-writing
+    such data (e.g. blessing a syrupy snapshot) then fails because the shard shape
+    does not tile the dask graph. Dropping the encoding lets the writer derive a
+    valid layout. Use xarray's :meth:`~xarray.Dataset.drop_encoding`: a manual
+    ``encoding.pop`` does not survive to the writer because the shard shape is
+    re-derived from the zarr backend at write time.
+    """
+    return tree.map_over_datasets(lambda ds: ds.drop_encoding())
+
+
 def _open_output_datatree(uri: str, branch: str = "main", tag: str | None = None) -> xr.DataTree:
     """Open an icechunk output store as a DataTree at a given branch or tag."""
     import icechunk
@@ -738,7 +752,11 @@ def _open_output_datatree(uri: str, branch: str = "main", tag: str | None = None
         session = repo.readonly_session(tag=tag)
     else:
         session = repo.readonly_session(branch=branch)
-    return xr.open_datatree(session.store, engine="zarr", chunks="auto", consolidated=False)
+    # chunks={} loads the store's native chunk grid; _drop_output_encoding removes
+    # the zarr-v3 shard shape that would otherwise clash with the dask graph when
+    # the tree is re-written (e.g. blessing a snapshot).
+    tree = xr.open_datatree(session.store, engine="zarr", chunks={}, consolidated=False)
+    return _drop_output_encoding(tree)
 
 
 def validate_output_store(

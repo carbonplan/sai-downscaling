@@ -42,15 +42,21 @@ jobs:
                   fetch-depth: 0
             - uses: ./.github/actions/setup
 
+            # Single source of truth: the snapshot branch is defined in baselines.py,
+            # so blessing a new version is one edit there and both jobs follow. Setting
+            # it via $GITHUB_ENV makes produce, the gate, and the storage path inherit it.
+            - name: Resolve snapshot branch
+              run: |
+                  BRANCH="$(uv run python -c 'from srm.snapshot.baselines import CESM2_WACCM_GLOBAL as b; print(b.branch)')"
+                  echo "BCSD_BRANCH=${BRANCH}" >> "$GITHUB_ENV"
+
             - name: Produce SA output (Coiled)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
               run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
 
             - name: Resolve snapshot storage path
-              run: |
-                  VERSION="$(uv run python -c 'import importlib.metadata as m; print(m.version("srm"))')"
-                  echo "SNAPSHOT_STORAGE_PATH=${SNAPSHOT_STORAGE_PATH_BASE}/${VERSION}" >> "$GITHUB_ENV"
+              run: echo "SNAPSHOT_STORAGE_PATH=${SNAPSHOT_STORAGE_PATH_BASE}/${BCSD_BRANCH}" >> "$GITHUB_ENV"
 
             - name: Assert against snapshot
               env:
