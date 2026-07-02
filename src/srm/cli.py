@@ -24,7 +24,7 @@ from rich.tree import Tree
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
-from srm.validation import CheckResult, CheckStatus, _open_output_datatree
+from srm.validation import CheckResult, CheckStatus
 
 console = Console()
 logging.basicConfig(
@@ -1302,47 +1302,6 @@ def validate_output(
 
     if any_blocking:
         raise typer.Exit(1)
-
-
-@app.command()
-def compare(
-    store_a: str = typer.Argument(..., help="Candidate output datatree store URI."),
-    store_b: str = typer.Argument(..., help="Baseline (snapshot) output datatree store URI."),
-    branch: str = typer.Option("main", "--branch", help="icechunk branch to read on both stores."),
-    scenario: list[str] | None = typer.Option(
-        None, "--scenario", help="Scenario group(s) to compare (repeatable). Defaults to all."
-    ),
-    variable: list[str] | None = typer.Option(
-        None, "--variable", help="Variable(s) to compare (repeatable). Defaults to all."
-    ),
-) -> None:
-    """Compare two output datatree stores under srm's per-variable tolerance.
-
-    Prints a DiffReport table and exits 1 if any leaf is out of tolerance, else 0.
-    Runs locally, or near the data with coiled batch for global-scale stores:
-    ``uv run coiled batch run --region us-west-2 "bcsd compare A B --branch main"``.
-    """
-    from srm.snapshot.compare import DiffReport, compare as compare_trees
-
-    cand = _open_output_datatree(store_a, branch=branch)
-    base = _open_output_datatree(store_b, branch=branch)
-
-    report = compare_trees(cand, base)
-    # Filter on the report leaves (not the trees) so we avoid DataTree.filter's
-    # ancestor-retention semantics. leaf.path is "{scenario}/{variable}/{member}/{var}".
-    leaves = report.leaves
-    if scenario:
-        scen = set(scenario)
-        leaves = [leaf for leaf in leaves if leaf.path.split("/")[0] in scen]
-    if variable:
-        var = set(variable)
-        leaves = [leaf for leaf in leaves if leaf.variable in var]
-    report = DiffReport(leaves=leaves)
-
-    console.rule(f"[bold]{store_a}[/bold]  vs  [bold]{store_b}[/bold]")
-    console.print(report.to_table())
-    if not report.within_tolerance:
-        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
