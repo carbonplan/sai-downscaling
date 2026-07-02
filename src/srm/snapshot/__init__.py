@@ -7,6 +7,7 @@ comparison: per-variable tolerances (:mod:`srm.snapshot.tolerances`) and a
 """
 
 from srm.snapshot.compare import DiffReport, LeafDiff, compare
+from srm.snapshot.runs import compare_runs
 from srm.snapshot.tolerances import DEFAULT_TOLERANCE, TOLERANCES, Tolerance, tolerance_for
 
 __all__ = [
@@ -16,5 +17,6 @@ __all__ = [
     "LeafDiff",
     "Tolerance",
     "compare",
+    "compare_runs",
     "tolerance_for",
 ]
