@@ -1,80 +1,33 @@
 """Compare a candidate BCSD run against the global snapshot.
 
-:func:`compare_runs` opens two output stores and diffs them leaf-by-leaf under the
-per-variable tolerances. For the cheap South Africa pre-merge check (issue #410) the
-global snapshot is spatially aligned to the candidate's extent (per leaf, using each
-leaf's own ``lat``/``lon``), so a regional subset can be compared against the global
-run. Leaves present on only one side are reported rather than silently skipped.
+:func:`compare_runs` opens two output stores on the same icechunk branch and diffs
+them leaf-by-leaf under the per-variable tolerances, reporting leaves that appear on
+only one side. It performs **no coordinate alignment**: the two stores are compared
+as-is, so a grid mismatch surfaces as an out-of-tolerance / shape-mismatch leaf rather
+than being silently reconciled. To compare a regional candidate against the global
+snapshot, subset the snapshot to the candidate's extent first (see the comparison
+notebook).
 """
 
 from __future__ import annotations
-
-import xarray as xr
 
 from srm.snapshot.compare import DiffReport, LeafDiff, _iter_leaf_datasets, compare
 from srm.validation import _open_output_datatree
 
 
-def _tree_key(path: str) -> str:
-    """Map an :func:`_iter_leaf_datasets` group path to a ``DataTree.from_dict`` key."""
-    if not path:
-        return "/"
-    return path if path.startswith("/") else f"/{path}"
-
-
-def _align_latlon_to(snapshot: xr.DataTree, candidate: xr.DataTree) -> xr.DataTree:
-    """Return ``snapshot`` with each leaf's ``lat``/``lon`` aligned to the matching
-    candidate leaf.
-
-    For every snapshot leaf that also exists in ``candidate``, select the nearest
-    cells to the candidate's ``lat``/``lon`` and overwrite the coordinate labels with
-    the candidate's exact values, so the subsequent element-wise diff aligns cell for
-    cell even under tiny floating-point drift. Snapshot-only leaves are passed through
-    unchanged (they are reported as one-sided later).
-    """
-    cand_leaves = dict(_iter_leaf_datasets(candidate))
-    aligned: dict[str, xr.Dataset] = {}
-    for path, snap_ds in _iter_leaf_datasets(snapshot):
-        cand_ds = cand_leaves.get(path)
-        if cand_ds is not None:
-            dims = [d for d in ("lat", "lon") if d in cand_ds.coords and d in snap_ds.coords]
-            if dims:
-                snap_ds = snap_ds.sel({d: cand_ds[d] for d in dims}, method="nearest")
-                snap_ds = snap_ds.assign_coords({d: cand_ds[d] for d in dims})
-        aligned[_tree_key(path)] = snap_ds
-    return xr.DataTree.from_dict(aligned)
-
-
 def _compare_datatrees(
-    candidate: xr.DataTree,
-    snapshot: xr.DataTree,
+    candidate,
+    snapshot,
     *,
-    subset_to_candidate: bool = True,
     scenarios: list[str] | None = None,
     variables: list[str] | None = None,
 ) -> DiffReport:
-    """Diff ``candidate`` against ``snapshot`` across all leaves.
+    """Diff ``candidate`` against ``snapshot`` across all leaves (no alignment).
 
-    Parameters
-    ----------
-    candidate, snapshot : xr.DataTree
-        Output datatrees to compare.
-    subset_to_candidate : bool
-        If True, align the snapshot to the candidate's spatial extent per leaf before
-        comparing (the cheap South Africa check). If False, compare as-is (global run
-        vs global snapshot).
-    scenarios, variables : list of str, optional
-        Restrict the reported leaves to these scenario groups / variables.
-
-    Returns
-    -------
-    DiffReport
-        One :class:`~srm.snapshot.compare.LeafDiff` per leaf, including leaves present
-        on only one side (marked ``shape_mismatch``).
+    Runs :func:`~srm.snapshot.compare.compare` (which flags candidate leaves absent
+    from the snapshot), then appends leaves present only in the snapshot so nothing is
+    silently skipped. ``scenarios`` / ``variables`` restrict the reported leaves.
     """
-    if subset_to_candidate:
-        snapshot = _align_latlon_to(snapshot, candidate)
-
     report = compare(candidate, snapshot)
     leaves = list(report.leaves)
 
@@ -101,22 +54,14 @@ def compare_runs(
     snapshot_uri: str,
     *,
     branch: str,
-    subset_to_candidate: bool = True,
     scenarios: list[str] | None = None,
     variables: list[str] | None = None,
 ) -> DiffReport:
-    """Open two output stores and compare them (see :func:`_compare_datatrees`).
+    """Open two output stores on ``branch`` and compare them as-is.
 
-    Both stores are read on ``branch``. Use ``subset_to_candidate=True`` (default) to
-    compare a regional candidate against the global snapshot, or ``False`` for a
-    global-vs-global comparison.
+    The stores must already be on the same grid (see the module docstring). Use the
+    comparison notebook to subset the global snapshot to a regional candidate first.
     """
     candidate = _open_output_datatree(candidate_uri, branch=branch)
     snapshot = _open_output_datatree(snapshot_uri, branch=branch)
-    return _compare_datatrees(
-        candidate,
-        snapshot,
-        subset_to_candidate=subset_to_candidate,
-        scenarios=scenarios,
-        variables=variables,
-    )
+    return _compare_datatrees(candidate, snapshot, scenarios=scenarios, variables=variables)
