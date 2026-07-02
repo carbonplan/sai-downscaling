@@ -6,17 +6,17 @@ Every command below runs through `uv`, and the produce step needs access to S3 a
 
 ## Step 1 — Produce the cheap South Africa run
 
-The comparison reads existing output stores; it does not produce them. Run the South Africa snapshot configs first, which write the `qa` output for the G6-1.5K and SSP245 legs over the small South Africa subset, so the check is cheap to produce and cheap to diff.
+The comparison reads existing output stores; it does not produce them. Run the South Africa snapshot configs first, which write the `qa` output for the G6-1.5K and SSP245 legs over the small South Africa subset, so the check is cheap to produce and cheap to diff. These configs run over a domain with a ~3° **halo** around the region of interest, because BCSD's regridding and spatial disaggregation have edge effects at a truncated domain boundary; the comparison trims that halo away (Step 2), so only interior cells — which had full neighborhoods in both the regional and the global run — are compared.
 
 ```bash
 uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
 ```
 
-This runs on Coiled by default and finishes quickly because the subset is small. Add `--no-coiled` only if you have local source-data access and enough memory.
+This runs on Coiled by default and finishes quickly because the subset is small. Add `--no-coiled` only if you have local source-data access and enough memory. The run writes to the icechunk branch `bcsd run` uses — the installed package version by default, or `BCSD_BRANCH` if you set it — which Step 2 needs as `candidate_branch`.
 
 ## Step 2 — Run the comparison notebook
 
-Open [`docs/how-to/snapshot-comparison.ipynb`](./snapshot-comparison.ipynb) and run all cells. Keep `mode = "southafrica"` (the default): the notebook subsets the global snapshot to the South Africa candidate's extent with a plain per-leaf `.sel` — a grid mismatch fails loudly rather than being reconciled — so the regional run is compared against the global baseline under the per-variable tolerances. The first cells print an overall PASS/FAIL and a per-leaf table; the remaining cells draw difference maps, a fraction-over-tolerance heatmap, and value distributions.
+Open [`docs/how-to/snapshot-comparison.ipynb`](./snapshot-comparison.ipynb) and set `candidate_branch` to the branch your Step 1 run wrote to (the default matches the snapshot branch from `baselines.py`). The candidate and the snapshot are separate stores read on their own branches, so these need not be the same. Keep `mode = "southafrica"` (the default): the notebook subsets the global snapshot to the South Africa candidate's extent with a plain per-leaf `.sel` — a grid mismatch fails loudly rather than being reconciled — then trims both runs to `roi_bounds` (the region of interest), dropping the halo so only interior cells are compared under the per-variable tolerances. The first cells print an overall PASS/FAIL and a per-leaf table; the remaining cells draw difference maps, a fraction-over-tolerance heatmap, and value distributions.
 
 When the notebook has run, commit it **with its outputs** to your pull request. Those committed outputs are the evidence that the check ran and what it showed, which is what a reviewer reads and what the `snapshot-verified` label attests to.
 
