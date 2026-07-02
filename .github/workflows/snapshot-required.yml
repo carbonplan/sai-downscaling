@@ -45,5 +45,5 @@ jobs:
                     echo "snapshot-verified label present — gate satisfied."
                     exit 0
                   fi
-                  echo "::error::Modeling code changed. Dispatch the 'snapshot' workflow, confirm it is green, commit the comparison notebook, then add the 'snapshot-verified' label."
+                  echo "::error::Modeling code changed. Run the comparison notebook (docs/how-to/snapshot-comparison.ipynb), commit it to this PR, then add the 'snapshot-verified' label."
                   exit 1
