@@ -16,7 +16,7 @@ This runs on Coiled by default and finishes quickly because the subset is small.
 
 ## Step 2 — Run the comparison notebook
 
-Open [`docs/how-to/snapshot-comparison.ipynb`](./snapshot-comparison.ipynb) and run all cells. Keep `subset_to_candidate = True` (the default): the notebook aligns the global snapshot to the South Africa candidate's extent per leaf, so the regional run is compared against the global baseline under the per-variable tolerances. The first cells print an overall PASS/FAIL and a per-leaf table; the remaining cells draw difference maps, a fraction-over-tolerance heatmap, and value distributions.
+Open [`docs/how-to/snapshot-comparison.ipynb`](./snapshot-comparison.ipynb) and run all cells. Keep `mode = "southafrica"` (the default): the notebook subsets the global snapshot to the South Africa candidate's extent with a plain per-leaf `.sel` — a grid mismatch fails loudly rather than being reconciled — so the regional run is compared against the global baseline under the per-variable tolerances. The first cells print an overall PASS/FAIL and a per-leaf table; the remaining cells draw difference maps, a fraction-over-tolerance heatmap, and value distributions.
 
 When the notebook has run, commit it **with its outputs** to your pull request. Those committed outputs are the evidence that the check ran and what it showed, which is what a reviewer reads and what the `snapshot-verified` label attests to.
 
@@ -25,7 +25,7 @@ When the notebook has run, commit it **with its outputs** to your pull request. 
 The comparison is a judgment aid, not an automatic pass/fail, so you read the result and decide. Handle the two cases as follows:
 
 - **No change, and none expected.** If every leaf is within tolerance and you did not intend to change the outputs, the change is safe: merge the pull request. The committed notebook records the clean comparison.
-- **A change appears, or the change was intended.** If any leaf moves out of tolerance, or your work deliberately changes the outputs, the cheap South Africa check is not enough on its own. Produce a full **global** run, set `subset_to_candidate = False` in the notebook, and expand it with the global-vs-global comparison. Document what changed and why in the pull request, get sign-off from Claire or Ori, then merge. After merging, repoint `CESM2_WACCM_GLOBAL` in `src/srm/snapshot/baselines.py` at the new global run so it becomes the baseline for the next comparison.
+- **A change appears, or the change was intended.** If any leaf moves out of tolerance, or your work deliberately changes the outputs, the cheap South Africa check is not enough on its own. Produce a full **global** run, set `mode = "global"` in the notebook, and expand it with the global-vs-global comparison. Document what changed and why in the pull request, get sign-off from Claire or Ori, then merge. After merging, repoint `CESM2_WACCM_GLOBAL` in `src/srm/snapshot/baselines.py` at the new global run so it becomes the baseline for the next comparison.
 
 ## Step 4 — Satisfy CI
 
