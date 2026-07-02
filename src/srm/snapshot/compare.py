@@ -102,7 +102,11 @@ def _compare_dataarray(
     frac_over_tol = float(over.mean().compute())
     nan_mismatch_count = int(nan_mismatch.sum().compute())
 
-    within_tol = frac_over_tol == 0.0 and nan_mismatch_count == 0
+    try:
+        xr.testing.assert_allclose(candidate, snapshot, rtol=rtol, atol=atol)
+        within_tol = True
+    except AssertionError:
+        within_tol = False
     return LeafDiff(
         path=path,
         variable=variable,

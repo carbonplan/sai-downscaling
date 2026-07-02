@@ -118,3 +118,13 @@ def test_global_baseline_pointer_is_well_formed():
     assert CESM2_WACCM_GLOBAL.uri.startswith("s3://carbonplan-srm/")
     assert CESM2_WACCM_GLOBAL.uri.endswith(".icechunk")
     assert CESM2_WACCM_GLOBAL.branch
+
+
+def test_partial_coordinate_overlap_not_within_tol():
+    # Same shape, equal values on the overlap, but coordinates only partially overlap.
+    # A shape-only verdict inner-joins to x=[1, 2] and calls this within tolerance;
+    # aligning on coordinates (assert_allclose) must not.
+    a = xr.DataArray(np.full(3, 5.0), dims="x", coords={"x": [0, 1, 2]})
+    b = xr.DataArray(np.full(3, 5.0), dims="x", coords={"x": [1, 2, 3]})
+    d = _compare_dataarray(a, b, path="g/v", variable="tas", rtol=1e-5, atol=1e-8)
+    assert d.within_tol is False
