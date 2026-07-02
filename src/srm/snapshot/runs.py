@@ -53,15 +53,19 @@ def compare_runs(
     candidate_uri: str,
     snapshot_uri: str,
     *,
-    branch: str,
+    candidate_branch: str,
+    snapshot_branch: str,
     scenarios: list[str] | None = None,
     variables: list[str] | None = None,
 ) -> DiffReport:
-    """Open two output stores on ``branch`` and compare them as-is.
+    """Open two output stores and compare them as-is.
 
-    The stores must already be on the same grid (see the module docstring). Use the
-    comparison notebook to subset the global snapshot to a regional candidate first.
+    ``candidate_branch`` and ``snapshot_branch`` are independent: the candidate and the
+    snapshot are separate stores, so each is read on its own icechunk branch (the
+    candidate need not be on the snapshot's branch). The stores must be on the same grid
+    (see the module docstring); use the comparison notebook to subset the global
+    snapshot to a regional candidate first.
     """
-    candidate = _open_output_datatree(candidate_uri, branch=branch)
-    snapshot = _open_output_datatree(snapshot_uri, branch=branch)
+    candidate = _open_output_datatree(candidate_uri, branch=candidate_branch)
+    snapshot = _open_output_datatree(snapshot_uri, branch=snapshot_branch)
     return _compare_datatrees(candidate, snapshot, scenarios=scenarios, variables=variables)
