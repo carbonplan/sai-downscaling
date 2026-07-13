@@ -89,7 +89,7 @@ def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
     if calendar in ("proleptic_gregorian", "gregorian", "standard"):
         return ds.convert_calendar("proleptic_gregorian", use_cftime=False)
     align: Literal["year"] | None = "year" if calendar == "360_day" else None
-    return (
+    ds = (
         ds.convert_calendar(
             "proleptic_gregorian", align_on=align, missing=float("nan"), use_cftime=False
         )
