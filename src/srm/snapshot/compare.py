@@ -62,6 +62,19 @@ def _compare_dataarray(
 ) -> LeafDiff:
     """Compare two DataArrays under absolute/relative tolerance.
 
+    Both arrays are compared element-wise using the same tolerance rule as
+    :func:`xarray.testing.assert_allclose`: a cell passes when its absolute
+    difference is at most ``atol + rtol * abs(snapshot)``. The function reduces
+    the full element-wise comparison down to the scalar summary statistics
+    carried by :class:`LeafDiff`, so callers get a compact verdict instead of a
+    whole diff array.
+
+    If the two arrays have different shapes they cannot be compared cell-by-cell,
+    so the function short-circuits: it returns a :class:`LeafDiff` with
+    ``shape_mismatch=True``, ``within_tol=False``, and NaN/sentinel metrics
+    rather than raising. Otherwise every metric is computed and ``within_tol``
+    reflects the real element-wise verdict.
+
     Parameters
     ----------
     candidate, snapshot : xr.DataArray
@@ -72,12 +85,25 @@ def _compare_dataarray(
     variable : str
         Canonical variable name, for reporting.
     rtol, atol : float
-        Relative and absolute tolerance.
+        Relative and absolute tolerance. ``atol`` sets a fixed floor that
+        dominates near zero, while ``rtol`` scales the allowance with the
+        magnitude of ``snapshot`` and dominates for large values.
 
     Returns
     -------
     LeafDiff
-        The populated comparison result.
+        The populated comparison result. ``within_tol`` is authoritative and is
+        taken from :func:`xarray.testing.assert_allclose`; the other fields
+        (``max_abs_diff``, ``rmse``, ``frac_over_tol``, ``nan_mismatch_count``)
+        quantify *how far* off the arrays are when they disagree.
+
+    Notes
+    -----
+    All reductions call ``.compute()`` on lazy aggregates only, never on the
+    full arrays, so a multi-GB diff is summarized without materializing it in
+    memory. NaN cells are skipped in ``max_abs_diff`` and ``rmse`` via
+    ``skipna=True``, and disagreement on NaN-ness is tracked separately through
+    ``nan_mismatch_count``.
     """
     if candidate.shape != snapshot.shape:
         return LeafDiff(
@@ -91,11 +117,14 @@ def _compare_dataarray(
             within_tol=False,
         )
 
-    diff = candidate - snapshot
-    abs_diff = abs(diff)
+    diff = candidate - snapshot  # signed error, per element
+    abs_diff = abs(diff)  # magnitude of the error, ignoring sign
+    # Per-element allowed difference, using numpy's isclose convention:
+    # a fixed floor (atol) plus a term that scales with the reference value
+    # (rtol * |snapshot|). atol dominates near zero; rtol dominates for large values.
     tol = atol + rtol * abs(snapshot)
-    over = abs_diff > tol
-    nan_mismatch = candidate.isnull() != snapshot.isnull()
+    over = abs_diff > tol  # elements whose error exceeds their tolerance
+    nan_mismatch = candidate.isnull() != snapshot.isnull()  # NaN in one array but not the other
 
     max_abs_diff = float(abs_diff.max(skipna=True).compute())
     rmse = float(((diff**2).mean(skipna=True) ** 0.5).compute())
@@ -169,6 +198,9 @@ def compare(
         snap_ds = snapshot_groups.get(path)
         for variable, cand_da in cand_ds.data_vars.items():
             leaf_path = f"{path}/{variable}" if path else str(variable)
+            # Pick this variable's rtol/atol: exact match in the table, else a
+            # sensible per-variable default. Its .rtol/.atol flow into the
+            # atol + rtol * abs(snapshot) tolerance inside _compare_dataarray.
             tol = table.get(str(variable)) or tolerance_for(str(variable))
             if snap_ds is None or variable not in snap_ds.data_vars:
                 leaves.append(
