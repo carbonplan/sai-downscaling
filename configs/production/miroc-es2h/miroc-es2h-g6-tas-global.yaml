@@ -3,7 +3,8 @@
 # === Model and Scenario ===
 gcm: "MIROC-ES2H"
 variables: ["tas"]
-ensemble_members: ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
+ensemble_members:
+  ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
 scenarios: ["G6-1.5K"]
 
 # === Time Periods ===
@@ -19,7 +20,7 @@ environment: "production"
 # version intentionally unset — derived from the installed package version at runtime
 
 # === Bias Correction ===
-mapping_type: "nonparametric_hybrid"
+mapping_type: "nonparametric_hybrid_2sided"
 
 # === Additional Options ===
 verbose: true
