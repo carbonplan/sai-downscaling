@@ -261,6 +261,28 @@ class TestDataIntegrity:
             pytest.skip(result.message)
         assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
 
+    # variable-checks: invalid first day repaired (issue #424)
+    def test_cesm2_waccm_invalid_first_day_repaired(self):
+        from srm.input_data.cesm2_waccm import INVALID_FIRST_DAY
+
+        entry = catalog.get("CESM2-WACCM")
+        if entry is None or not isinstance(entry, Datatree):
+            pytest.skip("No unified datatree found for CESM2-WACCM")
+
+        dt = entry.to_xarray()
+        issues = []
+        for group, (date, members) in INVALID_FIRST_DAY.items():
+            if group not in dt.children:
+                continue
+            ds = dt[group].to_dataset()
+            for member in members:
+                day = ds[["tasmax", "tasmin"]].sel(ensemble_member=member, time=date).compute()
+                if bool((day["tasmax"] == day["tasmin"]).all()):
+                    issues.append(
+                        f"{group}/{member} {date}: tasmax == tasmin everywhere (unrepaired)"
+                    )
+        assert not issues, "\n".join(issues)
+
     # temporal-checks: coverage
     @pytest.mark.parametrize("gcm", list(GCM_OPTIONS))
     @pytest.mark.parametrize("scenario", list(SCENARIO_OPTIONS))

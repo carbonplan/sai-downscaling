@@ -10,6 +10,7 @@ import re
 import dask
 import icechunk
 import obstore as obs
+import pandas as pd
 import typer
 import xarray as xr
 import zarr
@@ -71,6 +72,16 @@ OUTPUT_CHUNKS: dict[str, int] = {"ensemble_member": 1, "time": 30, "lat": 192, "
 OUTPUT_SHARDS: dict[str, int] = {"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288}
 
 ALL_SCENARIOS = ["pangeo-historical", "historical", "SSP245", "G6-1.5K"]
+
+# TREFHTMX == TREFHTMN == TREFHT on each run's first day (issue #424).
+# Per group: (invalid first day, members to repair) — repair copies the next
+# day's tasmax/tasmin over the bad day. ssp245 members 001-005 are excluded:
+# their whole series has tasmax == tasmin (upstream issue, barred in lineage).
+INVALID_FIRST_DAY: dict[str, tuple[str, list[str]]] = {
+    "historical": ("1978-01-01", ["001"]),
+    "ssp245": ("2015-01-01", ["006", "007", "008", "009", "010"]),
+    "g6_1p5k": ("2035-01-01", ["001", "002", "003"]),
+}
 
 VAR_SPECS: dict[str, VarSpec] = {
     f.default.name: f.default for f in dataclasses.fields(VarStandards)
@@ -304,6 +315,32 @@ def _preprocess_cesm(ds: xr.Dataset, scenario: str, var: str, subset: bool = Fal
     return ds
 
 
+def _fix_invalid_first_day(ds: xr.Dataset, scenario: str, member: str) -> xr.Dataset:
+    """Issue #424: tasmax == tasmin == tas on the first day. bfill it from the next day."""
+    entry = INVALID_FIRST_DAY.get(SCENARIO_TO_GROUP[scenario])
+    if entry is None:
+        return ds
+    invalid_day, members = entry
+    if member not in members:
+        return ds
+
+    bad_day = pd.Timestamp(invalid_day)
+    next_day = bad_day + pd.Timedelta(days=1)
+    ds = ds.copy()
+    for var in ("tasmax", "tasmin"):
+        if var not in ds.data_vars:
+            continue
+        ds[var] = ds[var].where(ds.time != bad_day, ds[var].sel(time=next_day, drop=True))
+        log.info(
+            "member=%s %s: replaced %s with %s (issue #424)",
+            member,
+            var,
+            bad_day.date(),
+            next_day.date(),
+        )
+    return ds
+
+
 def _update_attrs(ds: xr.Dataset, var_specs: dict, scenario: str) -> xr.Dataset:
     for var_name in ds.data_vars:
         if var_name in CESM_UNIT_MAPPING:
@@ -395,6 +432,7 @@ def _process_single_variable(
             else time_slices[0]
         )
         member_ds = _preprocess_cesm(member_ds, scenario, variable, subset=subset)
+        member_ds = _fix_invalid_first_day(member_ds, scenario, member)
         member_ds = member_ds.expand_dims({"ensemble_member": [member]})
         member_datasets.append(member_ds)
         log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
