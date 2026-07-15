@@ -642,6 +642,11 @@ def swap_temperature_extremes(
     the land mask) compare ``False`` and are left unchanged. The operation is lazy
     and idempotent.
 
+    Inputs must share identical coordinates. Alignment is enforced with
+    ``join="exact"`` so a mismatched grid raises loudly rather than being silently
+    inner/outer-joined into dropped or NaN-filled cells, regardless of the global
+    ``arithmetic_join`` option.
+
     Parameters
     ----------
     tasmax, tasmin : xr.DataArray
@@ -653,21 +658,10 @@ def swap_temperature_extremes(
     tuple[xr.DataArray, xr.DataArray]
         ``(tasmax_corrected, tasmin_corrected)`` with names and attrs preserved.
     """
+    tasmax, tasmin = xr.align(tasmax, tasmin, join="exact")
     swap = tasmax < tasmin
     tasmax_corrected = xr.where(swap, tasmin, tasmax).astype(tasmax.dtype).rename(tasmax.name)
     tasmin_corrected = xr.where(swap, tasmax, tasmin).astype(tasmin.dtype).rename(tasmin.name)
     tasmax_corrected.attrs = dict(tasmax.attrs)
     tasmin_corrected.attrs = dict(tasmin.attrs)
     return tasmax_corrected, tasmin_corrected
-
-
-def assert_no_temperature_inversions(tasmax: xr.DataArray, tasmin: xr.DataArray) -> None:
-    """Raise if any cell has ``tasmax < tasmin`` (NaN-safe).
-
-    Hard QA gate applied after :func:`swap_temperature_extremes`. Because the swap
-    makes an inversion structurally impossible, a violation here signals a real
-    bug rather than shippable data (issue #331).
-    """
-    n = int((tasmax < tasmin).sum())
-    if n:
-        raise ValueError(f"{n} cell(s) still have tasmax < tasmin after swap")

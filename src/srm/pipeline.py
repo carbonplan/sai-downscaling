@@ -29,7 +29,6 @@ from srm.cache import ArtifactCache, StoreLocation
 from srm.config import _ensure_root_group, _icechunk_storage_for_path
 from srm.datasets import catalog as _catalog
 from srm.downscaling_utils import (
-    assert_no_temperature_inversions,
     calculate_baseline_climatology,
     detrend,
     downscale_from_coarse,
@@ -515,12 +514,13 @@ class BCSDPipeline:
                 f"tasmax must complete before tasmin."
             )
         tasmax_ds = self._open_from_icechunk(tasmax_loc)
+        # swap_temperature_extremes enforces exact grid alignment and is structurally
+        # monotone, so tasmax >= tasmin holds by construction; the output-QA
+        # (qaqc.validate_temp_consistency) is the belt-and-suspenders gate, avoiding
+        # a second full-array pass over the fine fields here (issue #331).
         tasmax_corrected, tasmin_corrected = swap_temperature_extremes(
             tasmax_ds["tasmax"], tasmin_fine
         )
-        # Hard QA gate: the swap makes an inversion structurally impossible, so a
-        # failure here signals a real bug rather than shippable data (issue #331).
-        assert_no_temperature_inversions(tasmax_corrected, tasmin_corrected)
         self._write_to_icechunk(
             tasmax_corrected,
             tasmax_loc,

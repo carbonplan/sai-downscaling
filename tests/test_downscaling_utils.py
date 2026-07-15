@@ -7,7 +7,6 @@ import xarray as xr
 
 from srm import downscaling_utils
 from srm.downscaling_utils import (
-    assert_no_temperature_inversions,
     calculate_baseline_climatology,
     detrend,
     fft_smooth_3harmonics,
@@ -507,7 +506,7 @@ def test_get_historical_experiment_uses_unified_store(gcm: str, member: str):
 
 
 # ---------------------------------------------------------------------------
-# swap_temperature_extremes / assert_no_temperature_inversions (issue #331)
+# swap_temperature_extremes (issue #331)
 # ---------------------------------------------------------------------------
 
 
@@ -566,21 +565,60 @@ class TestSwapTemperatureExtremes:
         assert new_max.name == "tasmax"
         assert new_min.name == "tasmin"
 
+    def test_3d_dask_backed_stays_lazy_and_monotone(self):
+        # Production calls this with (time, lat, lon) dask arrays read back from
+        # icechunk; make sure the op stays lazy and the invariant holds.
+        rng = np.random.default_rng(0)
+        time = np.arange(np.datetime64("2020-01-01"), np.datetime64("2020-01-06"))
+        lat = np.array([0.0, 1.0])
+        lon = np.array([10.0, 11.0])
+        coords = {"time": time, "lat": lat, "lon": lon}
+        tasmax = xr.DataArray(
+            rng.normal(300.0, 3.0, (5, 2, 2)),
+            dims=["time", "lat", "lon"],
+            coords=coords,
+            name="tasmax",
+        ).chunk({"time": 2})
+        tasmin = xr.DataArray(
+            rng.normal(300.0, 3.0, (5, 2, 2)),
+            dims=["time", "lat", "lon"],
+            coords=coords,
+            name="tasmin",
+        ).chunk({"time": 2})
 
-class TestAssertNoTemperatureInversions:
-    def test_raises_on_inversion(self):
-        tasmax, tasmin = _temp_pair()
-        with pytest.raises(ValueError, match="tasmax < tasmin"):
-            assert_no_temperature_inversions(tasmax, tasmin)
-
-    def test_passes_after_swap(self):
-        tasmax, tasmin = _temp_pair()
         new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
-        assert_no_temperature_inversions(new_max, new_min)  # must not raise
 
-    def test_passes_when_all_nan(self):
+        assert new_max.chunks is not None and new_min.chunks is not None  # never computed
+        a, b = new_max.compute().values, new_min.compute().values
+        finite = np.isfinite(a) & np.isfinite(b)
+        assert np.all(a[finite] >= b[finite])
+
+    def test_raises_on_misaligned_coords(self):
+        # A silent inner-join would drop/NaN cells instead of swapping; require exact coords.
         lat = np.array([0.0])
-        lon = np.array([10.0])
-        nan_max = xr.DataArray([[np.nan]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
-        nan_min = xr.DataArray([[np.nan]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
-        assert_no_temperature_inversions(nan_max, nan_min)  # NaN compares False → no raise
+        tasmax = xr.DataArray(
+            [[300.0, 290.0]],
+            dims=["lat", "lon"],
+            coords={"lat": lat, "lon": [10.0, 11.0]},
+            name="tasmax",
+        )
+        tasmin = xr.DataArray(
+            [[280.0, 295.0]],
+            dims=["lat", "lon"],
+            coords={"lat": lat, "lon": [10.001, 11.001]},
+            name="tasmin",
+        )
+        with pytest.raises(ValueError):
+            swap_temperature_extremes(tasmax, tasmin)
+
+    def test_handles_unnamed_tasmin(self):
+        lat, lon = np.array([0.0]), np.array([10.0, 11.0])
+        tasmax = xr.DataArray(
+            [[300.0, 290.0]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon}, name="tasmax"
+        )
+        tasmin = xr.DataArray(  # no name — the fresh downscaled tasmin may be unnamed
+            [[280.0, 295.0]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon}
+        )
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert new_max.name == "tasmax"
+        assert new_max.values[0, 1] == 295.0
