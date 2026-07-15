@@ -15,11 +15,11 @@ from typing import Literal
 
 import pydantic_settings
 from packaging.version import Version as _Version
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 _cache_version = f"v{_Version(_pkg_version('srm')).public}"
 
-MappingType = Literal[
+DebiasApproach = Literal[
     "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided"
 ]
 DownscalingMethod = Literal["additive", "multiplicative"]
@@ -119,9 +119,9 @@ class VariableConfig(BaseModel):
             f"-dtm{self.detrend_method}"
         )
 
-    def to_hash(self, mapping_type: MappingType) -> str:
+    def to_hash(self, debias_approach: DebiasApproach) -> str:
         """
-        8-character SHA-256 hash of VariableConfig fields + mapping_type.
+        8-character SHA-256 hash of VariableConfig fields + debias_approach.
 
         Uses the same stable-string pattern as ``BCSDConfig.config_hash`` so the
         hash is deterministic across Python versions and process restarts.
@@ -130,15 +130,15 @@ class VariableConfig(BaseModel):
 
         Parameters
         ----------
-        mapping_type : MappingType
-            Quantile mapping method. See ``MappingType`` for valid values.
+        debias_approach : DebiasApproach
+            Debias approach for bias correction. See ``DebiasApproach`` for valid values.
 
         Returns
         -------
         str
             8-character hex string, e.g. ``a3f8b2c1``.
         """
-        params = {**self.model_dump(), "mapping_type": mapping_type}
+        params = {**self.model_dump(), "debias_approach": debias_approach}
         raw = str(sorted(params.items()))
         return hashlib.sha256(raw.encode()).hexdigest()[:8]
 
@@ -196,9 +196,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         None, description="Spatial bounds as (lat_min, lat_max, lon_min, lon_max). None for global."
     )
 
-    mapping_type: MappingType = Field(
+    debias_approach: DebiasApproach = Field(
         "nonparametric_hybrid_2sided",
-        description="Quantile mapping method for bias correction. See MappingType for valid values.",
+        description="Debias approach for bias correction. See DebiasApproach for valid values.",
     )
 
     obs_dataset: str = Field(
@@ -212,6 +212,17 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     variable_config: VariableConfig | None = Field(
         None, description="Variable-specific BCSD parameters. Auto-populated if None."
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed_mapping_type(cls, data):
+        """Fail loudly if the pre-rename ``mapping_type`` key is still used."""
+        if isinstance(data, dict) and "mapping_type" in data:
+            raise ValueError(
+                "'mapping_type' was renamed to 'debias_approach'. "
+                "Update your config/CLI/env to use 'debias_approach'."
+            )
+        return data
 
     def model_post_init(self, __context) -> None:
         """Post-initialization validation and auto-population"""
@@ -299,7 +310,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             "predict_period": (self.predict_period_start, self.predict_period_end),
             "subset_bounds": self.subset_bounds,
             "variable_config": self.variable_config.model_dump() if self.variable_config else None,
-            "mapping_type": self.mapping_type,
+            "debias_approach": self.debias_approach,
         }
 
         # Create stable string representation and hash
@@ -359,7 +370,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             predict_period_start=self.predict_period_start,
             predict_period_end=self.predict_period_end,
             subset_bounds=self.subset_bounds,
-            mapping_type=self.mapping_type,
+            debias_approach=self.debias_approach,
         )
 
 

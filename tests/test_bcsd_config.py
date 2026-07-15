@@ -187,6 +187,19 @@ class TestBCSDConfigConstruction:
         assert opts.environment == "qa"
         assert opts.branch == _cache_version
 
+    def test_debias_approach_defaults_to_nonparametric_hybrid_2sided(self, minimal_config):
+        assert minimal_config.debias_approach == "nonparametric_hybrid_2sided"
+
+    def test_renamed_mapping_type_key_raises(self):
+        """The pre-rename ``mapping_type`` key must fail loudly, not be silently ignored."""
+        with pytest.raises(ValidationError, match="renamed to 'debias_approach'"):
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                mapping_type="parametric",
+            )
+
     def test_explicit_variable_config_not_overwritten(self):
         """Explicitly supplied variable_config must survive post-init."""
         custom_vc = VariableConfig(

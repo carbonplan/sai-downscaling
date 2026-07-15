@@ -15,7 +15,7 @@ scenarios: ["SSP245"]
 predict_period_start: 2015
 predict_period_end: 2100
 environment: production
-mapping_type: nonparametric_hybrid
+debias_approach: nonparametric_hybrid
 ```
 
 ```bash
