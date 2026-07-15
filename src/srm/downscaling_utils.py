@@ -625,3 +625,49 @@ def downscale_from_coarse(
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
 
     return downscaled
+
+
+def swap_temperature_extremes(
+    tasmax: xr.DataArray, tasmin: xr.DataArray
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Enforce ``tasmax >= tasmin`` by swapping values where ``tasmax < tasmin``.
+
+    Independent spatial disaggregation of ``tasmax`` and ``tasmin`` can leave a
+    small number of cells where the downscaled ``tasmax`` falls below ``tasmin``.
+    Following the NEX-GDDP-CMIP6 v2 final sweep (issue #331), swap the two values
+    at those cells so the physical constraint ``tasmax >= tasmin`` holds
+    everywhere.
+
+    The comparison is NaN-safe: cells where either input is NaN (e.g. ocean under
+    the land mask) compare ``False`` and are left unchanged. The operation is lazy
+    and idempotent.
+
+    Parameters
+    ----------
+    tasmax, tasmin : xr.DataArray
+        Downscaled daily maximum / minimum near-surface air temperature on the
+        same grid and time axis.
+
+    Returns
+    -------
+    tuple[xr.DataArray, xr.DataArray]
+        ``(tasmax_corrected, tasmin_corrected)`` with names and attrs preserved.
+    """
+    swap = tasmax < tasmin
+    tasmax_corrected = xr.where(swap, tasmin, tasmax).astype(tasmax.dtype).rename(tasmax.name)
+    tasmin_corrected = xr.where(swap, tasmax, tasmin).astype(tasmin.dtype).rename(tasmin.name)
+    tasmax_corrected.attrs = dict(tasmax.attrs)
+    tasmin_corrected.attrs = dict(tasmin.attrs)
+    return tasmax_corrected, tasmin_corrected
+
+
+def assert_no_temperature_inversions(tasmax: xr.DataArray, tasmin: xr.DataArray) -> None:
+    """Raise if any cell has ``tasmax < tasmin`` (NaN-safe).
+
+    Hard QA gate applied after :func:`swap_temperature_extremes`. Because the swap
+    makes an inversion structurally impossible, a violation here signals a real
+    bug rather than shippable data (issue #331).
+    """
+    n = int((tasmax < tasmin).sum())
+    if n:
+        raise ValueError(f"{n} cell(s) still have tasmax < tasmin after swap")

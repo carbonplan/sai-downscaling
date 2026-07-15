@@ -7,6 +7,7 @@ import xarray as xr
 
 from srm import downscaling_utils
 from srm.downscaling_utils import (
+    assert_no_temperature_inversions,
     calculate_baseline_climatology,
     detrend,
     fft_smooth_3harmonics,
@@ -14,6 +15,7 @@ from srm.downscaling_utils import (
     rechunk,
     retrend,
     subset_space,
+    swap_temperature_extremes,
 )
 
 
@@ -502,3 +504,83 @@ def test_get_historical_experiment_uses_unified_store(gcm: str, member: str):
             get_historical_experiment(gcm, member, "tas")
             mock_fn.assert_called_once_with(gcm)
             mock_dt.__getitem__.assert_called_once_with("historical")
+
+
+# ---------------------------------------------------------------------------
+# swap_temperature_extremes / assert_no_temperature_inversions (issue #331)
+# ---------------------------------------------------------------------------
+
+
+def _temp_pair():
+    """(tasmax, tasmin) with one inversion, one monotone cell, one NaN cell."""
+    lat = np.array([0.0, 1.0])
+    lon = np.array([10.0, 11.0])
+    tasmax = xr.DataArray(
+        np.array([[300.0, 290.0], [np.nan, 305.0]]),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+        name="tasmax",
+    )
+    tasmin = xr.DataArray(
+        # [0,0] monotone (280<300); [0,1] INVERSION (295>290);
+        # [1,0] NaN tasmax; [1,1] monotone (300<305)
+        np.array([[280.0, 295.0], [285.0, 300.0]]),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+        name="tasmin",
+    )
+    return tasmax, tasmin
+
+
+class TestSwapTemperatureExtremes:
+    def test_inverted_cell_is_swapped(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        # inverted cell [0,1]: max/min exchanged
+        assert new_max.values[0, 1] == 295.0
+        assert new_min.values[0, 1] == 290.0
+
+    def test_monotone_cells_unchanged(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert new_max.values[0, 0] == 300.0
+        assert new_min.values[0, 0] == 280.0
+        assert new_max.values[1, 1] == 305.0
+        assert new_min.values[1, 1] == 300.0
+
+    def test_nan_cells_left_untouched(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert np.isnan(new_max.values[1, 0])
+        assert new_min.values[1, 0] == 285.0
+
+    def test_result_is_monotone_everywhere(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        finite = np.isfinite(new_max.values) & np.isfinite(new_min.values)
+        assert np.all(new_max.values[finite] >= new_min.values[finite])
+
+    def test_names_preserved(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert new_max.name == "tasmax"
+        assert new_min.name == "tasmin"
+
+
+class TestAssertNoTemperatureInversions:
+    def test_raises_on_inversion(self):
+        tasmax, tasmin = _temp_pair()
+        with pytest.raises(ValueError, match="tasmax < tasmin"):
+            assert_no_temperature_inversions(tasmax, tasmin)
+
+    def test_passes_after_swap(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert_no_temperature_inversions(new_max, new_min)  # must not raise
+
+    def test_passes_when_all_nan(self):
+        lat = np.array([0.0])
+        lon = np.array([10.0])
+        nan_max = xr.DataArray([[np.nan]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
+        nan_min = xr.DataArray([[np.nan]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
+        assert_no_temperature_inversions(nan_max, nan_min)  # NaN compares False → no raise

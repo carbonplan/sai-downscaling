@@ -1238,3 +1238,62 @@ class TestTransformScenarioTasminCoarseDeps:
                     pass
 
         mock_write.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Tasmax<tasmin swap in the tasmin stage (issue #331)
+# ---------------------------------------------------------------------------
+
+
+def _fine_pair_with_inversion():
+    lat = np.array([0.0])
+    lon = np.array([10.0, 11.0])
+    tasmax = xr.DataArray(
+        np.array([[300.0, 290.0]]),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+        name="tasmax",
+    )
+    tasmin = xr.DataArray(
+        np.array([[280.0, 295.0]]),  # cell [0,1] inverted (295 > 290)
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+        name="tasmin",
+    )
+    return tasmax, tasmin
+
+
+class TestTasminSwap:
+    def test_rewrites_corrected_tasmax_and_returns_corrected_tasmin(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
+        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)  # sibling fine tasmax exists
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+
+        writes: dict = {}
+
+        def capture_write(da, loc, **kwargs):
+            writes[loc.group] = da
+            return "snap"
+
+        with patch.object(
+            BCSDPipeline, "_open_from_icechunk", return_value=tasmax_fine.to_dataset()
+        ):
+            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+                result = p._swap_and_write_tasmax(tasmin_fine, tasmax_loc)
+
+        # corrected tasmax was written back to the sibling loc
+        assert tasmax_loc.group in writes
+        written_tasmax = writes[tasmax_loc.group]
+        assert written_tasmax.values[0, 1] == 295.0  # swapped up
+        # returned tasmin is the corrected one
+        assert result.values[0, 1] == 290.0  # swapped down
+        # monotone everywhere
+        assert bool((written_tasmax >= result).all())
+
+    def test_raises_when_fine_tasmax_missing(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")  # not created
+        _tasmax, tasmin_fine = _fine_pair_with_inversion()
+        with pytest.raises(ValueError, match="tasmax"):
+            p._swap_and_write_tasmax(tasmin_fine, tasmax_loc)

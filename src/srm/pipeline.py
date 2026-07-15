@@ -29,6 +29,7 @@ from srm.cache import ArtifactCache, StoreLocation
 from srm.config import _ensure_root_group, _icechunk_storage_for_path
 from srm.datasets import catalog as _catalog
 from srm.downscaling_utils import (
+    assert_no_temperature_inversions,
     calculate_baseline_climatology,
     detrend,
     downscale_from_coarse,
@@ -39,6 +40,7 @@ from srm.downscaling_utils import (
     rechunk,
     retrend,
     subset_space,
+    swap_temperature_extremes,
 )
 from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_coarse_encoding, make_encoding
 from srm.utils import get_variable
@@ -483,6 +485,50 @@ class BCSDPipeline:
             session.store, engine="zarr", consolidated=False, chunks="auto", group=loc.group
         )
 
+    def _swap_and_write_tasmax(
+        self, tasmin_fine: xr.DataArray, tasmax_loc: StoreLocation
+    ) -> xr.DataArray:
+        """Enforce ``tasmax >= tasmin`` on the fine outputs and return corrected tasmin.
+
+        Independent spatial disaggregation of tasmax and tasmin can leave a few
+        fine cells with ``tasmax < tasmin`` (issue #331). The wave-gated ordering
+        (issue #363) guarantees the sibling fine tasmax output is already final, so
+        here we load it, swap the offending cells, rewrite the corrected tasmax back
+        to its own store, and return the corrected tasmin for the caller to write.
+
+        Parameters
+        ----------
+        tasmin_fine : xr.DataArray
+            Freshly downscaled fine tasmin for this stage.
+        tasmax_loc : StoreLocation
+            Location of the sibling fine tasmax output to reconcile against.
+
+        Returns
+        -------
+        xr.DataArray
+            Corrected tasmin (``tasmax >= tasmin`` holds everywhere).
+        """
+        if not self.cache.exists(tasmax_loc):
+            raise ValueError(
+                f"tasmin post-processing needs the fine tasmax output "
+                f"{tasmax_loc.store_path}/{tasmax_loc.group}, which is missing. "
+                f"tasmax must complete before tasmin."
+            )
+        tasmax_ds = self._open_from_icechunk(tasmax_loc)
+        tasmax_corrected, tasmin_corrected = swap_temperature_extremes(
+            tasmax_ds["tasmax"], tasmin_fine
+        )
+        # Hard QA gate: the swap makes an inversion structurally impossible, so a
+        # failure here signals a real bug rather than shippable data (issue #331).
+        assert_no_temperature_inversions(tasmax_corrected, tasmin_corrected)
+        self._write_to_icechunk(
+            tasmax_corrected,
+            tasmax_loc,
+            encoding=make_encoding("tasmax"),
+            dataset_attrs=dict(tasmax_ds.attrs),
+        )
+        return tasmin_corrected
+
     def prepare_observations(self, force: bool = False) -> str:
         """
         Stage 1: Regrid observations to GCM grid.
@@ -724,6 +770,14 @@ class BCSDPipeline:
             model_hist_debiased, obs_coarse, obs_fine
         )
         logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        # Reconcile any tasmax < tasmin left by independent disaggregation (issue #331).
+        t0 = time.perf_counter()
+        model_hist_downscaled = self._swap_and_write_tasmax(
+            model_hist_downscaled,
+            self.cache.historical_loc(self._hist_member, variable="tasmax"),
+        )
+        logger.info("Reconciled tasmax/tasmin extremes (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         model_hist_downscaled.name = self.config.variable
@@ -1287,6 +1341,15 @@ class BCSDPipeline:
             scenario_downscaled = scenario_downscaled.where(
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
+
+        # Reconcile any tasmax < tasmin left by independent disaggregation (issue #331).
+        # Runs after ocean masking so both fine fields share aligned NaN cells.
+        scenario_downscaled = self._swap_and_write_tasmax(
+            scenario_downscaled, self.cache.scenario_output_loc(variable="tasmax")
+        )
+        logger.info("Reconciled tasmax/tasmin extremes (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
         scenario_downscaled.name = self.config.variable
         self._write_to_icechunk(
             scenario_downscaled,

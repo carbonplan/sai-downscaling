@@ -285,6 +285,15 @@ class TestHistoricalLoc:
         loc = bound_cache.historical_loc("r1i1p1f1")
         assert "CESM2-WACCM-ERA5-global.icechunk" in loc.store_path
 
+    def test_variable_override_targets_sibling_group(self, bound_cache):
+        # tasmin's swap step reads the sibling fine tasmax output (issue #331).
+        loc = bound_cache.historical_loc("r1i1p1f1", variable="tasmax")
+        assert loc.group == "historical/tasmax/r1i1p1f1"
+
+    def test_no_variable_override_uses_config_variable(self, bound_cache):
+        loc = bound_cache.historical_loc("r1i1p1f1")
+        assert loc.group == "historical/tas/r1i1p1f1"
+
 
 # ---------------------------------------------------------------------------
 # scenario_loc
@@ -306,6 +315,14 @@ class TestScenarioLoc:
     def test_uses_scratch_store_when_no_output_dir(self, bound_cache):
         loc = bound_cache.scenario_loc
         assert bound_cache.scratch_dir in loc.store_path
+
+    def test_output_loc_variable_override_targets_sibling_group(self, bound_cache):
+        # tasmin's swap step reads the sibling fine tasmax scenario output (issue #331).
+        loc = bound_cache.scenario_output_loc(variable="tasmax")
+        assert loc.group == "ssp245/tasmax/r1i1p1f1"
+
+    def test_output_loc_without_override_matches_scenario_loc(self, bound_cache):
+        assert bound_cache.scenario_output_loc().group == bound_cache.scenario_loc.group
 
 
 # ---------------------------------------------------------------------------

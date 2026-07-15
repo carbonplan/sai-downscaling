@@ -173,7 +173,7 @@ class ArtifactCache:
         config = self._require_config()
         return StoreLocation(self._scratch_store, f"obs/{config.variable}")
 
-    def historical_loc(self, hist_member: str) -> StoreLocation:
+    def historical_loc(self, hist_member: str, variable: str | None = None) -> StoreLocation:
         """StoreLocation for the fully downscaled historical artifact.
 
         Written to the output store — the fine-resolution downscaled historical
@@ -183,25 +183,41 @@ class ArtifactCache:
         ----------
         hist_member : str
             Resolved historical ensemble member ID.
+        variable : str, optional
+            Override the variable from config. Used by tasmin to read/rewrite the
+            sibling fine tasmax output during the tasmax<tasmin swap (issue #331).
         """
         config = self._require_config()
+        var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"historical/{config.variable}/{hist_member}",
+            f"historical/{var}/{hist_member}",
         )
 
     def _scenario_group(self) -> str:
         """Return the icechunk group prefix for the bound config's scenario."""
         return SCENARIO_TO_GROUP[self._require_config().scenario]
 
+    def scenario_output_loc(self, variable: str | None = None) -> StoreLocation:
+        """StoreLocation for the fine scenario downscaling output.
+
+        Parameters
+        ----------
+        variable : str, optional
+            Override the variable from config. Used by tasmin to read/rewrite the
+            sibling fine tasmax output during the tasmax<tasmin swap (issue #331).
+        """
+        config = self._require_config()
+        var = variable or config.variable
+        return StoreLocation(
+            self._output_store,
+            f"{self._scenario_group()}/{var}/{config.ensemble_member}",
+        )
+
     @property
     def scenario_loc(self) -> StoreLocation:
         """StoreLocation for the scenario downscaling output."""
-        config = self._require_config()
-        return StoreLocation(
-            self._output_store,
-            f"{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
-        )
+        return self.scenario_output_loc()
 
     def debiased_coarse_historical_loc(
         self, hist_member: str, variable: str | None = None
