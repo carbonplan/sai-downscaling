@@ -272,9 +272,14 @@ class TestHistoricalLoc:
                 loc = bound_cache.historical_loc(member)
                 assert loc.group == f"historical/tas/{member}"
 
-    def test_uses_scratch_store(self, bound_cache):
+    def test_uses_output_store_when_set(self, bound_cache_with_output):
+        loc = bound_cache_with_output.historical_loc("r1i1p1f1")
+        assert bound_cache_with_output.output_dir in loc.store_path
+        assert bound_cache_with_output.scratch_dir not in loc.store_path
+
+    def test_uses_scratch_store_when_no_output_dir(self, bound_cache):
         loc = bound_cache.historical_loc("r1i1p1f1")
-        assert loc.store_path == bound_cache._scratch_store
+        assert bound_cache.scratch_dir in loc.store_path
 
     def test_store_path_encodes_gcm_obs_subset(self, bound_cache):
         loc = bound_cache.historical_loc("r1i1p1f1")
@@ -434,7 +439,7 @@ class TestVarconfigId:
             vc1, "parametric"
         ) != ArtifactCache._get_varconfig_id(vc2, "parametric")
 
-    def test_different_mapping_type_produces_different_hash(self):
+    def test_different_debias_approach_produces_different_hash(self):
         vc = VariableConfig.for_variable("tas")
         assert ArtifactCache._get_varconfig_id(vc, "parametric") != ArtifactCache._get_varconfig_id(
             vc, "nonparametric"

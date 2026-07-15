@@ -35,6 +35,7 @@ s3://carbonplan-srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechun
 Within each store, data is organised in zarr groups:
 
 ```
+historical/{variable}/{hist_member}
 {scenario_group}/{variable}/{ensemble_member}
 debiased_coarse/historical/{variable}/{hist_member}
 debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
@@ -47,9 +48,12 @@ debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 | `ensemble_member` | e.g. `001`, `002`, `r1i1p1f1` | `001` |
 | `hist_member` | resolved historical parent member | `r1i1p1f1` |
 
-A fully-populated global CESM2-WACCM store would contain groups like `ssp245/tas/001`,
-`g6_1p5k/pr/003`, `debiased_coarse/historical/tas/r1i1p1f1`, and
+A fully-populated global CESM2-WACCM store would contain groups like `historical/tas/r1i1p1f1`,
+`ssp245/tas/001`, `g6_1p5k/pr/003`, `debiased_coarse/historical/tas/r1i1p1f1`, and
 `debiased_coarse/g6_1p5k/tas/001`.
+
+The top-level `historical/` group holds the fully downscaled historical data at fine ERA5
+resolution — the historical-period analog of the scenario outputs.
 
 The `debiased_coarse` groups hold GCM data after quantile-mapping bias correction but **before**
 spatial disaggregation to ERA5 resolution — they remain at the native coarse GCM grid (~1–2°).

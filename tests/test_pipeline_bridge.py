@@ -20,7 +20,7 @@ def _make_config(**overrides) -> BCSDConfig:
         predict_period_start=2015,
         predict_period_end=2100,
         subset_bounds=(-35.0, -22.0, 16.0, 33.0),
-        mapping_type="nonparametric_hybrid",
+        debias_approach="nonparametric_hybrid",
     )
     defaults.update(overrides)
     return BCSDConfig(**defaults)
