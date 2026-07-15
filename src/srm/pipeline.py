@@ -668,6 +668,11 @@ class BCSDPipeline:
         because it loads debiased coarse tasmax and dtr to compute debiased coarse tasmin,
         which is then spatially disaggregated to fine resolution.
         """
+        # tasmin reads the sibling debiased-coarse tasmax/dtr stores; fail loudly if
+        # they are missing rather than fossilising a mid-flight read (issue #363).
+        self.cache.validate_dependencies(
+            "fit_historical", self.config, hist_member=self._hist_member
+        )
 
         loc = self.cache.historical_loc(self._hist_member)
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)

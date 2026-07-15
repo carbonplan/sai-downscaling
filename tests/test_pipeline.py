@@ -1121,6 +1121,12 @@ class TestFitHistoricalTasminCoarseDeps:
         """fit_historical_tasmin reads dtr/tasmax from debiased_coarse_historical_loc."""
         p = tasmin_pipeline
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        # tasmin now validates that its debiased-coarse dtr/tasmax inputs exist (issue #363).
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_historical_loc(p._hist_member, variable=_var),
+                branch=p.cache.branch,
+            )
         opened_groups: list = []
 
         def capture_open(loc):
@@ -1154,7 +1160,12 @@ class TestFitHistoricalTasminCoarseDeps:
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
         hist_loc = p.cache.historical_loc(p._hist_member)
         _make_icechunk_group(hist_loc, branch=p.cache.branch)
-        # No coarse loc — stage must rerun (not short-circuit)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_historical_loc(p._hist_member, variable=_var),
+                branch=p.cache.branch,
+            )
+        # No tasmin coarse loc — stage must rerun (not short-circuit)
 
         with _mock_fit_historical_compute():
             with patch.object(
@@ -1174,6 +1185,11 @@ class TestTransformScenarioTasminCoarseDeps:
         p = tasmin_pipeline
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
         _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        # tasmin now validates that its debiased-coarse dtr/tasmax inputs exist (issue #363).
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_scenario_loc(variable=_var), branch=p.cache.branch
+            )
         opened_groups: list = []
 
         def capture_open(loc):
@@ -1204,9 +1220,13 @@ class TestTransformScenarioTasminCoarseDeps:
         p = tasmin_pipeline
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
         _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_scenario_loc(variable=_var), branch=p.cache.branch
+            )
         scenario_loc = p.cache.scenario_loc
         _make_icechunk_group(scenario_loc, branch=p.cache.branch)
-        # No coarse loc — stage must rerun (not short-circuit)
+        # No tasmin coarse loc — stage must rerun (not short-circuit)
 
         with _mock_transform_scenario_compute():
             with patch.object(

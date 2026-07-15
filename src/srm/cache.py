@@ -448,15 +448,32 @@ class ArtifactCache:
 
         elif stage == "fit_historical":
             loc = self.obs_loc
-            return {"obs_regridded": (self.exists(loc), loc)}
+            deps = {"obs_regridded": (self.exists(loc), loc)}
+            if config.variable == "tasmin":
+                member = hist_member or config.ensemble_member
+                for name, var in (
+                    ("debiased_coarse_dtr", "dtr"),
+                    ("debiased_coarse_tasmax", "tasmax"),
+                ):
+                    dep_loc = self.debiased_coarse_historical_loc(member, variable=var)
+                    deps[name] = (self.exists(dep_loc), dep_loc)
+            return deps
 
         elif stage == "transform_scenario":
             obs_loc = self.obs_loc
             hist_loc = self.historical_loc(hist_member or config.ensemble_member)
-            return {
+            deps = {
                 "obs_regridded": (self.exists(obs_loc), obs_loc),
                 "historical": (self.exists(hist_loc), hist_loc),
             }
+            if config.variable == "tasmin":
+                for name, var in (
+                    ("debiased_coarse_dtr", "dtr"),
+                    ("debiased_coarse_tasmax", "tasmax"),
+                ):
+                    dep_loc = self.debiased_coarse_scenario_loc(variable=var)
+                    deps[name] = (self.exists(dep_loc), dep_loc)
+            return deps
 
         else:
             raise ValueError(f"Unknown stage: {stage}")

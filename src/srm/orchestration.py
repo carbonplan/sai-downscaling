@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Callable
 from typing import Literal
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
@@ -91,6 +92,53 @@ class BCSDOrchestrator:
         else:
             raise ValueError(f"Unknown stage: {stage}")
 
+    @staticmethod
+    def _dependency_waves(configs: list[BCSDConfig]) -> list[list[int]]:
+        """Split config indices into ordered execution waves within a stage.
+
+        ``tasmin`` is never bias-corrected directly; it is reconstructed as
+        ``debiased_coarse tasmax - dtr`` by reading its sibling variables' stores
+        (issue #363). Those siblings are written by separate tasks on the same
+        icechunk branch, so ``tasmin`` must not start until they are committed and
+        final — otherwise it fossilises a mid-flight (still-NaN) ``dtr``/``tasmax``.
+
+        All non-tasmin configs form the first wave; tasmin configs run in a second
+        wave that only starts once the first wave has fully completed.
+
+        Parameters
+        ----------
+        configs : list[BCSDConfig]
+            Configs to be executed in this stage.
+
+        Returns
+        -------
+        list[list[int]]
+            Ordered list of waves, each a list of indices into ``configs``. Empty
+            waves are omitted.
+        """
+        first = [i for i, c in enumerate(configs) if c.variable != "tasmin"]
+        later = [i for i, c in enumerate(configs) if c.variable == "tasmin"]
+        return [wave for wave in (first, later) if wave]
+
+    def _run_in_dependency_waves(
+        self,
+        executor: Callable[[str, list[BCSDConfig]], list[str]],
+        stage: str,
+        configs: list[BCSDConfig],
+    ) -> list[str]:
+        """Run ``configs`` through ``executor`` one dependency wave at a time.
+
+        Waves are executed sequentially (each blocks to completion before the next
+        starts), while output paths are returned in the original ``configs`` order.
+        """
+        completed: list[str | None] = [None] * len(configs)
+        for wave in self._dependency_waves(configs):
+            wave_configs = [configs[i] for i in wave]
+            wave_paths = executor(stage, wave_configs)
+            for i, path in zip(wave, wave_paths):
+                completed[i] = path
+        return completed  # type: ignore[return-value]
+
     def submit_stage(
         self,
         stage: Literal["prepare_observations", "fit_historical", "transform_scenario"],
@@ -149,11 +197,10 @@ class BCSDOrchestrator:
             f"({'Coiled' if use_coiled else 'local'})"
         )
 
-        # Submit to Coiled or run locally
-        if use_coiled:
-            completed_paths = self._submit_to_coiled(stage, configs_to_run)
-        else:
-            completed_paths = self._run_local(stage, configs_to_run)
+        # Submit to Coiled or run locally, respecting intra-stage dependency
+        # ordering (tasmin must run after its debiased-coarse tasmax/dtr inputs).
+        executor = self._submit_to_coiled if use_coiled else self._run_local
+        completed_paths = self._run_in_dependency_waves(executor, stage, configs_to_run)
 
         # Fill in the output_paths list
         completed_idx = 0
