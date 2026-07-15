@@ -372,7 +372,7 @@ class BCSDPipeline:
             "srm_downscaling:historical_ensemble_member": self._hist_member,
             "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
             "srm_downscaling:observation_dataset": self.config.obs_dataset,
-            "srm_downscaling:bias_correction_method": self.config.mapping_type,
+            "srm_downscaling:bias_correction_method": self.config.debias_approach,
             "srm_downscaling:downscaling_method": self.config.downscaling_method,
             "srm_downscaling:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
@@ -606,8 +606,9 @@ class BCSDPipeline:
         """
         mapping_type = (
             "nonparametric"
-            if self.config.mapping_type in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
-            else self.config.mapping_type
+            if self.config.debias_approach
+            in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
+            else self.config.debias_approach
         )
         debiaser = _make_debiaser(
             variable=self.config.variable,
@@ -648,12 +649,16 @@ class BCSDPipeline:
         obs_fine: xr.DataArray,
     ) -> xr.DataArray:
         """Spatially disaggregate coarse debiased data to fine resolution."""
+
+        # We don't want negative values for any of the variables we are downscaling (tas, tasmin, tasmax, rsds, hurs, pr)
+
         downscaled = downscale_from_coarse(
             da=debiased,
             obs_coarse=obs_coarse.as_numpy(),
             obs_fine=obs_fine.as_numpy(),
             method=self.config.downscaling_method,
             clim_method=self.config.downscaling_clim_method,
+            allow_negative_values=False,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
@@ -668,7 +673,7 @@ class BCSDPipeline:
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
 
         if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
+            logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
         logger.info(
@@ -725,7 +730,7 @@ class BCSDPipeline:
             force=force,
         )
         logger.info(
-            "✓ Cached historical: %s/%s (%.2fs)",
+            "✓ Saved historical: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -763,13 +768,14 @@ class BCSDPipeline:
 
         Notes
         -----
-        The output (fully downscaled historical data) is written to the cache as a
-        data artifact for the historical period. It is also used as a completion gate:
-        ``transform_scenario`` checks that this artifact exists before it will run, but
-        does *not* load it as an input (scenario runs re-load the raw GCM historical data
-        for their own bias-correction training). Setting ``force=True`` reruns all three
-        computation steps and overwrites the cached artifact; ``force=False`` skips all
-        three and returns the existing path immediately.
+        The output (fully downscaled historical data) is written to the output store as
+        a deliverable for the historical period — the analog of the fine scenario output.
+        It is also used as a completion gate: ``transform_scenario`` checks that this
+        artifact exists before it will run, but does *not* load it as an input (scenario
+        runs re-load the raw GCM historical data for their own bias-correction training).
+        Setting ``force=True`` reruns all three computation steps and overwrites the
+        existing artifact; ``force=False`` skips all three and returns the existing path
+        immediately.
 
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
@@ -780,7 +786,7 @@ class BCSDPipeline:
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
 
         if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
+            logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
         logger.info(
@@ -829,7 +835,7 @@ class BCSDPipeline:
             force=force,
         )
         logger.info(
-            "✓ Cached historical: %s/%s (%.2fs)",
+            "✓ Saved historical: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -1130,12 +1136,12 @@ class BCSDPipeline:
             failsafe=True,  # ocean pixels have NaN obs; fill with NaN rather than crash
         )
 
-        if self.config.mapping_type in ["parametric", "nonparametric"]:
+        if self.config.debias_approach in ["parametric", "nonparametric"]:
             debiased_np = _make_debiaser(
-                mapping_type=self.config.mapping_type, **common_kwargs
+                mapping_type=self.config.debias_approach, **common_kwargs
             ).apply(**apply_kwargs)
 
-        elif self.config.mapping_type == "nonparametric_hybrid":
+        elif self.config.debias_approach == "nonparametric_hybrid":
             parametric_np = _make_debiaser(mapping_type="parametric", **common_kwargs).apply(
                 **apply_kwargs
             )
@@ -1150,7 +1156,7 @@ class BCSDPipeline:
             )
             debiased_np = np.where(out_of_range.values, parametric_np, nonparametric_np)
 
-        elif self.config.mapping_type == "nonparametric_hybrid_2sided":
+        elif self.config.debias_approach == "nonparametric_hybrid_2sided":
             # Use one parametric debiaser for low out-of-range values, another for high, and nonparametric everywhere else
 
             if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:
@@ -1187,7 +1193,7 @@ class BCSDPipeline:
 
         else:
             raise ValueError(
-                "mapping_type must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
+                "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
 
         if self.options.clip_values:
@@ -1453,12 +1459,12 @@ class BCSDPipeline:
         if self.config.variable == "tasmin":
             self.fit_historical_tasmin(force=force)
             # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the cached historical
+            # gate (artifact existence); it does not read the historical
             # output as data input.
             return self.transform_scenario_tasmin(force=force)
         else:
             self.fit_historical(force=force)
             # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the cached historical
+            # gate (artifact existence); it does not read the historical
             # output as data input.
             return self.transform_scenario(force=force)

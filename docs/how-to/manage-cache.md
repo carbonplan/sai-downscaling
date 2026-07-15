@@ -7,11 +7,11 @@ zarr groups on a named branch (by default the installed package version).
 ## Cache Store Locations
 
 ```
-# Scratch store — obs regridded + historical + optional intermediates
+# Scratch store — obs regridded + optional intermediates
 s3://carbonplan-scratch/srm/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3   ← defaults to installed package version
 
-# Output store — fine-res scenario results + debiased coarse data
+# Output store — fine-res historical + scenario results + debiased coarse data
 s3://carbonplan-scratch/srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
 
@@ -29,7 +29,7 @@ Within each store the zarr groups are:
 | Store | Group pattern | Stage | Always written |
 |-------|---------------|-------|----------------|
 | scratch | `obs/{variable}` | Stage 1 | yes |
-| scratch | `historical/{variable}/{member}` | Stage 2 | yes |
+| output | `historical/{variable}/{hist_member}` | Stage 2 | yes |
 | output | `{scenario_group}/{variable}/{member}` | Stage 3 | yes |
 | output | `debiased_coarse/historical/{variable}/{hist_member}` | Stage 2 | yes |
 | output | `debiased_coarse/{scenario_group}/{variable}/{member}` | Stage 3 | yes |
@@ -115,7 +115,7 @@ To force recomputation (ignoring the cache):
 # Force all stages
 uv run bcsd run --config-path configs/example.yaml --force
 
-# Force only the scenario stage (keeps obs and historical in cache)
+# Force only the scenario stage (reuses existing obs and historical artifacts)
 uv run bcsd run --config-path configs/example.yaml --stage transform_scenario --force
 ```
 

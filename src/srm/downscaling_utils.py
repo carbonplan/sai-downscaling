@@ -474,7 +474,9 @@ def fft_smooth_3harmonics(data):
 
 
 def calculate_doy_means(
-    da: xr.DataArray, clim_method: DownscalingClimMethod = "simple"
+    da: xr.DataArray,
+    clim_method: DownscalingClimMethod = "simple",
+    allow_negative_values: bool = True,
 ) -> xr.DataArray:
     """
     Compute day-of-year climatology on the fine-resolution observation grid.
@@ -487,6 +489,8 @@ def calculate_doy_means(
         Climatology smoothing method:
         - ``"simple"`` returns raw day-of-year means.
         - ``"fft"`` smooths the day-of-year cycle with mean + first 3 harmonics.
+    allow_negative_values : bool, default: True
+        Whether to allow negative values in the output.
 
     Returns
     -------
@@ -521,6 +525,13 @@ def calculate_doy_means(
             "dayofyear", "lat", "lon"
         )
 
+        # It is possible for the FFT smoothing to introduce small negative artifacts for variables that are strictly positive (e.g., precipitation)
+        # If allow_negative_values is False, we set any negative values to zero here.
+        if not allow_negative_values:
+            obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.where(
+                obs_fine_doy_means_smoothed >= 0, 0
+            )
+
     return obs_fine_doy_means_smoothed
 
 
@@ -530,6 +541,8 @@ def downscale_from_coarse(
     obs_fine: xr.DataArray,
     method: DownscalingMethod = "additive",
     clim_method: DownscalingClimMethod = "simple",
+    allow_negative_values: bool = True,
+    max_residual: float = 100,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
@@ -548,6 +561,9 @@ def downscale_from_coarse(
         - ``"multiplicative"`` uses ratios to coarse climatology.
     clim_method : {"simple", "fft"}, default: "simple"
         Method used to estimate fine-grid day-of-year climatology.
+    max_residual : float
+        The maximum value possible for the residuals used for building the
+        relationship between coarse data and fine.
 
     Returns
     -------
@@ -564,7 +580,9 @@ def downscale_from_coarse(
     5. Reapply fine-grid climatology (add or multiply).
     """
     # Step 1: calculate the daily climatology of high-res observations
-    obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
+    obs_fine_doy_means = calculate_doy_means(
+        obs_fine, clim_method=clim_method, allow_negative_values=allow_negative_values
+    )
 
     # Step 2: Aggregate daily climatology to the low-resolution grid of the GCM being processed
     obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
@@ -575,7 +593,19 @@ def downscale_from_coarse(
     if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
     elif method == "multiplicative":
-        residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
+        # Guard the denominator: where coarse climatology is zero (dry cells/days),
+        # the NCL reference forces the ratio to 0 rather than producing inf/NaN.
+        # Replace exact zeros with NaN so the division yields NaN, then fill those
+        # specific locations with 0 after dividing.
+        zero_clim = obs_coarse_doy_means == 0
+        safe_clim = obs_coarse_doy_means.where(~zero_clim)  # zeros -> NaN
+
+        residuals = da.groupby("time.dayofyear") / safe_clim
+
+        # Force ratio to 0 exactly where the coarse climatology was zero.
+        # Broadcast the per-DOY zero mask back onto the time axis.
+        zero_clim_on_time = zero_clim.sel(dayofyear=da["time"].dt.dayofyear)
+        residuals = residuals.where(~zero_clim_on_time, 0.0).clip(max=max_residual)
 
     # Step 4: Bilinearly interpolate residuals to the high-res grid
     # this creates a smooth layer of how different the particular simulated february 10 is

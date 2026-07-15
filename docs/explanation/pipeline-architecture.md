@@ -35,7 +35,7 @@ graph TB
         S2F[Quantile mapping bias correction<br/>GCM historical → observations]
         S2FC[Write debiased_coarse/historical<br/>to output store]
         S2G[Spatial disaggregation<br/>coarse → fine resolution]
-        S2H[Cache: historical<br/>Reused across all scenarios]
+        S2H[Output: historical<br/>Deliverable + scenario gate]
         
         S2A --> S2B --> S2C --> S2D --> S2E
         S2E --> S2F --> S2FC
@@ -45,7 +45,7 @@ graph TB
     subgraph "Stage 3: transform_scenario"
         direction TB
         S3A[Load obs_regridded from cache]
-        S3B[Load historical from cache]
+        S3B[Check historical exists<br/>completion gate]
         S3C[Load fine ERA5 observations]
         S3D[Load GCM Historical for training]
         S3E[Load GCM Scenario data]
@@ -91,7 +91,7 @@ graph TB
     S2H -.-> S3B
     
     style S1E fill:#90EE90
-    style S2H fill:#90EE90
+    style S2H fill:#FFD700
     style S3R fill:#FFD700
     
     classDef cacheNode fill:#90EE90,stroke:#228B22,stroke-width:2px
@@ -101,10 +101,10 @@ graph TB
 **Key points:**
 
 - **stage 1 (prepare_observations)**: runs once per (GCM, variable, spatial_subset) combination
-- **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination; writes fine-res historical to scratch store **and** debiased coarse historical to the output store
+- **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store
 - **stage 3 (transform_scenario)**: runs for each scenario configuration; writes fine-res scenario and debiased coarse scenario to the output store
-- **green boxes**: cached intermediate artifacts in the scratch icechunk store, on the active branch
-- **gold box**: final outputs in the output icechunk store, on the active branch (fine-res scenario + debiased coarse data)
+- **green boxes**: cached intermediate artifacts (obs regridded) in the scratch icechunk store, on the active branch
+- **gold boxes**: deliverables in the output icechunk store, on the active branch (fine-res historical + fine-res scenario + debiased coarse data)
 - **dotted arrows**: cache dependencies (automatic validation)
 
 ## Cache Store Structure
@@ -114,18 +114,18 @@ for scratch intermediates, one for final outputs. All artifact groups live insid
 zarr group paths on a named branch (defaulting to the installed package version):
 
 ```text
-# Scratch store — intermediate artifacts
+# Scratch store — obs regridded + optional intermediates
 s3://carbonplan-scratch/srm/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3        ← installed package version (BCSD_BRANCH to override)
     obs/{variable}
-    historical/{variable}/{ensemble_member}
     detrended_scenario/{scenario_group}/{variable}/{ensemble_member}  # only if save_intermediate=True
     trend_scenario/{scenario_group}/{variable}/{ensemble_member}      # only if save_intermediate=True
     debiased_scenario/{scenario_group}/{variable}/{ensemble_member}   # only if save_intermediate=True
 
-# Output store — fine-res scenario results + debiased coarse data
+# Output store — fine-res historical + scenario results + debiased coarse data
 s3://carbonplan-scratch/srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
+    historical/{variable}/{hist_member}
     {scenario_group}/{variable}/{ensemble_member}
     debiased_coarse/historical/{variable}/{hist_member}
     debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
@@ -208,7 +208,7 @@ VM types are selected per pipeline stage to match resource requirements:
 The CLI is built on several key components:
 
 1. **BCSDConfig** + **PipelineOptions** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
-   - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `mapping_type`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `detrend_data`, etc.
+   - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `debias_approach`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `detrend_data`, etc.
    - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `branch`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`, `clip_values`, `clip_bounds`. The `branch` field (default: installed package version) names the icechunk branch all artifacts are written to and read from.
    - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 

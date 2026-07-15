@@ -334,7 +334,7 @@ def configs_from_matrix(
     branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
-    mapping_type: str = "nonparametric_hybrid_2sided",
+    debias_approach: str = "nonparametric_hybrid_2sided",
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
@@ -378,8 +378,8 @@ def configs_from_matrix(
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
-    mapping_type : str
-        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
+    debias_approach : str
+        Debias approach (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -436,7 +436,7 @@ def configs_from_matrix(
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
                 subset_bounds=subset_bounds,
-                mapping_type=mapping_type,
+                debias_approach=debias_approach,
                 variable_config=vc,
             )
         )
@@ -671,10 +671,10 @@ def run_matrix(
         "--save-intermediate",
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
-    mapping_type: str = typer.Option(
+    debias_approach: str = typer.Option(
         "nonparametric_hybrid_2sided",
-        "--mapping-type",
-        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
+        "--debias-approach",
+        help="Debias approach: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     # VariableConfig overrides
@@ -756,7 +756,7 @@ def run_matrix(
         branch=branch,
         subset_bounds=parsed_bounds,
         save_intermediate=save_intermediate,
-        mapping_type=mapping_type,
+        debias_approach=debias_approach,
         verbose=verbose,
         detrend_data=detrend_data,
         do_windowing=do_windowing,
