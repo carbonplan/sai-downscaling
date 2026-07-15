@@ -9,10 +9,12 @@ def test_unknown_variable_falls_back_to_default():
     assert tolerance_for("not_a_var") is DEFAULT_TOLERANCE
 
 
-def test_pr_is_atol_dominant():
-    # Precipitation near zero must not rely on relative tolerance.
-    assert TOLERANCES["pr"].rtol == 0.0
-    assert TOLERANCES["pr"].atol > 0.0
+def test_pr_has_tightest_atol():
+    # pr is stored in kg m-2 s-1, where values are tiny (~1e-5), so it needs a
+    # much tighter atol floor than the temperature baseline while keeping the
+    # uniform nonzero rtol slope.
+    assert TOLERANCES["pr"].atol < TOLERANCES["tas"].atol
+    assert TOLERANCES["pr"].rtol == 1e-5
 
 
 def test_all_seven_variables_present():
