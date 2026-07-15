@@ -434,7 +434,7 @@ class TestVarconfigId:
             vc1, "parametric"
         ) != ArtifactCache._get_varconfig_id(vc2, "parametric")
 
-    def test_different_mapping_type_produces_different_hash(self):
+    def test_different_debias_approach_produces_different_hash(self):
         vc = VariableConfig.for_variable("tas")
         assert ArtifactCache._get_varconfig_id(vc, "parametric") != ArtifactCache._get_varconfig_id(
             vc, "nonparametric"

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import icechunk
 
-from srm.bcsd_config import BCSDConfig, MappingType, PipelineOptions, VariableConfig
+from srm.bcsd_config import BCSDConfig, DebiasApproach, PipelineOptions, VariableConfig
 from srm.config import _ROOT_MESSAGES, SCENARIO_TO_GROUP, _icechunk_storage_for_path
 
 logger = logging.getLogger(__name__)
@@ -134,9 +134,9 @@ class ArtifactCache:
         return f"lat{lat_min}to{lat_max}_lon{lon_min}to{lon_max}"
 
     @staticmethod
-    def _get_varconfig_id(variable_config: VariableConfig, mapping_type: MappingType) -> str:
-        """8-character hash of VariableConfig fields + mapping_type. See ``VariableConfig.to_hash``."""
-        return variable_config.to_hash(mapping_type)
+    def _get_varconfig_id(variable_config: VariableConfig, debias_approach: DebiasApproach) -> str:
+        """8-character hash of VariableConfig fields + debias_approach. See ``VariableConfig.to_hash``."""
+        return variable_config.to_hash(debias_approach)
 
     def _require_config(self) -> BCSDConfig:
         if self.config is None:
