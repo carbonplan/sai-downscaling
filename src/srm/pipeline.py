@@ -669,7 +669,7 @@ class BCSDPipeline:
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
 
         if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
+            logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
         logger.info(
@@ -726,7 +726,7 @@ class BCSDPipeline:
             force=force,
         )
         logger.info(
-            "✓ Cached historical: %s/%s (%.2fs)",
+            "✓ Saved historical: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -764,13 +764,14 @@ class BCSDPipeline:
 
         Notes
         -----
-        The output (fully downscaled historical data) is written to the cache as a
-        data artifact for the historical period. It is also used as a completion gate:
-        ``transform_scenario`` checks that this artifact exists before it will run, but
-        does *not* load it as an input (scenario runs re-load the raw GCM historical data
-        for their own bias-correction training). Setting ``force=True`` reruns all three
-        computation steps and overwrites the cached artifact; ``force=False`` skips all
-        three and returns the existing path immediately.
+        The output (fully downscaled historical data) is written to the output store as
+        a deliverable for the historical period — the analog of the fine scenario output.
+        It is also used as a completion gate: ``transform_scenario`` checks that this
+        artifact exists before it will run, but does *not* load it as an input (scenario
+        runs re-load the raw GCM historical data for their own bias-correction training).
+        Setting ``force=True`` reruns all three computation steps and overwrites the
+        existing artifact; ``force=False`` skips all three and returns the existing path
+        immediately.
 
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
@@ -781,7 +782,7 @@ class BCSDPipeline:
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
 
         if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
+            logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
         logger.info(
@@ -830,7 +831,7 @@ class BCSDPipeline:
             force=force,
         )
         logger.info(
-            "✓ Cached historical: %s/%s (%.2fs)",
+            "✓ Saved historical: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -1454,12 +1455,12 @@ class BCSDPipeline:
         if self.config.variable == "tasmin":
             self.fit_historical_tasmin(force=force)
             # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the cached historical
+            # gate (artifact existence); it does not read the historical
             # output as data input.
             return self.transform_scenario_tasmin(force=force)
         else:
             self.fit_historical(force=force)
             # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the cached historical
+            # gate (artifact existence); it does not read the historical
             # output as data input.
             return self.transform_scenario(force=force)

@@ -173,7 +173,10 @@ class ArtifactCache:
         return StoreLocation(self._scratch_store, f"obs/{config.variable}")
 
     def historical_loc(self, hist_member: str) -> StoreLocation:
-        """StoreLocation for the historical bias-correction artifact.
+        """StoreLocation for the fully downscaled historical artifact.
+
+        Written to the output store — the fine-resolution downscaled historical
+        is a deliverable, the analog of the fine scenario output.
 
         Parameters
         ----------
@@ -182,7 +185,7 @@ class ArtifactCache:
         """
         config = self._require_config()
         return StoreLocation(
-            self._scratch_store,
+            self._output_store,
             f"historical/{config.variable}/{hist_member}",
         )
 
