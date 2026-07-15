@@ -49,7 +49,7 @@ predict_period_end: 2100               # Prediction period end year (required if
 subset_bounds: [-35, -22, 16, 33]     # [lat_min, lat_max, lon_min, lon_max]
 
 # Bias-correction method
-mapping_type: "parametric"             # QM method: parametric, nonparametric, nonparametric_hybrid (default: "parametric")
+debias_approach: "nonparametric_hybrid_2sided"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided (default: "nonparametric_hybrid_2sided")
 
 # Variable-specific settings (auto-loaded from per-variable defaults if not specified)
 variable_config:
@@ -60,6 +60,8 @@ variable_config:
 ```
 
 **Required:** `gcm`, `variable`, `ensemble_member`. All others have defaults or are conditionally required (e.g. `predict_period_*` when `scenario` is set).
+
+> **Note:** `debias_approach` is our own field and is a superset of ibicus's `mapping_type` argument. ibicus only accepts `parametric` or `nonparametric`; the `nonparametric_hybrid` and `nonparametric_hybrid_2sided` values are hybrid strategies the pipeline composes on top of ibicus. The former name `mapping_type` was renamed to `debias_approach` — a config still using `mapping_type` now raises an error.
 
 ## PipelineOptions Fields (operational)
 

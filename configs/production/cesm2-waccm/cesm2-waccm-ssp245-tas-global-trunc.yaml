@@ -22,7 +22,7 @@ environment: "production"
 # version intentionally unset — derived from the installed package version at runtime
 
 # === Bias Correction ===
-mapping_type: "nonparametric_hybrid_2sided"
+debias_approach: "nonparametric_hybrid_2sided"
 
 # === Additional Options ===
 verbose: true

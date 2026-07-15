@@ -372,7 +372,7 @@ class BCSDPipeline:
             "srm_downscaling:historical_ensemble_member": self._hist_member,
             "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
             "srm_downscaling:observation_dataset": self.config.obs_dataset,
-            "srm_downscaling:bias_correction_method": self.config.mapping_type,
+            "srm_downscaling:bias_correction_method": self.config.debias_approach,
             "srm_downscaling:downscaling_method": self.config.downscaling_method,
             "srm_downscaling:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
@@ -606,8 +606,9 @@ class BCSDPipeline:
         """
         mapping_type = (
             "nonparametric"
-            if self.config.mapping_type in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
-            else self.config.mapping_type
+            if self.config.debias_approach
+            in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
+            else self.config.debias_approach
         )
         debiaser = _make_debiaser(
             variable=self.config.variable,
@@ -1130,12 +1131,12 @@ class BCSDPipeline:
             failsafe=True,  # ocean pixels have NaN obs; fill with NaN rather than crash
         )
 
-        if self.config.mapping_type in ["parametric", "nonparametric"]:
+        if self.config.debias_approach in ["parametric", "nonparametric"]:
             debiased_np = _make_debiaser(
-                mapping_type=self.config.mapping_type, **common_kwargs
+                mapping_type=self.config.debias_approach, **common_kwargs
             ).apply(**apply_kwargs)
 
-        elif self.config.mapping_type == "nonparametric_hybrid":
+        elif self.config.debias_approach == "nonparametric_hybrid":
             parametric_np = _make_debiaser(mapping_type="parametric", **common_kwargs).apply(
                 **apply_kwargs
             )
@@ -1150,7 +1151,7 @@ class BCSDPipeline:
             )
             debiased_np = np.where(out_of_range.values, parametric_np, nonparametric_np)
 
-        elif self.config.mapping_type == "nonparametric_hybrid_2sided":
+        elif self.config.debias_approach == "nonparametric_hybrid_2sided":
             # Use one parametric debiaser for low out-of-range values, another for high, and nonparametric everywhere else
 
             if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:
@@ -1187,7 +1188,7 @@ class BCSDPipeline:
 
         else:
             raise ValueError(
-                "mapping_type must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
+                "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
 
         if self.options.clip_values:
