@@ -92,21 +92,25 @@ class BCSDOrchestrator:
         else:
             raise ValueError(f"Unknown stage: {stage}")
 
-    @staticmethod
-    def _dependency_waves(configs: list[BCSDConfig]) -> list[list[int]]:
+    # Stages where tasmin reconstructs itself from its sibling tasmax/dtr stores
+    # and therefore must run after them. Other stages (obs regridding) have no
+    # cross-variable dependency and are never wave-split.
+    _DERIVED_VARIABLE_STAGES: frozenset[str] = frozenset({"fit_historical", "transform_scenario"})
+
+    def _dependency_waves(self, stage: str, configs: list[BCSDConfig]) -> list[list[int]]:
         """Split config indices into ordered execution waves within a stage.
 
-        ``tasmin`` is never bias-corrected directly; it is reconstructed as
-        ``debiased_coarse tasmax - dtr`` by reading its sibling variables' stores
-        (issue #363). Those siblings are written by separate tasks on the same
-        icechunk branch, so ``tasmin`` must not start until they are committed and
-        final — otherwise it fossilises a mid-flight (still-NaN) ``dtr``/``tasmax``.
-
-        All non-tasmin configs form the first wave; tasmin configs run in a second
-        wave that only starts once the first wave has fully completed.
+        ``tasmin`` is never bias-corrected directly; it is reconstructed from its
+        sibling ``tasmax``/``dtr`` stores (issue #363). Those siblings are written
+        by separate tasks on the same icechunk branch, so in the stages that read
+        them (``fit_historical``, ``transform_scenario``) ``tasmin`` must not start
+        until they are committed and final — otherwise it fossilises a mid-flight
+        (still-NaN) ``dtr``/``tasmax``. Stages without that coupling run as one wave.
 
         Parameters
         ----------
+        stage : str
+            Pipeline stage being submitted.
         configs : list[BCSDConfig]
             Configs to be executed in this stage.
 
@@ -116,6 +120,8 @@ class BCSDOrchestrator:
             Ordered list of waves, each a list of indices into ``configs``. Empty
             waves are omitted.
         """
+        if stage not in self._DERIVED_VARIABLE_STAGES:
+            return [list(range(len(configs)))] if configs else []
         first = [i for i, c in enumerate(configs) if c.variable != "tasmin"]
         later = [i for i, c in enumerate(configs) if c.variable == "tasmin"]
         return [wave for wave in (first, later) if wave]
@@ -132,7 +138,7 @@ class BCSDOrchestrator:
         starts), while output paths are returned in the original ``configs`` order.
         """
         completed: list[str | None] = [None] * len(configs)
-        for wave in self._dependency_waves(configs):
+        for wave in self._dependency_waves(stage, configs):
             wave_configs = [configs[i] for i in wave]
             wave_paths = executor(stage, wave_configs)
             for i, path in zip(wave, wave_paths):

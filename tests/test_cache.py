@@ -631,6 +631,20 @@ class TestCheckDependencies:
         deps = bound_cache.check_dependencies("transform_scenario", base_config)
         assert set(deps.keys()) == {"obs_regridded", "historical"}
 
+    def test_transform_scenario_tasmin_requires_fine_tasmax(self, tmp_path):
+        # the tasmax<tasmin swap reads the fine tasmax output, so it is a hard
+        # dependency and must fail fast, not deep in the stage (issue #331).
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("transform_scenario", cfg)
+        assert "fine_tasmax" in deps
+        assert deps["fine_tasmax"][1].group == "ssp245/tasmax/r1i1p1f1"
+
+    def test_fit_historical_tasmin_requires_fine_tasmax(self, tmp_path):
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("fit_historical", cfg)
+        assert "fine_tasmax" in deps
+        assert deps["fine_tasmax"][1].group == "historical/tasmax/r1i1p1f1"
+
 
 class TestValidateDependencies:
     def test_raises_missing(self, bound_cache, base_config):

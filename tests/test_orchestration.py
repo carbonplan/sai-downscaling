@@ -283,6 +283,20 @@ class TestTasminOrdering:
         assert len(calls) == 1
         assert set(calls[0]) == {"tasmax", "dtr"}
 
+    def test_prepare_observations_not_wave_split(self, orchestrator):
+        # obs regridding has no cross-variable dependency; tasmin must not be
+        # peeled into a second wave (that would spin up an extra job for nothing).
+        configs = [
+            _make_config(variable="tasmax", ensemble_member="008"),
+            _make_config(variable="tasmin", ensemble_member="008"),
+        ]
+        calls: list[list[str]] = []
+        with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
+            orchestrator.submit_stage("prepare_observations", configs, use_coiled=False)
+
+        assert len(calls) == 1
+        assert set(calls[0]) == {"tasmax", "tasmin"}
+
     def test_output_paths_preserve_input_order_across_waves(self, orchestrator):
         configs = [
             _make_config(variable="tasmin", ensemble_member="008"),

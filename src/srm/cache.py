@@ -473,6 +473,9 @@ class ArtifactCache:
                 ):
                     dep_loc = self.debiased_coarse_historical_loc(member, variable=var)
                     deps[name] = (self.exists(dep_loc), dep_loc)
+                # the tasmax<tasmin swap reads/rewrites the fine tasmax output
+                fine_tasmax = self.historical_loc(member, variable="tasmax")
+                deps["fine_tasmax"] = (self.exists(fine_tasmax), fine_tasmax)
             return deps
 
         elif stage == "transform_scenario":
@@ -489,6 +492,9 @@ class ArtifactCache:
                 ):
                     dep_loc = self.debiased_coarse_scenario_loc(variable=var)
                     deps[name] = (self.exists(dep_loc), dep_loc)
+                # the tasmax<tasmin swap reads/rewrites the fine tasmax output
+                fine_tasmax = self.scenario_output_loc(variable="tasmax")
+                deps["fine_tasmax"] = (self.exists(fine_tasmax), fine_tasmax)
             return deps
 
         else:
