@@ -349,7 +349,8 @@ class DatasetChecker:
             return ValidationResult(True, [])
 
         n = self.ds.sizes["time"]
-        window = _sample_time_window(n)
+        # Start at day 0.  CESM2-WACCM, #424 give an invalid first day (tasmax == tasmin == tas).
+        window = slice(0, min(n, _N_TIME_SAMPLES))
         ds_sample = self.ds.isel(time=window)
 
         if "ensemble_member" in ds_sample.dims:
