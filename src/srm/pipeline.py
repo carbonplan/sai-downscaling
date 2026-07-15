@@ -46,12 +46,6 @@ from srm.utils import get_variable
 
 logger = logging.getLogger(__name__)
 
-# Dataset attr stamped on a fine tasmax output once it has been reconciled against
-# tasmin by the tasmax<tasmin swap (issue #331). A plain tasmax rerun writes tasmax
-# without it, which lets the tasmin stage detect a stale (un-reconciled) sibling and
-# re-run the swap instead of short-circuiting on its own cache hit.
-TASMAX_RECONCILED_ATTR = "srm_tasmax_reconciled_with_tasmin"
-
 
 def _make_debiaser(variable: str, distribution=None, **kwargs):
     if distribution is None:
@@ -490,75 +484,86 @@ class BCSDPipeline:
             session.store, engine="zarr", consolidated=False, chunks="auto", group=loc.group
         )
 
-    def _swap_and_write_tasmax(
-        self, tasmin_fine: xr.DataArray, tasmax_loc: StoreLocation, force: bool = False
-    ) -> xr.DataArray:
-        """Enforce ``tasmax >= tasmin`` on the fine outputs and return corrected tasmin.
+    def reconcile_temperature_extremes(
+        self,
+        tasmin_loc: StoreLocation,
+        tasmax_loc: StoreLocation,
+        *,
+        tasmin_fine: xr.DataArray | None = None,
+        force: bool = False,
+    ) -> None:
+        """Dedicated reconcile step: enforce ``tasmax >= tasmin`` on the fine outputs.
 
-        Independent spatial disaggregation of tasmax and tasmin can leave a few
-        fine cells with ``tasmax < tasmin`` (issue #331). The wave-gated ordering
-        (issue #363) guarantees the sibling fine tasmax output is already final, so
-        here we load it, swap the offending cells, rewrite the corrected tasmax back
-        to its own store (stamped as reconciled), and return the corrected tasmin
-        for the caller to write.
+        Independent spatial disaggregation of tasmax and tasmin can leave a few fine
+        cells with ``tasmax < tasmin`` (issue #331). Following the NEX-GDDP-CMIP6 v2
+        final sweep, this step reads the sibling fine tasmax, swaps the offending
+        cells against tasmin, and writes *both* corrected fields back to their own
+        stores. It runs after both fine outputs are produced (the #363 wave-gating
+        guarantees tasmax is final before tasmin), and can also be re-run standalone
+        against the persisted outputs.
+
+        The reconciliation is idempotent and structurally monotone (see
+        :func:`swap_temperature_extremes`); ``qaqc.validate_temp_consistency`` is the
+        output-QA gate that catches any residual inversion (e.g. from a tasmax-only
+        rerun that has not yet been re-reconciled).
 
         Parameters
         ----------
-        tasmin_fine : xr.DataArray
-            Freshly downscaled fine tasmin for this stage.
+        tasmin_loc : StoreLocation
+            Location of this stage's fine tasmin output (written here, corrected).
         tasmax_loc : StoreLocation
-            Location of the sibling fine tasmax output to reconcile against.
+            Location of the sibling fine tasmax output (rewritten here, corrected).
+        tasmin_fine : xr.DataArray, optional
+            The freshly downscaled tasmin. If omitted, tasmin is read back from
+            ``tasmin_loc`` (standalone reconcile of already-persisted outputs).
         force : bool, optional
-            Threaded to the tasmax rewrite so a forced tasmin recompute expires the
-            superseded tasmax snapshots instead of accumulating commits.
-
-        Returns
-        -------
-        xr.DataArray
-            Corrected tasmin (``tasmax >= tasmin`` holds everywhere).
+            Threaded to the *tasmin* write only (see below).
         """
         if not self.cache.exists(tasmax_loc):
             raise ValueError(
-                f"tasmin post-processing needs the fine tasmax output "
+                f"tasmin reconciliation needs the fine tasmax output "
                 f"{tasmax_loc.store_path}/{tasmax_loc.group}, which is missing. "
                 f"tasmax must complete before tasmin."
             )
+        if tasmin_fine is None:
+            if not self.cache.exists(tasmin_loc):
+                raise ValueError(
+                    f"standalone reconcile needs the fine tasmin output "
+                    f"{tasmin_loc.store_path}/{tasmin_loc.group}, which is missing."
+                )
+            tasmin_fine = self._open_from_icechunk(tasmin_loc)[self.config.variable]
+
         tasmax_ds = self._open_from_icechunk(tasmax_loc)
         # swap_temperature_extremes enforces exact grid alignment and is structurally
-        # monotone, so tasmax >= tasmin holds by construction; the output-QA
-        # (qaqc.validate_temp_consistency) is the belt-and-suspenders gate, avoiding
-        # a second full-array pass over the fine fields here (issue #331).
+        # monotone, so tasmax >= tasmin holds by construction; the second full-array
+        # pass is left to output-QA rather than gated here (issue #331).
         tasmax_corrected, tasmin_corrected = swap_temperature_extremes(
             tasmax_ds["tasmax"], tasmin_fine
         )
-        # Rechunk to the shard layout make_encoding("tasmax") expects (the store-read
-        # tasmax carries chunks="auto"), matching the tasmin write path.
-        tasmax_corrected = tasmax_corrected.chunk(
-            {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
-        )
+        shard = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+        tasmax_corrected = tasmax_corrected.chunk(shard)
+        tasmin_corrected = tasmin_corrected.chunk(shard)
+
+        # tasmax first, force=False: tasmin_corrected still lazily reads this
+        # pre-rewrite tasmax snapshot, so a force GC now would collect those chunks
+        # before the tasmin write below materialises them (data-loss hazard).
         self._write_to_icechunk(
             tasmax_corrected,
             tasmax_loc,
             encoding=make_encoding("tasmax"),
-            dataset_attrs={**dict(tasmax_ds.attrs), TASMAX_RECONCILED_ATTR: True},
+            dataset_attrs=dict(tasmax_ds.attrs),
+            force=False,
+        )
+        # tasmin last, force-threaded: it is materialised before its own commit, so
+        # the trailing GC safely sweeps the now-superseded tasmax snapshot too.
+        tasmin_corrected.name = self.config.variable
+        self._write_to_icechunk(
+            tasmin_corrected,
+            tasmin_loc,
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
             force=force,
         )
-        return tasmin_corrected
-
-    def _tasmax_is_reconciled(self, tasmax_loc: StoreLocation) -> bool:
-        """Return True if the fine tasmax at ``tasmax_loc`` was reconciled against tasmin.
-
-        A tasmax rewritten by its own stage after the swap carries no reconciliation
-        marker; detecting that lets the tasmin stage re-run the swap instead of
-        serving a stale cache hit (issue #331). Missing/unreadable stores return
-        False, biasing toward recompute.
-        """
-        if not self.cache.exists(tasmax_loc):
-            return False
-        try:
-            return bool(self._open_from_icechunk(tasmax_loc).attrs.get(TASMAX_RECONCILED_ATTR))
-        except Exception:
-            return False
 
     def prepare_observations(self, force: bool = False) -> str:
         """
@@ -749,15 +754,7 @@ class BCSDPipeline:
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
         tasmax_fine_loc = self.cache.historical_loc(self._hist_member, variable="tasmax")
 
-        # Cache hit only if the tasmin outputs exist *and* the sibling tasmax is
-        # still reconciled against tasmin — a later un-reconciled tasmax rerun must
-        # force a recompute so the swap is re-applied (issue #331).
-        if (
-            not force
-            and self.cache.exists(loc)
-            and self.cache.exists(coarse_loc)
-            and self._tasmax_is_reconciled(tasmax_fine_loc)
-        ):
+        if not force and self.cache.exists(loc) and self.cache.exists(coarse_loc):
             logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
@@ -812,24 +809,14 @@ class BCSDPipeline:
         )
         logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
 
-        # Reconcile any tasmax < tasmin left by independent disaggregation (issue #331).
+        # Dedicated reconcile step: swap any tasmax < tasmin left by independent
+        # disaggregation and write both corrected fields (issue #331).
         t0 = time.perf_counter()
-        model_hist_downscaled = self._swap_and_write_tasmax(
-            model_hist_downscaled, tasmax_fine_loc, force=force
-        )
-        logger.info("Reconciled tasmax/tasmin extremes (%.2fs)", time.perf_counter() - t0)
-
-        t0 = time.perf_counter()
-        model_hist_downscaled.name = self.config.variable
-        self._write_to_icechunk(
-            da=model_hist_downscaled,
-            loc=loc,
-            encoding=make_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
-            force=force,
+        self.reconcile_temperature_extremes(
+            loc, tasmax_fine_loc, tasmin_fine=model_hist_downscaled, force=force
         )
         logger.info(
-            "✓ Saved historical: %s/%s (%.2fs)",
+            "✓ Reconciled + saved historical: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -1326,15 +1313,7 @@ class BCSDPipeline:
         coarse_loc = self.cache.debiased_coarse_scenario_loc()
         tasmax_fine_loc = self.cache.scenario_output_loc(variable="tasmax")
 
-        # Cache hit only if the tasmin outputs exist *and* the sibling tasmax is
-        # still reconciled against tasmin — a later un-reconciled tasmax rerun must
-        # force a recompute so the swap is re-applied (issue #331).
-        if (
-            not force
-            and self.cache.exists(loc)
-            and self.cache.exists(coarse_loc)
-            and self._tasmax_is_reconciled(tasmax_fine_loc)
-        ):
+        if not force and self.cache.exists(loc) and self.cache.exists(coarse_loc):
             logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
@@ -1393,24 +1372,14 @@ class BCSDPipeline:
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
-        # Reconcile any tasmax < tasmin left by independent disaggregation (issue #331).
-        # Runs after ocean masking so both fine fields share aligned NaN cells.
-        scenario_downscaled = self._swap_and_write_tasmax(
-            scenario_downscaled, tasmax_fine_loc, force=force
-        )
-        logger.info("Reconciled tasmax/tasmin extremes (%.2fs)", time.perf_counter() - t0)
-
-        t0 = time.perf_counter()
-        scenario_downscaled.name = self.config.variable
-        self._write_to_icechunk(
-            scenario_downscaled,
-            loc,
-            dataset_attrs=self._build_output_attrs(),
-            encoding=make_encoding(self.config.variable),
-            force=force,
+        # Dedicated reconcile step: swap any tasmax < tasmin left by independent
+        # disaggregation and write both corrected fields (issue #331). Runs after
+        # ocean masking so both fine fields share aligned NaN cells.
+        self.reconcile_temperature_extremes(
+            loc, tasmax_fine_loc, tasmin_fine=scenario_downscaled, force=force
         )
         logger.info(
-            "✓ Saved scenario output: %s/%s (%.2fs)",
+            "✓ Reconciled + saved scenario output: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,

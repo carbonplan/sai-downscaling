@@ -1269,8 +1269,11 @@ def _fine_pair_with_inversion():
     return tasmax, tasmin
 
 
-class TestTasminSwap:
-    def _run_swap(self, p, tasmax_fine, tasmin_fine, force=False):
+class TestReconcileTemperatureExtremes:
+    def _run_reconcile(self, p, tasmax_fine, tasmin_fine, *, force=False):
+        tasmin_loc = p.cache.scenario_loc
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
+        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)  # sibling fine tasmax exists
         writes: dict = {}
         kwargs_seen: dict = {}
 
@@ -1283,147 +1286,97 @@ class TestTasminSwap:
             BCSDPipeline, "_open_from_icechunk", return_value=tasmax_fine.to_dataset()
         ):
             with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
-                result = p._swap_and_write_tasmax(
-                    tasmin_fine, p.cache.scenario_output_loc(variable="tasmax"), force=force
+                p.reconcile_temperature_extremes(
+                    tasmin_loc, tasmax_loc, tasmin_fine=tasmin_fine, force=force
                 )
-        return result, writes, kwargs_seen
+        return tasmin_loc, tasmax_loc, writes, kwargs_seen
 
-    def test_rewrites_corrected_tasmax_and_returns_corrected_tasmin(self, tasmin_pipeline):
+    def test_writes_both_corrected_fields(self, tasmin_pipeline):
         p = tasmin_pipeline
-        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
-        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)  # sibling fine tasmax exists
         tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+        tasmin_loc, tasmax_loc, writes, _ = self._run_reconcile(p, tasmax_fine, tasmin_fine)
 
-        result, writes, _ = self._run_swap(p, tasmax_fine, tasmin_fine)
+        assert tasmax_loc.group in writes and tasmin_loc.group in writes
+        written_max = writes[tasmax_loc.group]
+        written_min = writes[tasmin_loc.group]
+        assert written_max.values[0, 0, 1] == 295.0  # swapped up
+        assert written_min.values[0, 0, 1] == 290.0  # swapped down
+        assert bool((written_max >= written_min).all())  # monotone
 
-        # corrected tasmax was written back to the sibling loc
-        assert tasmax_loc.group in writes
-        written_tasmax = writes[tasmax_loc.group]
-        assert written_tasmax.values[0, 0, 1] == 295.0  # swapped up
-        # returned tasmin is the corrected one
-        assert result.values[0, 0, 1] == 290.0  # swapped down
-        # monotone everywhere
-        assert bool((written_tasmax >= result).all())
-
-    def test_tasmax_rewrite_is_rechunked_to_shard_layout(self, tasmin_pipeline):
-        # issue #331 finding #7: store-read tasmax has chunks="auto"; must be
-        # rechunked to the shard layout make_encoding("tasmax") expects.
+    def test_tasmax_write_never_force_gcs_but_tasmin_does(self, tasmin_pipeline):
+        # tasmax rewrite must never force-GC (the tasmin write still lazily reads the
+        # pre-rewrite tasmax); the tasmin write, materialised last, threads force so
+        # its trailing GC sweeps the superseded tasmax.
         p = tasmin_pipeline
-        _make_icechunk_group(p.cache.scenario_output_loc(variable="tasmax"), branch=p.cache.branch)
         tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
-        _result, writes, _ = self._run_swap(p, tasmax_fine, tasmin_fine)
-        written = writes[p.cache.scenario_output_loc(variable="tasmax").group]
-        assert written.chunks is not None  # dask-backed (was rechunked)
-        # a small array shard-chunks to a single chunk per dim
-        assert all(len(c) == 1 for c in written.chunks)
+        tasmin_loc, tasmax_loc, _writes, kwargs_seen = self._run_reconcile(
+            p, tasmax_fine, tasmin_fine, force=True
+        )
+        assert kwargs_seen[tasmax_loc.group].get("force") is False
+        assert kwargs_seen[tasmin_loc.group].get("force") is True
 
-    def test_force_is_threaded_to_tasmax_rewrite(self, tasmin_pipeline):
-        # issue #331 finding #6: a forced tasmin recompute must expire superseded
-        # tasmax snapshots instead of accumulating commits.
+    def test_both_writes_rechunked_to_shard_layout(self, tasmin_pipeline):
         p = tasmin_pipeline
-        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
-        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)
         tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
-        _result, _writes, kwargs_seen = self._run_swap(p, tasmax_fine, tasmin_fine, force=True)
-        assert kwargs_seen[tasmax_loc.group].get("force") is True
-
-    def test_tasmax_rewrite_is_stamped_reconciled(self, tasmin_pipeline):
-        # issue #331 finding #3: the rewritten tasmax carries the reconciliation
-        # marker so a later stale tasmax rerun is detectable.
-        from srm.pipeline import TASMAX_RECONCILED_ATTR
-
-        p = tasmin_pipeline
-        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
-        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)
-        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
-        _result, _writes, kwargs_seen = self._run_swap(p, tasmax_fine, tasmin_fine)
-        assert kwargs_seen[tasmax_loc.group]["dataset_attrs"].get(TASMAX_RECONCILED_ATTR) is True
+        tasmin_loc, tasmax_loc, writes, _ = self._run_reconcile(p, tasmax_fine, tasmin_fine)
+        for loc in (tasmax_loc, tasmin_loc):
+            written = writes[loc.group]
+            assert written.chunks is not None  # dask-backed (was rechunked)
+            assert all(len(c) == 1 for c in written.chunks)  # small array → one chunk/dim
 
     def test_raises_when_fine_tasmax_missing(self, tasmin_pipeline):
         p = tasmin_pipeline
-        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")  # not created
         _tasmax, tasmin_fine = _fine_pair_with_inversion()
         with pytest.raises(ValueError, match="tasmax"):
-            p._swap_and_write_tasmax(tasmin_fine, tasmax_loc)
+            p.reconcile_temperature_extremes(
+                p.cache.scenario_loc,  # tasmax loc below is not created
+                p.cache.scenario_output_loc(variable="tasmax"),
+                tasmin_fine=tasmin_fine,
+            )
+
+    def test_standalone_reads_tasmin_from_store(self, tasmin_pipeline):
+        # with tasmin_fine=None the step reconciles already-persisted outputs.
+        p = tasmin_pipeline
+        tasmin_loc = p.cache.scenario_loc
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
+        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)
+        _make_icechunk_group(tasmin_loc, branch=p.cache.branch)
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+
+        def fake_open(loc):
+            return (tasmin_fine if loc.group == tasmin_loc.group else tasmax_fine).to_dataset()
+
+        writes: dict = {}
+
+        def capture_write(da, loc, **kwargs):
+            writes[loc.group] = da
+            return "snap"
+
+        with patch.object(BCSDPipeline, "_open_from_icechunk", side_effect=fake_open):
+            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+                p.reconcile_temperature_extremes(tasmin_loc, tasmax_loc)  # tasmin_fine=None
+
+        assert writes[tasmax_loc.group].values[0, 0, 1] == 295.0
+        assert writes[tasmin_loc.group].values[0, 0, 1] == 290.0
+
+    def test_standalone_raises_when_tasmin_missing(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
+        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)  # tasmax present, tasmin absent
+        with pytest.raises(ValueError, match="tasmin"):
+            p.reconcile_temperature_extremes(p.cache.scenario_loc, tasmax_loc)
 
 
-# ---------------------------------------------------------------------------
-# Tasmin cache staleness vs. an un-reconciled tasmax rerun (issue #331 finding #3/#5)
-# ---------------------------------------------------------------------------
-
-
-def _make_reconciled_tasmax(loc, branch, *, reconciled: bool) -> None:
-    """Write a fine tasmax group at ``loc.group``, optionally stamped reconciled."""
-    import icechunk
-    from icechunk.xarray import to_icechunk
-
-    from srm.config import _ensure_root_group
-    from srm.pipeline import TASMAX_RECONCILED_ATTR
-
-    storage = icechunk.local_filesystem_storage(path=loc.store_path)
-    repo = icechunk.Repository.open_or_create(storage)
-    root = _ensure_root_group(repo)
-    if branch not in repo.list_branches():
-        repo.create_branch(branch, root)
-    session = repo.writable_session(branch)
-    attrs = {TASMAX_RECONCILED_ATTR: True} if reconciled else {}
-    ds = xr.Dataset({"tasmax": xr.DataArray(np.array([1.0]), dims=["x"])}, attrs=attrs)
-    to_icechunk(ds, session, mode="w", group=loc.group)
-    session.commit(loc.group)
-
-
-class TestTasminReconciliationCache:
-    def test_reconciled_tasmax_serves_cache_hit_without_upstream(self, tasmin_pipeline):
-        # tasmin cached + tasmax reconciled → short-circuit, even though the
-        # obs/coarse upstreams have been reaped (issue #363 finding #5).
+class TestTasminCacheShortCircuit:
+    def test_cached_tasmin_served_without_upstream_deps(self, tasmin_pipeline):
+        # A cached tasmin short-circuits without reconciling or requiring the
+        # (possibly reaped) obs/coarse upstreams (issue #363 finding #5).
         p = tasmin_pipeline
         _make_icechunk_group(p.cache.scenario_loc, branch=p.cache.branch)
         _make_icechunk_group(p.cache.debiased_coarse_scenario_loc(), branch=p.cache.branch)
-        _make_reconciled_tasmax(
-            p.cache.scenario_output_loc(variable="tasmax"), p.cache.branch, reconciled=True
-        )
 
         with patch.object(BCSDPipeline, "_write_to_icechunk") as mock_write:
             result = p.transform_scenario_tasmin()
 
-        mock_write.assert_not_called()  # served from cache, nothing recomputed
+        mock_write.assert_not_called()
         assert result == p.cache.scenario_loc.store_path
-
-    def test_tasmax_is_reconciled_reads_marker(self, tasmin_pipeline):
-        p = tasmin_pipeline
-        loc = p.cache.scenario_output_loc(variable="tasmax")
-        assert p._tasmax_is_reconciled(loc) is False  # missing → False
-        _make_reconciled_tasmax(loc, p.cache.branch, reconciled=False)
-        assert p._tasmax_is_reconciled(loc) is False  # present, no marker → False
-
-    def test_reconciled_marker_detected(self, tasmin_pipeline):
-        p = tasmin_pipeline
-        loc = p.cache.scenario_output_loc(variable="tasmax")
-        _make_reconciled_tasmax(loc, p.cache.branch, reconciled=True)
-        assert p._tasmax_is_reconciled(loc) is True
-
-    def test_unreconciled_tasmax_forces_recompute(self, tasmin_pipeline):
-        # tasmin cached but tasmax un-reconciled (_tasmax_is_reconciled False) → must
-        # NOT short-circuit; it recomputes and re-applies the swap (issue #331 finding #3).
-        p = tasmin_pipeline
-        _make_icechunk_group(p.cache.scenario_loc, branch=p.cache.branch)
-        _make_icechunk_group(p.cache.debiased_coarse_scenario_loc(), branch=p.cache.branch)
-        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
-        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
-        for _var in ("dtr", "tasmax"):
-            _make_icechunk_group(
-                p.cache.debiased_coarse_scenario_loc(variable=_var), branch=p.cache.branch
-            )
-        _make_icechunk_group(p.cache.scenario_output_loc(variable="tasmax"), branch=p.cache.branch)
-
-        with _mock_transform_scenario_compute():
-            with patch.object(BCSDPipeline, "_tasmax_is_reconciled", return_value=False):
-                with patch.object(
-                    BCSDPipeline, "_write_to_icechunk", return_value="snap"
-                ) as mock_write:
-                    try:
-                        p.transform_scenario_tasmin()
-                    except Exception:
-                        pass
-
-        mock_write.assert_called()  # recomputed instead of serving the stale cache
