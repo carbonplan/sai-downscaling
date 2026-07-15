@@ -542,7 +542,7 @@ def downscale_from_coarse(
     method: DownscalingMethod = "additive",
     clim_method: DownscalingClimMethod = "simple",
     allow_negative_values: bool = True,
-    max_residual: float = 100
+    max_residual: float = 100,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
@@ -562,7 +562,7 @@ def downscale_from_coarse(
     clim_method : {"simple", "fft"}, default: "simple"
         Method used to estimate fine-grid day-of-year climatology.
     max_residual : float
-        The maximum value possible for the residuals used for building the 
+        The maximum value possible for the residuals used for building the
         relationship between coarse data and fine.
 
     Returns
