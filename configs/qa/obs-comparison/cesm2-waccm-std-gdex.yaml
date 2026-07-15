@@ -17,6 +17,6 @@ predict_period_end: 2099
 scratch_dir: "s3://carbonplan-srm/output/qa/bcsd-cache"
 output_dir: "s3://carbonplan-srm/output/obs-comparison"
 environment: "qa"
-mapping_type: "nonparametric_hybrid"
+mapping_type: "nonparametric_hybrid_2sided"
 verbose: true
 save_intermediate: true
