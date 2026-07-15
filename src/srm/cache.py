@@ -9,6 +9,7 @@ plus intermediate artifacts when save_intermediate is enabled.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -273,7 +274,7 @@ class ArtifactCache:
 
     # ── existence check ───────────────────────────────────────────────────────
 
-    def exists(self, loc: StoreLocation) -> bool:
+    def exists(self, loc: StoreLocation, *, max_attempts: int = 4) -> bool:
         """
         Check if an artifact exists by scanning the icechunk commit ancestry.
 
@@ -281,33 +282,67 @@ class ArtifactCache:
         exists on ``self.branch`` of the store. This is atomic — partial writes
         leave no matching commit.
 
+        A store or branch that does not exist yet is a genuine cache miss and
+        returns ``False``. Transient infrastructure errors — e.g. reading a
+        branch ref while other workers concurrently commit to it — are retried
+        with exponential backoff. A persistent failure raises
+        :class:`CacheCheckError` rather than being silently reported as a miss,
+        so a momentarily unreadable store never causes valid, already-committed
+        outputs to be discarded and recomputed (or reported as failed).
+
         Parameters
         ----------
         loc : StoreLocation
             Location to check.
+        max_attempts : int, optional
+            Number of attempts before giving up on a transient error (default 4).
 
         Returns
         -------
         bool
-            True if a commit with message ``loc.group`` is in the ancestry.
-        """
-        import icechunk
+            True if a commit with message ``loc.group`` is in the ancestry;
+            False if the store or branch does not exist.
 
+        Raises
+        ------
+        CacheCheckError
+            If an existing store cannot be read after ``max_attempts`` attempts.
+        """
         branch = self._branch_for()
-        try:
-            storage = _icechunk_storage_for_path(loc.store_path)
-            repo = icechunk.Repository.open(storage)
-            result = any(snapshot.message == loc.group for snapshot in repo.ancestry(branch=branch))
-            if result:
-                logger.debug("Cache hit: %s / %s", loc.store_path, loc.group)
-            else:
+        storage = _icechunk_storage_for_path(loc.store_path)
+
+        last_error: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                if not icechunk.Repository.exists(storage):
+                    logger.debug("Cache miss (store does not exist): %s", loc.store_path)
+                    return False
+                repo = icechunk.Repository.open(storage)
+                if branch not in repo.list_branches():
+                    logger.debug("Cache miss (branch %r not created): %s", branch, loc.store_path)
+                    return False
+                hit = any(s.message == loc.group for s in repo.ancestry(branch=branch))
                 logger.debug(
-                    "Cache miss (group not in ancestry): %s / %s", loc.store_path, loc.group
+                    "Cache %s: %s / %s", "hit" if hit else "miss", loc.store_path, loc.group
                 )
-            return result
-        except Exception:
-            logger.debug("Cache miss (store does not exist): %s", loc.store_path)
-            return False
+                return hit
+            except Exception as err:  # transient infra error against an existing store
+                last_error = err
+                if attempt < max_attempts - 1:
+                    logger.debug(
+                        "Cache check error on %s / %s (attempt %d/%d), retrying: %s",
+                        loc.store_path,
+                        loc.group,
+                        attempt + 1,
+                        max_attempts,
+                        err,
+                    )
+                    time.sleep(0.5 * 2**attempt)
+
+        raise CacheCheckError(
+            f"Could not verify {loc.store_path} / {loc.group} on branch {branch!r} "
+            f"after {max_attempts} attempts"
+        ) from last_error
 
     def list_groups_on_branch(self, store_path: str) -> list[str]:
         """Return all zarr group paths committed on the current branch of a store.
