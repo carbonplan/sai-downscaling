@@ -6,7 +6,7 @@ import pytest
 from conftest import make_icechunk_group
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
-from srm.cache import ArtifactCache, StoreLocation
+from srm.cache import ArtifactCache, CacheCheckError, StoreLocation
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -476,15 +476,55 @@ class TestExists:
         make_icechunk_group(wrong_loc, branch=bound_cache.branch)
         assert bound_cache.exists(loc) is False
 
-    def test_exists_returns_false_on_exception(self, bound_cache, tmp_path, monkeypatch):
-        import icechunk
+    def test_persistent_infra_error_raises_cache_check_error(
+        self, bound_cache, tmp_path, monkeypatch
+    ):
+        """A persistent infrastructure error must surface, not masquerade as a miss.
 
-        def raise_error(*a, **kw):
+        Silently returning False here is what caused the v0.8.0 production deploy
+        to discard 13 valid, already-committed scenario outputs.
+        """
+        import srm.cache as cache_module
+
+        monkeypatch.setattr("time.sleep", lambda *a, **kw: None)
+
+        def boom(*a, **kw):
             raise RuntimeError("connection refused")
 
-        monkeypatch.setattr(icechunk.Repository, "open", raise_error)
+        monkeypatch.setattr(cache_module.icechunk.Repository, "exists", boom)
         loc = StoreLocation(str(tmp_path / "any.icechunk"), "obs/tas")
-        assert bound_cache.exists(loc) is False
+        with pytest.raises(CacheCheckError):
+            bound_cache.exists(loc)
+
+    def test_transient_error_is_retried_then_succeeds(self, bound_cache, tmp_path, monkeypatch):
+        """A transient read error is retried; a real hit is still reported True."""
+        import srm.cache as cache_module
+
+        monkeypatch.setattr("time.sleep", lambda *a, **kw: None)
+        loc = StoreLocation(str(tmp_path / "valid.icechunk"), "obs/tas")
+        make_icechunk_group(loc, branch=bound_cache.branch)
+
+        real_exists = cache_module.icechunk.Repository.exists
+        calls = {"n": 0}
+
+        def flaky(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient network blip")
+            return real_exists(*a, **kw)
+
+        monkeypatch.setattr(cache_module.icechunk.Repository, "exists", flaky)
+        assert bound_cache.exists(loc) is True
+        assert calls["n"] == 2  # failed once, retried, then succeeded
+
+    def test_absent_branch_returns_false_not_error(self, bound_cache, tmp_path):
+        """A store that exists but lacks the queried branch is a genuine miss."""
+        loc = StoreLocation(str(tmp_path / "store.icechunk"), "obs/tas")
+        make_icechunk_group(loc, branch="main")
+        other_branch = ArtifactCache(
+            scratch_dir=bound_cache.scratch_dir, environment="qa", branch="v9.9.9"
+        )
+        assert other_branch.exists(loc) is False
 
     def test_exists_via_ancestry_after_write(self, bound_cache, tmp_path):
         loc = StoreLocation(str(tmp_path / "test.icechunk"), "obs/tas")

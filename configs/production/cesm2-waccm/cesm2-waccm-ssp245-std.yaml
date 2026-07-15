@@ -1,12 +1,16 @@
-# BCSD configuration: CESM2-WACCM (production)
+# BCSD configuration: CESM2-WACCM / SSP245 / standard variables (production)
+#
+# Standard variables (tas/pr/rsds/hurs) are available for SSP245 members 001-010.
+# tasmax/tasmin/dtr are split into cesm2-waccm-ssp245-tmx.yaml because the
+# corrected temperature extremes only exist for members 006-010 (CMIP6 bug).
 #
 # Equivalent CLI command:
 #   uv run bcsd run --config-path configs/production/
 
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
-variables: ["tas"]
-ensemble_members: ["003"]
+variables: ["tas", "pr", "rsds", "hurs"]
+ensemble_members: ["003", "008"]
 scenarios: ["SSP245"]
 
 train_period_start: 1978

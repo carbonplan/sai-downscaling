@@ -1,0 +1,49 @@
+name: snapshot-required
+
+on:
+    pull_request:
+        types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+
+jobs:
+    gate:
+        name: snapshot gate
+        if: ${{ !github.event.pull_request.draft }}
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
+            - name: Detect modeling-relevant changes
+              id: changed
+              env:
+                  # SHAs are not attacker-controllable free text, but pass them via
+                  # env (not inline ${{ }}) to follow workflow-injection best practice.
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+              run: |
+                  git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
+                  FILES="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+                  echo "changed files:"; echo "$FILES"
+                  NONEXEMPT="$(echo "$FILES" | grep -vE '^(docs/|notebooks/)|\.md$' || true)"
+                  if [[ -z "$NONEXEMPT" ]]; then
+                    echo "modeling=false" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "modeling=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Enforce snapshot verification
+              env:
+                  MODELING: ${{ steps.changed.outputs.modeling }}
+                  HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'snapshot-verified') }}
+              run: |
+                  if [[ "$MODELING" == "false" ]]; then
+                    echo "Only docs/notebooks changed — snapshot test not required."
+                    exit 0
+                  fi
+                  if [[ "$HAS_LABEL" == "true" ]]; then
+                    echo "snapshot-verified label present — gate satisfied."
+                    exit 0
+                  fi
+                  echo "::error::Modeling code changed. Run the comparison notebook (docs/how-to/snapshot-comparison.ipynb), commit it to this PR, then add the 'snapshot-verified' label."
+                  exit 1
