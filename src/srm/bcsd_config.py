@@ -88,7 +88,7 @@ class VariableConfig(BaseModel):
                 "detrend_data": False,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
+                "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
             },
         }
