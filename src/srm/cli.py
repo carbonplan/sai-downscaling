@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 
 import typer
@@ -45,40 +46,40 @@ _STATUS_SYMBOL = {
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
 
 
-def _enter_validation_cluster(
-    stack: contextlib.ExitStack,
+@contextlib.contextmanager
+def _validation_cluster(
+    use_coiled: bool,
     *,
-    name: str,
     n_workers: int,
     worker_vm_type: str,
     adaptive_max: int | None,
-) -> None:
-    """Enter a short-lived Coiled Dask cluster + client on ``stack``.
+) -> Iterator[None]:
+    """Yield with a Coiled Dask client active, or as a no-op when ``use_coiled`` is False.
 
-    Validation checks are lazy dask reductions; entering the cluster's client makes every
-    ``.compute()`` run on workers while the driver keeps rendering tables and the exit gate.
-    Only scalar results return to the driver, so full arrays never touch the caller. The
-    cluster tears down when ``stack`` unwinds.
+    Validation checks are lazy dask reductions; the active client makes every ``.compute()``
+    run on cluster workers while the driver keeps rendering tables and the exit gate — only
+    scalar results return to the driver, so full arrays never touch it. When ``use_coiled``
+    is False the reductions run in-process on the default scheduler.
 
-    Scheduler and workers share ``worker_vm_type`` so their processor architectures match;
-    otherwise Coiled defaults the scheduler to an x86_64 type and rejects the mix with
-    aarch64 (Graviton) workers.
+    Reuses :func:`srm.config.setup_cluster` (the canonical SRM Coiled setup, as in
+    ``input_data/era5.py``) so region, tags, and spot policy live in one place. ``n_workers``
+    with ``adaptive_max`` becomes an ``[min, max]`` range so Coiled scales adaptively, and the
+    scheduler VM type is pinned to the worker type so their processor architectures match
+    (Coiled rejects mixing x86_64 and aarch64 Graviton VMs).
     """
-    import coiled
+    if not use_coiled:
+        yield
+        return
 
-    cluster = stack.enter_context(
-        coiled.Cluster(
-            name=name,
-            n_workers=n_workers,
-            worker_vm_types=[worker_vm_type],
-            scheduler_vm_types=[worker_vm_type],
-            region="us-west-2",
-            tags={"Project": "SRM"},
-        )
+    from srm.config import ClusterConfig, setup_cluster
+
+    config = ClusterConfig(
+        worker_vm_types=[worker_vm_type],
+        scheduler_vm_types=worker_vm_type,
+        n_workers=[n_workers, adaptive_max] if adaptive_max is not None else n_workers,
     )
-    if adaptive_max is not None:
-        cluster.adapt(minimum=n_workers, maximum=adaptive_max)
-    stack.enter_context(cluster.get_client())
+    with setup_cluster(config):
+        yield
 
 
 def _build_check_matrix_table(
@@ -1070,29 +1071,21 @@ def validate(
 
     pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
 
-    # Run reductions on Coiled (see _enter_validation_cluster); the cluster tears down when
-    # this block exits, before the tables and exit gate below run on the driver.
+    # Reductions run on Coiled (see _validation_cluster) so the driver only handles scalars.
     all_results = []
-    with contextlib.ExitStack() as stack:
-        if use_coiled:
-            _enter_validation_cluster(
-                stack,
-                name="bcsd-validate",
-                n_workers=n_workers,
-                worker_vm_type=worker_vm_type,
-                adaptive_max=adaptive_max,
-            )
-
+    with _validation_cluster(
+        use_coiled, n_workers=n_workers, worker_vm_type=worker_vm_type, adaptive_max=adaptive_max
+    ):
         for g, s in pairs:
             try:
                 all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
             except pydantic.ValidationError as exc:
                 logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
 
-        # Per-member config time-domain checks (only when configs are supplied). Kept out of
-        # the gcm/scenario matrix below since they have member granularity; merged into
-        # all_results after rendering so blocking-failure aggregation picks them up.
-        config_results = [check_config_time_domain(c) for c in configs] if config_path else []
+    # Per-member config time-domain checks (only when configs are supplied). Driver-only
+    # metadata lookups, so kept outside the cluster block; merged into all_results after
+    # rendering so blocking-failure aggregation picks them up.
+    config_results = [check_config_time_domain(c) for c in configs] if config_path else []
 
     def _scenario_order(s: str) -> tuple[int, str]:
         if s == "historical":
@@ -1297,18 +1290,11 @@ def validate_output(
 
     summary_lines: list[str] = []
     any_blocking = False
-    # Run reductions on Coiled (see _enter_validation_cluster); the cluster tears down when
-    # this block exits, before the summary write / exit gate below run on the driver.
-    with contextlib.ExitStack() as stack:
-        if use_coiled:
-            _enter_validation_cluster(
-                stack,
-                name="bcsd-validate-output",
-                n_workers=n_workers,
-                worker_vm_type=worker_vm_type,
-                adaptive_max=adaptive_max,
-            )
-
+    # Reductions run on Coiled (see _validation_cluster) so the driver only handles scalars;
+    # the cluster tears down when this block exits, before the summary write / exit gate below.
+    with _validation_cluster(
+        use_coiled, n_workers=n_workers, worker_vm_type=worker_vm_type, adaptive_max=adaptive_max
+    ):
         for store_uri in store_uris:
             results = validate_output_store(
                 store_uri,
