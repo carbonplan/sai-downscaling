@@ -488,7 +488,7 @@ class TestTransformScenarioBehavior:
                 except Exception:
                     pass
         # detrend is called because tas has detrend_data=True
-        assert mock_detrend.call_count >= 1 or pipeline.config.detrend_data
+        assert mock_detrend.call_count >= 1 or pipeline.config.variable_config.detrend_data
 
     def test_ocean_mask_applied_when_enabled(self, pr_config, tmp_path):
         """Ocean mask is applied to scenario output when apply_ocean_mask=True."""
@@ -1573,7 +1573,7 @@ class TestDetrendScenarioBridge:
             predict_period_end=2084,
         )
         pipe = BCSDPipeline(cfg, pipeline_options)
-        assert cfg.detrend_data is False and cfg.is_sai_scenario is True
+        assert cfg.variable_config.detrend_data is False and cfg.is_sai_scenario is True
 
         ssp = MagicMock(name="ssp_timeseries")
         stitched = MagicMock(name="stitched")
@@ -1598,7 +1598,7 @@ class TestDetrendScenarioBridge:
             predict_period_end=2099,
         )
         pipe = BCSDPipeline(cfg, pipeline_options)
-        assert cfg.detrend_data is False and cfg.is_sai_scenario is False
+        assert cfg.variable_config.detrend_data is False and cfg.is_sai_scenario is False
 
         model_scenario = MagicMock(name="model_scenario")
         with patch("srm.pipeline.stitch_historical_scenario") as mock_stitch:

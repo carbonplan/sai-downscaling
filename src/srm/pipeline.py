@@ -375,7 +375,7 @@ class BCSDPipeline:
             "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
             "srm_downscaling:observation_dataset": self.config.obs_dataset,
             "srm_downscaling:bias_correction_method": self.config.debias_approach,
-            "srm_downscaling:downscaling_method": self.config.downscaling_method,
+            "srm_downscaling:downscaling_method": self.config.variable_config.downscaling_method,
             "srm_downscaling:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
             ),
@@ -697,8 +697,8 @@ class BCSDPipeline:
             variable=self.config.variable,
             mapping_type=mapping_type,
             detrending="no_detrending",
-            running_window_mode=self.config.do_windowing,
-            running_window_length=self.config.running_window_length,
+            running_window_mode=self.config.variable_config.do_windowing,
+            running_window_length=self.config.variable_config.running_window_length,
             running_window_step_length=1,
             running_window_mode_over_years_of_cm_future=False,
         )
@@ -739,8 +739,8 @@ class BCSDPipeline:
             da=debiased,
             obs_coarse=obs_coarse.as_numpy(),
             obs_fine=obs_fine.as_numpy(),
-            method=self.config.downscaling_method,
-            clim_method=self.config.downscaling_clim_method,
+            method=self.config.variable_config.downscaling_method,
+            clim_method=self.config.variable_config.downscaling_clim_method,
             allow_negative_values=False,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
@@ -1128,7 +1128,7 @@ class BCSDPipeline:
         at the SAI simulation year — otherwise ``tasmin = tasmax - dtr`` breaks against
         the bridged (full-length) tasmax on the missing days (issue #363).
         """
-        if not self.config.detrend_data:
+        if not self.config.variable_config.detrend_data:
             if self.config.is_sai_scenario:
                 # No detrending, but a SAI scenario still needs the SSP245 bridge so
                 # the debiased-coarse output spans predict_period_start..end (#363).
@@ -1171,7 +1171,7 @@ class BCSDPipeline:
         scenario_detrended, scenario_trend = detrend(
             da=historical_scenario,
             da_baseline_clim=da_baseline_clim,
-            detrend_method=self.config.detrend_method,
+            detrend_method=self.config.variable_config.detrend_method,
         )
 
         predict_slice = slice(
@@ -1232,8 +1232,8 @@ class BCSDPipeline:
         common_kwargs = dict(
             variable=self.config.variable,
             detrending="no_detrending",
-            running_window_mode=self.config.do_windowing,
-            running_window_length=self.config.running_window_length,
+            running_window_mode=self.config.variable_config.do_windowing,
+            running_window_length=self.config.variable_config.running_window_length,
             running_window_step_length=1,
             running_window_mode_over_years_of_cm_future=False,
         )
@@ -1266,7 +1266,7 @@ class BCSDPipeline:
             out_of_range, _, _ = calculate_out_of_range_mask(
                 model_hist=model_hist,
                 scenario_detrended=scenario_detrended,
-                center_window=self.config.running_window_length,
+                center_window=self.config.variable_config.running_window_length,
             )
             debiased_np = np.where(out_of_range.values, parametric_np, nonparametric_np)
 
@@ -1299,7 +1299,7 @@ class BCSDPipeline:
             _, out_of_range_low, out_of_range_high = calculate_out_of_range_mask(
                 model_hist=model_hist,
                 scenario_detrended=scenario_detrended,
-                center_window=self.config.running_window_length,
+                center_window=self.config.variable_config.running_window_length,
             )
 
             debiased_np = np.where(out_of_range_low.values, parametric_low_np, nonparametric_np)
@@ -1514,7 +1514,7 @@ class BCSDPipeline:
             scenario_debiased = retrend(
                 bias_corrected_detrended=scenario_debiased,
                 trend_on_daily_timestep=scenario_trend,
-                detrend_method=self.config.detrend_method,
+                detrend_method=self.config.variable_config.detrend_method,
             )
             logger.info("Re-trended scenario (%.2fs)", time.perf_counter() - t0)
 
