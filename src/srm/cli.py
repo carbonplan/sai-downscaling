@@ -410,8 +410,8 @@ def configs_from_matrix(
         Directory for final downscaled outputs
     environment : str
         Environment name (qa, production)
-    version : str
-        Version identifier
+    branch : str
+        icechunk output branch (default: "main")
     subset_bounds : tuple[float, float, float, float] | None
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool

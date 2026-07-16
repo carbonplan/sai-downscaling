@@ -44,7 +44,7 @@ debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 | Component | Values | Example |
 | --- | --- | --- |
 | `scenario_group` | `ssp245`, `g6_1p5k`, `esgf_ssp245` | `ssp245` |
-| `variable` | `tas`, `tasmax`, `pr`, `rsds`, … | `tas` |
+| `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `dtr`, `hurs` | `tas` |
 | `ensemble_member` | e.g. `001`, `002`, `r1i1p1f1` | `001` |
 | `hist_member` | resolved historical parent member | `r1i1p1f1` |
 
@@ -177,7 +177,7 @@ import yaml
 from srm.bcsd_config import BCSDConfig
 
 # Reconstruct BCSDConfig from the YAML you intend to run
-with open("configs/production/cesm2-waccm/cesm2-waccm-ssp245.yaml") as f:
+with open("configs/production/cesm2-waccm/cesm2-waccm-ssp245-std.yaml") as f:
     yaml_config = BCSDConfig(**yaml.safe_load(f))
 
 # Reconstruct BCSDConfig from what was actually written

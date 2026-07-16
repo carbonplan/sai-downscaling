@@ -12,16 +12,16 @@ s3://carbonplan-scratch/srm/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.
   branch: v1.2.3   ← defaults to installed package version
 
 # Output store — fine-res historical + scenario results + debiased coarse data
-s3://carbonplan-scratch/srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+s3://carbonplan-scratch/srm/outputs/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
 
 # Examples for CESM2-WACCM, ERA5, global run:
 s3://carbonplan-scratch/srm/cache/qa/CESM2-WACCM-ERA5-global.icechunk
-s3://carbonplan-scratch/srm/output/qa/CESM2-WACCM-ERA5-global.icechunk
+s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-global.icechunk
 
 # Regional subset (South Africa):
 s3://carbonplan-scratch/srm/cache/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
-s3://carbonplan-scratch/srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
 ```
 
 Within each store the zarr groups are:
@@ -37,7 +37,7 @@ Within each store the zarr groups are:
 These five are the primary artifacts — written unconditionally on every run. The `debiased_coarse`
 groups expose the GCM data after bias correction but before spatial disaggregation, at the native
 coarse GCM resolution (~1–2°). `hist_member` is the resolved historical parent member (see
-[ensemble member lineage](../explanation/bcsd-methods.md#9-ensemble-member-lineage)); for most
+[ensemble member lineage](ensemble-member-lineage.ipynb)); for most
 variables it equals `member`, but for SAI scenarios they can differ.
 
 ## Intermediate Artifacts
