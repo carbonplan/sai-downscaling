@@ -9,6 +9,8 @@ pipeline execution.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import itertools
 
 import cf_xarray  # noqa: F401  # registers CF accessor
@@ -679,50 +681,58 @@ def disagg_test_print_evaluation_for_metric(
         print((metrics_to_evaluate[metric] < metric_min_thresh).mean(dim=["lat", "lon"]).values)
 
 
-def disagg_test_print_all_evaluation_metrics(metrics, is_regional_subset=True):
+def disagg_test_print_all_evaluation_metrics(metrics, is_regional_subset=True, log_path=None):
     if is_regional_subset:
         metrics_to_evaluate = metrics.isel(lat=slice(1, -1), lon=slice(1, -1))
     else:
         metrics_to_evaluate = metrics
 
-    disagg_test_print_evaluation_for_metric(
-        metric="rmse",
-        metrics_to_evaluate=metrics_to_evaluate,
-        metric_max_thresh=0.9,
-        metric_min_thresh=0.0,
-    )
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        disagg_test_print_evaluation_for_metric(
+            metric="rmse",
+            metrics_to_evaluate=metrics_to_evaluate,
+            metric_max_thresh=0.9,
+            metric_min_thresh=0.0,
+        )
 
-    disagg_test_print_evaluation_for_metric(
-        metric="bias",
-        metrics_to_evaluate=metrics_to_evaluate,
-        metric_max_thresh=0.3,
-        metric_min_thresh=-0.3,
-    )
+        disagg_test_print_evaluation_for_metric(
+            metric="bias",
+            metrics_to_evaluate=metrics_to_evaluate,
+            metric_max_thresh=0.3,
+            metric_min_thresh=-0.3,
+        )
 
-    disagg_test_print_evaluation_for_metric(
-        metric="std_resid",
-        metrics_to_evaluate=metrics_to_evaluate,
-        metric_max_thresh=0.7,
-        metric_min_thresh=0.0,
-    )
+        disagg_test_print_evaluation_for_metric(
+            metric="std_resid",
+            metrics_to_evaluate=metrics_to_evaluate,
+            metric_max_thresh=0.7,
+            metric_min_thresh=0.0,
+        )
 
-    disagg_test_print_evaluation_for_metric(
-        metric="mae",
-        metrics_to_evaluate=metrics_to_evaluate,
-        metric_max_thresh=0.7,
-        metric_min_thresh=0.0,
-    )
+        disagg_test_print_evaluation_for_metric(
+            metric="mae",
+            metrics_to_evaluate=metrics_to_evaluate,
+            metric_max_thresh=0.7,
+            metric_min_thresh=0.0,
+        )
 
-    disagg_test_print_evaluation_for_metric(
-        metric="max_dev",
-        metrics_to_evaluate=metrics_to_evaluate,
-        metric_max_thresh=1,
-        metric_min_thresh=0.0,
-    )
+        disagg_test_print_evaluation_for_metric(
+            metric="max_dev",
+            metrics_to_evaluate=metrics_to_evaluate,
+            metric_max_thresh=1,
+            metric_min_thresh=0.0,
+        )
 
-    disagg_test_print_evaluation_for_metric(
-        metric="r2_oneone",
-        metrics_to_evaluate=metrics_to_evaluate,
-        metric_max_thresh=1,
-        metric_min_thresh=0.9,
-    )
+        disagg_test_print_evaluation_for_metric(
+            metric="r2_oneone",
+            metrics_to_evaluate=metrics_to_evaluate,
+            metric_max_thresh=1,
+            metric_min_thresh=0.9,
+        )
+
+    output = buf.getvalue()
+    print(output, end="")
+    if log_path is not None:
+        with open(log_path, "a") as f:
+            f.write(output)
