@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+from pathlib import Path
 
 import cf_xarray  # noqa: F401  # registers CF accessor
 import matplotlib.pyplot as plt
@@ -710,7 +711,13 @@ def disagg_test_print_evaluation_for_metric(
 
 
 def disagg_test_print_all_evaluation_metrics(
-    metrics, variable, is_regional_subset=True, log_path=None
+    metrics,
+    variable,
+    scenario,
+    ensemble_member,
+    timescale,
+    is_regional_subset=True,
+    log_path=None,
 ):
     thresholds = DISAGG_EVAL_THRESHOLDS[variable]
     if is_regional_subset:
@@ -718,6 +725,7 @@ def disagg_test_print_all_evaluation_metrics(
     else:
         metrics_to_evaluate = metrics
 
+    rows = []
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         for metric, limits in thresholds.items():
@@ -727,9 +735,30 @@ def disagg_test_print_all_evaluation_metrics(
                 metric_max_thresh=limits["eval_max"],
                 metric_min_thresh=limits["eval_min"],
             )
+            rows.append(
+                {
+                    "variable": variable,
+                    "scenario": scenario,
+                    "ensemble_member": ensemble_member,
+                    "timescale": timescale,
+                    "metric": metric,
+                    "max": float(np.nanmax(metrics_to_evaluate[metric])),
+                    "min": float(np.nanmin(metrics_to_evaluate[metric])),
+                    "fraction_above": float(
+                        (metrics_to_evaluate[metric] > limits["eval_max"])
+                        .mean(dim=["lat", "lon"])
+                        .values
+                    ),
+                    "fraction_below": float(
+                        (metrics_to_evaluate[metric] < limits["eval_min"])
+                        .mean(dim=["lat", "lon"])
+                        .values
+                    ),
+                }
+            )
 
-    output = buf.getvalue()
-    print(output, end="")
+    print(buf.getvalue(), end="")
     if log_path is not None:
-        with open(log_path, "a") as f:
-            f.write(output)
+        csv_path = Path(log_path).with_suffix(".csv")
+        df = pd.DataFrame(rows)
+        df.to_csv(csv_path, mode="a", header=not csv_path.exists(), index=False)
