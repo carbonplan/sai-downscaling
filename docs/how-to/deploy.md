@@ -38,7 +38,7 @@ QA runs execute all configs in `configs/qa/` against a small South Africa spatia
 
 1. Go to **Actions → deploy → Run workflow**
 2. Optionally enable **Force recompute** to bypass the S3 cache
-3. Optionally provide a **version** override (the workflow input, passed to the pipeline's `--branch` flag) to pin a specific cache namespace
+3. Optionally provide a **branch** override to pin a specific cache namespace (passed to the pipeline's `--branch` flag)
 4. Click **Run workflow**
 
 The job runs two steps in order:
