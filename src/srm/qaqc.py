@@ -665,6 +665,34 @@ def disagg_test_plot_summary_stats(
         plt.savefig(savefig_path)
 
 
+DISAGG_EVAL_THRESHOLDS = {
+    "tas": {
+        "rmse": {"eval_max": 0.5, "eval_min": 0.0},
+        "bias": {"eval_max": 0.1, "eval_min": -0.1},
+        "std_resid": {"eval_max": 0.5, "eval_min": 0.0},
+        "mae": {"eval_max": 0.5, "eval_min": 0.0},
+        "max_dev": {"eval_max": 1.0, "eval_min": 0.0},
+        "r2_oneone": {"eval_max": 1.0, "eval_min": 0.98},
+    },
+    "tasmax": {
+        "rmse": {"eval_max": 0.5, "eval_min": 0.0},
+        "bias": {"eval_max": 0.1, "eval_min": -0.1},
+        "std_resid": {"eval_max": 0.5, "eval_min": 0.0},
+        "mae": {"eval_max": 0.5, "eval_min": 0.0},
+        "max_dev": {"eval_max": 1.0, "eval_min": 0.0},
+        "r2_oneone": {"eval_max": 1.0, "eval_min": 0.98},
+    },
+    "tasmin": {
+        "rmse": {"eval_max": 0.5, "eval_min": 0.0},
+        "bias": {"eval_max": 0.1, "eval_min": -0.1},
+        "std_resid": {"eval_max": 0.5, "eval_min": 0.0},
+        "mae": {"eval_max": 0.5, "eval_min": 0.0},
+        "max_dev": {"eval_max": 1.0, "eval_min": 0.0},
+        "r2_oneone": {"eval_max": 1.0, "eval_min": 0.98},
+    },
+}
+
+
 def disagg_test_print_evaluation_for_metric(
     metric, metrics_to_evaluate, metric_max_thresh=None, metric_min_thresh=None
 ):
@@ -681,7 +709,10 @@ def disagg_test_print_evaluation_for_metric(
         print((metrics_to_evaluate[metric] < metric_min_thresh).mean(dim=["lat", "lon"]).values)
 
 
-def disagg_test_print_all_evaluation_metrics(metrics, is_regional_subset=True, log_path=None):
+def disagg_test_print_all_evaluation_metrics(
+    metrics, variable, is_regional_subset=True, log_path=None
+):
+    thresholds = DISAGG_EVAL_THRESHOLDS[variable]
     if is_regional_subset:
         metrics_to_evaluate = metrics.isel(lat=slice(1, -1), lon=slice(1, -1))
     else:
@@ -689,47 +720,13 @@ def disagg_test_print_all_evaluation_metrics(metrics, is_regional_subset=True, l
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        disagg_test_print_evaluation_for_metric(
-            metric="rmse",
-            metrics_to_evaluate=metrics_to_evaluate,
-            metric_max_thresh=0.9,
-            metric_min_thresh=0.0,
-        )
-
-        disagg_test_print_evaluation_for_metric(
-            metric="bias",
-            metrics_to_evaluate=metrics_to_evaluate,
-            metric_max_thresh=0.3,
-            metric_min_thresh=-0.3,
-        )
-
-        disagg_test_print_evaluation_for_metric(
-            metric="std_resid",
-            metrics_to_evaluate=metrics_to_evaluate,
-            metric_max_thresh=0.7,
-            metric_min_thresh=0.0,
-        )
-
-        disagg_test_print_evaluation_for_metric(
-            metric="mae",
-            metrics_to_evaluate=metrics_to_evaluate,
-            metric_max_thresh=0.7,
-            metric_min_thresh=0.0,
-        )
-
-        disagg_test_print_evaluation_for_metric(
-            metric="max_dev",
-            metrics_to_evaluate=metrics_to_evaluate,
-            metric_max_thresh=1,
-            metric_min_thresh=0.0,
-        )
-
-        disagg_test_print_evaluation_for_metric(
-            metric="r2_oneone",
-            metrics_to_evaluate=metrics_to_evaluate,
-            metric_max_thresh=1,
-            metric_min_thresh=0.9,
-        )
+        for metric, limits in thresholds.items():
+            disagg_test_print_evaluation_for_metric(
+                metric=metric,
+                metrics_to_evaluate=metrics_to_evaluate,
+                metric_max_thresh=limits["eval_max"],
+                metric_min_thresh=limits["eval_min"],
+            )
 
     output = buf.getvalue()
     print(output, end="")
