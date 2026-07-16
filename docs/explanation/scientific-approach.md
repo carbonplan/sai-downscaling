@@ -44,7 +44,7 @@ We then spatially disaggregated the debiased coarse GCM data to the high-resolut
 
 ### Variable-specific implementation
 
-The implementation above applies to mean temperature (tas) and maximum temperature (tasmax). For tasmin, we did the workflow above for the diurnal temperature range and max temperature (see ref in NASA NEX). Precip: . Special constraints for relative humidity.
+The implementation above applies to mean temperature (`tas`) and maximum temperature (`tasmax`). Minimum temperature (`tasmin`) is not bias-corrected directly: following the NASA-NEX approach, we bias-correct `tasmax` and the diurnal temperature range (`dtr = tasmax − tasmin`), reconstruct `tasmin = tasmax − dtr` on the debiased coarse grid, and then — because `tasmax` and `tasmin` are spatially disaggregated independently — swap any fine cells left with `tasmax < tasmin` so that the physical constraint `tasmax >= tasmin` holds everywhere in the published output. Precip: . Special constraints for relative humidity.
 
 ## Quality checks
 
