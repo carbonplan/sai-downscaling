@@ -35,9 +35,12 @@ These fields identify a BCSD run and affect computation results. Changing any of
 ```yaml
 # Model identifiers (singular or list)
 gcm: "CESM2-WACCM"                    # GCM model name
-variable: "tas"                        # Variable: tas, tasmax, pr, rsds
+variable: "tas"                        # Variable: tas, tasmax, tasmin, pr, rsds, dtr, hurs
 ensemble_member: "r1i1p1f1"            # Ensemble member label (e.g. "r1i1p1f1", "01")
 scenario: "SSP245"                     # Scenario: SSP245, G6-1.5K, etc. (null for historical-only)
+
+# Observation dataset (catalog key)
+obs_dataset: "ERA5"                    # Observation dataset key (default: "ERA5")
 
 # Time periods
 train_period_start: 1978               # Training period start year (default: 1978)
@@ -54,8 +57,10 @@ debias_approach: "nonparametric_hybrid_2sided"  # parametric, nonparametric, non
 # Variable-specific settings (auto-loaded from per-variable defaults if not specified)
 variable_config:
   detrend_data: true                   # Whether to detrend (auto-set based on variable)
-  do_windowing: true                   # Use 31-day running window for QM
-  downscaling_method: "additive"       # "additive" for temp, "multiplicative" for precip
+  detrend_method: "additive"           # "additive" or "multiplicative" trend model
+  do_windowing: true                   # Use a running window for quantile mapping
+  running_window_length: 31            # Running-window length in days (default: 31)
+  downscaling_method: "additive"       # "additive" for temperature-like vars, "multiplicative" for pr/rsds
   downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
 ```
 
@@ -81,6 +86,13 @@ verbose: true                          # Enable verbose logging (default: true)
 rechunk_workflow: true                 # Enable strategic rechunking between stages (default: true)
 apply_ocean_mask: false                # Mask ocean pixels to NaN in final output (default: false)
 save_intermediate: false               # Save intermediate artifacts for debugging (default: false)
+
+# Post-bias-correction clipping
+clip_values: true                      # Apply per-variable clipping after bias correction (default: true)
+clip_bounds:                           # Per-variable [min, max] bounds applied when clip_values=true
+  pr: {min: 0.0}                        #   defaults: pr >= 0
+  rsds: {min: 0.0}                      #            rsds >= 0
+  hurs: {min: 0.0, max: 105.0}          #            0 <= hurs <= 105
 ```
 
 All `PipelineOptions` fields are optional — defaults are suitable for most runs. Override `scratch_dir` and `output_dir` to point at your own storage.
@@ -137,16 +149,19 @@ This is useful for:
 
 ## Variable-Specific Auto-Configuration
 
-The pipeline automatically sets variable-specific parameters based on `BCSD_CONFIG` defaults:
+The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/srm/bcsd_config.py`). All variables use a `running_window_length` of `31` days.
 
-| Variable | detrend_data | do_windowing | downscaling_method | downscaling_clim_method |
-| --- | --- | --- | --- | --- |
-| `tas` | `true` | `true` | `additive` | `fft` |
-| `tasmax` | `true` | `true` | `additive` | `fft` |
-| `pr` | `false` | `true` | `multiplicative` | `simple` |
-| `rsds` | `true` | `true` | `multiplicative` | `simple` |
+| Variable | detrend_data | detrend_method | do_windowing | downscaling_method | downscaling_clim_method |
+| --- | --- | --- | --- | --- | --- |
+| `tas` | `true` | `additive` | `true` | `additive` | `fft` |
+| `tasmax` | `true` | `additive` | `true` | `additive` | `fft` |
+| `tasmin` | `true` | `additive` | `true` | `additive` | `fft` |
+| `pr` | `false` | `multiplicative` | `true` | `multiplicative` | `fft` |
+| `rsds` | `false` | `multiplicative` | `true` | `multiplicative` | `fft` |
+| `dtr` | `false` | `multiplicative` | `true` | `multiplicative` | `fft` |
+| `hurs` | `false` | `additive` | `true` | `multiplicative` | `fft` |
 
-You can override these in the config file if needed.
+You can override these per run through the nested `variable_config` block in the config file, or with the `bcsd run-matrix` override flags (`--downscaling-method`, `--detrend-data/--no-detrend-data`, etc.).
 
 ## Validation Examples
 

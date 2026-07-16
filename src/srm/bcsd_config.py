@@ -519,8 +519,8 @@ scenario: ssp245
 predict_period_start: 2015
 predict_period_end: 2100
 environment: qa
-# version defaults to installed package version; override here if needed
-# version: 1.0.post3
+# branch defaults to installed package version; override here if needed
+# branch: v1.0.post3
 """
 
 import yaml
