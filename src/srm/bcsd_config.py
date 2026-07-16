@@ -208,9 +208,14 @@ class BCSDConfig(pydantic_settings.BaseSettings):
 
     model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 
-    # Variable-specific settings (auto-populated)
-    variable_config: VariableConfig | None = Field(
-        None, description="Variable-specific BCSD parameters. Auto-populated if None."
+    # Variable-specific settings. Always populated: when not supplied explicitly it is
+    # derived from ``variable`` in a ``mode="before"`` validator (see below), so it is
+    # never ``None`` after construction. This is the single source of truth for
+    # variable-specific parameters — there are deliberately no per-field accessors on
+    # BCSDConfig, since those silently mapped variables to the wrong method (issue #423).
+    variable_config: VariableConfig = Field(
+        default=None,  # type: ignore[assignment]  # populated by _populate_variable_config
+        description="Variable-specific BCSD parameters. Auto-populated from `variable`.",
     )
 
     @model_validator(mode="before")
@@ -224,10 +229,20 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             )
         return data
 
-    def model_post_init(self, __context) -> None:
-        """Post-initialization validation and auto-population"""
-        if self.variable_config is None:
-            self.variable_config = VariableConfig.for_variable(self.variable)
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_variable_config(cls, data):
+        """Derive ``variable_config`` from ``variable`` when it is not supplied.
+
+        Runs before field validation so ``variable_config`` can be declared as a
+        required (non-optional) field and is never ``None`` after construction. An
+        invalid ``variable`` raises here with a single clear "Unknown variable" error.
+        """
+        if isinstance(data, dict) and data.get("variable_config") is None:
+            variable = data.get("variable")
+            if variable is not None:
+                data["variable_config"] = VariableConfig.for_variable(variable)
+        return data
 
     @field_validator("predict_period_start", "predict_period_end")
     @classmethod
@@ -316,36 +331,6 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         # Create stable string representation and hash
         hash_str = str(sorted(hash_params.items()))
         return hashlib.sha256(hash_str.encode()).hexdigest()[:12]
-
-    @computed_field
-    def detrend_data(self) -> bool:
-        """Convenience accessor for variable config"""
-        return self.variable_config.detrend_data if self.variable_config else False
-
-    @computed_field
-    def detrend_method(self) -> DetrendMethod:
-        """Convenience accessor for variable config"""
-        return self.variable_config.detrend_method if self.variable_config else "additive"
-
-    @computed_field
-    def do_windowing(self) -> bool:
-        """Convenience accessor for variable config"""
-        return self.variable_config.do_windowing if self.variable_config else False
-
-    @computed_field
-    def running_window_length(self) -> int:
-        """Convenience accessor for variable config"""
-        return self.variable_config.running_window_length if self.variable_config else 31
-
-    @computed_field
-    def downscaling_method(self) -> DownscalingMethod:
-        """Convenience accessor for variable config"""
-        return self.variable_config.downscaling_method if self.variable_config else "additive"
-
-    @computed_field
-    def downscaling_clim_method(self) -> DownscalingClimMethod:
-        """Convenience accessor for variable config"""
-        return self.variable_config.downscaling_clim_method if self.variable_config else "fft"
 
     @computed_field
     def is_sai_scenario(self) -> bool:
@@ -481,8 +466,8 @@ config = BCSDConfig(
 )
 
 print(config.run_id)  # "CESM2-WACCM_tas_e00_ssp245"
-print(config.detrend_data)  # True (auto-loaded from variable config)
-print(config.downscaling_method)  # "additive"
+print(config.variable_config.detrend_data)  # True (auto-loaded from variable config)
+print(config.variable_config.downscaling_method)  # "additive"
 
 # 2. SAI scenario
 sai_config = BCSDConfig(
@@ -495,7 +480,7 @@ sai_config = BCSDConfig(
 )
 
 print(sai_config.is_sai_scenario)  # True
-print(sai_config.detrend_data)  # False (precipitation doesn't detrend)
+print(sai_config.variable_config.detrend_data)  # False (precipitation doesn't detrend)
 
 # 3. Regional subset
 subset_config = BCSDConfig(

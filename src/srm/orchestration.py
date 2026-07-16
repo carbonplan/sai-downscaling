@@ -257,7 +257,7 @@ class BCSDOrchestrator:
         except ImportError:
             raise ImportError("Coiled is not installed. Install with: uv pip install coiled")
 
-        # Exclude computed fields (run_id, config_hash, detrend_data, etc.) since they
+        # Exclude computed fields (run_id, config_hash, is_sai_scenario) since they
         # are derived values and BCSDConfig does not accept them as constructor inputs.
         computed_fields = set(BCSDConfig.model_computed_fields.keys())
         cache = self._get_cache()
