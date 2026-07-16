@@ -3,6 +3,8 @@
 # tasmax/tasmin (and derived dtr) use the corrected historical run and only exist
 # for SSP245 members 006-010; members 001-005 are standard-vars-only due to the
 # CMIP6 tasmax/tasmin bug. Standard variables live in cesm2-waccm-ssp245-std.yaml.
+# Member 008's data ends 2070, so predict_period_end is clamped to 2070 to avoid
+# downscaling past its valid extent.
 #
 # Equivalent CLI command:
 #   uv run bcsd run --config-path configs/production/
@@ -16,7 +18,7 @@ scenarios: ["SSP245"]
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2100
+predict_period_end: 2070
 
 debias_approach: "nonparametric_hybrid_2sided"
 
