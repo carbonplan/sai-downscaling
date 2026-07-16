@@ -12,6 +12,7 @@ from __future__ import annotations
 import itertools
 
 import cf_xarray  # noqa: F401  # registers CF accessor
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -557,3 +558,171 @@ def check_ensemble_spread(ds: xr.Dataset, label: str, var: str = "tas", day_inde
         "means": means,
         "spread_ok": spread_ok,
     }
+
+
+def disagg_test_calculate_metrics(x, y):
+    # Align on time so positional pairing can't silently drift
+    x, y = xr.align(x, y, join="inner")
+
+    # Only count cells/times where BOTH are finite, so every metric uses the same n
+    good = x.notnull() & y.notnull()
+    x = x.where(good)
+    y = y.where(good)
+
+    resid = y - x  # deviation from 1:1 line
+
+    n = good.sum("time")
+    bias = resid.mean("time")
+    mae = np.abs(resid).mean("time")
+    rmse = np.sqrt((resid**2).mean("time"))
+    max_dev = np.abs(resid).max("time")
+    std_resid = resid.std("time")
+    rmse_perp = rmse / np.sqrt(2)
+
+    # R² vs 1:1 (Nash–Sutcliffe): 1 = perfect, can go negative
+    ss_res = (resid**2).sum("time")
+    ss_tot = ((y - y.mean("time")) ** 2).sum("time")
+    r2_oneone = 1 - ss_res / ss_tot
+
+    # Pearson r per cell (shape agreement) for contrast
+    xm, ym = x - x.mean("time"), y - y.mean("time")
+    pearson = (xm * ym).sum("time") / np.sqrt((xm**2).sum("time") * (ym**2).sum("time"))
+
+    metrics = xr.Dataset(
+        {
+            "n": n,
+            "bias": bias,
+            "mae": mae,
+            "rmse": rmse,
+            "rmse_perp": rmse_perp,
+            "max_dev": max_dev,
+            "std_resid": std_resid,
+            "r2_oneone": r2_oneone,
+            "pearson": pearson,
+        }
+    )
+
+    return metrics
+
+
+def disagg_test_plot_summary_stats(
+    metrics,
+    vmax_rmse=None,
+    vmax_bias=None,
+    vmax_std_resid=None,
+    vmax_mae=None,
+    vmax_max_dev=None,
+    savefig_path=None,
+):
+    nrows = 2
+    ncols = 3
+
+    plt.figure(figsize=(20, 12))
+
+    plt.subplot(nrows, ncols, 1)
+    if vmax_rmse is None:
+        metrics["rmse"].plot(vmin=0)
+    else:
+        metrics["rmse"].plot(vmin=0, vmax=vmax_rmse)
+    plt.title("RMSE")
+
+    plt.subplot(nrows, ncols, 2)
+    if vmax_bias is None:
+        metrics["bias"].plot()
+    else:
+        metrics["bias"].plot(vmax=vmax_bias, vmin=-vmax_bias, cmap=plt.cm.RdBu_r)
+    plt.title("Bias relative to coarse debiased \n (goal: bias=0)")
+
+    plt.subplot(nrows, ncols, 3)
+    if vmax_std_resid is None:
+        metrics["std_resid"].plot(vmin=0)
+    else:
+        metrics["std_resid"].plot(vmin=0, vmax=vmax_std_resid)
+    plt.title("Std residual")
+
+    plt.subplot(nrows, ncols, 4)
+    if vmax_mae is None:
+        metrics["mae"].plot(vmin=0)
+    else:
+        metrics["mae"].plot(vmin=0, vmax=vmax_mae)
+    plt.title("MAE")
+
+    plt.subplot(nrows, ncols, 5)
+    if vmax_max_dev is None:
+        metrics["max_dev"].plot(vmin=0)
+    else:
+        metrics["max_dev"].plot(vmin=0, vmax=vmax_max_dev)
+    plt.title("Maximum deviation")
+
+    plt.subplot(nrows, ncols, 6)
+    metrics["r2_oneone"].plot(vmin=0.9, vmax=1)
+    plt.title("R2 relative to 1:1 line")
+
+    plt.tight_layout()
+    if savefig_path is not None:
+        plt.savefig(savefig_path)
+
+
+def disagg_test_print_evaluation_for_metric(
+    metric, metrics_to_evaluate, metric_max_thresh=None, metric_min_thresh=None
+):
+    print("---------------" + metric + "---------------")
+    print("Max:")
+    print(np.nanmax(metrics_to_evaluate[metric]))
+    print("Min:")
+    print(np.nanmin(metrics_to_evaluate[metric]))
+    if metric_max_thresh is not None:
+        print("Fraction above threshold:")
+        print((metrics_to_evaluate[metric] > metric_max_thresh).mean(dim=["lat", "lon"]).values)
+    if metric_min_thresh is not None:
+        print("Fraction below threshold:")
+        print((metrics_to_evaluate[metric] < metric_min_thresh).mean(dim=["lat", "lon"]).values)
+
+
+def disagg_test_print_all_evaluation_metrics(metrics, is_regional_subset=True):
+    if is_regional_subset:
+        metrics_to_evaluate = metrics.isel(lat=slice(1, -1), lon=slice(1, -1))
+    else:
+        metrics_to_evaluate = metrics
+
+    disagg_test_print_evaluation_for_metric(
+        metric="rmse",
+        metrics_to_evaluate=metrics_to_evaluate,
+        metric_max_thresh=0.9,
+        metric_min_thresh=0.0,
+    )
+
+    disagg_test_print_evaluation_for_metric(
+        metric="bias",
+        metrics_to_evaluate=metrics_to_evaluate,
+        metric_max_thresh=0.3,
+        metric_min_thresh=-0.3,
+    )
+
+    disagg_test_print_evaluation_for_metric(
+        metric="std_resid",
+        metrics_to_evaluate=metrics_to_evaluate,
+        metric_max_thresh=0.7,
+        metric_min_thresh=0.0,
+    )
+
+    disagg_test_print_evaluation_for_metric(
+        metric="mae",
+        metrics_to_evaluate=metrics_to_evaluate,
+        metric_max_thresh=0.7,
+        metric_min_thresh=0.0,
+    )
+
+    disagg_test_print_evaluation_for_metric(
+        metric="max_dev",
+        metrics_to_evaluate=metrics_to_evaluate,
+        metric_max_thresh=1,
+        metric_min_thresh=0.0,
+    )
+
+    disagg_test_print_evaluation_for_metric(
+        metric="r2_oneone",
+        metrics_to_evaluate=metrics_to_evaluate,
+        metric_max_thresh=1,
+        metric_min_thresh=0.9,
+    )
