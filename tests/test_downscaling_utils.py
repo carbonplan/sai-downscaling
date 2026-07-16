@@ -8,6 +8,7 @@ import xarray as xr
 from srm import downscaling_utils
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
+    derive_tasmin,
     detrend,
     fft_smooth_3harmonics,
     get_historical_experiment,
@@ -622,3 +623,37 @@ class TestSwapTemperatureExtremes:
         new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
         assert new_max.name == "tasmax"
         assert new_max.values[0, 1] == 295.0
+
+
+# ---------------------------------------------------------------------------
+# derive_tasmin — fail loud on mismatched tasmax/dtr time axes (issue #363)
+# ---------------------------------------------------------------------------
+
+
+def _temp_series(times, value, name):
+    return xr.DataArray(
+        np.full((len(times), 1, 1), value, dtype="float32"),
+        dims=["time", "lat", "lon"],
+        coords={"time": times, "lat": [0.0], "lon": [0.0]},
+        name=name,
+    )
+
+
+class TestDeriveTasmin:
+    def test_matching_axes_subtracts(self):
+        t = np.arange("2015-01-01", "2015-01-05", dtype="datetime64[D]")
+        out = derive_tasmin(_temp_series(t, 300.0, "tasmax"), _temp_series(t, 10.0, "dtr"))
+        assert out.name == "tasmin"
+        assert float(out.isel(time=0, lat=0, lon=0)) == 290.0
+
+    def test_mismatched_start_raises(self):
+        t1 = np.arange("2015-01-01", "2015-01-05", dtype="datetime64[D]")
+        t2 = np.arange("2035-01-01", "2035-01-05", dtype="datetime64[D]")
+        with pytest.raises(ValueError, match="#363"):
+            derive_tasmin(_temp_series(t1, 300.0, "tasmax"), _temp_series(t2, 10.0, "dtr"))
+
+    def test_different_length_raises(self):
+        t1 = np.arange("2015-01-01", "2020-01-01", dtype="datetime64[D]")
+        t2 = np.arange("2015-01-01", "2018-01-01", dtype="datetime64[D]")
+        with pytest.raises(ValueError, match="time ax"):
+            derive_tasmin(_temp_series(t1, 300.0, "tasmax"), _temp_series(t2, 10.0, "dtr"))

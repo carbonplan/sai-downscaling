@@ -627,6 +627,39 @@ def downscale_from_coarse(
     return downscaled
 
 
+def derive_tasmin(tasmax: xr.DataArray, dtr: xr.DataArray) -> xr.DataArray:
+    """Return ``tasmin = tasmax - dtr``, requiring identical time axes.
+
+    ``dtr`` is produced by a separate (non-detrended) scenario path. For SAI
+    scenarios it was historically truncated to the SAI simulation period (~2035+)
+    while ``tasmax`` spans the full predict window (issue #363). Subtracting
+    mismatched axes silently NaN-fills ``tasmin`` on the non-overlapping days, so
+    fail loudly here instead — the upstream extent bug should be surfaced, not
+    shipped as scattered NaNs.
+
+    Parameters
+    ----------
+    tasmax, dtr : xr.DataArray
+        Debiased-coarse maximum temperature and diurnal temperature range, which
+        must share an identical ``time`` axis.
+
+    Returns
+    -------
+    xr.DataArray
+        ``tasmax - dtr`` named ``"tasmin"``.
+    """
+    if not tasmax.indexes["time"].equals(dtr.indexes["time"]):
+        tmax_t, dtr_t = tasmax["time"].values, dtr["time"].values
+        raise ValueError(
+            f"cannot derive tasmin: tasmax spans {tasmax.sizes['time']} timesteps "
+            f"({str(tmax_t.min())[:10]}..{str(tmax_t.max())[:10]}) but dtr spans "
+            f"{dtr.sizes['time']} ({str(dtr_t.min())[:10]}..{str(dtr_t.max())[:10]}); "
+            f"their time axes must be identical (issue #363 — a truncated dtr would "
+            f"silently NaN-fill tasmin)."
+        )
+    return (tasmax - dtr).rename("tasmin")
+
+
 def swap_temperature_extremes(
     tasmax: xr.DataArray, tasmin: xr.DataArray
 ) -> tuple[xr.DataArray, xr.DataArray]:

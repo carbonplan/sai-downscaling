@@ -344,6 +344,25 @@ class DatasetChecker:
             issues.append(f"tasmax < tasmin at {min_gt_max} grid point(s)")
         return ValidationResult(len(issues) == 0, issues)
 
+    def validate_tasmax_ge_tasmin(self, isel_kwargs: dict | None = None) -> ValidationResult:
+        """Blocking cross-variable gate: ``tasmax >= tasmin`` everywhere (issue #331).
+
+        Unlike :meth:`validate_temp_consistency` this needs only ``tasmax`` and
+        ``tasmin`` (not ``tas``), so it also covers the temperature-extremes-only
+        outputs. NaN-safe (NaN comparisons are False). A nonzero count means the
+        reconcile step did not land — the run must not ship.
+        """
+        required = {"tasmin", "tasmax"}
+        if not required.issubset(self.ds.data_vars):
+            return ValidationResult(True, [])
+        subset = (
+            self.ds[list(required)].isel(**isel_kwargs) if isel_kwargs else self.ds[list(required)]
+        )
+        n = int((subset["tasmax"] < subset["tasmin"]).sum().compute())
+        if n > 0:
+            return ValidationResult(False, [f"tasmax < tasmin at {n} grid point(s)"])
+        return ValidationResult(True, [])
+
     def validate_no_identical_vars(self) -> ValidationResult:
         if "time" not in self.ds.dims or self.ds.sizes["time"] == 0:
             return ValidationResult(True, [])

@@ -1380,3 +1380,57 @@ class TestTasminCacheShortCircuit:
 
         mock_write.assert_not_called()
         assert result == p.cache.scenario_loc.store_path
+
+
+# ---------------------------------------------------------------------------
+# _detrend_scenario: SAI bridge is applied even when detrend_data=False (#363)
+# ---------------------------------------------------------------------------
+
+
+class TestDetrendScenarioBridge:
+    def test_detrend_off_sai_still_bridges(self, pipeline_options):
+        # dtr has detrend_data=False; for a SAI scenario it must still stitch the
+        # SSP245 bridge so the output spans the full predict window (issue #363).
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="dtr",
+            ensemble_member="003",
+            scenario="G6-1.5K",
+            predict_period_start=2015,
+            predict_period_end=2084,
+        )
+        pipe = BCSDPipeline(cfg, pipeline_options)
+        assert cfg.detrend_data is False and cfg.is_sai_scenario is True
+
+        ssp = MagicMock(name="ssp_timeseries")
+        stitched = MagicMock(name="stitched")
+        stitched.sel.return_value = "bridged-predict-slice"
+        with patch("srm.pipeline.stitch_historical_scenario", return_value=stitched) as mock_stitch:
+            out, trend = pipe._detrend_scenario(MagicMock(), MagicMock(), ssp)
+
+        mock_stitch.assert_called_once()
+        assert mock_stitch.call_args.kwargs["ssp_timeseries"] is ssp
+        assert out == "bridged-predict-slice"
+        assert trend is None
+
+    def test_detrend_off_non_sai_returns_scenario_unchanged(self, pipeline_options):
+        # pr has detrend_data=False; for a non-SAI scenario there is no bridge —
+        # the scenario is returned unchanged (regression: no behavior change).
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="pr",
+            ensemble_member="003",
+            scenario="SSP245",
+            predict_period_start=2015,
+            predict_period_end=2099,
+        )
+        pipe = BCSDPipeline(cfg, pipeline_options)
+        assert cfg.detrend_data is False and cfg.is_sai_scenario is False
+
+        model_scenario = MagicMock(name="model_scenario")
+        with patch("srm.pipeline.stitch_historical_scenario") as mock_stitch:
+            out, trend = pipe._detrend_scenario(MagicMock(), model_scenario, None)
+
+        mock_stitch.assert_not_called()
+        assert out is model_scenario
+        assert trend is None

@@ -30,6 +30,7 @@ from srm.config import _ensure_root_group, _icechunk_storage_for_path
 from srm.datasets import catalog as _catalog
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
+    derive_tasmin,
     detrend,
     downscale_from_coarse,
     get_experiment,
@@ -785,7 +786,7 @@ class BCSDPipeline:
         )
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
-        model_hist_debiased = debiased_tasmax - debiased_dtr
+        model_hist_debiased = derive_tasmin(debiased_tasmax, debiased_dtr)
         logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
@@ -1108,13 +1109,30 @@ class BCSDPipeline:
         """Optionally detrend the scenario timeseries.
 
         Returns (scenario_detrended, scenario_trend). When detrending is disabled,
-        returns (model_scenario, None) and scenario_trend will be None.
+        returns (scenario, None) and scenario_trend will be None.
 
         For SAI scenarios, stitches in SSP245 data to bridge the gap between the end of
-        historical (2014/2015) and the SAI simulation start (~2035) before detrending,
-        ensuring a smooth baseline for trend removal.
+        historical (2014/2015) and the SAI simulation start (~2035). This bridge is
+        applied even when detrending is disabled, so that non-detrended variables
+        (dtr, pr, rsds, hurs) still span the full predict window rather than starting
+        at the SAI simulation year — otherwise ``tasmin = tasmax - dtr`` breaks against
+        the bridged (full-length) tasmax on the missing days (issue #363).
         """
         if not self.config.detrend_data:
+            if self.config.is_sai_scenario:
+                # No detrending, but a SAI scenario still needs the SSP245 bridge so
+                # the debiased-coarse output spans predict_period_start..end (#363).
+                predict_slice = slice(
+                    f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
+                )
+                bridged = stitch_historical_scenario(
+                    model_hist=model_hist,
+                    model_scenario=model_scenario,
+                    train_period_end=self.config.train_period_end,
+                    predict_period_start=self.config.predict_period_start,
+                    ssp_timeseries=ssp_timeseries,
+                )
+                return bridged.sel(time=predict_slice), None
             return model_scenario, None
 
         if self.options.rechunk_workflow:
@@ -1342,7 +1360,7 @@ class BCSDPipeline:
         debiased_tasmax_loc = self.cache.debiased_coarse_scenario_loc(variable="tasmax")
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
-        scenario_debiased = debiased_tasmax - debiased_dtr
+        scenario_debiased = derive_tasmin(debiased_tasmax, debiased_dtr)
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
