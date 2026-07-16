@@ -128,11 +128,14 @@ def resolve_s3_glob(path):
     return matches[0]
 
 
-def open_icechunk(path):
-    bucket, prefix = path.replace("s3://", "").split("/", 1)
+def open_icechunk(path, group=None):
+    bucket, prefix = path.replace("s3://", "").rstrip("/").split("/", 1)
     storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
     repo = icechunk.Repository.open(storage)
     session = repo.readonly_session("main")
 
-    ds = xr.open_dataset(session.store, engine="zarr", chunks={})
+    if group is not None:
+        ds = xr.open_dataset(session.store, engine="zarr", group=group, chunks={})
+    else:
+        ds = xr.open_dataset(session.store, engine="zarr", chunks={})
     return ds
