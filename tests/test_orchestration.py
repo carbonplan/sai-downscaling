@@ -242,6 +242,75 @@ class TestSubmitStage:
 
 
 # ---------------------------------------------------------------------------
+# dependency-aware ordering: tasmin is derived from debiased-coarse tasmax and
+# dtr, so it must run only after those sibling variables are committed and final
+# (issue #363).
+# ---------------------------------------------------------------------------
+
+
+class TestTasminOrdering:
+    def _run_local_recorder(self, calls):
+        def fake(stage, cfgs):
+            calls.append([c.variable for c in cfgs])
+            return [f"path-{c.variable}-{i}" for i, c in enumerate(cfgs)]
+
+        return fake
+
+    def test_tasmin_runs_in_a_later_wave_than_tasmax_and_dtr(self, orchestrator):
+        configs = [
+            _make_config(variable="tasmax", ensemble_member="008"),
+            _make_config(variable="dtr", ensemble_member="008"),
+            _make_config(variable="tasmin", ensemble_member="008"),
+        ]
+        calls: list[list[str]] = []
+        with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
+            orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+
+        assert len(calls) == 2, "tasmin should be submitted in a separate, later wave"
+        assert "tasmin" not in calls[0]
+        assert set(calls[0]) == {"tasmax", "dtr"}
+        assert calls[1] == ["tasmin"]
+
+    def test_no_extra_wave_when_no_tasmin(self, orchestrator):
+        configs = [
+            _make_config(variable="tasmax", ensemble_member="008"),
+            _make_config(variable="dtr", ensemble_member="008"),
+        ]
+        calls: list[list[str]] = []
+        with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
+            orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+
+        assert len(calls) == 1
+        assert set(calls[0]) == {"tasmax", "dtr"}
+
+    def test_prepare_observations_not_wave_split(self, orchestrator):
+        # obs regridding has no cross-variable dependency; tasmin must not be
+        # peeled into a second wave (that would spin up an extra job for nothing).
+        configs = [
+            _make_config(variable="tasmax", ensemble_member="008"),
+            _make_config(variable="tasmin", ensemble_member="008"),
+        ]
+        calls: list[list[str]] = []
+        with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
+            orchestrator.submit_stage("prepare_observations", configs, use_coiled=False)
+
+        assert len(calls) == 1
+        assert set(calls[0]) == {"tasmax", "tasmin"}
+
+    def test_output_paths_preserve_input_order_across_waves(self, orchestrator):
+        configs = [
+            _make_config(variable="tasmin", ensemble_member="008"),
+            _make_config(variable="tasmax", ensemble_member="008"),
+        ]
+        with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder([])):
+            result = orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+
+        # result[i] must correspond to configs[i] even though tasmin ran last
+        assert "tasmin" in result[0]
+        assert "tasmax" in result[1]
+
+
+# ---------------------------------------------------------------------------
 # _submit_to_coiled (retry logic)
 # ---------------------------------------------------------------------------
 

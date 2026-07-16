@@ -30,6 +30,7 @@ from srm.config import _ensure_root_group, _icechunk_storage_for_path
 from srm.datasets import catalog as _catalog
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
+    derive_tasmin,
     detrend,
     downscale_from_coarse,
     get_experiment,
@@ -39,6 +40,7 @@ from srm.downscaling_utils import (
     rechunk,
     retrend,
     subset_space,
+    swap_temperature_extremes,
 )
 from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_coarse_encoding, make_encoding
 from srm.utils import get_variable
@@ -483,6 +485,87 @@ class BCSDPipeline:
             session.store, engine="zarr", consolidated=False, chunks="auto", group=loc.group
         )
 
+    def reconcile_temperature_extremes(
+        self,
+        tasmin_loc: StoreLocation,
+        tasmax_loc: StoreLocation,
+        *,
+        tasmin_fine: xr.DataArray | None = None,
+        force: bool = False,
+    ) -> None:
+        """Dedicated reconcile step: enforce ``tasmax >= tasmin`` on the fine outputs.
+
+        Independent spatial disaggregation of tasmax and tasmin can leave a few fine
+        cells with ``tasmax < tasmin`` (issue #331). Following the NEX-GDDP-CMIP6 v2
+        final sweep, this step reads the sibling fine tasmax, swaps the offending
+        cells against tasmin, and writes *both* corrected fields back to their own
+        stores. It runs after both fine outputs are produced (the #363 wave-gating
+        guarantees tasmax is final before tasmin), and can also be re-run standalone
+        against the persisted outputs.
+
+        The reconciliation is idempotent and structurally monotone (see
+        :func:`swap_temperature_extremes`); ``qaqc.validate_temp_consistency`` is the
+        output-QA gate that catches any residual inversion (e.g. from a tasmax-only
+        rerun that has not yet been re-reconciled).
+
+        Parameters
+        ----------
+        tasmin_loc : StoreLocation
+            Location of this stage's fine tasmin output (written here, corrected).
+        tasmax_loc : StoreLocation
+            Location of the sibling fine tasmax output (rewritten here, corrected).
+        tasmin_fine : xr.DataArray, optional
+            The freshly downscaled tasmin. If omitted, tasmin is read back from
+            ``tasmin_loc`` (standalone reconcile of already-persisted outputs).
+        force : bool, optional
+            Threaded to the *tasmin* write only (see below).
+        """
+        if not self.cache.exists(tasmax_loc):
+            raise ValueError(
+                f"tasmin reconciliation needs the fine tasmax output "
+                f"{tasmax_loc.store_path}/{tasmax_loc.group}, which is missing. "
+                f"tasmax must complete before tasmin."
+            )
+        if tasmin_fine is None:
+            if not self.cache.exists(tasmin_loc):
+                raise ValueError(
+                    f"standalone reconcile needs the fine tasmin output "
+                    f"{tasmin_loc.store_path}/{tasmin_loc.group}, which is missing."
+                )
+            tasmin_fine = self._open_from_icechunk(tasmin_loc)[self.config.variable]
+
+        tasmax_ds = self._open_from_icechunk(tasmax_loc)
+        # swap_temperature_extremes enforces exact grid alignment and is structurally
+        # monotone, so tasmax >= tasmin holds by construction; the second full-array
+        # pass is left to output-QA rather than gated here (issue #331).
+        tasmax_corrected, tasmin_corrected = swap_temperature_extremes(
+            tasmax_ds["tasmax"], tasmin_fine
+        )
+        shard = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+        tasmax_corrected = tasmax_corrected.chunk(shard)
+        tasmin_corrected = tasmin_corrected.chunk(shard)
+
+        # tasmax first, force=False: tasmin_corrected still lazily reads this
+        # pre-rewrite tasmax snapshot, so a force GC now would collect those chunks
+        # before the tasmin write below materialises them (data-loss hazard).
+        self._write_to_icechunk(
+            tasmax_corrected,
+            tasmax_loc,
+            encoding=make_encoding("tasmax"),
+            dataset_attrs=dict(tasmax_ds.attrs),
+            force=False,
+        )
+        # tasmin last, force-threaded: it is materialised before its own commit, so
+        # the trailing GC safely sweeps the now-superseded tasmax snapshot too.
+        tasmin_corrected.name = self.config.variable
+        self._write_to_icechunk(
+            tasmin_corrected,
+            tasmin_loc,
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+            force=force,
+        )
+
     def prepare_observations(self, force: bool = False) -> str:
         """
         Stage 1: Regrid observations to GCM grid.
@@ -668,13 +751,20 @@ class BCSDPipeline:
         because it loads debiased coarse tasmax and dtr to compute debiased coarse tasmin,
         which is then spatially disaggregated to fine resolution.
         """
-
         loc = self.cache.historical_loc(self._hist_member)
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
+        tasmax_fine_loc = self.cache.historical_loc(self._hist_member, variable="tasmax")
 
-        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
+        if not force and self.cache.exists(loc) and self.cache.exists(coarse_loc):
             logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
+
+        # Validate inputs only when we are actually going to compute, so a cache hit
+        # is never blocked by a reaped upstream (issue #363). tasmin reads the
+        # debiased-coarse tasmax/dtr and the fine tasmax; fail fast if any is missing.
+        self.cache.validate_dependencies(
+            "fit_historical", self.config, hist_member=self._hist_member
+        )
 
         logger.info(
             "Computing historical downscaling for %s/%s/%s",
@@ -696,7 +786,7 @@ class BCSDPipeline:
         )
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
-        model_hist_debiased = debiased_tasmax - debiased_dtr
+        model_hist_debiased = derive_tasmin(debiased_tasmax, debiased_dtr)
         logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
@@ -720,17 +810,14 @@ class BCSDPipeline:
         )
         logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
 
+        # Dedicated reconcile step: swap any tasmax < tasmin left by independent
+        # disaggregation and write both corrected fields (issue #331).
         t0 = time.perf_counter()
-        model_hist_downscaled.name = self.config.variable
-        self._write_to_icechunk(
-            da=model_hist_downscaled,
-            loc=loc,
-            encoding=make_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
-            force=force,
+        self.reconcile_temperature_extremes(
+            loc, tasmax_fine_loc, tasmin_fine=model_hist_downscaled, force=force
         )
         logger.info(
-            "✓ Saved historical: %s/%s (%.2fs)",
+            "✓ Reconciled + saved historical: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -780,6 +867,13 @@ class BCSDPipeline:
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
         """
+        # tasmin is derived (tasmax - dtr) and reconciled against tasmax; route it to
+        # the dedicated method from here so every entry point — including the
+        # distributed batch_runner, which calls this method directly — gets the
+        # correct path (issues #363/#331).
+        if self.config.variable == "tasmin":
+            return self.fit_historical_tasmin(force=force)
+
         self.cache.validate_dependencies("fit_historical", self.config)
 
         loc = self.cache.historical_loc(self._hist_member)
@@ -1022,13 +1116,30 @@ class BCSDPipeline:
         """Optionally detrend the scenario timeseries.
 
         Returns (scenario_detrended, scenario_trend). When detrending is disabled,
-        returns (model_scenario, None) and scenario_trend will be None.
+        returns (scenario, None) and scenario_trend will be None.
 
         For SAI scenarios, stitches in SSP245 data to bridge the gap between the end of
-        historical (2014/2015) and the SAI simulation start (~2035) before detrending,
-        ensuring a smooth baseline for trend removal.
+        historical (2014/2015) and the SAI simulation start (~2035). This bridge is
+        applied even when detrending is disabled, so that non-detrended variables
+        (dtr, pr, rsds, hurs) still span the full predict window rather than starting
+        at the SAI simulation year — otherwise ``tasmin = tasmax - dtr`` breaks against
+        the bridged (full-length) tasmax on the missing days (issue #363).
         """
         if not self.config.detrend_data:
+            if self.config.is_sai_scenario:
+                # No detrending, but a SAI scenario still needs the SSP245 bridge so
+                # the debiased-coarse output spans predict_period_start..end (#363).
+                predict_slice = slice(
+                    f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
+                )
+                bridged = stitch_historical_scenario(
+                    model_hist=model_hist,
+                    model_scenario=model_scenario,
+                    train_period_end=self.config.train_period_end,
+                    predict_period_start=self.config.predict_period_start,
+                    ssp_timeseries=ssp_timeseries,
+                )
+                return bridged.sel(time=predict_slice), None
             return model_scenario, None
 
         if self.options.rechunk_workflow:
@@ -1223,16 +1334,19 @@ class BCSDPipeline:
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
 
+        loc = self.cache.scenario_loc
+        coarse_loc = self.cache.debiased_coarse_scenario_loc()
+        tasmax_fine_loc = self.cache.scenario_output_loc(variable="tasmax")
+
+        if not force and self.cache.exists(loc) and self.cache.exists(coarse_loc):
+            logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
+
+        # Validate inputs only when we are actually going to compute, so a cache hit
+        # is never blocked by a reaped upstream (issue #363).
         self.cache.validate_dependencies(
             "transform_scenario", self.config, hist_member=self._hist_member
         )
-
-        loc = self.cache.scenario_loc
-        coarse_loc = self.cache.debiased_coarse_scenario_loc()
-
-        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
-            return loc.store_path
 
         logger.info(
             "Computing scenario downscaling for %s/%s/%s/%s",
@@ -1253,7 +1367,7 @@ class BCSDPipeline:
         debiased_tasmax_loc = self.cache.debiased_coarse_scenario_loc(variable="tasmax")
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
-        scenario_debiased = debiased_tasmax - debiased_dtr
+        scenario_debiased = derive_tasmin(debiased_tasmax, debiased_dtr)
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
@@ -1282,16 +1396,15 @@ class BCSDPipeline:
             scenario_downscaled = scenario_downscaled.where(
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
-        scenario_downscaled.name = self.config.variable
-        self._write_to_icechunk(
-            scenario_downscaled,
-            loc,
-            dataset_attrs=self._build_output_attrs(),
-            encoding=make_encoding(self.config.variable),
-            force=force,
+
+        # Dedicated reconcile step: swap any tasmax < tasmin left by independent
+        # disaggregation and write both corrected fields (issue #331). Runs after
+        # ocean masking so both fine fields share aligned NaN cells.
+        self.reconcile_temperature_extremes(
+            loc, tasmax_fine_loc, tasmin_fine=scenario_downscaled, force=force
         )
         logger.info(
-            "✓ Saved scenario output: %s/%s (%.2fs)",
+            "✓ Reconciled + saved scenario output: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -1333,6 +1446,13 @@ class BCSDPipeline:
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
         """
+        # tasmin is derived (tasmax - dtr) and reconciled against tasmax; route it to
+        # the dedicated method from here so every entry point — including the
+        # distributed batch_runner, which calls this method directly — gets the
+        # correct path (issues #363/#331).
+        if self.config.variable == "tasmin":
+            return self.transform_scenario_tasmin(force=force)
+
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
 
@@ -1456,15 +1576,9 @@ class BCSDPipeline:
         """
         self.prepare_observations(force=force)
 
-        if self.config.variable == "tasmin":
-            self.fit_historical_tasmin(force=force)
-            # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the historical
-            # output as data input.
-            return self.transform_scenario_tasmin(force=force)
-        else:
-            self.fit_historical(force=force)
-            # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the historical
-            # output as data input.
-            return self.transform_scenario(force=force)
+        # fit_historical / transform_scenario self-dispatch tasmin to their derived
+        # variants, so no variable-specific branching is needed here.
+        self.fit_historical(force=force)
+        # `transform_scenario` depends on fit_historical only as a completion gate
+        # (artifact existence); it does not read the historical output as data input.
+        return self.transform_scenario(force=force)

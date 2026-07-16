@@ -35,6 +35,7 @@ BLOCKING_CHECKS = {
     "spatial_range_tasmin",
     "spatial_range_pr",
     "spatial_range_rsds",
+    "tasmax_ge_tasmin",
 }
 
 
@@ -799,4 +800,31 @@ def validate_output_store(
                         message="" if vr else "; ".join(vr.issues),
                     )
                 )
+
+    # Cross-variable gate: tasmax >= tasmin per (scenario, member). The per-leaf loop
+    # above sees one variable at a time, so this monotonicity check (issue #331 — a
+    # silent reconcile-skip must never ship) runs as a separate pass that pairs the
+    # tasmax and tasmin leaves.
+    for scenario_node in scenario_nodes:
+        svars = scenario_node.children
+        if "tasmax" not in svars or "tasmin" not in svars:
+            continue
+        tmax_members = {leaf.name: leaf for leaf in svars["tasmax"].leaves}
+        tmin_members = {leaf.name: leaf for leaf in svars["tasmin"].leaves}
+        for member in sorted(set(tmax_members) & set(tmin_members)):
+            paired = xr.merge(
+                [tmax_members[member].to_dataset(), tmin_members[member].to_dataset()],
+                compat="override",
+                join="inner",
+            )
+            vr = DatasetChecker(paired).validate_tasmax_ge_tasmin()
+            results.append(
+                CheckResult(
+                    check_id="tasmax_ge_tasmin",
+                    gcm=label,
+                    scenario=f"{scenario_node.name}/tasmax_ge_tasmin/{member}",
+                    status=CheckStatus.PASS if vr else CheckStatus.FAIL,
+                    message="" if vr else "; ".join(vr.issues),
+                )
+            )
     return results

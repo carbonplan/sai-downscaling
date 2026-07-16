@@ -173,7 +173,7 @@ class ArtifactCache:
         config = self._require_config()
         return StoreLocation(self._scratch_store, f"obs/{config.variable}")
 
-    def historical_loc(self, hist_member: str) -> StoreLocation:
+    def historical_loc(self, hist_member: str, variable: str | None = None) -> StoreLocation:
         """StoreLocation for the fully downscaled historical artifact.
 
         Written to the output store — the fine-resolution downscaled historical
@@ -183,25 +183,41 @@ class ArtifactCache:
         ----------
         hist_member : str
             Resolved historical ensemble member ID.
+        variable : str, optional
+            Override the variable from config. Used by tasmin to read/rewrite the
+            sibling fine tasmax output during the tasmax<tasmin swap (issue #331).
         """
         config = self._require_config()
+        var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"historical/{config.variable}/{hist_member}",
+            f"historical/{var}/{hist_member}",
         )
 
     def _scenario_group(self) -> str:
         """Return the icechunk group prefix for the bound config's scenario."""
         return SCENARIO_TO_GROUP[self._require_config().scenario]
 
+    def scenario_output_loc(self, variable: str | None = None) -> StoreLocation:
+        """StoreLocation for the fine scenario downscaling output.
+
+        Parameters
+        ----------
+        variable : str, optional
+            Override the variable from config. Used by tasmin to read/rewrite the
+            sibling fine tasmax output during the tasmax<tasmin swap (issue #331).
+        """
+        config = self._require_config()
+        var = variable or config.variable
+        return StoreLocation(
+            self._output_store,
+            f"{self._scenario_group()}/{var}/{config.ensemble_member}",
+        )
+
     @property
     def scenario_loc(self) -> StoreLocation:
         """StoreLocation for the scenario downscaling output."""
-        config = self._require_config()
-        return StoreLocation(
-            self._output_store,
-            f"{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
-        )
+        return self.scenario_output_loc()
 
     def debiased_coarse_historical_loc(
         self, hist_member: str, variable: str | None = None
@@ -448,15 +464,38 @@ class ArtifactCache:
 
         elif stage == "fit_historical":
             loc = self.obs_loc
-            return {"obs_regridded": (self.exists(loc), loc)}
+            deps = {"obs_regridded": (self.exists(loc), loc)}
+            if config.variable == "tasmin":
+                member = hist_member or config.ensemble_member
+                for name, var in (
+                    ("debiased_coarse_dtr", "dtr"),
+                    ("debiased_coarse_tasmax", "tasmax"),
+                ):
+                    dep_loc = self.debiased_coarse_historical_loc(member, variable=var)
+                    deps[name] = (self.exists(dep_loc), dep_loc)
+                # the tasmax<tasmin swap reads/rewrites the fine tasmax output
+                fine_tasmax = self.historical_loc(member, variable="tasmax")
+                deps["fine_tasmax"] = (self.exists(fine_tasmax), fine_tasmax)
+            return deps
 
         elif stage == "transform_scenario":
             obs_loc = self.obs_loc
             hist_loc = self.historical_loc(hist_member or config.ensemble_member)
-            return {
+            deps = {
                 "obs_regridded": (self.exists(obs_loc), obs_loc),
                 "historical": (self.exists(hist_loc), hist_loc),
             }
+            if config.variable == "tasmin":
+                for name, var in (
+                    ("debiased_coarse_dtr", "dtr"),
+                    ("debiased_coarse_tasmax", "tasmax"),
+                ):
+                    dep_loc = self.debiased_coarse_scenario_loc(variable=var)
+                    deps[name] = (self.exists(dep_loc), dep_loc)
+                # the tasmax<tasmin swap reads/rewrites the fine tasmax output
+                fine_tasmax = self.scenario_output_loc(variable="tasmax")
+                deps["fine_tasmax"] = (self.exists(fine_tasmax), fine_tasmax)
+            return deps
 
         else:
             raise ValueError(f"Unknown stage: {stage}")

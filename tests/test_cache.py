@@ -285,6 +285,15 @@ class TestHistoricalLoc:
         loc = bound_cache.historical_loc("r1i1p1f1")
         assert "CESM2-WACCM-ERA5-global.icechunk" in loc.store_path
 
+    def test_variable_override_targets_sibling_group(self, bound_cache):
+        # tasmin's swap step reads the sibling fine tasmax output (issue #331).
+        loc = bound_cache.historical_loc("r1i1p1f1", variable="tasmax")
+        assert loc.group == "historical/tasmax/r1i1p1f1"
+
+    def test_no_variable_override_uses_config_variable(self, bound_cache):
+        loc = bound_cache.historical_loc("r1i1p1f1")
+        assert loc.group == "historical/tas/r1i1p1f1"
+
 
 # ---------------------------------------------------------------------------
 # scenario_loc
@@ -306,6 +315,14 @@ class TestScenarioLoc:
     def test_uses_scratch_store_when_no_output_dir(self, bound_cache):
         loc = bound_cache.scenario_loc
         assert bound_cache.scratch_dir in loc.store_path
+
+    def test_output_loc_variable_override_targets_sibling_group(self, bound_cache):
+        # tasmin's swap step reads the sibling fine tasmax scenario output (issue #331).
+        loc = bound_cache.scenario_output_loc(variable="tasmax")
+        assert loc.group == "ssp245/tasmax/r1i1p1f1"
+
+    def test_output_loc_without_override_matches_scenario_loc(self, bound_cache):
+        assert bound_cache.scenario_output_loc().group == bound_cache.scenario_loc.group
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +588,62 @@ class TestCheckDependencies:
         deps = bound_cache.check_dependencies("fit_historical", base_config)
         exists, _loc = deps["obs_regridded"]
         assert exists is False
+
+    def _tasmin_cache(self, tmp_path, scenario="SSP245"):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmin",
+            ensemble_member="r1i1p1f1",
+            scenario=scenario,
+            predict_period_start=2015,
+            predict_period_end=2100,
+        )
+        cache = ArtifactCache(
+            scratch_dir=str(tmp_path / "cache"),
+            environment="qa",
+            output_dir=str(tmp_path / "outputs"),
+        )
+        cache.config = cfg
+        return cache, cfg
+
+    def test_transform_scenario_tasmin_requires_debiased_coarse_dtr_and_tasmax(self, tmp_path):
+        # tasmin is reconstructed as debiased_coarse tasmax - dtr, so those sibling
+        # stores are hard dependencies of the tasmin scenario stage (issue #363).
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("transform_scenario", cfg)
+        assert "debiased_coarse_dtr" in deps
+        assert "debiased_coarse_tasmax" in deps
+        assert deps["debiased_coarse_dtr"][1].group == "debiased_coarse/ssp245/dtr/r1i1p1f1"
+        assert deps["debiased_coarse_tasmax"][1].group == "debiased_coarse/ssp245/tasmax/r1i1p1f1"
+
+    def test_fit_historical_tasmin_requires_debiased_coarse_dtr_and_tasmax(self, tmp_path):
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("fit_historical", cfg)
+        assert "debiased_coarse_dtr" in deps
+        assert "debiased_coarse_tasmax" in deps
+        assert deps["debiased_coarse_dtr"][1].group == "debiased_coarse/historical/dtr/r1i1p1f1"
+        assert (
+            deps["debiased_coarse_tasmax"][1].group == "debiased_coarse/historical/tasmax/r1i1p1f1"
+        )
+
+    def test_non_tasmin_scenario_deps_unchanged(self, bound_cache, base_config):
+        # regression: non-derived variables keep the original obs+historical deps only.
+        deps = bound_cache.check_dependencies("transform_scenario", base_config)
+        assert set(deps.keys()) == {"obs_regridded", "historical"}
+
+    def test_transform_scenario_tasmin_requires_fine_tasmax(self, tmp_path):
+        # the tasmax<tasmin swap reads the fine tasmax output, so it is a hard
+        # dependency and must fail fast, not deep in the stage (issue #331).
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("transform_scenario", cfg)
+        assert "fine_tasmax" in deps
+        assert deps["fine_tasmax"][1].group == "ssp245/tasmax/r1i1p1f1"
+
+    def test_fit_historical_tasmin_requires_fine_tasmax(self, tmp_path):
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("fit_historical", cfg)
+        assert "fine_tasmax" in deps
+        assert deps["fine_tasmax"][1].group == "historical/tasmax/r1i1p1f1"
 
 
 class TestValidateDependencies:

@@ -8,12 +8,14 @@ import xarray as xr
 from srm import downscaling_utils
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
+    derive_tasmin,
     detrend,
     fft_smooth_3harmonics,
     get_historical_experiment,
     rechunk,
     retrend,
     subset_space,
+    swap_temperature_extremes,
 )
 
 
@@ -502,3 +504,156 @@ def test_get_historical_experiment_uses_unified_store(gcm: str, member: str):
             get_historical_experiment(gcm, member, "tas")
             mock_fn.assert_called_once_with(gcm)
             mock_dt.__getitem__.assert_called_once_with("historical")
+
+
+# ---------------------------------------------------------------------------
+# swap_temperature_extremes (issue #331)
+# ---------------------------------------------------------------------------
+
+
+def _temp_pair():
+    """(tasmax, tasmin) with one inversion, one monotone cell, one NaN cell."""
+    lat = np.array([0.0, 1.0])
+    lon = np.array([10.0, 11.0])
+    tasmax = xr.DataArray(
+        np.array([[300.0, 290.0], [np.nan, 305.0]]),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+        name="tasmax",
+    )
+    tasmin = xr.DataArray(
+        # [0,0] monotone (280<300); [0,1] INVERSION (295>290);
+        # [1,0] NaN tasmax; [1,1] monotone (300<305)
+        np.array([[280.0, 295.0], [285.0, 300.0]]),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+        name="tasmin",
+    )
+    return tasmax, tasmin
+
+
+class TestSwapTemperatureExtremes:
+    def test_inverted_cell_is_swapped(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        # inverted cell [0,1]: max/min exchanged
+        assert new_max.values[0, 1] == 295.0
+        assert new_min.values[0, 1] == 290.0
+
+    def test_monotone_cells_unchanged(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert new_max.values[0, 0] == 300.0
+        assert new_min.values[0, 0] == 280.0
+        assert new_max.values[1, 1] == 305.0
+        assert new_min.values[1, 1] == 300.0
+
+    def test_nan_cells_left_untouched(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert np.isnan(new_max.values[1, 0])
+        assert new_min.values[1, 0] == 285.0
+
+    def test_result_is_monotone_everywhere(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        finite = np.isfinite(new_max.values) & np.isfinite(new_min.values)
+        assert np.all(new_max.values[finite] >= new_min.values[finite])
+
+    def test_names_preserved(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert new_max.name == "tasmax"
+        assert new_min.name == "tasmin"
+
+    def test_3d_dask_backed_stays_lazy_and_monotone(self):
+        # Production calls this with (time, lat, lon) dask arrays read back from
+        # icechunk; make sure the op stays lazy and the invariant holds.
+        rng = np.random.default_rng(0)
+        time = np.arange(np.datetime64("2020-01-01"), np.datetime64("2020-01-06"))
+        lat = np.array([0.0, 1.0])
+        lon = np.array([10.0, 11.0])
+        coords = {"time": time, "lat": lat, "lon": lon}
+        tasmax = xr.DataArray(
+            rng.normal(300.0, 3.0, (5, 2, 2)),
+            dims=["time", "lat", "lon"],
+            coords=coords,
+            name="tasmax",
+        ).chunk({"time": 2})
+        tasmin = xr.DataArray(
+            rng.normal(300.0, 3.0, (5, 2, 2)),
+            dims=["time", "lat", "lon"],
+            coords=coords,
+            name="tasmin",
+        ).chunk({"time": 2})
+
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+
+        assert new_max.chunks is not None and new_min.chunks is not None  # never computed
+        a, b = new_max.compute().values, new_min.compute().values
+        finite = np.isfinite(a) & np.isfinite(b)
+        assert np.all(a[finite] >= b[finite])
+
+    def test_raises_on_misaligned_coords(self):
+        # A silent inner-join would drop/NaN cells instead of swapping; require exact coords.
+        lat = np.array([0.0])
+        tasmax = xr.DataArray(
+            [[300.0, 290.0]],
+            dims=["lat", "lon"],
+            coords={"lat": lat, "lon": [10.0, 11.0]},
+            name="tasmax",
+        )
+        tasmin = xr.DataArray(
+            [[280.0, 295.0]],
+            dims=["lat", "lon"],
+            coords={"lat": lat, "lon": [10.001, 11.001]},
+            name="tasmin",
+        )
+        with pytest.raises(ValueError):
+            swap_temperature_extremes(tasmax, tasmin)
+
+    def test_handles_unnamed_tasmin(self):
+        lat, lon = np.array([0.0]), np.array([10.0, 11.0])
+        tasmax = xr.DataArray(
+            [[300.0, 290.0]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon}, name="tasmax"
+        )
+        tasmin = xr.DataArray(  # no name — the fresh downscaled tasmin may be unnamed
+            [[280.0, 295.0]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon}
+        )
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert new_max.name == "tasmax"
+        assert new_max.values[0, 1] == 295.0
+
+
+# ---------------------------------------------------------------------------
+# derive_tasmin — fail loud on mismatched tasmax/dtr time axes (issue #363)
+# ---------------------------------------------------------------------------
+
+
+def _temp_series(times, value, name):
+    return xr.DataArray(
+        np.full((len(times), 1, 1), value, dtype="float32"),
+        dims=["time", "lat", "lon"],
+        coords={"time": times, "lat": [0.0], "lon": [0.0]},
+        name=name,
+    )
+
+
+class TestDeriveTasmin:
+    def test_matching_axes_subtracts(self):
+        t = np.arange("2015-01-01", "2015-01-05", dtype="datetime64[D]")
+        out = derive_tasmin(_temp_series(t, 300.0, "tasmax"), _temp_series(t, 10.0, "dtr"))
+        assert out.name == "tasmin"
+        assert float(out.isel(time=0, lat=0, lon=0)) == 290.0
+
+    def test_mismatched_start_raises(self):
+        t1 = np.arange("2015-01-01", "2015-01-05", dtype="datetime64[D]")
+        t2 = np.arange("2035-01-01", "2035-01-05", dtype="datetime64[D]")
+        with pytest.raises(ValueError, match="#363"):
+            derive_tasmin(_temp_series(t1, 300.0, "tasmax"), _temp_series(t2, 10.0, "dtr"))
+
+    def test_different_length_raises(self):
+        t1 = np.arange("2015-01-01", "2020-01-01", dtype="datetime64[D]")
+        t2 = np.arange("2015-01-01", "2018-01-01", dtype="datetime64[D]")
+        with pytest.raises(ValueError, match="time ax"):
+            derive_tasmin(_temp_series(t1, 300.0, "tasmax"), _temp_series(t2, 10.0, "dtr"))
