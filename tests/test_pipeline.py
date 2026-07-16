@@ -1315,6 +1315,115 @@ class TestTransformScenarioTasminCoarseDeps:
 
 
 # ---------------------------------------------------------------------------
+# Coarse tasmin write must tile the shard grid (production regression)
+# ---------------------------------------------------------------------------
+
+
+def _misaligned_coarse_ds() -> xr.Dataset:
+    """Debiased-coarse tasmax/dtr whose dask lat chunks straddle the coarse shard grid.
+
+    ``_open_from_icechunk`` opens with ``chunks="auto"``, so re-opened coarse inputs are
+    dask-backed with chunk boundaries that need not tile ``SHARD_LAT_COARSE`` (24). Here
+    lat=48 is chunked in 16s (boundaries 0/16/32/48), which straddles the shard boundary
+    at 24 — the exact condition that made the real icechunk write raise ``safe_chunks``.
+    """
+    time = pd.date_range("2000-01-01", periods=40, freq="D")
+    lat = np.linspace(-88.0, 88.0, 48)
+    lon = np.linspace(0.0, 356.0, 96)
+    shape = (time.size, lat.size, lon.size)
+    coords = {"time": time, "lat": lat, "lon": lon}
+    tasmax = xr.DataArray(
+        np.full(shape, 300.0, dtype="float32"), dims=["time", "lat", "lon"], coords=coords
+    ).chunk({"time": -1, "lat": 16, "lon": -1})
+    dtr = xr.DataArray(
+        np.full(shape, 10.0, dtype="float32"), dims=["time", "lat", "lon"], coords=coords
+    ).chunk({"time": -1, "lat": 16, "lon": -1})
+    return xr.Dataset({"tasmax": tasmax, "dtr": dtr})
+
+
+def _read_coarse_tasmin(cache, coarse_loc) -> xr.DataArray:
+    """Open a written coarse store directly, bypassing the mocked ``_open_from_icechunk``."""
+    import icechunk
+
+    from srm.pipeline import _icechunk_storage_for_path
+
+    storage = _icechunk_storage_for_path(coarse_loc.store_path)
+    repo = icechunk.Repository.open(storage)
+    session = repo.readonly_session(branch=cache.branch)
+    ds = xr.open_dataset(session.store, engine="zarr", consolidated=False, group=coarse_loc.group)
+    return ds["tasmin"]
+
+
+class TestTasminCoarseWriteChunkAlignment:
+    """The derived coarse tasmin write must tile the coarse shard grid.
+
+    Regression for the production failure ``CESM2-WACCM_tasmin_003_G6-1.5K``: the tasmin
+    stages derive coarse tasmin from auto-chunked tasmax/dtr and wrote it with
+    ``make_coarse_encoding`` (shard 24x48) without rechunking, so xarray's ``safe_chunks``
+    check rejected the misaligned dask chunks. These tests drive the *real*
+    ``_write_to_icechunk`` (the sibling tasmin tests mock it), so they fail before the fix.
+    """
+
+    def test_fit_historical_tasmin_coarse_write_is_shard_aligned(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_historical_loc(p._hist_member, variable=_var),
+                branch=p.cache.branch,
+            )
+        _make_icechunk_group(
+            p.cache.historical_loc(p._hist_member, variable="tasmax"), branch=p.cache.branch
+        )
+        coarse_loc = p.cache.debiased_coarse_historical_loc(p._hist_member)
+
+        with (
+            patch.object(
+                BCSDPipeline,
+                "_load_gcm_obs",
+                return_value=(MagicMock(), MagicMock(), MagicMock()),
+            ),
+            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=_misaligned_coarse_ds()),
+            patch.object(BCSDPipeline, "_apply_spatial_downscaling", return_value=MagicMock()),
+            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
+        ):
+            result = p.fit_historical_tasmin()
+
+        assert result == p.cache.historical_loc(p._hist_member).store_path
+        # Round-trips without a safe_chunks error and holds tasmax(300) - dtr(10) == 290.
+        written = _read_coarse_tasmin(p.cache, coarse_loc)
+        assert float(written.isel(time=0, lat=0, lon=0)) == 290.0
+
+    def test_transform_scenario_tasmin_coarse_write_is_shard_aligned(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_scenario_loc(variable=_var), branch=p.cache.branch
+            )
+        _make_icechunk_group(p.cache.scenario_output_loc(variable="tasmax"), branch=p.cache.branch)
+        coarse_loc = p.cache.debiased_coarse_scenario_loc()
+
+        with (
+            patch.object(
+                BCSDPipeline,
+                "_load_scenario_data",
+                return_value=(MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()),
+            ),
+            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=_misaligned_coarse_ds()),
+            patch.object(BCSDPipeline, "_apply_spatial_downscaling", return_value=MagicMock()),
+            patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
+            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
+        ):
+            result = p.transform_scenario_tasmin()
+
+        assert result == p.cache.scenario_loc.store_path
+        written = _read_coarse_tasmin(p.cache, coarse_loc)
+        assert float(written.isel(time=0, lat=0, lon=0)) == 290.0
+
+
+# ---------------------------------------------------------------------------
 # Tasmax<tasmin swap in the tasmin stage (issue #331)
 # ---------------------------------------------------------------------------
 

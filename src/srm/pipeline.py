@@ -791,8 +791,11 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         model_hist_debiased.name = self.config.variable
+        # derive_tasmin operates on auto-chunked coarse inputs, so its dask chunks need not
+        # tile the coarse shard grid; rechunk to full_space (as the sibling coarse writes do)
+        # so the sharded write passes xarray's safe_chunks alignment check.
         self._write_to_icechunk(
-            model_hist_debiased,
+            rechunk(model_hist_debiased, pattern="full_space"),
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
             dataset_attrs=self._build_output_attrs(),
@@ -1372,8 +1375,11 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         scenario_debiased.name = self.config.variable
+        # derive_tasmin operates on auto-chunked coarse inputs, so its dask chunks need not
+        # tile the coarse shard grid; rechunk to full_space (as the sibling coarse writes do)
+        # so the sharded write passes xarray's safe_chunks alignment check.
         self._write_to_icechunk(
-            scenario_debiased,
+            rechunk(scenario_debiased, pattern="full_space"),
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
             dataset_attrs=self._build_output_attrs(),
