@@ -68,8 +68,11 @@ debugging detrending behaviour without re-running the full stage.
 :class: note
 
 `fit_historical_tasmin` and `transform_scenario_tasmin` derive `tasmin` as `tasmax − dtr`
-(diurnal temperature range). They read the following groups as **hard dependencies** from the
-output store (written unconditionally by the `dtr` and `tasmax` stages):
+(diurnal temperature range). `fit_historical` and `transform_scenario` dispatch to these variants
+automatically whenever `variable == "tasmin"`, so no special flag or config is required; after
+spatial disaggregation, `tasmin` is reconciled against the fine `tasmax` so that `tasmax >= tasmin`
+everywhere (issue #331). They read the following groups as **hard dependencies** from the output
+store (written unconditionally by the `dtr` and `tasmax` stages):
 
 | Stage | Reads from output store |
 |-------|-------------------------|

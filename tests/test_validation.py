@@ -591,3 +591,55 @@ class TestCheckConfigTimeDomain:
             gcm="MIROC-ES2H", variable="tas", ensemble_member="r1i1p4f2", scenario=None
         )
         assert check_config_time_domain(cfg).status == CheckStatus.SKIP
+
+
+# ── tasmax >= tasmin cross-variable output gate (issue #331) ──────────────────
+
+
+def _temp_leaf(var: str, data: np.ndarray) -> xr.Dataset:
+    time = np.arange("2035-01-01", "2035-01-04", dtype="datetime64[D]").astype("datetime64[ns]")
+    return xr.Dataset(
+        {var: (("time", "lat", "lon"), data.astype("float32"))},
+        coords={"time": time, "lat": [0.0, 1.0], "lon": [10.0, 11.0]},
+    )
+
+
+class TestTasmaxGeTasminOutputGate:
+    def _tree(self, tasmax_vals, tasmin_vals):
+        return xr.DataTree.from_dict(
+            {
+                "/g6_1p5k/tasmax/003": _temp_leaf("tasmax", tasmax_vals),
+                "/g6_1p5k/tasmin/003": _temp_leaf("tasmin", tasmin_vals),
+            }
+        )
+
+    def test_is_blocking(self):
+        from srm.validation import BLOCKING_CHECKS
+
+        assert "tasmax_ge_tasmin" in BLOCKING_CHECKS
+
+    def test_fails_on_inversion(self):
+        tmax = np.full((3, 2, 2), 300.0)
+        tmin = np.full((3, 2, 2), 290.0)
+        tmin[0, 0, 0] = 305.0  # tasmax(300) < tasmin(305) — an inversion
+        results = validate_output_store(self._tree(tmax, tmin))
+        gate = [r for r in results if r.check_id == "tasmax_ge_tasmin"]
+        assert len(gate) == 1
+        assert gate[0].status == CheckStatus.FAIL
+        assert "tasmax < tasmin at 1" in gate[0].message
+
+    def test_passes_when_monotone(self):
+        tmax = np.full((3, 2, 2), 300.0)
+        tmin = np.full((3, 2, 2), 290.0)
+        results = validate_output_store(self._tree(tmax, tmin))
+        gate = [r for r in results if r.check_id == "tasmax_ge_tasmin"]
+        assert len(gate) == 1
+        assert gate[0].status == CheckStatus.PASS
+
+    def test_nan_cells_do_not_trip_gate(self):
+        tmax = np.full((3, 2, 2), 300.0)
+        tmin = np.full((3, 2, 2), 290.0)
+        tmax[1, 1, 1] = np.nan  # NaN comparisons are False → no false inversion
+        results = validate_output_store(self._tree(tmax, tmin))
+        gate = [r for r in results if r.check_id == "tasmax_ge_tasmin"]
+        assert gate[0].status == CheckStatus.PASS

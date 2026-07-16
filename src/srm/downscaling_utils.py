@@ -625,3 +625,76 @@ def downscale_from_coarse(
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
 
     return downscaled
+
+
+def derive_tasmin(tasmax: xr.DataArray, dtr: xr.DataArray) -> xr.DataArray:
+    """Return ``tasmin = tasmax - dtr``, requiring identical time axes.
+
+    ``dtr`` is produced by a separate (non-detrended) scenario path. For SAI
+    scenarios it was historically truncated to the SAI simulation period (~2035+)
+    while ``tasmax`` spans the full predict window (issue #363). Subtracting
+    mismatched axes silently NaN-fills ``tasmin`` on the non-overlapping days, so
+    fail loudly here instead — the upstream extent bug should be surfaced, not
+    shipped as scattered NaNs.
+
+    Parameters
+    ----------
+    tasmax, dtr : xr.DataArray
+        Debiased-coarse maximum temperature and diurnal temperature range, which
+        must share an identical ``time`` axis.
+
+    Returns
+    -------
+    xr.DataArray
+        ``tasmax - dtr`` named ``"tasmin"``.
+    """
+    if not tasmax.indexes["time"].equals(dtr.indexes["time"]):
+        tmax_t, dtr_t = tasmax["time"].values, dtr["time"].values
+        raise ValueError(
+            f"cannot derive tasmin: tasmax spans {tasmax.sizes['time']} timesteps "
+            f"({str(tmax_t.min())[:10]}..{str(tmax_t.max())[:10]}) but dtr spans "
+            f"{dtr.sizes['time']} ({str(dtr_t.min())[:10]}..{str(dtr_t.max())[:10]}); "
+            f"their time axes must be identical (issue #363 — a truncated dtr would "
+            f"silently NaN-fill tasmin)."
+        )
+    return (tasmax - dtr).rename("tasmin")
+
+
+def swap_temperature_extremes(
+    tasmax: xr.DataArray, tasmin: xr.DataArray
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Enforce ``tasmax >= tasmin`` by swapping values where ``tasmax < tasmin``.
+
+    Independent spatial disaggregation of ``tasmax`` and ``tasmin`` can leave a
+    small number of cells where the downscaled ``tasmax`` falls below ``tasmin``.
+    Following the NEX-GDDP-CMIP6 v2 final sweep (issue #331), swap the two values
+    at those cells so the physical constraint ``tasmax >= tasmin`` holds
+    everywhere.
+
+    The comparison is NaN-safe: cells where either input is NaN (e.g. ocean under
+    the land mask) compare ``False`` and are left unchanged. The operation is lazy
+    and idempotent.
+
+    Inputs must share identical coordinates. Alignment is enforced with
+    ``join="exact"`` so a mismatched grid raises loudly rather than being silently
+    inner/outer-joined into dropped or NaN-filled cells, regardless of the global
+    ``arithmetic_join`` option.
+
+    Parameters
+    ----------
+    tasmax, tasmin : xr.DataArray
+        Downscaled daily maximum / minimum near-surface air temperature on the
+        same grid and time axis.
+
+    Returns
+    -------
+    tuple[xr.DataArray, xr.DataArray]
+        ``(tasmax_corrected, tasmin_corrected)`` with names and attrs preserved.
+    """
+    tasmax, tasmin = xr.align(tasmax, tasmin, join="exact")
+    swap = tasmax < tasmin
+    tasmax_corrected = xr.where(swap, tasmin, tasmax).astype(tasmax.dtype).rename(tasmax.name)
+    tasmin_corrected = xr.where(swap, tasmax, tasmin).astype(tasmin.dtype).rename(tasmin.name)
+    tasmax_corrected.attrs = dict(tasmax.attrs)
+    tasmin_corrected.attrs = dict(tasmin.attrs)
+    return tasmax_corrected, tasmin_corrected

@@ -184,7 +184,9 @@ branch: "v9"
         with patch(
             "srm.validation.validate_output_store", return_value=[passing_result]
         ) as mock_validate:
-            result = CliRunner().invoke(app, ["validate-output", "--config-path", str(config_file)])
+            result = CliRunner().invoke(
+                app, ["validate-output", "--config-path", str(config_file), "--no-coiled"]
+            )
 
         assert result.exit_code == 0, result.output
         # Two configs (tas, pr) share the same gcm/subset → one deduped store URI.
@@ -207,7 +209,14 @@ branch: "v9"
         ) as mock_validate:
             result = CliRunner().invoke(
                 app,
-                ["validate-output", "--config-path", str(config_file), "--branch", "override"],
+                [
+                    "validate-output",
+                    "--config-path",
+                    str(config_file),
+                    "--branch",
+                    "override",
+                    "--no-coiled",
+                ],
             )
 
         assert result.exit_code == 0, result.output
