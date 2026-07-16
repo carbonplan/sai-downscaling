@@ -867,6 +867,13 @@ class BCSDPipeline:
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
         """
+        # tasmin is derived (tasmax - dtr) and reconciled against tasmax; route it to
+        # the dedicated method from here so every entry point — including the
+        # distributed batch_runner, which calls this method directly — gets the
+        # correct path (issues #363/#331).
+        if self.config.variable == "tasmin":
+            return self.fit_historical_tasmin(force=force)
+
         self.cache.validate_dependencies("fit_historical", self.config)
 
         loc = self.cache.historical_loc(self._hist_member)
@@ -1439,6 +1446,13 @@ class BCSDPipeline:
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
         """
+        # tasmin is derived (tasmax - dtr) and reconciled against tasmax; route it to
+        # the dedicated method from here so every entry point — including the
+        # distributed batch_runner, which calls this method directly — gets the
+        # correct path (issues #363/#331).
+        if self.config.variable == "tasmin":
+            return self.transform_scenario_tasmin(force=force)
+
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
 
@@ -1562,15 +1576,9 @@ class BCSDPipeline:
         """
         self.prepare_observations(force=force)
 
-        if self.config.variable == "tasmin":
-            self.fit_historical_tasmin(force=force)
-            # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the historical
-            # output as data input.
-            return self.transform_scenario_tasmin(force=force)
-        else:
-            self.fit_historical(force=force)
-            # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the historical
-            # output as data input.
-            return self.transform_scenario(force=force)
+        # fit_historical / transform_scenario self-dispatch tasmin to their derived
+        # variants, so no variable-specific branching is needed here.
+        self.fit_historical(force=force)
+        # `transform_scenario` depends on fit_historical only as a completion gate
+        # (artifact existence); it does not read the historical output as data input.
+        return self.transform_scenario(force=force)

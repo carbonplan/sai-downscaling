@@ -637,6 +637,70 @@ class TestRunFullPipeline:
             ms.assert_called_once_with(force=False)
 
 
+class TestTasminStageDispatch:
+    """tasmin must route to the derive+reconcile variants from ANY entry point.
+
+    The distributed batch_runner calls ``fit_historical`` / ``transform_scenario``
+    directly (not ``run_full_pipeline``), so the tasmin dispatch has to live in the
+    stage methods themselves or ``derive_tasmin`` + ``reconcile_temperature_extremes``
+    never run on the VMs (issues #363/#331).
+    """
+
+    @pytest.fixture
+    def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmin",
+            ensemble_member="001",
+            scenario="G6-1.5K",
+            predict_period_start=2015,
+            predict_period_end=2084,
+        )
+        return BCSDPipeline(cfg, pipeline_options)
+
+    def test_transform_scenario_dispatches_tasmin(self, tasmin_pipeline):
+        with patch.object(
+            tasmin_pipeline, "transform_scenario_tasmin", return_value="tasmin_scenario_path"
+        ) as m:
+            result = tasmin_pipeline.transform_scenario(force=True)
+        m.assert_called_once_with(force=True)
+        assert result == "tasmin_scenario_path"
+
+    def test_fit_historical_dispatches_tasmin(self, tasmin_pipeline):
+        with patch.object(
+            tasmin_pipeline, "fit_historical_tasmin", return_value="tasmin_hist_path"
+        ) as m:
+            result = tasmin_pipeline.fit_historical(force=True)
+        m.assert_called_once_with(force=True)
+        assert result == "tasmin_hist_path"
+
+    def test_transform_scenario_does_not_dispatch_for_tas(self, pipeline):
+        # a non-tasmin variable must run the plain path (here: fails on missing deps),
+        # never the tasmin variant.
+        with patch.object(pipeline, "transform_scenario_tasmin") as m:
+            with pytest.raises(ValueError):
+                pipeline.transform_scenario()
+        m.assert_not_called()
+
+    def test_fit_historical_does_not_dispatch_for_tas(self, pipeline):
+        with patch.object(pipeline, "fit_historical_tasmin") as m:
+            with pytest.raises(ValueError):
+                pipeline.fit_historical()
+        m.assert_not_called()
+
+    def test_run_full_pipeline_routes_tasmin_through_stage_methods(self, tasmin_pipeline):
+        # end-to-end: run_full_pipeline -> plain stage methods -> tasmin variants.
+        with (
+            patch.object(tasmin_pipeline, "prepare_observations", return_value="obs"),
+            patch.object(tasmin_pipeline, "fit_historical_tasmin", return_value="hist") as mh,
+            patch.object(tasmin_pipeline, "transform_scenario_tasmin", return_value="scen") as ms,
+        ):
+            result = tasmin_pipeline.run_full_pipeline()
+        mh.assert_called_once_with(force=False)
+        ms.assert_called_once_with(force=False)
+        assert result == "scen"
+
+
 # ---------------------------------------------------------------------------
 # stitch_historical_scenario
 # ---------------------------------------------------------------------------
