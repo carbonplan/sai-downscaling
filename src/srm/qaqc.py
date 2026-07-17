@@ -563,7 +563,7 @@ def check_ensemble_spread(ds: xr.Dataset, label: str, var: str = "tas", day_inde
     }
 
 
-def disagg_test_calculate_metrics(x, y):
+def disagg_test_calculate_metrics(x, y, time_dim="time"):
     # Align on time so positional pairing can't silently drift
     x, y = xr.align(x, y, join="inner")
 
@@ -574,22 +574,22 @@ def disagg_test_calculate_metrics(x, y):
 
     resid = y - x  # deviation from 1:1 line
 
-    n = good.sum("time")
-    bias = resid.mean("time")
-    mae = np.abs(resid).mean("time")
-    rmse = np.sqrt((resid**2).mean("time"))
-    max_dev = np.abs(resid).max("time")
-    std_resid = resid.std("time")
+    n = good.sum(time_dim)
+    bias = resid.mean(time_dim)
+    mae = np.abs(resid).mean(time_dim)
+    rmse = np.sqrt((resid**2).mean(time_dim))
+    max_dev = np.abs(resid).max(time_dim)
+    std_resid = resid.std(time_dim)
     rmse_perp = rmse / np.sqrt(2)
 
     # R² vs 1:1 (Nash–Sutcliffe): 1 = perfect, can go negative
-    ss_res = (resid**2).sum("time")
-    ss_tot = ((y - y.mean("time")) ** 2).sum("time")
+    ss_res = (resid**2).sum(time_dim)
+    ss_tot = ((y - y.mean(time_dim)) ** 2).sum(time_dim)
     r2_oneone = 1 - ss_res / ss_tot
 
     # Pearson r per cell (shape agreement) for contrast
-    xm, ym = x - x.mean("time"), y - y.mean("time")
-    pearson = (xm * ym).sum("time") / np.sqrt((xm**2).sum("time") * (ym**2).sum("time"))
+    xm, ym = x - x.mean(time_dim), y - y.mean(time_dim)
+    pearson = (xm * ym).sum(time_dim) / np.sqrt((xm**2).sum(time_dim) * (ym**2).sum(time_dim))
 
     metrics = xr.Dataset(
         {
