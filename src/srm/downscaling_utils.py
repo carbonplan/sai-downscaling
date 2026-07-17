@@ -442,8 +442,30 @@ def interpolate_coarse_to_fine_grid(
     Uses ``slinear`` interpolation. This is preferred over ``linear`` here
     because ``linear`` can introduce tiny negative artifacts for strictly
     positive variables.
+
+
+    Fix for issue: https://github.com/carbonplan/srm-downscaling/issues/462
+
+    The coarse array is padded periodically by one cell on each side along
+    ``lon`` before interpolating: with lon in the -180..180 convention there is
+    no source point at exactly +180, so fine-grid points between the last
+    coarse cell center and the antimeridian would otherwise fall outside the
+    interpolation domain and come back NaN. For regional domains the padding
+    cells lie outside the query range and are unused.
+
+    References
+    ----------
+    xarray has no native cyclic-longitude support and padding seems to be the standard
+    workaround:
+    https://discourse.pangeo.io/t/interpolating-2d-data-with-periodic-boundaries-to-points-using-xarray/2702
+    https://github.com/pydata/xarray/issues/623
     """
-    coarse_on_fine_grid = da_coarse_to_regrid.interp(
+    lon = da_coarse_to_regrid["lon"]
+    left = da_coarse_to_regrid.isel(lon=[-1]).assign_coords(lon=lon.isel(lon=[-1]) - 360)
+    right = da_coarse_to_regrid.isel(lon=[0]).assign_coords(lon=lon.isel(lon=[0]) + 360)
+    da_periodic = xr.concat([left, da_coarse_to_regrid, right], dim="lon")
+
+    coarse_on_fine_grid = da_periodic.interp(
         lon=da_fine_grid["lon"],
         lat=da_fine_grid["lat"],
         method="slinear",
