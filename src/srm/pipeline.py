@@ -42,7 +42,16 @@ from srm.downscaling_utils import (
     subset_space,
     swap_temperature_extremes,
 )
-from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_coarse_encoding, make_encoding
+from srm.encoding import (
+    SHARD_LAT,
+    SHARD_LAT_COARSE,
+    SHARD_LON,
+    SHARD_LON_COARSE,
+    SHARD_TIME,
+    SHARD_TIME_COARSE,
+    make_coarse_encoding,
+    make_encoding,
+)
 from srm.utils import get_variable
 
 logger = logging.getLogger(__name__)
@@ -475,14 +484,26 @@ class BCSDPipeline:
             template, coast[["geom"]], all_touched=True, engine="rusterize", xdim="lon", ydim="lat"
         ).drop_vars("spatial_ref", errors="ignore")
 
-    def _open_from_icechunk(self, loc: StoreLocation) -> xr.Dataset:
-        """Open a zarr group from an icechunk store."""
+    def _open_from_icechunk(self, loc: StoreLocation, chunks="auto") -> xr.Dataset:
+        """Open a zarr group from an icechunk store.
+
+        Parameters
+        ----------
+        loc : StoreLocation
+            Store path and group to open.
+        chunks : str or dict, optional
+            Dask chunking for the opened dataset. Defaults to ``"auto"``. Pass an
+            explicit shard-aligned dict (e.g. ``{"time": SHARD_TIME, ...}``) when the
+            caller needs per-shard streaming reads rather than auto-sized chunks — the
+            store-to-store reconcile relies on this to avoid materialising the full
+            global fine array (reconcile OOM).
+        """
         branch = self.cache._branch_for()
         storage = _icechunk_storage_for_path(loc.store_path)
         repo = icechunk.Repository.open(storage)
         session = repo.readonly_session(branch=branch)
         return xr.open_dataset(
-            session.store, engine="zarr", consolidated=False, chunks="auto", group=loc.group
+            session.store, engine="zarr", consolidated=False, chunks=chunks, group=loc.group
         )
 
     def reconcile_temperature_extremes(
@@ -526,45 +547,54 @@ class BCSDPipeline:
                 f"{tasmax_loc.store_path}/{tasmax_loc.group}, which is missing. "
                 f"tasmax must complete before tasmin."
             )
+        # Read both fields shard-aligned so the swap+write slices per-shard from clean
+        # sharded zarr (no interp graph) instead of pulling the whole global fine array.
+        # With the pipeline persisting the raw tasmin before this step, tasmin_fine is
+        # None here in production and both inputs are plain sharded reads (reconcile OOM).
+        shard = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
         if tasmin_fine is None:
             if not self.cache.exists(tasmin_loc):
                 raise ValueError(
                     f"standalone reconcile needs the fine tasmin output "
                     f"{tasmin_loc.store_path}/{tasmin_loc.group}, which is missing."
                 )
-            tasmin_fine = self._open_from_icechunk(tasmin_loc)[self.config.variable]
+            tasmin_fine = self._open_from_icechunk(tasmin_loc, chunks=shard)[self.config.variable]
 
-        tasmax_ds = self._open_from_icechunk(tasmax_loc)
+        tasmax_ds = self._open_from_icechunk(tasmax_loc, chunks=shard)
         # swap_temperature_extremes enforces exact grid alignment and is structurally
         # monotone, so tasmax >= tasmin holds by construction; the second full-array
         # pass is left to output-QA rather than gated here (issue #331).
         tasmax_corrected, tasmin_corrected = swap_temperature_extremes(
             tasmax_ds["tasmax"], tasmin_fine
         )
-        shard = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
         tasmax_corrected = tasmax_corrected.chunk(shard)
         tasmin_corrected = tasmin_corrected.chunk(shard)
 
-        # tasmax first, force=False: tasmin_corrected still lazily reads this
-        # pre-rewrite tasmax snapshot, so a force GC now would collect those chunks
-        # before the tasmin write below materialises them (data-loss hazard).
-        self._write_to_icechunk(
-            tasmax_corrected,
-            tasmax_loc,
-            encoding=make_encoding("tasmax"),
-            dataset_attrs=dict(tasmax_ds.attrs),
-            force=False,
-        )
-        # tasmin last, force-threaded: it is materialised before its own commit, so
-        # the trailing GC safely sweeps the now-superseded tasmax snapshot too.
-        tasmin_corrected.name = self.config.variable
-        self._write_to_icechunk(
-            tasmin_corrected,
-            tasmin_loc,
-            encoding=make_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
-            force=force,
-        )
+        # Bound peak memory: the swap+writes are memory-bound. A synchronous scheduler
+        # keeps only a few shards resident at once (measured flat vs. array size) rather
+        # than the threaded scheduler's whole-array co-residency that OOMs at global
+        # scale (reconcile OOM; see project_fit_historical_single_threaded).
+        with dask.config.set(scheduler="synchronous"):
+            # tasmax first, force=False: tasmin_corrected still lazily reads this
+            # pre-rewrite tasmax snapshot, so a force GC now would collect those chunks
+            # before the tasmin write below materialises them (data-loss hazard).
+            self._write_to_icechunk(
+                tasmax_corrected,
+                tasmax_loc,
+                encoding=make_encoding("tasmax"),
+                dataset_attrs=dict(tasmax_ds.attrs),
+                force=False,
+            )
+            # tasmin last, force-threaded: it is materialised before its own commit, so
+            # the trailing GC safely sweeps the now-superseded tasmax snapshot too.
+            tasmin_corrected.name = self.config.variable
+            self._write_to_icechunk(
+                tasmin_corrected,
+                tasmin_loc,
+                encoding=make_encoding(self.config.variable),
+                dataset_attrs=self._build_output_attrs(),
+                force=force,
+            )
 
     def prepare_observations(self, force: bool = False) -> str:
         """
@@ -791,11 +821,15 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         model_hist_debiased.name = self.config.variable
-        # derive_tasmin operates on auto-chunked coarse inputs, so its dask chunks need not
-        # tile the coarse shard grid; rechunk to full_space (as the sibling coarse writes do)
-        # so the sharded write passes xarray's safe_chunks alignment check.
+        # derive_tasmin runs on auto-chunked coarse inputs, so its dask chunks (sub-shard on
+        # time, e.g. ~600-step) need not tile the coarse shard grid. rechunk(full_space) only
+        # fixes lat/lon; it leaves those sub-shard time chunks straddling SHARD_TIME_COARSE and
+        # trips xarray's safe_chunks check. Chunk to the full coarse shard grid instead (as the
+        # fine-res write does) so every dask chunk maps to exactly one shard.
         self._write_to_icechunk(
-            rechunk(model_hist_debiased, pattern="full_space"),
+            model_hist_debiased.chunk(
+                {"time": SHARD_TIME_COARSE, "lat": SHARD_LAT_COARSE, "lon": SHARD_LON_COARSE}
+            ),
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
             dataset_attrs=self._build_output_attrs(),
@@ -811,14 +845,29 @@ class BCSDPipeline:
         model_hist_downscaled = self._apply_spatial_downscaling(
             model_hist_debiased, obs_coarse, obs_fine
         )
+        model_hist_downscaled.name = self.config.variable
         logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        # Persist the raw (un-reconciled) tasmin FIRST, then reconcile store-to-store
+        # (tasmin_fine=None). This keeps the sibling fine tasmax and this fresh interp
+        # graph from being full-array-resident at the same time — the reconcile then
+        # re-reads both fields shard-aligned from clean sharded zarr (reconcile OOM).
+        t0 = time.perf_counter()
+        self._write_to_icechunk(
+            model_hist_downscaled,
+            loc,
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+            force=False,
+        )
+        logger.info(
+            "✓ Saved raw tasmin: %s/%s (%.2fs)", loc.store_path, loc.group, time.perf_counter() - t0
+        )
 
         # Dedicated reconcile step: swap any tasmax < tasmin left by independent
         # disaggregation and write both corrected fields (issue #331).
         t0 = time.perf_counter()
-        self.reconcile_temperature_extremes(
-            loc, tasmax_fine_loc, tasmin_fine=model_hist_downscaled, force=force
-        )
+        self.reconcile_temperature_extremes(loc, tasmax_fine_loc, tasmin_fine=None, force=force)
         logger.info(
             "✓ Reconciled + saved historical: %s/%s (%.2fs)",
             loc.store_path,
@@ -1375,11 +1424,15 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         scenario_debiased.name = self.config.variable
-        # derive_tasmin operates on auto-chunked coarse inputs, so its dask chunks need not
-        # tile the coarse shard grid; rechunk to full_space (as the sibling coarse writes do)
-        # so the sharded write passes xarray's safe_chunks alignment check.
+        # derive_tasmin runs on auto-chunked coarse inputs, so its dask chunks (sub-shard on
+        # time, e.g. ~600-step) need not tile the coarse shard grid. rechunk(full_space) only
+        # fixes lat/lon; it leaves those sub-shard time chunks straddling SHARD_TIME_COARSE and
+        # trips xarray's safe_chunks check on scenarios longer than one shard (>16000 days).
+        # Chunk to the full coarse shard grid instead so every dask chunk maps to one shard.
         self._write_to_icechunk(
-            rechunk(scenario_debiased, pattern="full_space"),
+            scenario_debiased.chunk(
+                {"time": SHARD_TIME_COARSE, "lat": SHARD_LAT_COARSE, "lon": SHARD_LON_COARSE}
+            ),
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
             dataset_attrs=self._build_output_attrs(),
@@ -1402,13 +1455,28 @@ class BCSDPipeline:
             scenario_downscaled = scenario_downscaled.where(
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
+        scenario_downscaled.name = self.config.variable
+
+        # Persist the raw (un-reconciled) tasmin FIRST — after any ocean masking so both
+        # fine fields share aligned NaN cells — then reconcile store-to-store
+        # (tasmin_fine=None). Sequencing the writes keeps the sibling fine tasmax and
+        # this fresh interp graph off the heap simultaneously; the reconcile re-reads
+        # both fields shard-aligned from clean sharded zarr (reconcile OOM).
+        self._write_to_icechunk(
+            scenario_downscaled,
+            loc,
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+            force=False,
+        )
+        logger.info(
+            "✓ Saved raw tasmin: %s/%s (%.2fs)", loc.store_path, loc.group, time.perf_counter() - t0
+        )
 
         # Dedicated reconcile step: swap any tasmax < tasmin left by independent
-        # disaggregation and write both corrected fields (issue #331). Runs after
-        # ocean masking so both fine fields share aligned NaN cells.
-        self.reconcile_temperature_extremes(
-            loc, tasmax_fine_loc, tasmin_fine=scenario_downscaled, force=force
-        )
+        # disaggregation and write both corrected fields (issue #331).
+        t0 = time.perf_counter()
+        self.reconcile_temperature_extremes(loc, tasmax_fine_loc, tasmin_fine=None, force=force)
         logger.info(
             "✓ Reconciled + saved scenario output: %s/%s (%.2fs)",
             loc.store_path,
