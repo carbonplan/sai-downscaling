@@ -574,13 +574,13 @@ def disagg_test_calculate_metrics(x, y, time_dim="time"):
 
     resid = y - x  # deviation from 1:1 line
 
-    n = good.sum(time_dim)
+    # n = good.sum(time_dim)
     bias = resid.mean(time_dim)
     mae = np.abs(resid).mean(time_dim)
     rmse = np.sqrt((resid**2).mean(time_dim))
     max_dev = np.abs(resid).max(time_dim)
     std_resid = resid.std(time_dim)
-    rmse_perp = rmse / np.sqrt(2)
+    # rmse_perp = rmse / np.sqrt(2)
 
     # R² vs 1:1 (Nash–Sutcliffe): 1 = perfect, can go negative
     ss_res = (resid**2).sum(time_dim)
@@ -588,20 +588,17 @@ def disagg_test_calculate_metrics(x, y, time_dim="time"):
     r2_oneone = 1 - ss_res / ss_tot
 
     # Pearson r per cell (shape agreement) for contrast
-    xm, ym = x - x.mean(time_dim), y - y.mean(time_dim)
-    pearson = (xm * ym).sum(time_dim) / np.sqrt((xm**2).sum(time_dim) * (ym**2).sum(time_dim))
+    # xm, ym = x - x.mean(time_dim), y - y.mean(time_dim)
+    # pearson = (xm * ym).sum(time_dim) / np.sqrt((xm**2).sum(time_dim) * (ym**2).sum(time_dim))
 
     metrics = xr.Dataset(
         {
-            "n": n,
             "bias": bias,
             "mae": mae,
             "rmse": rmse,
-            "rmse_perp": rmse_perp,
             "max_dev": max_dev,
             "std_resid": std_resid,
             "r2_oneone": r2_oneone,
-            "pearson": pearson,
         }
     )
 
@@ -658,7 +655,7 @@ def disagg_test_plot_summary_stats(
     plt.title("Maximum deviation")
 
     plt.subplot(nrows, ncols, 6)
-    metrics["r2_oneone"].plot(vmin=0.9, vmax=1)
+    metrics["r2_oneone"].plot(vmin=0.9, vmax=1, cmap=plt.cm.viridis_r)
     plt.title("R2 relative to 1:1 line")
 
     plt.tight_layout()
