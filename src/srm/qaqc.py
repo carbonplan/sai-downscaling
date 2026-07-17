@@ -666,34 +666,6 @@ def disagg_test_plot_summary_stats(
         plt.savefig(savefig_path)
 
 
-DISAGG_EVAL_THRESHOLDS = {
-    "tas": {
-        "rmse": {"eval_max": 0.5, "eval_min": 0.0},
-        "bias": {"eval_max": 0.1, "eval_min": -0.1},
-        "std_resid": {"eval_max": 0.5, "eval_min": 0.0},
-        "mae": {"eval_max": 0.5, "eval_min": 0.0},
-        "max_dev": {"eval_max": 1.0, "eval_min": 0.0},
-        "r2_oneone": {"eval_max": 1.0, "eval_min": 0.98},
-    },
-    "tasmax": {
-        "rmse": {"eval_max": 0.5, "eval_min": 0.0},
-        "bias": {"eval_max": 0.1, "eval_min": -0.1},
-        "std_resid": {"eval_max": 0.5, "eval_min": 0.0},
-        "mae": {"eval_max": 0.5, "eval_min": 0.0},
-        "max_dev": {"eval_max": 1.0, "eval_min": 0.0},
-        "r2_oneone": {"eval_max": 1.0, "eval_min": 0.98},
-    },
-    "tasmin": {
-        "rmse": {"eval_max": 0.5, "eval_min": 0.0},
-        "bias": {"eval_max": 0.1, "eval_min": -0.1},
-        "std_resid": {"eval_max": 0.5, "eval_min": 0.0},
-        "mae": {"eval_max": 0.5, "eval_min": 0.0},
-        "max_dev": {"eval_max": 1.0, "eval_min": 0.0},
-        "r2_oneone": {"eval_max": 1.0, "eval_min": 0.98},
-    },
-}
-
-
 def disagg_test_print_evaluation_for_metric(
     metric, metrics_to_evaluate, metric_max_thresh=None, metric_min_thresh=None
 ):
@@ -716,10 +688,11 @@ def disagg_test_print_all_evaluation_metrics(
     scenario,
     ensemble_member,
     timescale,
+    disagg_eval_tresholds,
     is_regional_subset=True,
     log_path=None,
 ):
-    thresholds = DISAGG_EVAL_THRESHOLDS[variable]
+    thresholds = disagg_eval_tresholds[variable]
     if is_regional_subset:
         metrics_to_evaluate = metrics.isel(lat=slice(1, -1), lon=slice(1, -1))
     else:
@@ -761,4 +734,4 @@ def disagg_test_print_all_evaluation_metrics(
     if log_path is not None:
         csv_path = Path(log_path).with_suffix(".csv")
         df = pd.DataFrame(rows)
-        df.to_csv(csv_path, mode="a", header=not csv_path.exists(), index=False)
+        df.to_csv(csv_path, mode="w", header=True, index=False)
