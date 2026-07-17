@@ -131,7 +131,7 @@ s3://carbonplan-scratch/srm/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.
     debiased_scenario/{scenario_group}/{variable}/{ensemble_member}   # only if save_intermediate=True
 
 # Output store — fine-res historical + scenario results + debiased coarse data
-s3://carbonplan-scratch/srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+s3://carbonplan-scratch/srm/outputs/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
     historical/{variable}/{hist_member}
     {scenario_group}/{variable}/{ensemble_member}
