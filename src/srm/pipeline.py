@@ -816,16 +816,19 @@ class BCSDPipeline:
         )
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
-        model_hist_debiased = derive_tasmin(debiased_tasmax, debiased_dtr)
+        # Materialise the derived coarse tasmin eagerly (it is only ~3-6 GB). This mirrors what
+        # every other variable already does — _apply_bias_correction returns a numpy-backed
+        # array — so the spatial disaggregation below runs the slinear interp eagerly and its
+        # .chunk(SHARD) is cheap slicing of concrete data. Left lazy, the interp is deferred
+        # into an all-to-all rechunk at the write that holds the whole ~56-129 GB fine array
+        # resident and stalls at global scale. See notebooks/issues/tasmin-disaggregation-inefficiency.
+        model_hist_debiased = derive_tasmin(debiased_tasmax, debiased_dtr).compute()
         logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         model_hist_debiased.name = self.config.variable
-        # derive_tasmin runs on auto-chunked coarse inputs, so its dask chunks (sub-shard on
-        # time, e.g. ~600-step) need not tile the coarse shard grid. rechunk(full_space) only
-        # fixes lat/lon; it leaves those sub-shard time chunks straddling SHARD_TIME_COARSE and
-        # trips xarray's safe_chunks check. Chunk to the full coarse shard grid instead (as the
-        # fine-res write does) so every dask chunk maps to exactly one shard.
+        # Chunk the now-concrete coarse field to the coarse shard grid so every dask chunk maps
+        # to exactly one shard for the write.
         self._write_to_icechunk(
             model_hist_debiased.chunk(
                 {"time": SHARD_TIME_COARSE, "lat": SHARD_LAT_COARSE, "lon": SHARD_LON_COARSE}
@@ -1419,16 +1422,19 @@ class BCSDPipeline:
         debiased_tasmax_loc = self.cache.debiased_coarse_scenario_loc(variable="tasmax")
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
-        scenario_debiased = derive_tasmin(debiased_tasmax, debiased_dtr)
+        # Materialise the derived coarse tasmin eagerly (it is only ~3-6 GB). This mirrors what
+        # every other variable already does — _apply_bias_correction returns a numpy-backed
+        # array — so the spatial disaggregation below runs the slinear interp eagerly and its
+        # .chunk(SHARD) is cheap slicing of concrete data. Left lazy, the interp is deferred
+        # into an all-to-all rechunk at the write that holds the whole ~56-129 GB fine array
+        # resident and stalls at global scale. See notebooks/issues/tasmin-disaggregation-inefficiency.
+        scenario_debiased = derive_tasmin(debiased_tasmax, debiased_dtr).compute()
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         scenario_debiased.name = self.config.variable
-        # derive_tasmin runs on auto-chunked coarse inputs, so its dask chunks (sub-shard on
-        # time, e.g. ~600-step) need not tile the coarse shard grid. rechunk(full_space) only
-        # fixes lat/lon; it leaves those sub-shard time chunks straddling SHARD_TIME_COARSE and
-        # trips xarray's safe_chunks check on scenarios longer than one shard (>16000 days).
-        # Chunk to the full coarse shard grid instead so every dask chunk maps to one shard.
+        # Chunk the now-concrete coarse field to the coarse shard grid so every dask chunk maps
+        # to exactly one shard for the write.
         self._write_to_icechunk(
             scenario_debiased.chunk(
                 {"time": SHARD_TIME_COARSE, "lat": SHARD_LAT_COARSE, "lon": SHARD_LON_COARSE}
