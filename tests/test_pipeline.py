@@ -702,6 +702,85 @@ class TestTasminStageDispatch:
         assert result == "scen"
 
 
+class TestTasminEagerDisaggInput:
+    """The derived coarse tasmin must be materialised (eager) before disaggregation —
+    the same shape of input `_apply_bias_correction` produces for every other variable.
+    Left lazy, the interp is deferred into an all-to-all rechunk at the write that holds
+    the whole fine array resident and stalls at global scale (the tasmin hang).
+    """
+
+    @pytest.fixture
+    def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmin",
+            ensemble_member="001",
+            scenario="G6-1.5K",
+            predict_period_start=2015,
+            predict_period_end=2084,
+        )
+        return BCSDPipeline(cfg, pipeline_options)
+
+    @staticmethod
+    def _lazy_coarse_pair() -> xr.Dataset:
+        """Lazy (dask) debiased-coarse tasmax + dtr, as _open_from_icechunk returns them."""
+        import dask.array as darr
+
+        t = xr.date_range("1978-01-01", periods=40, freq="D", use_cftime=True)
+        coords = {"time": t, "lat": [0.0, 1.0], "lon": [0.0, 1.0]}
+
+        def _da(val, name):
+            return xr.DataArray(
+                darr.full((40, 2, 2), val, chunks=(40, 2, 2), dtype="float32"),
+                dims=("time", "lat", "lon"),
+                coords=coords,
+                name=name,
+            )
+
+        return xr.Dataset({"tasmax": _da(300.0, "tasmax"), "dtr": _da(10.0, "dtr")})
+
+    def _capture_disagg_input(self, pipe, method: str, load_attr: str, load_return):
+        ds = self._lazy_coarse_pair()
+        obs = ds["tasmax"]  # coarse array; only its grid/time are used by the mocked disagg
+        captured = {}
+
+        def _capture(debiased, obs_coarse, obs_fine):
+            captured["input"] = debiased
+            return debiased
+
+        with (
+            patch.object(pipe.cache, "exists", return_value=False),
+            patch.object(pipe.cache, "validate_dependencies"),
+            patch.object(pipe, load_attr, return_value=load_return(obs)),
+            patch.object(pipe, "_open_from_icechunk", return_value=ds),
+            patch.object(pipe, "_write_to_icechunk", return_value="snap"),
+            patch.object(pipe, "reconcile_temperature_extremes"),
+            patch.object(pipe, "_build_output_attrs", return_value={}),
+            patch.object(pipe, "_apply_spatial_downscaling", side_effect=_capture),
+        ):
+            getattr(pipe, method)(force=True)
+        return captured["input"]
+
+    def test_fit_historical_tasmin_input_is_eager(self, tasmin_pipeline):
+        got = self._capture_disagg_input(
+            tasmin_pipeline, "fit_historical_tasmin", "_load_gcm_obs", lambda obs: (obs, obs, obs)
+        )
+        assert got.chunks is None, (
+            "fit_historical_tasmin must materialise the derived input (.compute())"
+        )
+
+    def test_transform_scenario_tasmin_input_is_eager(self, tasmin_pipeline):
+        got = self._capture_disagg_input(
+            tasmin_pipeline,
+            "transform_scenario_tasmin",
+            "_load_scenario_data",
+            lambda obs: (obs, obs, obs, obs, None),
+        )
+        assert got.chunks is None, (
+            "transform_scenario_tasmin must materialise the derived input (.compute())"
+        )
+
+
 # ---------------------------------------------------------------------------
 # stitch_historical_scenario
 # ---------------------------------------------------------------------------
