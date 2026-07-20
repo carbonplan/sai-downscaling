@@ -1,0 +1,33 @@
+# BCSD configuration: CESM2-WACCM / tas / SSP245 / truncated members 007-010 / global (production)
+# Members 007-010's data ends 2070-12-31 (per srm.validation._MEMBER_TIME_BOUNDS), so
+# predict_period_end is 2070. Member 006 ends 2069 and lives in
+# cesm2-waccm-ssp245-tas-global-trunc-2069.yaml. Splitting the batch by true data end
+# keeps each member's tas extent consistent with its other variables — 008's
+# tasmax/tasmin/dtr (cesm2-waccm-ssp245-tmx.yaml) and pr/rsds/hurs
+# (cesm2-waccm-ssp245-std-trunc.yaml) are already produced at 2070. Full-length members
+# 001-005 reach 2099.
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM"
+variables: ["tas"]
+ensemble_members: ["007", "008", "009", "010"]
+scenarios: ["SSP245"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2070
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
+output_dir: "s3://carbonplan-srm/output"
+environment: "production"
+# version intentionally unset — derived from the installed package version at runtime
+
+# === Bias Correction ===
+debias_approach: "nonparametric_hybrid_2sided"
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true
