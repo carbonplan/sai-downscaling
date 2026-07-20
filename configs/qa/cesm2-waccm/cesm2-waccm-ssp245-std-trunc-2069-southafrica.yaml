@@ -1,12 +1,14 @@
-# BCSD configuration: CESM2-WACCM / standard variables / SSP245 / truncated members 006-010 / South Africa (QA)
-# These members end early (006 -> 2069, 007-010 -> 2070); predict_period_end clamped to 2069
-# (group min) so no member is downscaled past its valid data extent. Full-length members
-# 001-005 live in cesm2-waccm-ssp245-std-southafrica.yaml.
+# BCSD configuration: CESM2-WACCM / standard variables / SSP245 / truncated member 006 / South Africa (QA)
+# Member 006's data ends 2069-12-31 (per srm.validation._MEMBER_TIME_BOUNDS), so
+# predict_period_end is 2069. Members 007-010 end 2070 and live in
+# cesm2-waccm-ssp245-std-trunc-2070-southafrica.yaml. Splitting by true data end keeps
+# each member's extent consistent across variables and with the production / snapshot
+# runs. Full-length members 001-005 live in cesm2-waccm-ssp245-std-southafrica.yaml.
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds", "hurs"]
-ensemble_members: ["006", "007", "008", "009", "010"]
+ensemble_members: ["006"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
@@ -20,7 +22,7 @@ predict_period_end: 2069
 subset_bounds: [-35, -22, 16, 33]
 
 # === Storage ===
-scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
 output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
 
