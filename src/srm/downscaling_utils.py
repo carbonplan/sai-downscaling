@@ -446,12 +446,12 @@ def interpolate_coarse_to_fine_grid(
 
     Fix for issue: https://github.com/carbonplan/srm-downscaling/issues/462
 
-    The coarse array is padded periodically by one cell on each side along
-    ``lon`` before interpolating: with lon in the -180..180 convention there is
-    no source point at exactly +180, so fine-grid points between the last
-    coarse cell center and the antimeridian would otherwise fall outside the
-    interpolation domain and come back NaN. For regional domains the padding
-    cells lie outside the query range and are unused.
+    Global coarse grids (lon end-gap ~ one grid step) get their first cell
+    periodically wrapped to +360 before interpolating, since -180..180 lon has
+    no source point at exactly +180 and fine cells past the last coarse center
+    would otherwise fall outside the interpolation domain and return NaN.
+    Regional (subset) domains have a large end-gap, are detected as such, and
+    are left unpadded so out-of-domain fine cells correctly stay NaN.
 
     References
     ----------
@@ -460,12 +460,33 @@ def interpolate_coarse_to_fine_grid(
     https://discourse.pangeo.io/t/interpolating-2d-data-with-periodic-boundaries-to-points-using-xarray/2702
     https://github.com/pydata/xarray/issues/623
     """
-    lon = da_coarse_to_regrid["lon"]
-    left = da_coarse_to_regrid.isel(lon=[-1]).assign_coords(lon=lon.isel(lon=[-1]) - 360)
-    right = da_coarse_to_regrid.isel(lon=[0]).assign_coords(lon=lon.isel(lon=[0]) + 360)
-    da_periodic = xr.concat([left, da_coarse_to_regrid, right], dim="lon")
+    # Padding math and slinear interp both assume ascending lon. Check, and if not apply sortby
+    if not da_coarse_to_regrid.indexes["lon"].is_monotonic_increasing:
+        da_coarse_to_regrid = da_coarse_to_regrid.sortby("lon")
 
-    coarse_on_fine_grid = da_periodic.interp(
+    lon = da_coarse_to_regrid["lon"]
+    lon_vals = lon.values
+    dlon = np.median(np.diff(lon_vals)) if lon_vals.size > 1 else np.nan
+    # A global grid covers the whole planet minus the gap between its last cell
+    # center and the wrap-around back to the first (~one grid step, dlon). So its
+    # span (last - first) is roughly 360 - dlon. A regional grid spans much less.
+    # The 1.5 * dlon just leaves room for floating-point / uneven-spacing wobble;
+    # it is not tied to any particular resolution.
+    spans_globe = lon_vals.size > 1 and (lon_vals[-1] - lon_vals[0]) >= 360.0 - 1.5 * dlon
+
+    if spans_globe:
+        # Right-only wrap relies on -180 already being an exact coarse lon point,
+        # which holds for even lon-point-count grids (all current GCMs: CESM2,
+        # MIROC-ES2H, UKESM). An odd-count grid would need a left pad too.
+        # Wrap the first cell to just past the last (+360) so fine points between
+        # the last coarse center and +180 interpolate across the dateline instead
+        # of falling outside the domain and returning NaN.
+        right = da_coarse_to_regrid.isel(lon=[0]).assign_coords(lon=lon.isel(lon=[0]) + 360)
+        da_to_interp = xr.concat([da_coarse_to_regrid, right], dim="lon")
+    else:
+        da_to_interp = da_coarse_to_regrid
+
+    coarse_on_fine_grid = da_to_interp.interp(
         lon=da_fine_grid["lon"],
         lat=da_fine_grid["lat"],
         method="slinear",

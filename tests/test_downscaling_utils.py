@@ -497,13 +497,6 @@ def _make_fine_grid() -> xr.DataArray:
     )
 
 
-def test_interpolate_coarse_to_fine_grid_no_nan_at_antimeridian():
-    coarse = _make_global_coarse_da()
-    fine = _make_fine_grid()
-    result = interpolate_coarse_to_fine_grid(coarse, fine)
-    assert not result.isnull().any()
-
-
 def test_interpolate_coarse_to_fine_grid_wraps_periodically():
     # Fine points between the last coarse lon (135) and +180 must interpolate
     # between lon=135 and the wrapped lon=-180 point, not return NaN.
@@ -552,20 +545,34 @@ def test_interpolate_coarse_to_fine_grid_dask_backed_no_nan():
     assert not result.isnull().any()
 
 
-def test_interpolate_coarse_to_fine_grid_regional_unchanged():
-    # A regional (non-global) domain nowhere near the dateline must behave
-    # exactly like plain interp.
-    lon = np.arange(10.0, 50.0, 5.0)
-    lat = np.arange(-30.0, 10.0, 5.0)
+def test_interpolate_coarse_to_fine_grid_unsorted_lon_handled():
+    # Coarse lon handed in descending / shuffled order must be sorted internally
+    # so the periodic-padding math and slinear interp stay correct.
+    coarse = _make_global_coarse_da()
+    fine = _make_fine_grid()
+    expected = interpolate_coarse_to_fine_grid(coarse, fine)
+    shuffled = coarse.isel(lon=np.array([3, 0, 7, 1, 5, 2, 6, 4]))
+    result = interpolate_coarse_to_fine_grid(shuffled, fine)
+    assert not result.isnull().any()
+    np.testing.assert_allclose(result.values, expected.values, atol=1e-12)
+
+
+def test_interpolate_coarse_to_fine_grid_regional_edge_stays_nan():
+    # Regional (non-global) domain: fine cells beyond the coarse lon edges must
+    # stay NaN exactly as plain interp leaves them — periodic padding must not
+    # wrap a regional domain's east edge around to its west edge.
+    lon = np.arange(16.25, 32.6, 1.25)  # South-Africa-like subset, centers only
+    lat = np.arange(-34.5, -22.0, 1.0)
     data = np.outer(np.cos(np.deg2rad(lat)), np.sin(np.deg2rad(lon)))
     coarse = xr.DataArray(data, dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
     fine = xr.DataArray(
-        np.zeros((3, 3)),
+        np.zeros((3, 5)),
         dims=["lat", "lon"],
-        coords={"lat": [-20.0, -10.0, 0.0], "lon": [17.5, 25.0, 40.1]},
+        coords={"lat": [-30.0, -28.0, -26.0], "lon": [16.0, 20.0, 25.0, 32.75, 33.0]},
     )
     result = interpolate_coarse_to_fine_grid(coarse, fine)
     plain = coarse.interp(lon=fine["lon"], lat=fine["lat"], method="slinear")
+    assert plain.isnull().any()  # sanity: this setup does have out-of-hull cells
     np.testing.assert_array_equal(result.values, plain.values)
 
 
