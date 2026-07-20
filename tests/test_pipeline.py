@@ -1709,6 +1709,35 @@ class TestReconcileTemperatureExtremes:
         assert written_min.values[0, 0, 1] == 290.0  # swapped down
         assert bool((written_max >= written_min).all())  # monotone
 
+    def test_logs_swap_count_in_qa(self, tasmin_pipeline, caplog):
+        import logging
+
+        p = tasmin_pipeline  # pipeline_options defaults to environment="qa"
+        assert p.options.environment == "qa"
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()  # 1 inverted of 2 valid cells
+        with caplog.at_level(logging.INFO, logger="srm.pipeline"):
+            self._run_reconcile(p, tasmax_fine, tasmin_fine)
+        assert "swapped 1 / 2 valid cells" in caplog.text
+        assert "50.0000%" in caplog.text
+        assert "max inversion 5.000" in caplog.text
+
+    def test_no_swap_count_in_production(self, tasmin_config, tmp_path, caplog):
+        import logging
+
+        # production skips the extra swap-count pass; the consistency gate is qaqc's job.
+        opts = PipelineOptions(
+            scratch_dir=str(tmp_path / "cache"),
+            output_dir=str(tmp_path / "outputs"),
+            verbose=False,
+            rechunk_workflow=False,
+            environment="production",
+        )
+        p = BCSDPipeline(tasmin_config, opts)
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+        with caplog.at_level(logging.INFO, logger="srm.pipeline"):
+            self._run_reconcile(p, tasmax_fine, tasmin_fine)
+        assert "swapped" not in caplog.text
+
     def test_tasmax_write_never_force_gcs_but_tasmin_does(self, tasmin_pipeline):
         # tasmax rewrite must never force-GC (the tasmin write still lazily reads the
         # pre-rewrite tasmax); the tasmin write, materialised last, threads force so

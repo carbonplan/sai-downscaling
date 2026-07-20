@@ -570,6 +570,35 @@ class BCSDPipeline:
         tasmax_corrected = tasmax_corrected.chunk(shard)
         tasmin_corrected = tasmin_corrected.chunk(shard)
 
+        # Data-quality diagnostic (issue #331): how many fine cells were inverted
+        # (tasmax < tasmin) before the swap, plus the worst inversion. Unlike the residual
+        # count in qaqc.validate_tasmax_ge_tasmin (which runs on the final output via
+        # `bcsd validate-output` and, being post-reconcile, is ~0), the *swap* count is only
+        # available here, pre-swap. It costs one extra streaming read pass over both fields,
+        # so restrict it to QA runs (always spatial subsets — cheap); production skips it and
+        # relies on the qaqc consistency gate. NaN cells (e.g. ocean) compare False, excluded.
+        if self.options.environment == "qa":
+            pre_tasmax = tasmax_ds["tasmax"]
+            inverted = pre_tasmax < tasmin_fine
+            with dask.config.set(scheduler="synchronous"):
+                swap_stats = xr.Dataset(
+                    {
+                        "n_swapped": inverted.sum(),
+                        "n_valid": (pre_tasmax.notnull() & tasmin_fine.notnull()).sum(),
+                        "max_inversion": xr.where(inverted, tasmin_fine - pre_tasmax, 0.0).max(),
+                    }
+                ).compute()
+            n_swapped = int(swap_stats["n_swapped"])
+            n_valid = int(swap_stats["n_valid"])
+            pct = 100.0 * n_swapped / n_valid if n_valid else 0.0
+            logger.info(
+                "Reconcile tasmax<tasmin: swapped %d / %d valid cells (%.4f%%); max inversion %.3f",
+                n_swapped,
+                n_valid,
+                pct,
+                float(swap_stats["max_inversion"]),
+            )
+
         # Bound peak memory: the swap+writes are memory-bound. A synchronous scheduler
         # keeps only a few shards resident at once (measured flat vs. array size) rather
         # than the threaded scheduler's whole-array co-residency that OOMs at global
