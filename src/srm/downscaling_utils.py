@@ -543,6 +543,7 @@ def downscale_from_coarse(
     clim_method: DownscalingClimMethod = "simple",
     allow_negative_values: bool = True,
     max_residual: float = 100,
+    enforce_conservation: bool = False,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
@@ -564,6 +565,10 @@ def downscale_from_coarse(
     max_residual : float
         The maximum value possible for the residuals used for building the
         relationship between coarse data and fine.
+    enforce_conservation: bool, default: False
+        Whether to enforce conservation of the coarse-scale mean after downscaling.
+        - True: the downscaled field is adjusted to ensure that its coarse-scale mean matches the debiased, coarse input
+        - False: the downscaled field is returned without adjustment, which may result in an added bias at the coarse scale.
 
     Returns
     -------
@@ -623,6 +628,25 @@ def downscale_from_coarse(
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
     elif method == "multiplicative":
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
+
+    # Optional Step 6: Enforce conservation of the coarse-scale mean after downscaling
+    if enforce_conservation:
+        recoarsened = interpolate_fine_to_coarse_grid(
+            downscaled.drop_vars("dayofyear", errors="ignore").unify_chunks(), da
+        )
+        if method == "additive":
+            correction_coarse = da - recoarsened
+            correction_fine = correction_coarse.interp(
+                lat=downscaled.lat, lon=downscaled.lon, method="nearest"
+            )
+            downscaled_corrected = downscaled + correction_fine
+        elif method == "multiplicative":
+            ratio_coarse = da / recoarsened.where(recoarsened != 0, 1.0)
+            ratio_fine = ratio_coarse.interp(
+                lat=downscaled.lat, lon=downscaled.lon, method="nearest"
+            )
+            downscaled_corrected = downscaled * ratio_fine
+        downscaled = downscaled_corrected
 
     return downscaled
 

@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cli import app, configs_from_matrix
+from srm.cli import _validate_predict_periods, app, configs_from_matrix
 from srm.validation import CheckResult, CheckStatus
 
 
@@ -148,6 +148,33 @@ class TestConfigsFromMatrix:
         assert cfg.predict_period_start == 2020
         assert cfg.predict_period_end == 2080
         assert isinstance(options, PipelineOptions)
+
+
+class TestValidatePredictPeriods:
+    """run/run-matrix must reject configs whose predict_period overruns a member's data."""
+
+    def test_truncated_member_overrun_raises(self):
+        configs, _ = configs_from_matrix(
+            gcms=["CESM2-WACCM"],
+            variables=["tasmax"],
+            members=["007"],
+            scenarios=["ssp245"],
+            predict_period_start=2015,
+            predict_period_end=2100,
+        )
+        with pytest.raises(ValueError, match="2070"):
+            _validate_predict_periods(configs)
+
+    def test_truncated_member_within_extent_does_not_raise(self):
+        configs, _ = configs_from_matrix(
+            gcms=["CESM2-WACCM"],
+            variables=["tasmax"],
+            members=["007"],
+            scenarios=["ssp245"],
+            predict_period_start=2015,
+            predict_period_end=2070,
+        )
+        _validate_predict_periods(configs)  # should not raise
 
 
 class TestValidateOutputConfigPath:

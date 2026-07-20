@@ -204,6 +204,20 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         console.print(tbl)
 
 
+def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
+    """Reject configs whose predict_period falls outside a member's valid data extent."""
+    from srm.validation import CheckStatus, check_config_time_domain
+
+    failures = [r for c in configs if (r := check_config_time_domain(c)).status == CheckStatus.FAIL]
+    if failures:
+        raise ValueError(
+            "predict_period out of bounds for the following configs:\n"
+            + "\n".join(
+                f"  {r.gcm}/{r.scenario}/{r.ensemble_member}: {r.message}" for r in failures
+            )
+        )
+
+
 def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
     """Cross-scenario validation: check resolved members exist in the unified datatree store.
 
@@ -511,6 +525,7 @@ def run(
     logger.info("Loaded %d configuration(s)", len(configs))
     _print_lineage_summary(configs)
     _validate_lineage_members(configs)
+    _validate_predict_periods(configs)
 
     orchestrator = BCSDOrchestrator(options)
 
@@ -805,6 +820,7 @@ def run_matrix(
     )
 
     _validate_lineage_members(configs)
+    _validate_predict_periods(configs)
 
     n = len(configs)
     logger.info(
