@@ -61,8 +61,9 @@ class _WeibullMinZeroBounded(type(scipy.stats.weibull_min)):
     """Subclass of weibull_min_gen that constrains loc=0 during fitting.
 
     Prevents degenerate negative loc values from the 3-parameter Weibull MLE,
-    which can produce physically impossible debiased DTR values (e.g. -300 K).
-    Must be defined at module level so multiprocessing can pickle it.
+    which can produce physically impossible negative debiased values (e.g. DTR -300 K).
+    This class must be defined at module level so multiprocessing can pickle it.
+    All variables using this class are zero-bounded (rsds, DTR, hurs, pr)
     """
 
     def fit(self, data, *args, **kwargs):
@@ -1372,6 +1373,7 @@ class BCSDPipeline:
 
             if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:
                 # Use different parametric distributions for low vs. high tails
+                # the distributions here mimic those in the nex-gddp implementation
                 low_dist = _weibull_min_zero_bounded
                 high_dist = scipy.stats.gumbel_r
 
