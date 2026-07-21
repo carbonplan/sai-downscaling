@@ -112,6 +112,45 @@ def test_to_lines_is_plain_text():
     assert all(isinstance(line, str) for line in lines)
 
 
+def _passing_leaf():
+    return LeafDiff("g/tas", "tas", 0.0, 0.0, 0.0, 0, False, True)
+
+
+def test_report_with_no_invariants_passes_on_leaves_alone():
+    from srm.snapshot.compare import DiffReport
+
+    report = DiffReport(leaves=[_passing_leaf()])
+    assert report.within_tolerance is True
+    assert report.invariants_hold is True  # vacuously true when no checks ran
+    assert report.passed is True
+
+
+def test_invariant_violation_fails_passed_even_when_leaves_within_tol():
+    from srm.snapshot.compare import DiffReport, InvariantCheck
+
+    report = DiffReport(
+        leaves=[_passing_leaf()],
+        invariant_checks=[
+            InvariantCheck(
+                "ssp245/tasmax_ge_tasmin/008", False, "tasmax < tasmin at 2 grid point(s)"
+            )
+        ],
+    )
+    assert report.within_tolerance is True  # leaves are fine on their own
+    assert report.invariants_hold is False
+    assert report.passed is False  # the invariant violation gates the overall verdict
+
+
+def test_report_passes_when_invariant_holds():
+    from srm.snapshot.compare import DiffReport, InvariantCheck
+
+    report = DiffReport(
+        leaves=[_passing_leaf()],
+        invariant_checks=[InvariantCheck("ssp245/tasmax_ge_tasmin/008", True, "")],
+    )
+    assert report.passed is True
+
+
 def test_global_baseline_pointer_is_well_formed():
     from srm.snapshot.baselines import CESM2_WACCM_GLOBAL
 
