@@ -1065,16 +1065,16 @@ class TestMakeDebiaser:
             assert mock_qm.call_args.kwargs["mapping_type"] == "nonparametric"
 
     def test_2sided_pr_low_tail_uses_parametric_with_weibull(self):
-        """PR low-tail debiaser must use mapping_type='parametric' and weibull_min distribution."""
+        """PR low-tail debiaser must use mapping_type='parametric' and the zero-bounded Weibull."""
         with patch("srm.pipeline.QuantileMapping") as mock_qm:
             _make_debiaser(
                 variable="pr",
-                distribution=scipy.stats.weibull_min,
+                distribution=_weibull_min_zero_bounded,
                 mapping_type="parametric",
             )
             call_kwargs = mock_qm.call_args.kwargs
             assert call_kwargs["mapping_type"] == "parametric"
-            assert call_kwargs["distribution"] is scipy.stats.weibull_min
+            assert call_kwargs["distribution"] is _weibull_min_zero_bounded
 
     def test_2sided_pr_high_tail_uses_parametric_with_gumbel(self):
         """PR high-tail debiaser must use mapping_type='parametric' and gumbel_r distribution."""
