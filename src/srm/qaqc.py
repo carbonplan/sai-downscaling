@@ -732,3 +732,76 @@ def disagg_test_print_all_evaluation_metrics(
         csv_path = Path(log_path).with_suffix(".csv")
         df = pd.DataFrame(rows)
         df.to_csv(csv_path, mode="w", header=True, index=False)
+
+
+def periodic_rolling(da, dim, window, agg="mean", **kwargs):
+    pad = window // 2
+    padded = da.pad({dim: pad}, mode="wrap")
+    if agg == "max":
+        out = padded.rolling({dim: window}, center=True, **kwargs).max()
+    elif agg == "min":
+        out = padded.rolling({dim: window}, center=True, **kwargs).min()
+    elif agg == "mean":
+        out = padded.rolling({dim: window}, center=True, **kwargs).mean()
+    return out.isel({dim: slice(pad, -pad)})
+
+
+def calculate_reasonable_bounds_doy(raw_scenario_subset, raw_historical_subset, obs_fine_subset):
+    scenario_doy_max = raw_scenario_subset.groupby("time.dayofyear").max(dim="time").compute()
+    scenario_doy_min = raw_scenario_subset.groupby("time.dayofyear").min(dim="time").compute()
+
+    hist_doy_max = (
+        raw_historical_subset.groupby("time.dayofyear")
+        .max(dim="time")
+        .max(dim="ensemble_member")
+        .compute()
+    )
+    hist_doy_min = (
+        raw_historical_subset.groupby("time.dayofyear")
+        .min(dim="time")
+        .min(dim="ensemble_member")
+        .compute()
+    )
+    hist_doy_mean = (
+        raw_historical_subset.groupby("time.dayofyear")
+        .mean(dim="time")
+        .mean(dim="ensemble_member")
+        .compute()
+    )
+
+    obs_max = obs_fine_subset.groupby("time.dayofyear").max().compute()
+    obs_min = obs_fine_subset.groupby("time.dayofyear").min().compute()
+
+    scenario_doy_max_rolling = periodic_rolling(
+        da=scenario_doy_max, dim="dayofyear", window=30, agg="max"
+    )
+    scenario_doy_min_rolling = periodic_rolling(
+        da=scenario_doy_min, dim="dayofyear", window=30, agg="min"
+    )
+    # hist_doy_max_rolling = periodic_rolling(da=hist_doy_max, dim="dayofyear", window=30, agg="max")
+    # hist_doy_min_rolling = periodic_rolling(da=hist_doy_min, dim="dayofyear", window=30, agg="min")
+    hist_doy_mean_rolling = periodic_rolling(
+        da=hist_doy_mean, dim="dayofyear", window=30, agg="mean"
+    )
+    obs_max_rolling = periodic_rolling(da=obs_max, dim="dayofyear", window=30, agg="max")
+    obs_min_rolling = periodic_rolling(da=obs_min, dim="dayofyear", window=30, agg="min")
+
+    delta_doy_max = scenario_doy_max_rolling - hist_doy_mean_rolling
+    delta_doy_min = scenario_doy_min_rolling - hist_doy_mean_rolling
+
+    delta_doy_max_finegrid = delta_doy_max.interp(
+        lon=obs_fine_subset["lon"],
+        lat=obs_fine_subset["lat"],
+        method="nearest",
+    ).compute()
+
+    delta_doy_min_finegrid = delta_doy_min.interp(
+        lon=obs_fine_subset["lon"],
+        lat=obs_fine_subset["lat"],
+        method="nearest",
+    ).compute()
+
+    high_bound = (obs_max_rolling + delta_doy_max_finegrid).compute()
+    low_bound = (obs_min_rolling + delta_doy_min_finegrid).compute()
+
+    return low_bound, high_bound
