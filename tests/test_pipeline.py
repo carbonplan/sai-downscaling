@@ -15,6 +15,7 @@ Tests focus on:
 
 from __future__ import annotations
 
+import pickle
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,7 @@ import pytest
 import scipy.stats
 import xarray as xr
 from conftest import make_icechunk_group as _make_icechunk_group
+from ibicus.debias import QuantileMapping
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
@@ -31,6 +33,8 @@ from srm.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
     _make_debiaser,
+    _weibull_min_zero_bounded,
+    _WeibullMinZeroBounded,
     calculate_out_of_range_mask,
     stitch_historical_scenario,
 )
@@ -1061,16 +1065,16 @@ class TestMakeDebiaser:
             assert mock_qm.call_args.kwargs["mapping_type"] == "nonparametric"
 
     def test_2sided_pr_low_tail_uses_parametric_with_weibull(self):
-        """PR low-tail debiaser must use mapping_type='parametric' and weibull_min distribution."""
+        """PR low-tail debiaser must use mapping_type='parametric' and the zero-bounded Weibull."""
         with patch("srm.pipeline.QuantileMapping") as mock_qm:
             _make_debiaser(
                 variable="pr",
-                distribution=scipy.stats.weibull_min,
+                distribution=_weibull_min_zero_bounded,
                 mapping_type="parametric",
             )
             call_kwargs = mock_qm.call_args.kwargs
             assert call_kwargs["mapping_type"] == "parametric"
-            assert call_kwargs["distribution"] is scipy.stats.weibull_min
+            assert call_kwargs["distribution"] is _weibull_min_zero_bounded
 
     def test_2sided_pr_high_tail_uses_parametric_with_gumbel(self):
         """PR high-tail debiaser must use mapping_type='parametric' and gumbel_r distribution."""
@@ -1089,6 +1093,121 @@ class TestMakeDebiaser:
         with patch("srm.pipeline.QuantileMapping") as mock_qm:
             _make_debiaser(variable="tas", mapping_type="parametric")
             assert mock_qm.call_args.kwargs["distribution"] is scipy.stats.norm
+
+
+class TestWeibullZeroBounded:
+    """The zero-bounded Weibull must pin ``loc=0`` during fitting.
+
+    The 3-parameter Weibull MLE otherwise drifts ``loc`` off zero (and can go
+    negative), producing physically impossible negative debiased values such as
+    DTR = -300 K. These tests trace the ``floc=0`` constraint through the whole
+    chain: the fit override, pickling for multiprocessing, the pipeline wiring
+    that selects the distribution, and the real ibicus fit call that consumes it.
+    """
+
+    @staticmethod
+    def _skewed_positive_data() -> np.ndarray:
+        """Positive data whose unconstrained 3-param Weibull MLE wants ``loc != 0``."""
+        return scipy.stats.weibull_min.rvs(
+            1.5, loc=5, scale=2, size=2000, random_state=np.random.default_rng(0)
+        )
+
+    # --- Layer 1: the fit override itself ---
+
+    def test_fit_forces_loc_zero(self):
+        """The override pins ``loc`` to exactly 0 regardless of the data."""
+        _, loc, _ = _weibull_min_zero_bounded.fit(self._skewed_positive_data())
+        assert loc == 0
+
+    def test_unconstrained_weibull_would_drift_loc_off_zero(self):
+        """Sanity anchor: documents the degenerate fit the zero-bounding prevents."""
+        _, loc, _ = scipy.stats.weibull_min.fit(self._skewed_positive_data())
+        assert loc != 0
+
+    def test_explicit_floc_is_not_overridden(self):
+        """``setdefault`` semantics: a caller-supplied ``floc`` still wins."""
+        _, loc, _ = _weibull_min_zero_bounded.fit(self._skewed_positive_data(), floc=3.0)
+        assert loc == 3.0
+
+    def test_picklable_for_multiprocessing(self):
+        """ibicus applies debiasers across processes, so the instance must survive
+        pickling and keep the ``loc=0`` override after a round trip."""
+        # Safe: round-trips a module-local object we created, not untrusted input.
+        restored = pickle.loads(pickle.dumps(_weibull_min_zero_bounded))
+        _, loc, _ = restored.fit(self._skewed_positive_data())
+        assert loc == 0
+
+    # --- Layer 2: the pipeline wires the right distribution to each tail ---
+
+    def test_pipeline_wires_zero_bounded_weibull_to_low_tail(self, pipeline_options):
+        """The 2-sided hybrid branch must feed the zero-bounded Weibull to the low
+        tail and gumbel_r to the high tail for pr/rsds/hurs/dtr."""
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="rsds",
+            ensemble_member="r1i1p1f1",
+            scenario="SSP245",
+            predict_period_start=2015,
+            predict_period_end=2100,
+        )
+        assert cfg.debias_approach == "nonparametric_hybrid_2sided"
+        pipeline = BCSDPipeline(cfg, pipeline_options)
+
+        time = pd.date_range("2015-01-01", periods=6)
+        coords = {"time": time, "lat": [10.0, 20.0], "lon": [0.0, 1.0, 2.0]}
+        dims = ["time", "lat", "lon"]
+        da = xr.DataArray(
+            np.abs(np.random.default_rng(1).normal(5, 2, (6, 2, 3))), coords=coords, dims=dims
+        )
+        mask = xr.DataArray(np.zeros((6, 2, 3), dtype=bool), coords=coords, dims=dims)
+
+        make_debiaser_spy = MagicMock()
+        make_debiaser_spy.return_value.apply.return_value = np.zeros((6, 2, 3))
+        with (
+            patch("srm.pipeline._make_debiaser", make_debiaser_spy),
+            patch("srm.pipeline.calculate_out_of_range_mask", return_value=(mask, mask, mask)),
+        ):
+            pipeline._apply_bias_correction_scenario(da, da, da)
+
+        distributions = [
+            call.kwargs.get("distribution") for call in make_debiaser_spy.call_args_list
+        ]
+        assert _weibull_min_zero_bounded in distributions  # low tail
+        assert scipy.stats.gumbel_r in distributions  # high tail
+
+    # --- Layer 3: floc=0 actually reaches scipy through a real ibicus fit ---
+
+    def test_floc_zero_reaches_scipy_through_ibicus(self):
+        """End-to-end: a real parametric ``QuantileMapping.apply()`` must route through
+        the override so scipy's underlying ``fit`` receives ``floc=0``."""
+        weibull_gen = _WeibullMinZeroBounded.__mro__[1]  # weibull_min_gen (parent of the override)
+        real_parent_fit = weibull_gen.fit
+        floc_seen: list = []
+
+        def spy_fit(self, data, *args, **kwargs):
+            floc_seen.append(kwargs.get("floc"))
+            return real_parent_fit(self, data, *args, **kwargs)
+
+        rng = np.random.default_rng(0)
+        obs = np.abs(rng.normal(5, 2, (500, 1, 1)))
+        cm_hist = np.abs(rng.normal(6, 2, (500, 1, 1)))
+        cm_future = np.abs(rng.normal(6, 2, (500, 1, 1)))
+
+        quantile_mapping = QuantileMapping(
+            distribution=_weibull_min_zero_bounded,
+            mapping_type="parametric",
+            variable="rsds",
+            detrending="no_detrending",
+            running_window_mode=False,
+        )
+        with patch.object(weibull_gen, "fit", spy_fit):
+            debiased = quantile_mapping.apply(
+                obs, cm_hist, cm_future, progressbar=False, parallel=False
+            )
+
+        assert floc_seen, "ibicus never called the distribution's fit"
+        assert all(floc == 0 for floc in floc_seen)
+        assert np.isfinite(debiased).all()
 
 
 # ---------------------------------------------------------------------------
