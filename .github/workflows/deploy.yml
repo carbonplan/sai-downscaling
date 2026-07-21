@@ -81,7 +81,7 @@ jobs:
 
     production:
         name: Production run
-        timeout-minutes: 480
+        timeout-minutes: 360
         runs-on: ubuntu-latest
         if: github.event_name == 'release'
         environment:

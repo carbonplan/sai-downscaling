@@ -29,9 +29,9 @@ class GlobalBaseline:
 
 # Bump ``branch`` here to start a new baseline version; the comparison notebook and
 # ``compare_runs`` both read this value. Data must live on the named branch ("main"
-# is an empty anchor and must not be used). Verified: "v0.8.0" holds the blessed
+# is an empty anchor and must not be used). Verified: "v0.10.0" holds the blessed
 # global run.
 CESM2_WACCM_GLOBAL = GlobalBaseline(
     uri="s3://carbonplan-srm/output/production/CESM2-WACCM-ERA5-global.icechunk",
-    branch="v0.8.0",
+    branch="v0.10.0",
 )

@@ -40,7 +40,12 @@ class Tolerance:
 TOLERANCES: dict[str, Tolerance] = {
     "tas": Tolerance(rtol=1e-5, atol=1e-3),
     "tasmax": Tolerance(rtol=1e-5, atol=1e-3),
-    "tasmin": Tolerance(rtol=1e-5, atol=1e-3),
+    # tasmin is derived as tasmax - dtr (see srm.downscaling_utils.derive_tasmin), so its
+    # per-cell drift vs the snapshot is Δtasmax - Δdtr and can reach atol(tasmax) +
+    # atol(dtr). Its atol is the sum of its inputs' (2e-3) so shared temperature noise
+    # that tasmax and dtr each absorb never trips tasmin as a false positive; a real
+    # change still shows up far above this floor.
+    "tasmin": Tolerance(rtol=1e-5, atol=2e-3),  # = atol(tasmax) + atol(dtr): derived field
     "dtr": Tolerance(rtol=1e-5, atol=1e-3),
     "pr": Tolerance(rtol=1e-5, atol=1e-10),  # tighter: pr values are tiny (~1e-5 kg m-2 s-1)
     "rsds": Tolerance(rtol=1e-5, atol=1e-2),  # looser: rsds spans a large range (~0-1000 W m-2)

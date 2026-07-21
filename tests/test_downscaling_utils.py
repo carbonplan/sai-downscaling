@@ -12,6 +12,7 @@ from srm.downscaling_utils import (
     detrend,
     fft_smooth_3harmonics,
     get_historical_experiment,
+    interpolate_coarse_to_fine_grid,
     rechunk,
     retrend,
     subset_space,
@@ -474,6 +475,105 @@ def test_fft_smooth_3harmonics_attenuates_high_frequency_content():
     data[0] = 1.0
     result = fft_smooth_3harmonics(data)
     assert np.sqrt(np.mean(result**2)) < np.sqrt(np.mean(data**2))
+
+
+def _make_global_coarse_da(dtype: str = "float64") -> xr.DataArray:
+    """Global coarse grid in the -180..180 convention (no point at exactly +180),
+    holding a smooth periodic function of longitude."""
+    lon = np.arange(-180.0, 180.0, 45.0)  # [-180, -135, ..., 135]
+    lat = np.array([-60.0, -30.0, 0.0, 30.0, 60.0])
+    data = np.sin(np.deg2rad(lon))[np.newaxis, :] + 0.1 * np.cos(np.deg2rad(lat))[:, np.newaxis]
+    return xr.DataArray(data.astype(dtype), dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
+
+
+def _make_fine_grid() -> xr.DataArray:
+    """Fine target grid with points close to the +/-180 antimeridian."""
+    lon = np.array([-179.9, -170.0, -90.0, 0.0, 90.0, 170.0, 179.9])
+    lat = np.array([-55.0, 0.0, 55.0])
+    return xr.DataArray(
+        np.zeros((lat.size, lon.size)),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+    )
+
+
+def test_interpolate_coarse_to_fine_grid_wraps_periodically():
+    # Fine points between the last coarse lon (135) and +180 must interpolate
+    # between lon=135 and the wrapped lon=-180 point, not return NaN.
+    coarse = _make_global_coarse_da()
+    fine = _make_fine_grid()
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+
+    w = (179.9 - 135.0) / 45.0
+    expected_lon_term = (1 - w) * np.sin(np.deg2rad(135.0)) + w * np.sin(np.deg2rad(-180.0))
+    expected = expected_lon_term + 0.1 * np.cos(np.deg2rad(0.0))
+    np.testing.assert_allclose(result.sel(lat=0.0, lon=179.9).item(), expected, atol=1e-6)
+    # And the interpolated field should approximate the true periodic function
+    # everywhere near the seam (linear-interp error over 45 deg spacing < 0.1).
+    truth = (
+        np.sin(np.deg2rad(fine["lon"].values))[np.newaxis, :]
+        + 0.1 * np.cos(np.deg2rad(fine["lat"].values))[:, np.newaxis]
+    )
+    np.testing.assert_allclose(result.values, truth, atol=0.1)
+
+
+def test_interpolate_coarse_to_fine_grid_interior_matches_plain_interp():
+    # Away from the antimeridian, results must be identical to a plain
+    # (non-padded) interp: padding only fills the seam, never perturbs interior.
+    coarse = _make_global_coarse_da()
+    fine = _make_fine_grid()
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+    plain = coarse.interp(lon=fine["lon"], lat=fine["lat"], method="slinear")
+    interior = ~plain.isnull()
+    np.testing.assert_array_equal(result.values[interior.values], plain.values[interior.values])
+
+
+def test_interpolate_coarse_to_fine_grid_preserves_dtype():
+    coarse = _make_global_coarse_da(dtype="float32")
+    fine = _make_fine_grid()
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+    assert result.dtype == np.float32
+
+
+def test_interpolate_coarse_to_fine_grid_dask_backed_no_nan():
+    # Mirrors the production call site: time-dependent residuals, dask-backed,
+    # chunked along lon.
+    coarse = _make_global_coarse_da().expand_dims(time=pd.date_range("2000-01-01", periods=3))
+    coarse = coarse.chunk({"time": 1, "lat": -1, "lon": 4})
+    fine = _make_fine_grid()
+    result = interpolate_coarse_to_fine_grid(coarse, fine).compute()
+    assert not result.isnull().any()
+
+
+def test_interpolate_coarse_to_fine_grid_unsorted_lon_handled():
+    # Coarse lon handed in descending / shuffled order must be sorted internally
+    # so the periodic-padding math and slinear interp stay correct.
+    coarse = _make_global_coarse_da()
+    fine = _make_fine_grid()
+    expected = interpolate_coarse_to_fine_grid(coarse, fine)
+    shuffled = coarse.isel(lon=np.array([3, 0, 7, 1, 5, 2, 6, 4]))
+    result = interpolate_coarse_to_fine_grid(shuffled, fine)
+    assert not result.isnull().any()
+    np.testing.assert_allclose(result.values, expected.values, atol=1e-12)
+
+
+def test_interpolate_coarse_to_fine_grid_regional_edge_stays_nan():
+    # Regional (non-global) domain: fine cells beyond the coarse lon edges must
+    # stay NaN exactly as plain interp leaves them — periodic padding must not
+    # wrap a regional domain's east edge around to its west edge.
+    lon = np.arange(16.25, 32.6, 1.25)  # South-Africa-like subset, centers only
+    lat = np.arange(-34.5, -22.0, 1.0)
+    data = np.outer(np.cos(np.deg2rad(lat)), np.sin(np.deg2rad(lon)))
+    coarse = xr.DataArray(data, dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
+    fine = xr.DataArray(
+        np.zeros((3, 5)),
+        dims=["lat", "lon"],
+        coords={"lat": [-30.0, -28.0, -26.0], "lon": [16.0, 20.0, 25.0, 32.75, 33.0]},
+    )
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+    plain = coarse.interp(lon=fine["lon"], lat=fine["lat"], method="slinear")
+    assert plain.isnull().any()  # sanity: this setup does have out-of-hull cells
+    np.testing.assert_array_equal(result.values, plain.values)
 
 
 @pytest.mark.parametrize(
