@@ -1356,7 +1356,19 @@ class BCSDPipeline:
 
             if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:
                 # Use different parametric distributions for low vs. high tails
-                low_dist = scipy.stats.weibull_min
+                class _ZeroBoundedWeibull:
+                    """Wraps scipy.stats.weibull_min with floc=0 to prevent unrealistic negative loc fits."""
+
+                    def fit(self, data):
+                        return scipy.stats.weibull_min.fit(data, floc=0)
+
+                    def cdf(self, x, *args, **kwargs):
+                        return scipy.stats.weibull_min.cdf(x, *args, **kwargs)
+
+                    def ppf(self, p, *args, **kwargs):
+                        return scipy.stats.weibull_min.ppf(p, *args, **kwargs)
+
+                low_dist = _ZeroBoundedWeibull()
                 high_dist = scipy.stats.gumbel_r
 
                 parametric_low_np = _make_debiaser(
