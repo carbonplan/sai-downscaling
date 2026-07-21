@@ -9,7 +9,7 @@ without loading whole arrays into memory.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import xarray as xr
 
@@ -230,6 +230,33 @@ def compare(
 
 
 @dataclass(frozen=True)
+class InvariantCheck:
+    """Result of one cross-variable physical-invariant check on the candidate.
+
+    These are checked on the candidate alone (not diffed against the snapshot): a
+    per-variable leaf diff compares tasmax and tasmin independently, so a broken
+    reconcile that leaves each field within tolerance yet violates ``tasmax >= tasmin``
+    would pass every leaf. The invariant closes that gap. The check itself lives in
+    :mod:`srm.snapshot.runs` (it needs the qaqc checker); this dataclass is just the
+    reported shape.
+
+    Parameters
+    ----------
+    path : str
+        Identifier of the checked pairing, e.g. ``"ssp245/tasmax_ge_tasmin/008"``.
+    holds : bool
+        True when the invariant is satisfied at every cell.
+    detail : str
+        Empty when the invariant holds; otherwise a human-readable violation message
+        (e.g. ``"tasmax < tasmin at 3 grid point(s)"``).
+    """
+
+    path: str
+    holds: bool
+    detail: str
+
+
+@dataclass(frozen=True)
 class DiffReport:
     """Aggregate comparison result across all leaves.
 
@@ -237,14 +264,35 @@ class DiffReport:
     ----------
     leaves : list of LeafDiff
         One entry per compared (group, variable) leaf.
+    invariant_checks : list of InvariantCheck
+        Cross-variable physical-invariant results on the candidate (e.g.
+        ``tasmax >= tasmin``). Empty when no invariant applies to the compared leaves.
     """
 
     leaves: list[LeafDiff]
+    invariant_checks: list[InvariantCheck] = field(default_factory=list)
 
     @property
     def within_tolerance(self) -> bool:
-        """True only if every leaf is within tolerance (empty report is False)."""
+        """True only if every leaf is within tolerance (empty report is False).
+
+        This reflects numeric drift vs the snapshot only. It does *not* fold in the
+        physical-invariant checks — use :attr:`passed` for the overall merge verdict.
+        """
         return bool(self.leaves) and all(leaf.within_tol for leaf in self.leaves)
+
+    @property
+    def invariants_hold(self) -> bool:
+        """True if every cross-variable invariant on the candidate holds.
+
+        Vacuously true when no invariant checks ran (e.g. a tas-only comparison).
+        """
+        return all(check.holds for check in self.invariant_checks)
+
+    @property
+    def passed(self) -> bool:
+        """Overall merge verdict: within tolerance vs the snapshot *and* invariants hold."""
+        return self.within_tolerance and self.invariants_hold
 
     def to_lines(self) -> list[str]:
         """Render a plain-text summary table."""
@@ -256,6 +304,9 @@ class DiffReport:
                 f"{leaf.path:40s} {status:6s} {leaf.max_abs_diff:12.3e} "
                 f"{leaf.rmse:12.3e} {leaf.frac_over_tol:10.3e}"
             )
+        for check in self.invariant_checks:
+            status = "PASS" if check.holds else "FAIL"
+            rows.append(f"{check.path:40s} {status:6s} {check.detail}")
         return rows
 
     def to_table(self):
@@ -278,4 +329,7 @@ class DiffReport:
                 f"{leaf.rmse:.3e}",
                 f"{leaf.frac_over_tol:.3e}",
             )
+        for check in self.invariant_checks:
+            status = "[green]✓[/green]" if check.holds else "[red]✗[/red]"
+            table.add_row(check.path, status, check.detail, "", "")
         return table
