@@ -4,7 +4,9 @@ on:
     workflow_dispatch:
         inputs:
             model:
-                description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm). Leave blank to run all models."
+                description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm), or a single
+                    config file relative to configs/qa/ (e.g. cesm2-waccm/cesm2-waccm-g6-southafrica.yaml).
+                    Leave blank to run all models."
                 required: false
                 default: ""
                 type: string
@@ -13,9 +15,9 @@ on:
                 required: false
                 type: boolean
                 default: false
-            version:
-                description: "Override version (e.g. v2). Leave blank to use installed package
-                    version."
+            branch:
+                description: "Override the icechunk output branch (e.g. v2). Leave blank to use the
+                    installed package version."
                 required: false
                 default: ""
                 type: string
@@ -40,11 +42,11 @@ jobs:
         environment:
             name: qa
         env:
-            QA_CONFIG_PATH: ${{ inputs.model != '' && format('configs/qa/{0}/', inputs.model) || 'configs/qa/' }}
+            QA_CONFIG_PATH: ${{ inputs.model == '' && 'configs/qa/' || endsWith(inputs.model, '.yaml') && format('configs/qa/{0}', inputs.model) || format('configs/qa/{0}/', inputs.model) }}
             FORCE: ${{ inputs.force }}
-            VERSION: ${{ inputs.version }}
+            BRANCH: ${{ inputs.branch }}
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
               with:
                   fetch-depth: 0
             - uses: ./.github/actions/setup
@@ -62,20 +64,30 @@ jobs:
                   if [[ "$FORCE" == "true" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --force"
                   fi
-                  if [[ -n "$VERSION" ]]; then
-                    EXTRA_ARGS="$EXTRA_ARGS --version $VERSION"
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
                   uv run bcsd run --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
 
+            - name: Validate output datasets (QA)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: |
+                  EXTRA_ARGS=""
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="--branch $BRANCH"
+                  fi
+                  uv run bcsd validate-output --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
+
     production:
         name: Production run
-        timeout-minutes: 480
+        timeout-minutes: 360
         runs-on: ubuntu-latest
         if: github.event_name == 'release'
         environment:
             name: production
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
               with:
                   ref: ${{ github.event.release.tag_name }}
             - uses: ./.github/actions/setup
@@ -83,10 +95,15 @@ jobs:
             - name: Validate input datasets (production)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate --config-path configs/production/
+              run: uv run bcsd validate --config-path configs/production/cesm2-waccm/
 
             - name: Run BCSD pipeline (production)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
               run: |
-                  uv run bcsd run --config-path configs/production/
+                  uv run bcsd run --config-path configs/production/cesm2-waccm/
+
+            - name: Validate output datasets (production)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd validate-output --config-path configs/production/cesm2-waccm/

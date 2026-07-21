@@ -1,3 +1,12 @@
+"""
+Pure functions for spatial and statistical downscaling operations.
+
+Contains the core algorithmic building blocks used by
+:class:`~srm.pipeline.BCSDPipeline`: detrending and retrend operations, spatial
+interpolation between coarse and fine grids, FFT climatology smoothing, and helpers
+for loading observation and GCM datasets.
+"""
+
 import typing
 
 import numpy as np
@@ -5,9 +14,18 @@ import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio access
 import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 
-from srm import catalog
 from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
+from srm.config import SCENARIO_TO_GROUP
+from srm.datasets import catalog
 from srm.utils import get_variable
+
+_dt_cache: dict[str, xr.DataTree] = {}
+
+
+def _gcm_datatree(gcm: str) -> xr.DataTree:
+    if gcm not in _dt_cache:
+        _dt_cache[gcm] = catalog.get(gcm).to_xarray()
+    return _dt_cache[gcm]
 
 
 def subset_space(
@@ -148,7 +166,7 @@ def get_experiment(
     ensemble_member: str | None = None,
 ):
     """
-    Load in a GCM simulation.
+    Load a GCM simulation variable from the unified per-GCM icechunk store.
 
     Parameters
     ----------
@@ -158,48 +176,34 @@ def get_experiment(
         Scenario of experiment, e.g. "SSP245"
     var : str
         Variable to load, e.g. "tas"
+    coord_bounds_list : list, optional
+        Spatial subset bounds [lat_min, lat_max, lon_min, lon_max].
+    ensemble_member : str, optional
+        Ensemble member to select.
 
     Returns
     -------
     xr.DataArray
-        Xarray data array for requested simulation
-
-    Raises
-    ------
-    ValueError
-        If invalid ensemble member requested
-
+        Xarray data array for the requested simulation.
     """
-    cat_name = gcm + "-" + scenario + "-icechunk"
-    dataset = catalog.get(cat_name)
-    # confirm that the requested ensemble member is available
-    if ensemble_member is not None and dataset.ensemble_members is not None:
-        if ensemble_member not in dataset.ensemble_members:
-            raise ValueError(
-                f"Invalid ensemble_member '{ensemble_member}' for '{cat_name}'. "
-                f"Valid options: {dataset.ensemble_members}"
-            )
-
-    ds_scenario = dataset.to_xarray()
-
-    ds_scenario = ds_scenario.proj.assign_crs(spatial_ref="epsg:4326")
-
-    da = get_variable(ds_scenario, var)
-
+    group = SCENARIO_TO_GROUP[scenario]
+    ds = _gcm_datatree(gcm)[group].to_dataset()
+    ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
+    da = get_variable(ds, var)
+    if ensemble_member is not None:
+        da = da.sel(ensemble_member=ensemble_member)
     if coord_bounds_list is not None:
-        print("Subsetting spatial domain")
         da = subset_space(da, coord_bounds_list)
-
     return da
 
 
 def get_historical_experiment(gcm: str, member: str, var: str) -> xr.DataArray:
-    """Load a single historical ensemble member, routing to the correct source dataset.
-    CESM2-WACCM has a two historical dataset options, so we route to the pangeo-prefixed store for r*i*p*f* members,
-    while others use the standard store path."""
-    use_pangeo = gcm == "CESM2-WACCM" and member.startswith("r")
-    key = f"pangeo-{gcm}-historical-icechunk" if use_pangeo else f"{gcm}-historical-icechunk"
-    ds = catalog.get(key).to_xarray()
+    """Load a single historical ensemble member from the unified per-GCM icechunk store.
+
+    The unified historical group merges both NCAR and pangeo member families for CESM2-WACCM,
+    so no per-member routing is needed.
+    """
+    ds = _gcm_datatree(gcm)["historical"].to_dataset()
     ds = ds.proj.assign_crs(spatial_ref="epsg:4326")
     return get_variable(ds, var).sel(ensemble_member=member)
 
@@ -438,8 +442,51 @@ def interpolate_coarse_to_fine_grid(
     Uses ``slinear`` interpolation. This is preferred over ``linear`` here
     because ``linear`` can introduce tiny negative artifacts for strictly
     positive variables.
+
+
+    Fix for issue: https://github.com/carbonplan/srm-downscaling/issues/462
+
+    Global coarse grids (lon end-gap ~ one grid step) get their first cell
+    periodically wrapped to +360 before interpolating, since -180..180 lon has
+    no source point at exactly +180 and fine cells past the last coarse center
+    would otherwise fall outside the interpolation domain and return NaN.
+    Regional (subset) domains have a large end-gap, are detected as such, and
+    are left unpadded so out-of-domain fine cells correctly stay NaN.
+
+    References
+    ----------
+    xarray has no native cyclic-longitude support and padding seems to be the standard
+    workaround:
+    https://discourse.pangeo.io/t/interpolating-2d-data-with-periodic-boundaries-to-points-using-xarray/2702
+    https://github.com/pydata/xarray/issues/623
     """
-    coarse_on_fine_grid = da_coarse_to_regrid.interp(
+    # Padding math and slinear interp both assume ascending lon. Check, and if not apply sortby
+    if not da_coarse_to_regrid.indexes["lon"].is_monotonic_increasing:
+        da_coarse_to_regrid = da_coarse_to_regrid.sortby("lon")
+
+    lon = da_coarse_to_regrid["lon"]
+    lon_vals = lon.values
+    dlon = np.median(np.diff(lon_vals)) if lon_vals.size > 1 else np.nan
+    # A global grid covers the whole planet minus the gap between its last cell
+    # center and the wrap-around back to the first (~one grid step, dlon). So its
+    # span (last - first) is roughly 360 - dlon. A regional grid spans much less.
+    # The 1.5 * dlon just leaves room for floating-point / uneven-spacing wobble;
+    # it is not tied to any particular resolution.
+    spans_globe = lon_vals.size > 1 and (lon_vals[-1] - lon_vals[0]) >= 360.0 - 1.5 * dlon
+
+    if spans_globe:
+        # Right-only wrap relies on -180 already being an exact coarse lon point,
+        # which holds for even lon-point-count grids (all current GCMs: CESM2,
+        # MIROC-ES2H, UKESM). An odd-count grid would need a left pad too.
+        # Wrap the first cell to just past the last (+360) so fine points between
+        # the last coarse center and +180 interpolate across the dateline instead
+        # of falling outside the domain and returning NaN.
+        right = da_coarse_to_regrid.isel(lon=[0]).assign_coords(lon=lon.isel(lon=[0]) + 360)
+        da_to_interp = xr.concat([da_coarse_to_regrid, right], dim="lon")
+    else:
+        da_to_interp = da_coarse_to_regrid
+
+    coarse_on_fine_grid = da_to_interp.interp(
         lon=da_fine_grid["lon"],
         lat=da_fine_grid["lat"],
         method="slinear",
@@ -470,7 +517,9 @@ def fft_smooth_3harmonics(data):
 
 
 def calculate_doy_means(
-    da: xr.DataArray, clim_method: DownscalingClimMethod = "simple"
+    da: xr.DataArray,
+    clim_method: DownscalingClimMethod = "simple",
+    allow_negative_values: bool = True,
 ) -> xr.DataArray:
     """
     Compute day-of-year climatology on the fine-resolution observation grid.
@@ -483,6 +532,8 @@ def calculate_doy_means(
         Climatology smoothing method:
         - ``"simple"`` returns raw day-of-year means.
         - ``"fft"`` smooths the day-of-year cycle with mean + first 3 harmonics.
+    allow_negative_values : bool, default: True
+        Whether to allow negative values in the output.
 
     Returns
     -------
@@ -517,6 +568,13 @@ def calculate_doy_means(
             "dayofyear", "lat", "lon"
         )
 
+        # It is possible for the FFT smoothing to introduce small negative artifacts for variables that are strictly positive (e.g., precipitation)
+        # If allow_negative_values is False, we set any negative values to zero here.
+        if not allow_negative_values:
+            obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.where(
+                obs_fine_doy_means_smoothed >= 0, 0
+            )
+
     return obs_fine_doy_means_smoothed
 
 
@@ -526,6 +584,9 @@ def downscale_from_coarse(
     obs_fine: xr.DataArray,
     method: DownscalingMethod = "additive",
     clim_method: DownscalingClimMethod = "simple",
+    allow_negative_values: bool = True,
+    max_residual: float = 100,
+    enforce_conservation: bool = False,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
@@ -544,6 +605,13 @@ def downscale_from_coarse(
         - ``"multiplicative"`` uses ratios to coarse climatology.
     clim_method : {"simple", "fft"}, default: "simple"
         Method used to estimate fine-grid day-of-year climatology.
+    max_residual : float
+        The maximum value possible for the residuals used for building the
+        relationship between coarse data and fine.
+    enforce_conservation: bool, default: False
+        Whether to enforce conservation of the coarse-scale mean after downscaling.
+        - True: the downscaled field is adjusted to ensure that its coarse-scale mean matches the debiased, coarse input
+        - False: the downscaled field is returned without adjustment, which may result in an added bias at the coarse scale.
 
     Returns
     -------
@@ -560,7 +628,9 @@ def downscale_from_coarse(
     5. Reapply fine-grid climatology (add or multiply).
     """
     # Step 1: calculate the daily climatology of high-res observations
-    obs_fine_doy_means = calculate_doy_means(obs_fine, clim_method=clim_method)
+    obs_fine_doy_means = calculate_doy_means(
+        obs_fine, clim_method=clim_method, allow_negative_values=allow_negative_values
+    )
 
     # Step 2: Aggregate daily climatology to the low-resolution grid of the GCM being processed
     obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
@@ -571,7 +641,19 @@ def downscale_from_coarse(
     if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
     elif method == "multiplicative":
-        residuals = da.groupby("time.dayofyear") / obs_coarse_doy_means
+        # Guard the denominator: where coarse climatology is zero (dry cells/days),
+        # the NCL reference forces the ratio to 0 rather than producing inf/NaN.
+        # Replace exact zeros with NaN so the division yields NaN, then fill those
+        # specific locations with 0 after dividing.
+        zero_clim = obs_coarse_doy_means == 0
+        safe_clim = obs_coarse_doy_means.where(~zero_clim)  # zeros -> NaN
+
+        residuals = da.groupby("time.dayofyear") / safe_clim
+
+        # Force ratio to 0 exactly where the coarse climatology was zero.
+        # Broadcast the per-DOY zero mask back onto the time axis.
+        zero_clim_on_time = zero_clim.sel(dayofyear=da["time"].dt.dayofyear)
+        residuals = residuals.where(~zero_clim_on_time, 0.0).clip(max=max_residual)
 
     # Step 4: Bilinearly interpolate residuals to the high-res grid
     # this creates a smooth layer of how different the particular simulated february 10 is
@@ -590,4 +672,96 @@ def downscale_from_coarse(
     elif method == "multiplicative":
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
 
+    # Optional Step 6: Enforce conservation of the coarse-scale mean after downscaling
+    if enforce_conservation:
+        recoarsened = interpolate_fine_to_coarse_grid(
+            downscaled.drop_vars("dayofyear", errors="ignore").unify_chunks(), da
+        )
+        if method == "additive":
+            correction_coarse = da - recoarsened
+            correction_fine = correction_coarse.interp(
+                lat=downscaled.lat, lon=downscaled.lon, method="nearest"
+            )
+            downscaled_corrected = downscaled + correction_fine
+        elif method == "multiplicative":
+            ratio_coarse = da / recoarsened.where(recoarsened != 0, 1.0)
+            ratio_fine = ratio_coarse.interp(
+                lat=downscaled.lat, lon=downscaled.lon, method="nearest"
+            )
+            downscaled_corrected = downscaled * ratio_fine
+        downscaled = downscaled_corrected
+
     return downscaled
+
+
+def derive_tasmin(tasmax: xr.DataArray, dtr: xr.DataArray) -> xr.DataArray:
+    """Return ``tasmin = tasmax - dtr``, requiring identical time axes.
+
+    ``dtr`` is produced by a separate (non-detrended) scenario path. For SAI
+    scenarios it was historically truncated to the SAI simulation period (~2035+)
+    while ``tasmax`` spans the full predict window (issue #363). Subtracting
+    mismatched axes silently NaN-fills ``tasmin`` on the non-overlapping days, so
+    fail loudly here instead — the upstream extent bug should be surfaced, not
+    shipped as scattered NaNs.
+
+    Parameters
+    ----------
+    tasmax, dtr : xr.DataArray
+        Debiased-coarse maximum temperature and diurnal temperature range, which
+        must share an identical ``time`` axis.
+
+    Returns
+    -------
+    xr.DataArray
+        ``tasmax - dtr`` named ``"tasmin"``.
+    """
+    if not tasmax.indexes["time"].equals(dtr.indexes["time"]):
+        tmax_t, dtr_t = tasmax["time"].values, dtr["time"].values
+        raise ValueError(
+            f"cannot derive tasmin: tasmax spans {tasmax.sizes['time']} timesteps "
+            f"({str(tmax_t.min())[:10]}..{str(tmax_t.max())[:10]}) but dtr spans "
+            f"{dtr.sizes['time']} ({str(dtr_t.min())[:10]}..{str(dtr_t.max())[:10]}); "
+            f"their time axes must be identical (issue #363 — a truncated dtr would "
+            f"silently NaN-fill tasmin)."
+        )
+    return (tasmax - dtr).rename("tasmin")
+
+
+def swap_temperature_extremes(
+    tasmax: xr.DataArray, tasmin: xr.DataArray
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Enforce ``tasmax >= tasmin`` by swapping values where ``tasmax < tasmin``.
+
+    Independent spatial disaggregation of ``tasmax`` and ``tasmin`` can leave a
+    small number of cells where the downscaled ``tasmax`` falls below ``tasmin``.
+    Following the NEX-GDDP-CMIP6 v2 final sweep (issue #331), swap the two values
+    at those cells so the physical constraint ``tasmax >= tasmin`` holds
+    everywhere.
+
+    The comparison is NaN-safe: cells where either input is NaN (e.g. ocean under
+    the land mask) compare ``False`` and are left unchanged. The operation is lazy
+    and idempotent.
+
+    Inputs must share identical coordinates. Alignment is enforced with
+    ``join="exact"`` so a mismatched grid raises loudly rather than being silently
+    inner/outer-joined into dropped or NaN-filled cells, regardless of the global
+    ``arithmetic_join`` option.
+
+    Parameters
+    ----------
+    tasmax, tasmin : xr.DataArray
+        Downscaled daily maximum / minimum near-surface air temperature on the
+        same grid and time axis.
+
+    Returns
+    -------
+    tuple[xr.DataArray, xr.DataArray]
+        ``(tasmax_corrected, tasmin_corrected)`` with names and attrs preserved.
+    """
+    tasmax, tasmin = xr.align(tasmax, tasmin, join="exact")
+    swap = tasmax < tasmin
+    tasmax_corrected = xr.where(swap, tasmin, tasmax).astype(tasmax.dtype).rename(tasmax.name)
+    tasmin_corrected = xr.where(swap, tasmax, tasmin).astype(tasmin.dtype).rename(tasmin.name)
+    tasmax_corrected.attrs = dict(tasmax.attrs)
+    tasmin_corrected.attrs = dict(tasmin.attrs)
+    return tasmax_corrected, tasmin_corrected

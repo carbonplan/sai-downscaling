@@ -28,11 +28,41 @@ _G6_BASE = dict(
 )
 
 
-def _mock_catalog_entry(members: list[str] | None) -> MagicMock:
+def _mock_dt_entry(
+    hist_members: list[str] | None = None,
+    scenario_members: dict[str, list[str]] | None = None,
+    raise_on_open: bool = False,
+) -> MagicMock:
+    """Mock a unified Datatree catalog entry with group-based member access.
+
+    hist_members: ensemble members available under historical/{variable}
+    scenario_members: mapping of scenario_group → member list (e.g. {"g6_1p5k": ["001", ...]})
+    raise_on_open: if True, to_xarray() raises (unreachable store)
+    """
     entry = MagicMock()
-    entry.ensemble_members = members
-    if members is None:
+    if raise_on_open:
         entry.to_xarray.side_effect = Exception("no S3 access in tests")
+        return entry
+
+    dt = MagicMock()
+
+    def _node(members):
+        n = MagicMock()
+        n.children = {m: MagicMock() for m in members}
+        return n
+
+    def getitem(path):
+        if path.startswith("historical/"):
+            if hist_members is None:
+                raise KeyError(path)
+            return _node(hist_members)
+        for grp, members in (scenario_members or {}).items():
+            if path.startswith(f"{grp}/"):
+                return _node(members)
+        raise KeyError(path)
+
+    dt.__getitem__.side_effect = getitem
+    entry.to_xarray.return_value = dt
     return entry
 
 
@@ -95,49 +125,48 @@ class TestResolveLineage:
 
 class TestValidateLineageMembers:
     def test_passes_when_hist_member_present(self):
-        """G6/001/tas resolves to hist=r1i1p1f1 and ssp245=001; catalog has both — no error."""
+        """G6/001/tas resolves to hist=r1i1p1f1 and ssp245=001; unified store has both — no error."""
         cfg = BCSDConfig(variable="tas", **_G6_BASE)
-        hist_entry = _mock_catalog_entry(["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"])
-        ssp_entry = _mock_catalog_entry(["001", "002", "003"])
-
-        def catalog_get(store_name):
-            return ssp_entry if "SSP245" in store_name else hist_entry
-
+        # G6-1.5K → g6_1p5k group in the unified store
+        entry = _mock_dt_entry(
+            hist_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
+            scenario_members={"g6_1p5k": ["001", "002", "003"]},
+        )
         with patch("srm.datasets.catalog") as cat:
-            cat.get.side_effect = catalog_get
+            cat.get.return_value = entry
             _validate_lineage_members([cfg])  # must not raise
 
     def test_raises_when_hist_member_absent(self):
         """ValueError raised when resolved historical member is absent from store."""
         cfg = BCSDConfig(variable="tas", **_G6_BASE)
-        # Catalog has other members but not r1i1p1f1
-        entry = _mock_catalog_entry(["r2i1p1f1", "r3i1p1f1"])
+        entry = _mock_dt_entry(
+            hist_members=["r2i1p1f1", "r3i1p1f1"],  # missing r1i1p1f1
+            scenario_members={"g6_1p5k": ["001", "002", "003"]},
+        )
         with patch("srm.datasets.catalog") as cat:
             cat.get.return_value = entry
             with pytest.raises(ValueError, match="r1i1p1f1"):
                 _validate_lineage_members([cfg])
 
     def test_raises_when_ssp245_member_absent(self):
-        """ValueError raised when resolved SSP245 bridge member is absent from SSP245 store."""
-        # G6/001/tas → ssp245="001"; mock catalog missing it for SSP245 store
+        """ValueError raised when resolved scenario member is absent from the scenario group."""
         cfg = BCSDConfig(variable="tas", **_G6_BASE)
-        entry_hist = _mock_catalog_entry(["r1i1p1f1"])  # hist store ok
-        entry_ssp = _mock_catalog_entry(["002", "003"])  # SSP245 store missing 001
-
-        def catalog_get(store_name):
-            if "SSP245" in store_name:
-                return entry_ssp
-            return entry_hist
-
+        entry = _mock_dt_entry(
+            hist_members=["r1i1p1f1"],  # hist ok
+            scenario_members={"g6_1p5k": ["002", "003"]},  # missing 001
+        )
         with patch("srm.datasets.catalog") as cat:
-            cat.get.side_effect = catalog_get
+            cat.get.return_value = entry
             with pytest.raises(ValueError, match="ssp245"):
                 _validate_lineage_members([cfg])
 
     def test_error_message_includes_gcm_and_variable(self):
         cfg = BCSDConfig(variable="tasmax", **_G6_BASE)
-        # tasmax/001 resolves to hist="001"; catalog doesn't have it
-        entry = _mock_catalog_entry(["r1i1p1f1"])
+        # tasmax/001 resolves to hist="001"; store is missing it
+        entry = _mock_dt_entry(
+            hist_members=["r1i1p1f1"],  # has r* but not "001"
+            scenario_members={"g6_1p5k": ["009"]},
+        )
         with patch("srm.datasets.catalog") as cat:
             cat.get.return_value = entry
             with pytest.raises(ValueError) as exc_info:
@@ -167,32 +196,31 @@ class TestValidateLineageMembers:
         cat.get.assert_not_called()
 
     def test_skips_when_catalog_members_none_and_store_unreachable(self):
-        """ensemble_members=None + S3 failure → silently skipped."""
+        """S3 failure on to_xarray → silently skipped."""
         cfg = BCSDConfig(variable="tas", **_G6_BASE)
-        entry = _mock_catalog_entry(None)  # ensemble_members is None, to_xarray raises
+        entry = _mock_dt_entry(raise_on_open=True)  # to_xarray raises
         with patch("srm.datasets.catalog") as cat:
             cat.get.return_value = entry
             _validate_lineage_members([cfg])  # must not raise
 
     def test_skips_when_store_not_in_catalog(self):
-        """KeyError from catalog.get → store unknown → silently skipped."""
+        """Exception from catalog.get → store unknown → silently skipped."""
         cfg = BCSDConfig(variable="tas", **_G6_BASE)
         with patch("srm.datasets.catalog") as cat:
             cat.get.side_effect = Exception("store not found")
             _validate_lineage_members([cfg])  # must not raise
 
     def test_deduplicates_store_lookups(self):
-        """Each unique store is queried at most once regardless of config count."""
+        """Each GCM's unified store is opened at most once regardless of config count."""
         cfgs = [BCSDConfig(variable=var, **_G6_BASE) for var in ("tas", "pr", "rsds", "tasmax")]
-        entry = _mock_catalog_entry(
-            ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001", "002", "003", "009"]
+        # All members across historical and G6-1.5K scenario groups
+        entry = _mock_dt_entry(
+            hist_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001", "002", "003"],
+            scenario_members={"g6_1p5k": ["001", "002", "003", "007", "008", "009"]},
         )
         with patch("srm.datasets.catalog") as cat:
             cat.get.return_value = entry
             _validate_lineage_members(cfgs)
-        # tas/pr/rsds → pangeo hist store; tasmax → standard hist store; all share SSP245
-        called_stores = {call.args[0] for call in cat.get.call_args_list}
-        assert "pangeo-CESM2-WACCM-historical-icechunk" in called_stores
-        assert "CESM2-WACCM-historical-icechunk" in called_stores
-        assert "CESM2-WACCM-SSP245-icechunk" in called_stores
-        assert cat.get.call_count == 3
+        # All 4 variables share the same GCM → catalog opened once
+        assert cat.get.call_count == 1
+        assert cat.get.call_args.args[0] == "CESM2-WACCM"

@@ -17,29 +17,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import make_icechunk_group as _make_icechunk_group
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_icechunk_store(path: str) -> None:
-    import icechunk
-    import numpy as np
-    import xarray as xr
-    from icechunk.xarray import to_icechunk
-
-    storage = icechunk.local_filesystem_storage(path=path)
-    repo = icechunk.Repository.open_or_create(storage)
-    session = repo.writable_session("main")
-    ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
-    to_icechunk(ds, session, mode="w")
-    session.commit("write complete")
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -61,7 +43,7 @@ def orchestrator(pipeline_options) -> BCSDOrchestrator:
 
 
 def _make_config(
-    gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", scenario="ssp245"
+    gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", scenario="SSP245"
 ) -> BCSDConfig:
     return BCSDConfig(
         gcm=gcm,
@@ -104,20 +86,20 @@ class TestGetCache:
         opts = orchestrator.options
         assert opts.scratch_dir.rstrip("/") in cache.scratch_dir
         assert cache.environment == opts.environment
-        assert cache.version == opts.version
+        assert cache.branch == opts.branch
 
     def test_same_call_returns_same_instance(self, orchestrator):
         cache_a = orchestrator._get_cache()
         cache_b = orchestrator._get_cache()
         assert cache_a is cache_b
 
-    def test_different_version_orchestrator_has_different_cache(self, tmp_path):
-        opts_v1 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), version="v1")
-        opts_v2 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), version="v2")
-        orch_v1 = BCSDOrchestrator(opts_v1)
+    def test_different_branch_orchestrator_has_different_cache(self, tmp_path):
+        opts_v2 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), branch="v2")
+        opts_v3 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), branch="v3")
         orch_v2 = BCSDOrchestrator(opts_v2)
-        assert orch_v1._get_cache().version == "v1"
-        assert orch_v2._get_cache().version == "v2"
+        orch_v3 = BCSDOrchestrator(opts_v3)
+        assert orch_v2._get_cache().branch == "v2"
+        assert orch_v3._get_cache().branch == "v3"
 
 
 # ---------------------------------------------------------------------------
@@ -195,14 +177,14 @@ class TestSubmitStage:
 
     def test_skips_all_when_all_cached(self, orchestrator, config):
         cache = orchestrator._get_cache()
-        obs_path = cache.get_obs_path(config)
-        _make_icechunk_store(obs_path)
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        _make_icechunk_group(loc, branch=cache.branch)
 
         with patch.object(orchestrator, "_run_local") as mock_local:
             result = orchestrator.submit_stage("prepare_observations", [config], use_coiled=False)
 
         mock_local.assert_not_called()
-        assert result == [obs_path]
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_calls_run_local_for_uncached_task(self, orchestrator, config):
         computed_path = "computed_obs_path"
@@ -223,10 +205,10 @@ class TestSubmitStage:
 
     def test_force_runs_even_when_cached(self, orchestrator, config):
         cache = orchestrator._get_cache()
-        obs_path = cache.get_obs_path(config)
-        _make_icechunk_store(obs_path)
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        _make_icechunk_group(loc, branch=cache.branch)
 
-        with patch.object(orchestrator, "_run_local", return_value=[obs_path]) as mock_local:
+        with patch.object(orchestrator, "_run_local", return_value=[loc.store_path]) as mock_local:
             orchestrator.submit_stage(
                 "prepare_observations", [config], force=True, use_coiled=False
             )
@@ -241,8 +223,8 @@ class TestSubmitStage:
         cfg_uncached = multi_configs[2]  # pr
 
         cache = orchestrator._get_cache()
-        obs_cached_path = cache.get_obs_path(cfg_cached)
-        _make_icechunk_store(obs_cached_path)
+        loc_cached = orchestrator._stage_loc(cache, "prepare_observations", cfg_cached)
+        _make_icechunk_group(loc_cached, branch=cache.branch)
 
         computed_path = "newly_computed"
 
@@ -253,10 +235,79 @@ class TestSubmitStage:
                 use_coiled=False,
             )
 
-        # cached config returns its path; uncached goes through _run_local
-        assert obs_cached_path in result
+        # cached config returns its qualified path; uncached goes through _run_local
+        assert f"{loc_cached.store_path}::{loc_cached.group}" in result
         assert computed_path in result
         mock_local.assert_called_once_with("prepare_observations", [cfg_uncached])
+
+
+# ---------------------------------------------------------------------------
+# dependency-aware ordering: tasmin is derived from debiased-coarse tasmax and
+# dtr, so it must run only after those sibling variables are committed and final
+# (issue #363).
+# ---------------------------------------------------------------------------
+
+
+class TestTasminOrdering:
+    def _run_local_recorder(self, calls):
+        def fake(stage, cfgs):
+            calls.append([c.variable for c in cfgs])
+            return [f"path-{c.variable}-{i}" for i, c in enumerate(cfgs)]
+
+        return fake
+
+    def test_tasmin_runs_in_a_later_wave_than_tasmax_and_dtr(self, orchestrator):
+        configs = [
+            _make_config(variable="tasmax", ensemble_member="008"),
+            _make_config(variable="dtr", ensemble_member="008"),
+            _make_config(variable="tasmin", ensemble_member="008"),
+        ]
+        calls: list[list[str]] = []
+        with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
+            orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+
+        assert len(calls) == 2, "tasmin should be submitted in a separate, later wave"
+        assert "tasmin" not in calls[0]
+        assert set(calls[0]) == {"tasmax", "dtr"}
+        assert calls[1] == ["tasmin"]
+
+    def test_no_extra_wave_when_no_tasmin(self, orchestrator):
+        configs = [
+            _make_config(variable="tasmax", ensemble_member="008"),
+            _make_config(variable="dtr", ensemble_member="008"),
+        ]
+        calls: list[list[str]] = []
+        with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
+            orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+
+        assert len(calls) == 1
+        assert set(calls[0]) == {"tasmax", "dtr"}
+
+    def test_prepare_observations_not_wave_split(self, orchestrator):
+        # obs regridding has no cross-variable dependency; tasmin must not be
+        # peeled into a second wave (that would spin up an extra job for nothing).
+        configs = [
+            _make_config(variable="tasmax", ensemble_member="008"),
+            _make_config(variable="tasmin", ensemble_member="008"),
+        ]
+        calls: list[list[str]] = []
+        with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
+            orchestrator.submit_stage("prepare_observations", configs, use_coiled=False)
+
+        assert len(calls) == 1
+        assert set(calls[0]) == {"tasmax", "tasmin"}
+
+    def test_output_paths_preserve_input_order_across_waves(self, orchestrator):
+        configs = [
+            _make_config(variable="tasmin", ensemble_member="008"),
+            _make_config(variable="tasmax", ensemble_member="008"),
+        ]
+        with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder([])):
+            result = orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+
+        # result[i] must correspond to configs[i] even though tasmin ran last
+        assert "tasmin" in result[0]
+        assert "tasmax" in result[1]
 
 
 # ---------------------------------------------------------------------------
@@ -277,15 +328,15 @@ class TestSubmitToCoiled:
     def test_success_on_first_attempt(self, orchestrator, config):
         """All tasks succeed on the first attempt — no retry needed."""
         cache = orchestrator._get_cache()
-        output_path = cache.get_output_path("prepare_observations", config)
-        _make_icechunk_store(output_path)
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        _make_icechunk_group(loc, branch=cache.branch)
 
         mock_coiled = self._make_coiled_mock(["done"])
 
         with patch.dict("sys.modules", {"coiled": mock_coiled}):
             result = orchestrator._submit_to_coiled("prepare_observations", [config])
 
-        assert result == [output_path]
+        assert result == [f"{loc.store_path}::{loc.group}"]
         assert mock_coiled.batch.run.call_count == 1
 
     def test_retries_only_failed_tasks(self, orchestrator, multi_configs):
@@ -294,11 +345,11 @@ class TestSubmitToCoiled:
         cfg_fail = multi_configs[2]  # will fail first, succeed on retry
 
         cache = orchestrator._get_cache()
-        ok_path = cache.get_output_path("prepare_observations", cfg_ok)
-        fail_path = cache.get_output_path("prepare_observations", cfg_fail)
+        loc_ok = orchestrator._stage_loc(cache, "prepare_observations", cfg_ok)
+        loc_fail = orchestrator._stage_loc(cache, "prepare_observations", cfg_fail)
 
         # First job: only cfg_ok writes its output
-        _make_icechunk_store(ok_path)
+        _make_icechunk_group(loc_ok, branch=cache.branch)
 
         batch_run_calls = []
 
@@ -307,7 +358,7 @@ class TestSubmitToCoiled:
             batch_run_calls.append(task_dicts)
             # On the second call (retry), write the fail output so it looks cached
             if len(batch_run_calls) == 2:
-                _make_icechunk_store(fail_path)
+                _make_icechunk_group(loc_fail, branch=cache.branch)
             return {"job_id": len(batch_run_calls)}
 
         mock_coiled = MagicMock()
@@ -326,8 +377,8 @@ class TestSubmitToCoiled:
 
         retry_configs = [json.loads(d["CONFIG_JSON"]) for d in batch_run_calls[1]]
         assert all(c["variable"] == cfg_fail.variable for c in retry_configs)
-        assert ok_path in result
-        assert fail_path in result
+        assert f"{loc_ok.store_path}::{loc_ok.group}" in result
+        assert f"{loc_fail.store_path}::{loc_fail.group}" in result
 
     def test_raises_after_max_retries_exhausted(self, orchestrator, config):
         """RuntimeError is raised when all retries are exhausted."""
@@ -351,7 +402,7 @@ class TestSubmitToCoiled:
     def test_succeeds_on_second_attempt(self, orchestrator, config):
         """Task fails once then succeeds on retry."""
         cache = orchestrator._get_cache()
-        output_path = cache.get_output_path("prepare_observations", config)
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
 
         call_count = 0
 
@@ -359,7 +410,7 @@ class TestSubmitToCoiled:
             nonlocal call_count
             call_count += 1
             if call_count == 2:
-                _make_icechunk_store(output_path)
+                _make_icechunk_group(loc, branch=cache.branch)
             return {"job_id": call_count}
 
         mock_coiled = MagicMock()
@@ -370,7 +421,7 @@ class TestSubmitToCoiled:
             result = orchestrator._submit_to_coiled("prepare_observations", [config], max_retries=3)
 
         assert mock_coiled.batch.run.call_count == 2
-        assert result == [output_path]
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
 
 # ---------------------------------------------------------------------------
@@ -383,35 +434,40 @@ class TestRunLocal:
         with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
-            mock_instance.prepare_observations.return_value = "obs_path"
 
             result = orchestrator._run_local("prepare_observations", [config])
 
         MockPipeline.assert_called_once_with(config, orchestrator.options)
         mock_instance.prepare_observations.assert_called_once()
-        assert result == ["obs_path"]
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_fit_historical(self, orchestrator, config):
         with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
-            mock_instance.fit_historical.return_value = "hist_path"
 
             result = orchestrator._run_local("fit_historical", [config])
 
         mock_instance.fit_historical.assert_called_once()
-        assert result == ["hist_path"]
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(
+            cache, "fit_historical", config, hist_member=config.ensemble_member
+        )
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_transform_scenario(self, orchestrator, config):
         with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
-            mock_instance.transform_scenario.return_value = "scenario_path"
 
             result = orchestrator._run_local("transform_scenario", [config])
 
         mock_instance.transform_scenario.assert_called_once()
-        assert result == ["scenario_path"]
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_unknown_stage_raises(self, orchestrator, config):
         with pytest.raises(ValueError, match="Unknown stage"):
@@ -428,15 +484,14 @@ class TestRunLocal:
         assert MockPipeline.call_count == len(multi_configs)
 
     def test_returns_path_per_config(self, orchestrator, multi_configs):
-        paths = [f"path_{i}" for i in range(len(multi_configs))]
         with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
-            mock_instance.prepare_observations.side_effect = paths
 
             result = orchestrator._run_local("prepare_observations", multi_configs)
 
-        assert result == paths
+        assert len(result) == len(multi_configs)
+        assert all("::" in r for r in result)
 
     def test_all_stage_names_route_correctly(self, orchestrator, config, subtests):
         stage_to_method = {
@@ -454,7 +509,7 @@ class TestRunLocal:
                     result = orchestrator._run_local(stage, [config])
 
                 getattr(mock_instance, method_name).assert_called_once()
-                assert result == [f"{stage}_path"]
+                assert len(result) == 1 and "::" in result[0]
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +628,9 @@ class TestGetStatus:
 
     def test_obs_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache()
-        _make_icechunk_store(cache.get_obs_path(config))
+        _make_icechunk_group(
+            orchestrator._stage_loc(cache, "prepare_observations", config), branch=cache.branch
+        )
 
         status = orchestrator.get_status([config])
         assert status["prepare_observations"]["cached"] == 1
@@ -581,7 +638,9 @@ class TestGetStatus:
 
     def test_historical_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache()
-        _make_icechunk_store(cache.get_historical_path(config))
+        _make_icechunk_group(
+            orchestrator._stage_loc(cache, "fit_historical", config), branch=cache.branch
+        )
 
         status = orchestrator.get_status([config])
         assert status["fit_historical"]["cached"] == 1
@@ -589,7 +648,8 @@ class TestGetStatus:
 
     def test_scenario_artifact_counted_as_cached(self, orchestrator, config):
         cache = orchestrator._get_cache()
-        _make_icechunk_store(cache.get_scenario_path(config))
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        _make_icechunk_group(loc, branch=cache.branch)
 
         status = orchestrator.get_status([config])
         assert status["transform_scenario"]["cached"] == 1
@@ -618,7 +678,10 @@ class TestGetStatus:
     def test_cached_plus_missing_equals_total(self, orchestrator, multi_configs, subtests):
         # Cache one obs artifact and verify counts are consistent
         cache = orchestrator._get_cache()
-        _make_icechunk_store(cache.get_obs_path(multi_configs[0]))
+        _make_icechunk_group(
+            orchestrator._stage_loc(cache, "prepare_observations", multi_configs[0]),
+            branch=cache.branch,
+        )
 
         status = orchestrator.get_status(multi_configs)
         for stage_name, stage_info in status.items():

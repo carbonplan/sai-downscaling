@@ -1,4 +1,11 @@
-# datasets.py
+"""
+Dataset catalog and abstract base classes for ERA5 and GCM input data.
+
+Provides :class:`BaseDataset` and its concrete subclasses for accessing ERA5
+observations and GCM model output. The :data:`catalog` singleton maps dataset names
+to their accessor objects; all ensemble member lineage logic lives in
+:mod:`srm.lineage`, not here.
+"""
 
 from __future__ import annotations
 
@@ -156,7 +163,7 @@ class Datatree(Dataset):
 
     format: typing.Literal["icechunk"] = "icechunk"
 
-    def to_xarray(self) -> xr.DataTree:  # type: ignore[override]
+    def to_xarray(self, group: str | None = None) -> xr.DataTree | xr.Dataset:  # type: ignore[override]
         import icechunk
         import xarray as xr
 
@@ -164,13 +171,16 @@ class Datatree(Dataset):
         storage = icechunk.s3_storage(bucket=self.bucket, prefix=self.prefix, from_env=True)
         repo = icechunk.Repository.open(storage, config=config)
         session = repo.readonly_session("main")
-        return xr.open_datatree(
+        dt = xr.open_datatree(
             session.store,
             engine="zarr",
             chunks="auto",
             consolidated=False,
             zarr_format=3,
         )
+        if group is not None:
+            return dt[group].to_dataset()
+        return dt
 
 
 @dataclass(kw_only=True)
@@ -231,214 +241,6 @@ class Catalog:
             VarStandards.PR,
         ]
         self.datasets: dict[str, BaseDataset] = {
-            "CESM2-WACCM-historical-icechunk": Dataset(
-                name="CESM2-WACCM-historical-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/CESM2-WACCM-historical.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
-                ensemble_members=["001"],
-                expected_vars=self.standard_vars + [VarStandards.DTR],
-            ),
-            "CESM2-WACCM-SSP245-icechunk": Dataset(
-                name="CESM2-WACCM-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-SSP245/icechunk/CESM2-WACCM-SSP245.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
-                ensemble_members=[
-                    "001",
-                    "002",
-                    "003",
-                    "004",
-                    "005",
-                    "006",
-                    "007",
-                    "008",
-                    "009",
-                    "010",
-                ],
-                expected_vars=self.standard_vars + [VarStandards.DTR],
-            ),
-            "CESM2-WACCM-G6-1.5K-icechunk": Dataset(
-                name="CESM2-WACCM-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-G6-1.5K/icechunk/CESM2-WACCM-G6-1.5k.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
-                ensemble_members=["001", "002", "003"],
-                expected_vars=self.standard_vars + [VarStandards.DTR],
-            ),
-            "pangeo-CESM2-WACCM-historical-icechunk": Dataset(
-                name="pangeo-CESM2-WACCM-historical-icechunk",
-                path="s3://carbonplan-srm/input/tensor/CESM2/CESM2-WACCM-Historical/icechunk/pangeo-CESM2-WACCM-historical.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288},
-                expected_shards={"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288},
-                ensemble_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
-                expected_vars=[
-                    VarStandards.HURS,
-                    VarStandards.PR,
-                    VarStandards.RSDS,
-                    VarStandards.TAS,
-                ],
-            ),
-            "MIROC-ES2H-historical-icechunk": Dataset(
-                name="MIROC-ES2H-historical-icechunk",
-                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/historical/icechunk/MIROC-ES2H-historical.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
-                expected_shards={"ensemble_member": 1, "time": 960, "lat": 128, "lon": 256},
-                ensemble_members=["r1i1p4f2", "r2i1p4f2", "r3i1p4f2"],
-                expected_vars=[
-                    VarStandards.HURS,
-                    VarStandards.PR,
-                    VarStandards.RSDS,
-                    VarStandards.TAS,
-                    VarStandards.TASMAX,
-                    VarStandards.TASMIN,
-                    VarStandards.DTR,
-                ],
-            ),
-            "MIROC-ES2H-SSP245-icechunk": Dataset(
-                name="MIROC-ES2H-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/baseline/icechunk/MIROC-ES2H-baseline.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
-                expected_shards={"ensemble_member": 1, "time": 960, "lat": 128, "lon": 256},
-                ensemble_members=[
-                    "r01",
-                    "r02",
-                    "r03",
-                    "r04",
-                    "r05",
-                    "r06",
-                    "r07",
-                    "r08",
-                    "r09",
-                    "r10",
-                ],
-                expected_vars=[
-                    VarStandards.HURS,
-                    VarStandards.PR,
-                    VarStandards.RSDS,
-                    VarStandards.TAS,
-                    VarStandards.TASMAX,
-                    VarStandards.TASMIN,
-                    VarStandards.DTR,
-                ],
-            ),
-            "MIROC-ES2H-esgf-SSP245-icechunk": Dataset(
-                name="MIROC-ES2H-esgf-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/ssp245/icechunk/MIROC-ES2H-SSP245.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
-                expected_shards={"ensemble_member": 1, "time": 960, "lat": 128, "lon": 256},
-                ensemble_members=["r1i1p4f2", "r2i1p4f2", "r3i1p4f2"],
-                expected_vars=[
-                    VarStandards.HURS,
-                    VarStandards.PR,
-                    VarStandards.RSDS,
-                    VarStandards.TAS,
-                    VarStandards.TASMAX,
-                    VarStandards.TASMIN,
-                    VarStandards.DTR,
-                ],
-            ),
-            "MIROC-ES2H-G6-1.5K-icechunk": Dataset(
-                name="MIROC-ES2H-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/MIROC-ES2H/G6-1.5K/icechunk/MIROC-ES2H-G6-1.5K.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 128, "lon": 256},
-                expected_shards={"ensemble_member": 1, "time": 960, "lat": 128, "lon": 256},
-                ensemble_members=[
-                    "r01",
-                    "r02",
-                    "r03",
-                    "r04",
-                    "r05",
-                    "r06",
-                    "r07",
-                    "r08",
-                    "r09",
-                    "r10",
-                ],
-                expected_vars=[
-                    VarStandards.HURS,
-                    VarStandards.PR,
-                    VarStandards.RSDS,
-                    VarStandards.TAS,
-                    VarStandards.TASMAX,
-                    VarStandards.TASMIN,
-                    VarStandards.DTR,
-                ],
-            ),
-            "UKESM-historical-icechunk": Dataset(
-                name="UKESM-historical-icechunk",
-                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-historical/UKESM-historical.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
-                expected_shards={
-                    "ensemble_member": 1,
-                    "time": 960,
-                    "lat": 144,
-                    "lon": 192,
-                },
-                ensemble_members=["r2i1p1f2", "r3i1p1f2", "r12i1p1f2"],
-                expected_vars=[
-                    VarStandards.PR,
-                    VarStandards.TAS,
-                    VarStandards.TASMIN,
-                    VarStandards.TASMAX,
-                    VarStandards.HURS,
-                    VarStandards.RSDS,
-                    VarStandards.DTR,
-                ],
-            ),
-            "UKESM-SSP245-icechunk": Dataset(
-                name="UKESM-SSP245-icechunk",
-                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-SSP245/UKESM_SSP245.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
-                expected_shards={
-                    "ensemble_member": 1,
-                    "time": 960,
-                    "lat": 144,
-                    "lon": 192,
-                },
-                ensemble_members=["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"],
-                expected_vars=[
-                    VarStandards.HURS,
-                    VarStandards.PR,
-                    VarStandards.RSDS,
-                    VarStandards.TAS,
-                    VarStandards.TASMAX,
-                    VarStandards.TASMIN,
-                    VarStandards.DTR,
-                ],
-            ),
-            "UKESM-G6-1.5K-icechunk": Dataset(
-                name="UKESM-G6-1.5K-icechunk",
-                path="s3://carbonplan-srm/input/tensor/UKESM/UKESM-G6-1.5K/UKESM_G6_1.5K.icechunk",
-                format="icechunk",
-                expected_chunks={"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192},
-                expected_shards={
-                    "ensemble_member": 1,
-                    "time": 960,
-                    "lat": 144,
-                    "lon": 192,
-                },
-                ensemble_members=["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"],
-                expected_vars=[
-                    VarStandards.HURS,
-                    VarStandards.RSDS,
-                    VarStandards.PR,
-                    VarStandards.TAS,
-                    VarStandards.TASMIN,
-                    VarStandards.TASMAX,
-                    VarStandards.DTR,
-                ],
-            ),
             "CESM2-WACCM": Datatree(
                 name="CESM2-WACCM",
                 path="s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk",
@@ -491,7 +293,13 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"time": 1, "lat": 720, "lon": 1440},
                 expected_shards={"time": 30, "lat": 720, "lon": 1440},
-                expected_vars=[VarStandards.TAS],
+                expected_vars=[
+                    VarStandards.TAS,
+                    VarStandards.TASMIN,
+                    VarStandards.TASMAX,
+                    VarStandards.PR,
+                    VarStandards.RLDS,
+                ],
             ),
             "ocean-mask": VectorDataset(
                 name="ocean-mask",

@@ -20,7 +20,7 @@ def _make_config(**overrides) -> BCSDConfig:
         predict_period_start=2015,
         predict_period_end=2100,
         subset_bounds=(-35.0, -22.0, 16.0, 33.0),
-        mapping_type="nonparametric_hybrid",
+        debias_approach="nonparametric_hybrid",
     )
     defaults.update(overrides)
     return BCSDConfig(**defaults)
@@ -106,10 +106,18 @@ def test_bridge_prepends_esgf_when_gap_detected(tmp_path):
     assert pipeline._ssp245_member == "r01"
     assert pipeline._ssp245_esgf_member == "r1i1p4f2"
 
-    with patch("srm.pipeline._catalog") as mock_cat:
-        mock_cat.get.side_effect = lambda k: _mock_catalog_get(
-            k, geomip_start=2020, esgf_start=2015
-        )
+    # Primary (GeoMIP) SSP245 starts at 2020; ESGF fills the 2015-2019 gap.
+    # get_experiment now uses downscaling_utils.catalog (separate from _catalog),
+    # so patch it directly to control the primary start year.
+    geomip_da = _make_annual_ds(2020, 2084, "r01")["tas"]
+    esgf_mock_entry = MagicMock()
+    esgf_mock_entry.to_xarray.return_value = _make_annual_ds(2015, 2084, "r1i1p4f2")
+
+    with (
+        patch("srm.pipeline.get_experiment", return_value=geomip_da),
+        patch("srm.pipeline._catalog") as mock_cat,
+    ):
+        mock_cat.get.return_value = esgf_mock_entry
         result = pipeline._load_ssp245_bridge()
 
     years = sorted(int(y) for y in np.unique(result.time.dt.year.values))
@@ -119,9 +127,9 @@ def test_bridge_prepends_esgf_when_gap_detected(tmp_path):
     assert years[-1] == 2084
     assert len(years) == len(set(years)), "No duplicate years"
 
-    calls = [c[0][0] for c in mock_cat.get.call_args_list]
-    assert any("esgf" in k for k in calls), "ESGF catalog key must be accessed"
-    assert any("esgf" not in k for k in calls), "Primary (GeoMIP) catalog key must be accessed"
+    # ESGF data is now fetched via catalog.get(gcm).to_xarray(group="esgf_ssp245")
+    mock_cat.get.assert_called_with(config.gcm)
+    esgf_mock_entry.to_xarray.assert_called_with(group="esgf_ssp245")
 
     # Provenance attrs
     assert result.attrs["bridge_type"] == "esgf_geomip_stitch"
@@ -208,11 +216,16 @@ def test_bridge_empty_esgf_gap_returns_primary(tmp_path):
     config = _make_config()
     pipeline = BCSDPipeline(config, _make_options(tmp_path))
 
-    # ESGF dataset also starts at 2020 — no data before primary_start_year=2020
-    with patch("srm.pipeline._catalog") as mock_cat:
-        mock_cat.get.side_effect = lambda k: _mock_catalog_get(
-            k, geomip_start=2020, esgf_start=2020
-        )
+    # GeoMIP SSP245 starts at 2020; ESGF also starts at 2020 → no gap data → return primary.
+    geomip_da = _make_annual_ds(2020, 2084, "r01")["tas"]
+    esgf_mock_entry = MagicMock()
+    esgf_mock_entry.to_xarray.return_value = _make_annual_ds(2020, 2084, "r1i1p4f2")
+
+    with (
+        patch("srm.pipeline.get_experiment", return_value=geomip_da),
+        patch("srm.pipeline._catalog") as mock_cat,
+    ):
+        mock_cat.get.return_value = esgf_mock_entry
         result = pipeline._load_ssp245_bridge()
 
     assert int(result.time.dt.year.min()) == 2020

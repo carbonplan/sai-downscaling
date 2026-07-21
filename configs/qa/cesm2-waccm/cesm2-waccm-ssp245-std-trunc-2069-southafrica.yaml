@@ -1,0 +1,34 @@
+# BCSD configuration: CESM2-WACCM / standard variables / SSP245 / truncated member 006 / South Africa (QA)
+# Member 006's data ends 2069-12-31 (per srm.validation._MEMBER_TIME_BOUNDS), so
+# predict_period_end is 2069. Members 007-010 end 2070 and live in
+# cesm2-waccm-ssp245-std-trunc-2070-southafrica.yaml. Splitting by true data end keeps
+# each member's extent consistent across variables and with the production / snapshot
+# runs. Full-length members 001-005 live in cesm2-waccm-ssp245-std-southafrica.yaml.
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM"
+variables: ["tas", "pr", "rsds", "hurs"]
+ensemble_members: ["006"]
+scenarios: ["SSP245"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2069
+
+# === Spatial Subsetting ===
+# South Africa region: [lat_min, lat_max, lon_min, lon_max]
+subset_bounds: [-35, -22, 16, 33]
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
+output_dir: "s3://carbonplan-scratch/srm/output"
+environment: "qa"
+
+# === Bias Correction ===
+debias_approach: "nonparametric_hybrid_2sided"
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true

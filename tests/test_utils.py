@@ -1,7 +1,8 @@
 import numpy as np
+import xarray as xr
 
 from srm.qaqc import DatasetChecker as DatasetValidator
-from srm.utils import lon_to_180
+from srm.utils import lon_to_180, to_proleptic_gregorian
 
 
 class TestLonTo180:
@@ -26,3 +27,34 @@ class TestLonTo180:
 
         assert not validation_result, "expected validation to fail for 0-360 longitude range"
         assert any("outside" in issue for issue in validation_result.issues)
+
+
+def _cftime_ds(start: str, end: str, calendar: str, freq: str = "D") -> xr.Dataset:
+    times = xr.date_range(start, end, freq=freq, use_cftime=True, calendar=calendar)
+    da = xr.DataArray(np.arange(len(times), dtype="float64"), dims=["time"], coords={"time": times})
+    return xr.Dataset({"tas": da})
+
+
+class TestToProlepticGregorian:
+    def test_noleap_interpolates_feb29(self):
+        ds = _cftime_ds("2020-01-01", "2020-12-31", "noleap")
+        result = to_proleptic_gregorian(ds)
+
+        assert isinstance(result.time.values[0], np.datetime64)
+        assert not result["tas"].isnull().any()
+        assert np.datetime64("2020-02-29") in result.time.values
+
+    def test_360_day_interpolates_and_realigns(self):
+        ds = _cftime_ds("2020-01-01", "2020-12-30", "360_day")
+        result = to_proleptic_gregorian(ds)
+
+        assert isinstance(result.time.values[0], np.datetime64)
+        assert not result["tas"].isnull().any()
+        assert result.time.values[-1] <= np.datetime64("2020-12-31")
+
+    def test_standard_calendar_is_passthrough(self):
+        ds = _cftime_ds("2020-01-01", "2020-12-31", "standard")
+        result = to_proleptic_gregorian(ds)
+
+        assert isinstance(result.time.values[0], np.datetime64)
+        np.testing.assert_array_equal(result["tas"].values, ds["tas"].values)

@@ -1,28 +1,27 @@
 """
-Input data validation checks for BCSD pipeline datasets.
-
-Checks are organized into the following groups:
-- integrity: checks for data completeness and correctness, such as missing values, duplicates
-- lineage: verifies that all lineage-resolved parent members exist in their stores
+Input data and output store validation checks for the BCSD pipeline.
 
 Use :class:`DatasetValidator` to run checks for a given (gcm, scenario) pair.
+Use :func:`validate_output_store` to run checks against a post-consolidation output datatree.
 """
 
 import enum
 import hashlib
+import inspect
 import traceback
+from typing import get_args
 
 import pydantic
 import xarray as xr
 
+from srm.bcsd_config import BCSDConfig, VariableName
+from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
 from srm.qaqc import DatasetChecker, ValidationResult
 
-# Blocking: crash or silent wrong output — abort the pipeline run.
-# Warning:  wrong data ingested — emit a warning but continue.
-# Info:     incomplete provenance — informational only.
 BLOCKING_CHECKS = {
     "ensemble_member_dim",
+    "config_time_domain",
     "g6_not_identical_to_ssp245",
     "lineage_member_availability",
     "temporal_coverage",
@@ -36,24 +35,14 @@ BLOCKING_CHECKS = {
     "spatial_range_tasmin",
     "spatial_range_pr",
     "spatial_range_rsds",
+    "tasmax_ge_tasmin",
 }
-WARNING_CHECKS: set[str] = set()
-INFO_CHECKS: set[str] = set()
-
-# (gcm, scenario, check_id) → human-readable reason for the expected failure.
-# A FAIL result for a key present here is downgraded to XFAIL (non-blocking).
-# If the check unexpectedly passes it becomes XPASS (also non-blocking, but flagged).
-XFAIL_CHECKS: dict[tuple[str, str, str], str] = {}
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
-
-_SCENARIO_TO_GROUP: dict[str, str] = {
-    "historical": "historical",
-    "SSP245": "ssp245",
-    "G6-1.5K": "g6_1p5k",
-}
+# On-disk variable group names; canonical (lowercase), so no translation needed.
+VARIABLE_OPTIONS = get_args(VariableName)
 
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
 # CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
@@ -79,6 +68,100 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     },
 }
 
+# Per-member valid daily extent, keyed gcm -> scenario -> ensemble_member -> (start, end).
+# First/last non-NaN day per member. Members not listed fall back to _SCENARIO_TIME_BOUNDS.
+# Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069-2070) while 001-005 reach 2099.
+_MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
+    "CESM2-WACCM": {
+        "G6-1.5K": {
+            "001": ("2035-01-01", "2085-12-31"),
+            "002": ("2035-01-01", "2085-12-31"),
+            "003": ("2035-01-01", "2085-12-31"),
+        },
+        "historical": {
+            "001": ("1978-01-01", "2015-12-31"),
+            "r1i1p1f1": ("1850-01-01", "2015-12-31"),
+            "r2i1p1f1": ("1850-01-01", "2015-12-31"),
+            "r3i1p1f1": ("1850-01-01", "2015-12-31"),
+        },
+        "SSP245": {
+            "001": ("2015-01-01", "2099-12-31"),
+            "002": ("2015-01-01", "2099-12-31"),
+            "003": ("2015-01-01", "2099-12-31"),
+            "004": ("2015-01-01", "2099-12-31"),
+            "005": ("2015-01-01", "2099-12-31"),
+            "006": ("2015-01-01", "2069-12-31"),
+            "007": ("2015-01-01", "2070-12-31"),
+            "008": ("2015-01-01", "2070-12-31"),
+            "009": ("2015-01-01", "2070-12-31"),
+            "010": ("2015-01-01", "2070-12-31"),
+        },
+    },
+    "MIROC-ES2H": {
+        "G6-1.5K": {
+            "r01": ("2035-01-01", "2084-12-31"),
+            "r02": ("2035-01-01", "2084-12-31"),
+            "r03": ("2035-01-01", "2084-12-31"),
+            "r04": ("2035-01-01", "2084-12-31"),
+            "r05": ("2035-01-01", "2084-12-31"),
+            "r06": ("2035-01-01", "2084-12-31"),
+            "r07": ("2035-01-01", "2084-12-31"),
+            "r08": ("2035-01-01", "2084-12-31"),
+            "r09": ("2035-01-01", "2084-12-31"),
+            "r10": ("2035-01-01", "2084-12-31"),
+        },
+        "SSP245": {
+            "r01": ("2015-01-01", "2084-12-31"),
+            "r02": ("2015-01-01", "2084-12-31"),
+            "r03": ("2015-01-01", "2084-12-31"),
+            "r04": ("2015-01-01", "2084-12-31"),
+            "r05": ("2015-01-01", "2084-12-31"),
+            "r06": ("2015-01-01", "2084-12-31"),
+            "r07": ("2015-01-01", "2084-12-31"),
+            "r08": ("2015-01-01", "2084-12-31"),
+            "r09": ("2015-01-01", "2084-12-31"),
+            "r10": ("2015-01-01", "2084-12-31"),
+        },
+        "historical": {
+            "r1i1p4f2": ("1850-01-01", "2014-12-31"),
+            "r2i1p4f2": ("1850-01-01", "2014-12-31"),
+            "r3i1p4f2": ("1850-01-01", "2014-12-31"),
+        },
+    },
+    "UKESM": {
+        "G6-1.5K": {
+            "r12i1p1f2": ("2035-01-01", "2084-12-31"),
+            "r2i1p1f2": ("2035-01-01", "2084-12-31"),
+            "r3i1p1f2": ("2035-01-01", "2084-12-31"),
+        },
+        "SSP245": {
+            "r12i1p1f2": ("2015-01-01", "2099-12-31"),
+            "r2i1p1f2": ("2015-01-01", "2099-12-31"),
+            "r3i1p1f2": ("2015-01-01", "2099-12-31"),
+        },
+        "historical": {
+            "r12i1p1f2": ("1850-01-01", "2014-12-31"),
+            "r2i1p1f2": ("1850-01-01", "2014-12-31"),
+            "r3i1p1f2": ("1850-01-01", "2014-12-31"),
+        },
+    },
+}
+
+
+def resolve_member_time_bounds(
+    gcm: str, scenario: str, ensemble_member: str
+) -> tuple[str, str] | None:
+    """Resolve the valid daily time bounds for a (gcm, scenario, ensemble_member).
+
+    Returns a member-specific override when present, else the scenario nominal bounds,
+    else None when no bounds are known for the (gcm, scenario).
+    """
+    member = _MEMBER_TIME_BOUNDS.get(gcm, {}).get(scenario, {}).get(ensemble_member)
+    if member is not None:
+        return member
+    return _SCENARIO_TIME_BOUNDS.get(gcm, {}).get(scenario)
+
+
 _FAST: dict = {"isel_kwargs": {"time": slice(0, 5)}}
 
 _DS_CHECKER_CHECKS: list[tuple[str, str, dict]] = [
@@ -87,7 +170,7 @@ _DS_CHECKER_CHECKS: list[tuple[str, str, dict]] = [
     ("lon_valid", "validate_lon", {}),
     ("time_axis", "validate_time_axis", {}),
     ("calendar", "validate_calendar", {}),
-    ("negative_precip", "validate_negative_precip", _FAST),
+    ("negative_precip", "validate_negative_precip", {"var": "pr", **_FAST}),
     ("spatial_range_tas", "validate_spatial_range", {"var": "tas", **_FAST}),
     ("spatial_range_tasmax", "validate_spatial_range", {"var": "tasmax", **_FAST}),
     ("spatial_range_tasmin", "validate_spatial_range", {"var": "tasmin", **_FAST}),
@@ -112,13 +195,18 @@ def parse_scenario(value: str) -> str:
     return _parse_catalog_value("scenario", value, SCENARIO_OPTIONS)
 
 
+def parse_variable(value: str) -> str:
+    """Parse a user-provided variable string to a canonical on-disk group name."""
+    return _parse_catalog_value("variable", value, VARIABLE_OPTIONS)
+
+
 class CheckStatus(enum.StrEnum):
     PASS = "pass"
     FAIL = "fail"
     SKIP = "skip"  # not applicable for this (gcm, scenario) pair
-    UNKNOWN = "unknown"  # check could not be determined
-    XFAIL = "xfail"  # expected to fail, and did — not blocking
-    XPASS = "xpass"  # expected to fail, but passed — flag for investigation
+    UNKNOWN = "unknown"
+    XFAIL = "xfail"  # expected failure
+    XPASS = "xpass"  # unexpected pass
 
 
 class CheckResult(pydantic.BaseModel):
@@ -130,6 +218,81 @@ class CheckResult(pydantic.BaseModel):
     status: CheckStatus
     message: str = ""
     detail: dict = pydantic.Field(default_factory=dict)
+    ensemble_member: str | None = None
+
+
+def check_config_time_domain(config: BCSDConfig) -> CheckResult:
+    """C1: config predict period must fit the member's valid data extent.
+
+    Guards against configs whose ``predict_period`` extends past (or starts before) the
+    real time coverage of a specific ensemble member — e.g. CESM2-WACCM SSP245 member
+    007 ends 2070 but is NaN-padded to the scenario end in the unified store. Without
+    this guard the pipeline slices the padded range and the downscaler emits garbage for
+    years with no real input.
+
+    Returns a blocking FAIL when the requested predict period falls outside the member's
+    valid bounds, PASS when it fits, and SKIP when no bounds are known for the member or
+    the config has no scenario/predict period (historical-only).
+    """
+    base = {
+        "check_id": "config_time_domain",
+        "gcm": config.gcm,
+        "scenario": config.scenario or "historical",
+        "ensemble_member": config.ensemble_member,
+    }
+
+    if config.scenario is None or config.predict_period_start is None:
+        return CheckResult(
+            **base,
+            status=CheckStatus.SKIP,
+            message="No scenario/predict period to check (historical-only config).",
+        )
+
+    bounds = resolve_member_time_bounds(config.gcm, config.scenario, config.ensemble_member)
+    if bounds is None:
+        return CheckResult(
+            **base,
+            status=CheckStatus.SKIP,
+            message=f"No time bounds known for {config.gcm}/{config.scenario}/"
+            f"{config.ensemble_member}; cannot validate predict period.",
+        )
+
+    # Bounds are first-of-month/first-of-next-month encoded for some GCMs; comparing the
+    # leading year is sufficient to catch member truncation and scenario-start violations.
+    valid_start_year = int(bounds[0][:4])
+    valid_end_year = int(bounds[1][:4])
+    detail = {
+        "predict_period_start": config.predict_period_start,
+        "predict_period_end": config.predict_period_end,
+        "valid_start": bounds[0],
+        "valid_end": bounds[1],
+    }
+
+    issues: list[str] = []
+    # SAI/G6 runs intentionally start before the scenario data (predict_period_start may
+    # be 2015 while G6 data begins 2035); the pipeline bridges that gap with SSP245. Only
+    # enforce the start bound for non-SAI scenarios.
+    if not config.is_sai_scenario and config.predict_period_start < valid_start_year:
+        issues.append(
+            f"predict_period_start {config.predict_period_start} is before data start "
+            f"{valid_start_year}"
+        )
+    if config.predict_period_end is not None and config.predict_period_end > valid_end_year:
+        issues.append(
+            f"predict_period_end {config.predict_period_end} is past data end {valid_end_year}"
+        )
+
+    if issues:
+        return CheckResult(
+            **base, status=CheckStatus.FAIL, message="; ".join(issues), detail=detail
+        )
+    return CheckResult(
+        **base,
+        status=CheckStatus.PASS,
+        message=f"predict period {config.predict_period_start}–{config.predict_period_end} "
+        f"within data extent {valid_start_year}–{valid_end_year}.",
+        detail=detail,
+    )
 
 
 def _get_ensemble_members(ds: xr.Dataset) -> list[str] | None:
@@ -237,7 +400,7 @@ class DatasetValidator(pydantic.BaseModel):
         if err:
             return None, err
         assert dt is not None
-        group = _SCENARIO_TO_GROUP.get(self.scenario)
+        group = SCENARIO_TO_GROUP.get(self.scenario)
         if group is None:
             return None, self._result(
                 CheckStatus.SKIP, f"No group mapping for scenario {self.scenario!r}"
@@ -258,16 +421,6 @@ class DatasetValidator(pydantic.BaseModel):
             status=CheckStatus.PASS if vr else CheckStatus.FAIL,
             message="; ".join(vr.issues) if not vr else "",
         )
-
-    def _apply_xfail(self, result: CheckResult) -> CheckResult:
-        key = (self.gcm, self.scenario, result.check_id)
-        if key not in XFAIL_CHECKS:
-            return result
-        if result.status == CheckStatus.FAIL:
-            return result.model_copy(update={"status": CheckStatus.XFAIL})
-        if result.status == CheckStatus.PASS:
-            return result.model_copy(update={"status": CheckStatus.XPASS})
-        return result
 
     # ── public check methods ─────────────────────────────────────────────────────
 
@@ -370,19 +523,21 @@ class DatasetValidator(pydantic.BaseModel):
             return err
         assert dt is not None
 
-        if "g6_1p5k" not in dt.children:
+        g6_group = SCENARIO_TO_GROUP["G6-1.5K"]
+        ssp245_group = SCENARIO_TO_GROUP["SSP245"]
+        if g6_group not in dt.children:
             return self._result(
                 CheckStatus.SKIP,
-                f"Group 'g6_1p5k' not present in datatree for {self.gcm}.",
+                f"Group {g6_group!r} not present in datatree for {self.gcm}.",
             )
-        if "ssp245" not in dt.children:
+        if ssp245_group not in dt.children:
             return self._result(
                 CheckStatus.SKIP,
-                f"Group 'ssp245' not present in datatree for {self.gcm}.",
+                f"Group {ssp245_group!r} not present in datatree for {self.gcm}.",
             )
 
-        g6_ds = dt["g6_1p5k"].to_dataset()
-        ssp245_ds = dt["ssp245"].to_dataset()
+        g6_ds = dt[g6_group].to_dataset()
+        ssp245_ds = dt[ssp245_group].to_dataset()
 
         g6_vars = {str(v) for v in g6_ds.data_vars}
         ssp245_vars = {str(v) for v in ssp245_ds.data_vars}
@@ -534,12 +689,7 @@ class DatasetValidator(pydantic.BaseModel):
     # ── orchestration ────────────────────────────────────────────────────────────
 
     def run_checks(self) -> list[CheckResult]:
-        """Run all applicable checks and return results stamped with ``check_id``.
-
-        Results whose (gcm, scenario, check_id) key appears in :data:`XFAIL_CHECKS` are
-        downgraded from ``FAIL`` → ``XFAIL`` (non-blocking expected failure) or upgraded
-        from ``PASS`` → ``XPASS`` (unexpected pass — worth investigating).
-        """
+        """Run all applicable checks and return results stamped with ``check_id``."""
         ds, err = self._open_scenario_ds()
         if err:
             return [err]
@@ -548,7 +698,9 @@ class DatasetValidator(pydantic.BaseModel):
         results: list[CheckResult] = []
 
         for check_id, method, kwargs in _DS_CHECKER_CHECKS:
-            vr: ValidationResult = getattr(checker, method)(**kwargs)
+            m = getattr(checker, method)
+            call_kwargs = {k: v for k, v in kwargs.items() if k in inspect.signature(m).parameters}
+            vr: ValidationResult = m(**call_kwargs)
             results.append(self._vr_to_cr(check_id, vr))
 
         for bespoke_check, check_id in (
@@ -561,4 +713,118 @@ class DatasetValidator(pydantic.BaseModel):
                 result = result.model_copy(update={"check_id": check_id})
             results.append(result)
 
-        return [self._apply_xfail(r) for r in results]
+        return results
+
+
+# ── output store validation ──────────────────────────────────────────────────────
+
+# Output leaves are /scenario/variable/member single-variable datasets with no
+# ensemble_member dim, so reuse the input primitives but drop the ensemble check.
+OUTPUT_CHECKS: list[tuple[str, str, dict]] = [
+    c for c in _DS_CHECKER_CHECKS if c[0] != "ensemble_member_dim"
+]
+
+
+def _open_output_datatree(uri: str, branch: str = "main", tag: str | None = None) -> xr.DataTree:
+    """Open an icechunk output store as a DataTree at a given branch or tag."""
+    import icechunk
+    from cloudpathlib import S3Path
+
+    if not uri.startswith(S3Path.cloud_prefix):
+        raise ValueError(f"Output store must be an {S3Path.cloud_prefix} URI, got: {uri}")
+    path = S3Path(uri)
+    storage = icechunk.s3_storage(bucket=path.bucket, prefix=path.key, from_env=True)
+    repo = icechunk.Repository.open(storage)
+    if tag is not None:
+        session = repo.readonly_session(tag=tag)
+    else:
+        session = repo.readonly_session(branch=branch)
+    return xr.open_datatree(session.store, engine="zarr", chunks="auto", consolidated=False)
+
+
+def validate_output_store(
+    store: str | xr.DataTree,
+    branch: str = "main",
+    tag: str | None = None,
+    scenarios: list[str] | None = None,
+    variables: list[str] | None = None,
+) -> list[CheckResult]:
+    """Run OUTPUT_CHECKS against every populated leaf of an output datatree store.
+
+    ``store`` may be an S3 URI string or an already-open DataTree. ``branch`` or ``tag`` mirror icechunk's ``readonly_session`` parameters and are ignored
+    when ``store`` is a DataTree. Each CheckResult reuses the ``gcm`` field for the store
+    label and the ``scenario`` field for the leaf path.
+
+    ``scenarios`` and ``variables`` restrict validation to matching leaves of the
+    ``/scenario/variable/member`` tree; they take the on-disk group names (e.g. ``"ssp245"``,
+    ``"tas"``). ``None`` means no filter.
+    """
+    if isinstance(store, str):
+        from cloudpathlib import S3Path
+
+        tree = _open_output_datatree(store, branch=branch, tag=tag)
+        label = S3Path(store).name or store
+    else:
+        tree = store
+        label = "output"
+
+    def _select(node: xr.DataTree, names: list[str] | None) -> list[xr.DataTree]:
+        """Child nodes to descend into: all children, or only the named ones present."""
+        if names is None:
+            return list(node.children.values())
+        return [node[name] for name in names if name in node.children]
+
+    # Descend the /scenario/variable/member tree one level at a time; member nodes are
+    # the leaves we validate. Filtering uses the tree structure, not path parsing.
+    scenario_nodes = _select(tree, scenarios)
+    variable_nodes = [vn for sn in scenario_nodes for vn in _select(sn, variables)]
+
+    results: list[CheckResult] = []
+    for variable_node in variable_nodes:
+        leaf_var = variable_node.name
+        for node in variable_node.leaves:
+            checker = DatasetChecker(node.to_dataset())
+            for check_id, method, kwargs in OUTPUT_CHECKS:
+                target_var = kwargs.get("var")
+                if target_var is not None and target_var != leaf_var:
+                    continue
+                sig = inspect.signature(getattr(checker, method))
+                call_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+                vr: ValidationResult = getattr(checker, method)(**call_kwargs)
+                results.append(
+                    CheckResult(
+                        check_id=check_id,
+                        gcm=label,
+                        scenario=node.path,
+                        status=CheckStatus.PASS if vr else CheckStatus.FAIL,
+                        message="" if vr else "; ".join(vr.issues),
+                    )
+                )
+
+    # Cross-variable gate: tasmax >= tasmin per (scenario, member). The per-leaf loop
+    # above sees one variable at a time, so this monotonicity check (issue #331 — a
+    # silent reconcile-skip must never ship) runs as a separate pass that pairs the
+    # tasmax and tasmin leaves.
+    for scenario_node in scenario_nodes:
+        svars = scenario_node.children
+        if "tasmax" not in svars or "tasmin" not in svars:
+            continue
+        tmax_members = {leaf.name: leaf for leaf in svars["tasmax"].leaves}
+        tmin_members = {leaf.name: leaf for leaf in svars["tasmin"].leaves}
+        for member in sorted(set(tmax_members) & set(tmin_members)):
+            paired = xr.merge(
+                [tmax_members[member].to_dataset(), tmin_members[member].to_dataset()],
+                compat="override",
+                join="inner",
+            )
+            vr = DatasetChecker(paired).validate_tasmax_ge_tasmin()
+            results.append(
+                CheckResult(
+                    check_id="tasmax_ge_tasmin",
+                    gcm=label,
+                    scenario=f"{scenario_node.name}/tasmax_ge_tasmin/{member}",
+                    status=CheckStatus.PASS if vr else CheckStatus.FAIL,
+                    message="" if vr else "; ".join(vr.issues),
+                )
+            )
+    return results

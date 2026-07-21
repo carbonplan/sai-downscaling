@@ -8,12 +8,15 @@ import xarray as xr
 from srm import downscaling_utils
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
+    derive_tasmin,
     detrend,
     fft_smooth_3harmonics,
     get_historical_experiment,
+    interpolate_coarse_to_fine_grid,
     rechunk,
     retrend,
     subset_space,
+    swap_temperature_extremes,
 )
 
 
@@ -474,32 +477,283 @@ def test_fft_smooth_3harmonics_attenuates_high_frequency_content():
     assert np.sqrt(np.mean(result**2)) < np.sqrt(np.mean(data**2))
 
 
+def _make_global_coarse_da(dtype: str = "float64") -> xr.DataArray:
+    """Global coarse grid in the -180..180 convention (no point at exactly +180),
+    holding a smooth periodic function of longitude."""
+    lon = np.arange(-180.0, 180.0, 45.0)  # [-180, -135, ..., 135]
+    lat = np.array([-60.0, -30.0, 0.0, 30.0, 60.0])
+    data = np.sin(np.deg2rad(lon))[np.newaxis, :] + 0.1 * np.cos(np.deg2rad(lat))[:, np.newaxis]
+    return xr.DataArray(data.astype(dtype), dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
+
+
+def _make_fine_grid() -> xr.DataArray:
+    """Fine target grid with points close to the +/-180 antimeridian."""
+    lon = np.array([-179.9, -170.0, -90.0, 0.0, 90.0, 170.0, 179.9])
+    lat = np.array([-55.0, 0.0, 55.0])
+    return xr.DataArray(
+        np.zeros((lat.size, lon.size)),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+    )
+
+
+def test_interpolate_coarse_to_fine_grid_wraps_periodically():
+    # Fine points between the last coarse lon (135) and +180 must interpolate
+    # between lon=135 and the wrapped lon=-180 point, not return NaN.
+    coarse = _make_global_coarse_da()
+    fine = _make_fine_grid()
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+
+    w = (179.9 - 135.0) / 45.0
+    expected_lon_term = (1 - w) * np.sin(np.deg2rad(135.0)) + w * np.sin(np.deg2rad(-180.0))
+    expected = expected_lon_term + 0.1 * np.cos(np.deg2rad(0.0))
+    np.testing.assert_allclose(result.sel(lat=0.0, lon=179.9).item(), expected, atol=1e-6)
+    # And the interpolated field should approximate the true periodic function
+    # everywhere near the seam (linear-interp error over 45 deg spacing < 0.1).
+    truth = (
+        np.sin(np.deg2rad(fine["lon"].values))[np.newaxis, :]
+        + 0.1 * np.cos(np.deg2rad(fine["lat"].values))[:, np.newaxis]
+    )
+    np.testing.assert_allclose(result.values, truth, atol=0.1)
+
+
+def test_interpolate_coarse_to_fine_grid_interior_matches_plain_interp():
+    # Away from the antimeridian, results must be identical to a plain
+    # (non-padded) interp: padding only fills the seam, never perturbs interior.
+    coarse = _make_global_coarse_da()
+    fine = _make_fine_grid()
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+    plain = coarse.interp(lon=fine["lon"], lat=fine["lat"], method="slinear")
+    interior = ~plain.isnull()
+    np.testing.assert_array_equal(result.values[interior.values], plain.values[interior.values])
+
+
+def test_interpolate_coarse_to_fine_grid_preserves_dtype():
+    coarse = _make_global_coarse_da(dtype="float32")
+    fine = _make_fine_grid()
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+    assert result.dtype == np.float32
+
+
+def test_interpolate_coarse_to_fine_grid_dask_backed_no_nan():
+    # Mirrors the production call site: time-dependent residuals, dask-backed,
+    # chunked along lon.
+    coarse = _make_global_coarse_da().expand_dims(time=pd.date_range("2000-01-01", periods=3))
+    coarse = coarse.chunk({"time": 1, "lat": -1, "lon": 4})
+    fine = _make_fine_grid()
+    result = interpolate_coarse_to_fine_grid(coarse, fine).compute()
+    assert not result.isnull().any()
+
+
+def test_interpolate_coarse_to_fine_grid_unsorted_lon_handled():
+    # Coarse lon handed in descending / shuffled order must be sorted internally
+    # so the periodic-padding math and slinear interp stay correct.
+    coarse = _make_global_coarse_da()
+    fine = _make_fine_grid()
+    expected = interpolate_coarse_to_fine_grid(coarse, fine)
+    shuffled = coarse.isel(lon=np.array([3, 0, 7, 1, 5, 2, 6, 4]))
+    result = interpolate_coarse_to_fine_grid(shuffled, fine)
+    assert not result.isnull().any()
+    np.testing.assert_allclose(result.values, expected.values, atol=1e-12)
+
+
+def test_interpolate_coarse_to_fine_grid_regional_edge_stays_nan():
+    # Regional (non-global) domain: fine cells beyond the coarse lon edges must
+    # stay NaN exactly as plain interp leaves them — periodic padding must not
+    # wrap a regional domain's east edge around to its west edge.
+    lon = np.arange(16.25, 32.6, 1.25)  # South-Africa-like subset, centers only
+    lat = np.arange(-34.5, -22.0, 1.0)
+    data = np.outer(np.cos(np.deg2rad(lat)), np.sin(np.deg2rad(lon)))
+    coarse = xr.DataArray(data, dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
+    fine = xr.DataArray(
+        np.zeros((3, 5)),
+        dims=["lat", "lon"],
+        coords={"lat": [-30.0, -28.0, -26.0], "lon": [16.0, 20.0, 25.0, 32.75, 33.0]},
+    )
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+    plain = coarse.interp(lon=fine["lon"], lat=fine["lat"], method="slinear")
+    assert plain.isnull().any()  # sanity: this setup does have out-of-hull cells
+    np.testing.assert_array_equal(result.values, plain.values)
+
+
 @pytest.mark.parametrize(
-    "gcm, member, expected_key",
+    "gcm, member",
     [
-        # CESM2-WACCM with CMIP6-style label -> pangeo store
-        ("CESM2-WACCM", "r1i1p1f1", "pangeo-CESM2-WACCM-historical-icechunk"),
-        # CESM2-WACCM with numeric label -> standard store
-        ("CESM2-WACCM", "1", "CESM2-WACCM-historical-icechunk"),
-        # MIROC-ES2H with CMIP6-style label -> standard store (not pangeo; only CESM2-WACCM has pangeo store)
-        ("MIROC-ES2H", "r1i1p1f1", "MIROC-ES2H-historical-icechunk"),
-        # Other GCM with CMIP6-style label -> standard store (not pangeo)
-        ("UKESM1-0-LL", "r1i1p1f2", "UKESM1-0-LL-historical-icechunk"),
+        ("CESM2-WACCM", "r1i1p1f1"),
+        ("CESM2-WACCM", "001"),
+        ("MIROC-ES2H", "r1i1p4f2"),
+        ("UKESM", "r2i1p1f2"),
     ],
 )
-def test_get_historical_experiment_routing(gcm: str, member: str, expected_key: str):
+def test_get_historical_experiment_uses_unified_store(gcm: str, member: str):
+    """get_historical_experiment always reads from the unified 'historical' group."""
     mock_da = MagicMock(spec=xr.DataArray)
-    mock_da.__getitem__ = lambda self, key: mock_da
     mock_da.sel.return_value = mock_da
 
     mock_ds = MagicMock()
-    mock_ds.__getitem__ = lambda self, key: mock_da
     mock_ds.proj.assign_crs.return_value = mock_ds
 
-    mock_catalog_entry = MagicMock()
-    mock_catalog_entry.to_xarray.return_value = mock_ds
+    mock_node = MagicMock()
+    mock_node.to_dataset.return_value = mock_ds
 
-    with patch("srm.downscaling_utils.catalog") as mock_catalog:
-        mock_catalog.get.return_value = mock_catalog_entry
-        get_historical_experiment(gcm, member, "tas")
-        mock_catalog.get.assert_called_once_with(expected_key)
+    mock_dt = MagicMock()
+    mock_dt.__getitem__ = MagicMock(return_value=mock_node)
+
+    with patch("srm.downscaling_utils._gcm_datatree", return_value=mock_dt) as mock_fn:
+        with patch("srm.downscaling_utils.get_variable", return_value=mock_da):
+            get_historical_experiment(gcm, member, "tas")
+            mock_fn.assert_called_once_with(gcm)
+            mock_dt.__getitem__.assert_called_once_with("historical")
+
+
+# ---------------------------------------------------------------------------
+# swap_temperature_extremes (issue #331)
+# ---------------------------------------------------------------------------
+
+
+def _temp_pair():
+    """(tasmax, tasmin) with one inversion, one monotone cell, one NaN cell."""
+    lat = np.array([0.0, 1.0])
+    lon = np.array([10.0, 11.0])
+    tasmax = xr.DataArray(
+        np.array([[300.0, 290.0], [np.nan, 305.0]]),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+        name="tasmax",
+    )
+    tasmin = xr.DataArray(
+        # [0,0] monotone (280<300); [0,1] INVERSION (295>290);
+        # [1,0] NaN tasmax; [1,1] monotone (300<305)
+        np.array([[280.0, 295.0], [285.0, 300.0]]),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+        name="tasmin",
+    )
+    return tasmax, tasmin
+
+
+class TestSwapTemperatureExtremes:
+    def test_inverted_cell_is_swapped(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        # inverted cell [0,1]: max/min exchanged
+        assert new_max.values[0, 1] == 295.0
+        assert new_min.values[0, 1] == 290.0
+
+    def test_monotone_cells_unchanged(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert new_max.values[0, 0] == 300.0
+        assert new_min.values[0, 0] == 280.0
+        assert new_max.values[1, 1] == 305.0
+        assert new_min.values[1, 1] == 300.0
+
+    def test_nan_cells_left_untouched(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert np.isnan(new_max.values[1, 0])
+        assert new_min.values[1, 0] == 285.0
+
+    def test_result_is_monotone_everywhere(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        finite = np.isfinite(new_max.values) & np.isfinite(new_min.values)
+        assert np.all(new_max.values[finite] >= new_min.values[finite])
+
+    def test_names_preserved(self):
+        tasmax, tasmin = _temp_pair()
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert new_max.name == "tasmax"
+        assert new_min.name == "tasmin"
+
+    def test_3d_dask_backed_stays_lazy_and_monotone(self):
+        # Production calls this with (time, lat, lon) dask arrays read back from
+        # icechunk; make sure the op stays lazy and the invariant holds.
+        rng = np.random.default_rng(0)
+        time = np.arange(np.datetime64("2020-01-01"), np.datetime64("2020-01-06"))
+        lat = np.array([0.0, 1.0])
+        lon = np.array([10.0, 11.0])
+        coords = {"time": time, "lat": lat, "lon": lon}
+        tasmax = xr.DataArray(
+            rng.normal(300.0, 3.0, (5, 2, 2)),
+            dims=["time", "lat", "lon"],
+            coords=coords,
+            name="tasmax",
+        ).chunk({"time": 2})
+        tasmin = xr.DataArray(
+            rng.normal(300.0, 3.0, (5, 2, 2)),
+            dims=["time", "lat", "lon"],
+            coords=coords,
+            name="tasmin",
+        ).chunk({"time": 2})
+
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+
+        assert new_max.chunks is not None and new_min.chunks is not None  # never computed
+        a, b = new_max.compute().values, new_min.compute().values
+        finite = np.isfinite(a) & np.isfinite(b)
+        assert np.all(a[finite] >= b[finite])
+
+    def test_raises_on_misaligned_coords(self):
+        # A silent inner-join would drop/NaN cells instead of swapping; require exact coords.
+        lat = np.array([0.0])
+        tasmax = xr.DataArray(
+            [[300.0, 290.0]],
+            dims=["lat", "lon"],
+            coords={"lat": lat, "lon": [10.0, 11.0]},
+            name="tasmax",
+        )
+        tasmin = xr.DataArray(
+            [[280.0, 295.0]],
+            dims=["lat", "lon"],
+            coords={"lat": lat, "lon": [10.001, 11.001]},
+            name="tasmin",
+        )
+        with pytest.raises(ValueError):
+            swap_temperature_extremes(tasmax, tasmin)
+
+    def test_handles_unnamed_tasmin(self):
+        lat, lon = np.array([0.0]), np.array([10.0, 11.0])
+        tasmax = xr.DataArray(
+            [[300.0, 290.0]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon}, name="tasmax"
+        )
+        tasmin = xr.DataArray(  # no name — the fresh downscaled tasmin may be unnamed
+            [[280.0, 295.0]], dims=["lat", "lon"], coords={"lat": lat, "lon": lon}
+        )
+        new_max, new_min = swap_temperature_extremes(tasmax, tasmin)
+        assert new_max.name == "tasmax"
+        assert new_max.values[0, 1] == 295.0
+
+
+# ---------------------------------------------------------------------------
+# derive_tasmin — fail loud on mismatched tasmax/dtr time axes (issue #363)
+# ---------------------------------------------------------------------------
+
+
+def _temp_series(times, value, name):
+    return xr.DataArray(
+        np.full((len(times), 1, 1), value, dtype="float32"),
+        dims=["time", "lat", "lon"],
+        coords={"time": times, "lat": [0.0], "lon": [0.0]},
+        name=name,
+    )
+
+
+class TestDeriveTasmin:
+    def test_matching_axes_subtracts(self):
+        t = np.arange("2015-01-01", "2015-01-05", dtype="datetime64[D]")
+        out = derive_tasmin(_temp_series(t, 300.0, "tasmax"), _temp_series(t, 10.0, "dtr"))
+        assert out.name == "tasmin"
+        assert float(out.isel(time=0, lat=0, lon=0)) == 290.0
+
+    def test_mismatched_start_raises(self):
+        t1 = np.arange("2015-01-01", "2015-01-05", dtype="datetime64[D]")
+        t2 = np.arange("2035-01-01", "2035-01-05", dtype="datetime64[D]")
+        with pytest.raises(ValueError, match="#363"):
+            derive_tasmin(_temp_series(t1, 300.0, "tasmax"), _temp_series(t2, 10.0, "dtr"))
+
+    def test_different_length_raises(self):
+        t1 = np.arange("2015-01-01", "2020-01-01", dtype="datetime64[D]")
+        t2 = np.arange("2015-01-01", "2018-01-01", dtype="datetime64[D]")
+        with pytest.raises(ValueError, match="time ax"):
+            derive_tasmin(_temp_series(t1, 300.0, "tasmax"), _temp_series(t2, 10.0, "dtr"))

@@ -7,7 +7,7 @@ There are two ways to run multiple GCMs, variables, ensemble members, and scenar
 Add list values to any YAML config and run it with `bcsd run`:
 
 ```yaml
-# configs/production/cesm2-waccm.yaml
+# configs/production/cesm2-waccm/cesm2-waccm-ssp245-std.yaml
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr"]
 ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
@@ -15,7 +15,7 @@ scenarios: ["SSP245"]
 predict_period_start: 2015
 predict_period_end: 2100
 environment: production
-mapping_type: nonparametric_hybrid
+debias_approach: nonparametric_hybrid
 ```
 
 ```bash
@@ -39,9 +39,9 @@ uv run bcsd run-matrix \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 \
   --predict-period-start 2015 --predict-period-end 2100 \
-  --scratch-dir "s3://carbonplan-scratch/srm/bcsd-cache" \
+  --scratch-dir "s3://carbonplan-scratch/srm/cache" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/" \
-  --environment production --version v1 \
+  --environment production --branch v1 \
   --coiled
 ```
 

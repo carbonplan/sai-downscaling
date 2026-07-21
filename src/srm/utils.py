@@ -1,7 +1,17 @@
+"""
+General-purpose utilities shared across pipeline stages and analysis code.
+
+Provides coordinate normalization (:func:`lon_to_180`), variable extraction
+(:func:`get_variable`), unit conversion helpers, and icechunk store accessors. These
+helpers carry no pipeline-specific logic and no stage dependencies.
+"""
+
 from __future__ import annotations
 
 from typing import Literal
 
+import boto3
+import icechunk
 import pint_xarray
 import xarray as xr
 
@@ -79,7 +89,7 @@ def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
     if calendar in ("proleptic_gregorian", "gregorian", "standard"):
         return ds.convert_calendar("proleptic_gregorian", use_cftime=False)
     align: Literal["year"] | None = "year" if calendar == "360_day" else None
-    return (
+    ds = (
         ds.convert_calendar(
             "proleptic_gregorian", align_on=align, missing=float("nan"), use_cftime=False
         )
@@ -97,3 +107,35 @@ def get_variable(ds: xr.Dataset, variable: str) -> xr.DataArray:
         dtr.attrs.update({"units": "K", "long_name": "Diurnal Temperature Range"})
         return dtr
     return ds[variable]
+
+
+def resolve_s3_glob(path):
+    """Resolve a single * wildcard in an S3 path to a real path."""
+    bucket, prefix = path.replace("s3://", "").split("/", 1)
+
+    before, after = prefix.split("*/", 1)
+
+    s3 = boto3.client("s3")
+    response = s3.list_objects_v2(Bucket=bucket, Prefix=before, Delimiter="/")
+
+    matches = [f"s3://{bucket}/{cp['Prefix']}{after}" for cp in response.get("CommonPrefixes", [])]
+
+    if not matches:
+        raise ValueError(f"No S3 paths matched: {path}")
+    if len(matches) > 1:
+        raise ValueError(f"Multiple matches: {matches}")
+
+    return matches[0]
+
+
+def open_icechunk(path, group=None, branch="main"):
+    bucket, prefix = path.replace("s3://", "").rstrip("/").split("/", 1)
+    storage = icechunk.s3_storage(bucket=bucket, prefix=prefix)
+    repo = icechunk.Repository.open(storage)
+    session = repo.readonly_session(branch)
+
+    if group is not None:
+        ds = xr.open_dataset(session.store, engine="zarr", group=group, chunks={})
+    else:
+        ds = xr.open_dataset(session.store, engine="zarr", chunks={})
+    return ds

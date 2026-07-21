@@ -1,8 +1,21 @@
+"""
+QA/QC checks for consolidated BCSD output stores.
+
+Runs spatial, temporal, and physical-constraint checks against merged output
+datatrees, including NaN detection, range validation, and temperature monotonicity.
+Distinct from :mod:`srm.qa_checks`, which operates on in-memory arrays during
+pipeline execution.
+"""
+
 from __future__ import annotations
 
+import contextlib
+import io
 import itertools
+from pathlib import Path
 
 import cf_xarray  # noqa: F401  # registers CF accessor
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -335,12 +348,32 @@ class DatasetChecker:
             issues.append(f"tasmax < tasmin at {min_gt_max} grid point(s)")
         return ValidationResult(len(issues) == 0, issues)
 
+    def validate_tasmax_ge_tasmin(self, isel_kwargs: dict | None = None) -> ValidationResult:
+        """Blocking cross-variable gate: ``tasmax >= tasmin`` everywhere (issue #331).
+
+        Unlike :meth:`validate_temp_consistency` this needs only ``tasmax`` and
+        ``tasmin`` (not ``tas``), so it also covers the temperature-extremes-only
+        outputs. NaN-safe (NaN comparisons are False). A nonzero count means the
+        reconcile step did not land — the run must not ship.
+        """
+        required = {"tasmin", "tasmax"}
+        if not required.issubset(self.ds.data_vars):
+            return ValidationResult(True, [])
+        subset = (
+            self.ds[list(required)].isel(**isel_kwargs) if isel_kwargs else self.ds[list(required)]
+        )
+        n = int((subset["tasmax"] < subset["tasmin"]).sum().compute())
+        if n > 0:
+            return ValidationResult(False, [f"tasmax < tasmin at {n} grid point(s)"])
+        return ValidationResult(True, [])
+
     def validate_no_identical_vars(self) -> ValidationResult:
         if "time" not in self.ds.dims or self.ds.sizes["time"] == 0:
             return ValidationResult(True, [])
 
         n = self.ds.sizes["time"]
-        window = _sample_time_window(n)
+        # Start at day 0.  CESM2-WACCM, #424 give an invalid first day (tasmax == tasmin == tas).
+        window = slice(0, min(n, _N_TIME_SAMPLES))
         ds_sample = self.ds.isel(time=window)
 
         if "ensemble_member" in ds_sample.dims:
@@ -528,3 +561,174 @@ def check_ensemble_spread(ds: xr.Dataset, label: str, var: str = "tas", day_inde
         "means": means,
         "spread_ok": spread_ok,
     }
+
+
+def disagg_test_calculate_metrics(x, y, time_dim="time"):
+    # Align on time so positional pairing can't silently drift
+    x, y = xr.align(x, y, join="inner")
+
+    # Only count cells/times where BOTH are finite, so every metric uses the same n
+    good = x.notnull() & y.notnull()
+    x = x.where(good)
+    y = y.where(good)
+
+    resid = y - x  # deviation from 1:1 line
+
+    # n = good.sum(time_dim)
+    bias = resid.mean(time_dim)
+    mae = np.abs(resid).mean(time_dim)
+    rmse = np.sqrt((resid**2).mean(time_dim))
+    max_dev = np.abs(resid).max(time_dim)
+    std_resid = resid.std(time_dim)
+    # rmse_perp = rmse / np.sqrt(2)
+
+    # R² vs 1:1 (Nash–Sutcliffe): 1 = perfect, can go negative
+    ss_res = (resid**2).sum(time_dim)
+    ss_tot = ((y - y.mean(time_dim)) ** 2).sum(time_dim)
+    r2_oneone = 1 - ss_res / ss_tot
+
+    # Pearson r per cell (shape agreement) for contrast
+    # xm, ym = x - x.mean(time_dim), y - y.mean(time_dim)
+    # pearson = (xm * ym).sum(time_dim) / np.sqrt((xm**2).sum(time_dim) * (ym**2).sum(time_dim))
+
+    metrics = xr.Dataset(
+        {
+            "bias": bias,
+            "mae": mae,
+            "rmse": rmse,
+            "max_dev": max_dev,
+            "std_resid": std_resid,
+            "r2_oneone": r2_oneone,
+        }
+    )
+
+    return metrics
+
+
+def disagg_test_plot_summary_stats(
+    metrics,
+    vmax_rmse=None,
+    vmax_bias=None,
+    vmax_std_resid=None,
+    vmax_mae=None,
+    vmax_max_dev=None,
+    savefig_path=None,
+):
+    nrows = 2
+    ncols = 3
+
+    plt.figure(figsize=(20, 12))
+
+    plt.subplot(nrows, ncols, 1)
+    if vmax_rmse is None:
+        metrics["rmse"].plot(vmin=0)
+    else:
+        metrics["rmse"].plot(vmin=0, vmax=vmax_rmse)
+    plt.title("RMSE")
+
+    plt.subplot(nrows, ncols, 2)
+    if vmax_bias is None:
+        metrics["bias"].plot()
+    else:
+        metrics["bias"].plot(vmax=vmax_bias, vmin=-vmax_bias, cmap=plt.cm.RdBu_r)
+    plt.title("Bias relative to coarse debiased \n (goal: bias=0)")
+
+    plt.subplot(nrows, ncols, 3)
+    if vmax_std_resid is None:
+        metrics["std_resid"].plot(vmin=0)
+    else:
+        metrics["std_resid"].plot(vmin=0, vmax=vmax_std_resid)
+    plt.title("Std residual")
+
+    plt.subplot(nrows, ncols, 4)
+    if vmax_mae is None:
+        metrics["mae"].plot(vmin=0)
+    else:
+        metrics["mae"].plot(vmin=0, vmax=vmax_mae)
+    plt.title("MAE")
+
+    plt.subplot(nrows, ncols, 5)
+    if vmax_max_dev is None:
+        metrics["max_dev"].plot(vmin=0)
+    else:
+        metrics["max_dev"].plot(vmin=0, vmax=vmax_max_dev)
+    plt.title("Maximum deviation")
+
+    plt.subplot(nrows, ncols, 6)
+    metrics["r2_oneone"].plot(vmin=0.9, vmax=1, cmap=plt.cm.viridis_r)
+    plt.title("R2 relative to 1:1 line")
+
+    plt.tight_layout()
+    if savefig_path is not None:
+        plt.savefig(savefig_path)
+
+
+def disagg_test_print_evaluation_for_metric(
+    metric, metrics_to_evaluate, metric_max_thresh=None, metric_min_thresh=None
+):
+    print("---------------" + metric + "---------------")
+    print("Max:")
+    print(np.nanmax(metrics_to_evaluate[metric]))
+    print("Min:")
+    print(np.nanmin(metrics_to_evaluate[metric]))
+    if metric_max_thresh is not None:
+        print("Fraction above threshold:")
+        print((metrics_to_evaluate[metric] > metric_max_thresh).mean(dim=["lat", "lon"]).values)
+    if metric_min_thresh is not None:
+        print("Fraction below threshold:")
+        print((metrics_to_evaluate[metric] < metric_min_thresh).mean(dim=["lat", "lon"]).values)
+
+
+def disagg_test_print_all_evaluation_metrics(
+    metrics,
+    variable,
+    scenario,
+    ensemble_member,
+    timescale,
+    disagg_eval_tresholds,
+    is_regional_subset=True,
+    log_path=None,
+):
+    thresholds = disagg_eval_tresholds[variable]
+    if is_regional_subset:
+        metrics_to_evaluate = metrics.isel(lat=slice(1, -1), lon=slice(1, -1))
+    else:
+        metrics_to_evaluate = metrics
+
+    rows = []
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        for metric, limits in thresholds.items():
+            disagg_test_print_evaluation_for_metric(
+                metric=metric,
+                metrics_to_evaluate=metrics_to_evaluate,
+                metric_max_thresh=limits["eval_max"],
+                metric_min_thresh=limits["eval_min"],
+            )
+            rows.append(
+                {
+                    "variable": variable,
+                    "scenario": scenario,
+                    "ensemble_member": ensemble_member,
+                    "timescale": timescale,
+                    "metric": metric,
+                    "max": float(np.nanmax(metrics_to_evaluate[metric])),
+                    "min": float(np.nanmin(metrics_to_evaluate[metric])),
+                    "fraction_above": float(
+                        (metrics_to_evaluate[metric] > limits["eval_max"])
+                        .mean(dim=["lat", "lon"])
+                        .values
+                    ),
+                    "fraction_below": float(
+                        (metrics_to_evaluate[metric] < limits["eval_min"])
+                        .mean(dim=["lat", "lon"])
+                        .values
+                    ),
+                }
+            )
+
+    print(buf.getvalue(), end="")
+    if log_path is not None:
+        csv_path = Path(log_path).with_suffix(".csv")
+        df = pd.DataFrame(rows)
+        df.to_csv(csv_path, mode="w", header=True, index=False)

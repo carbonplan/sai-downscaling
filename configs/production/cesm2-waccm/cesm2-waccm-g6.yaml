@@ -5,8 +5,8 @@
 
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr"]
-ensemble_members: ["001", "002", "003"]
+variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+ensemble_members: ["003"]
 scenarios: ["G6-1.5K"]
 
 train_period_start: 1978
@@ -14,7 +14,7 @@ train_period_end: 2014
 predict_period_start: 2015
 predict_period_end: 2084
 
-mapping_type: "nonparametric_hybrid"
+debias_approach: "nonparametric_hybrid_2sided"
 
 # === PipelineOptions: Operational Settings ===
 scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"

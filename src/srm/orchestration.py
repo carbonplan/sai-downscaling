@@ -1,19 +1,20 @@
 """
-Orchestration layer for batch BCSD execution with automatic caching and task deduplication.
+Orchestration layer for batch BCSD execution with automatic task deduplication.
 
-This module provides the BCSDOrchestrator class which manages efficient batch
-execution of BCSD runs across multiple configurations using Coiled's batch API.
-It automatically detects cached artifacts and submits only necessary tasks.
+Manages efficient batch execution of BCSD runs across multiple configurations using
+Coiled's batch API. Automatically detects cached artifacts, deduplicates shared stages
+across ensemble members and scenarios, and submits only the necessary tasks.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Callable
 from typing import Literal
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import ArtifactCache
+from srm.cache import ArtifactCache, StoreLocation
 from srm.pipeline import BCSDPipeline
 
 logger = logging.getLogger(__name__)
@@ -68,10 +69,81 @@ class BCSDOrchestrator:
             self._cache = ArtifactCache(
                 scratch_dir=self.options.scratch_dir,
                 environment=self.options.environment,
-                version=self.options.version,
+                branch=self.options.branch,
                 output_dir=self.options.output_dir,
             )
         return self._cache
+
+    def _stage_loc(
+        self,
+        cache: ArtifactCache,
+        stage: str,
+        config: BCSDConfig,
+        hist_member: str | None = None,
+    ) -> StoreLocation:
+        """Return the StoreLocation for a stage/config, binding config to cache."""
+        cache.config = config
+        if stage == "prepare_observations":
+            return cache.obs_loc
+        elif stage == "fit_historical":
+            return cache.historical_loc(hist_member or config.ensemble_member)
+        elif stage == "transform_scenario":
+            return cache.scenario_loc
+        else:
+            raise ValueError(f"Unknown stage: {stage}")
+
+    # Stages where tasmin reconstructs itself from its sibling tasmax/dtr stores
+    # and therefore must run after them. Other stages (obs regridding) have no
+    # cross-variable dependency and are never wave-split.
+    _DERIVED_VARIABLE_STAGES: frozenset[str] = frozenset({"fit_historical", "transform_scenario"})
+
+    def _dependency_waves(self, stage: str, configs: list[BCSDConfig]) -> list[list[int]]:
+        """Split config indices into ordered execution waves within a stage.
+
+        ``tasmin`` is never bias-corrected directly; it is reconstructed from its
+        sibling ``tasmax``/``dtr`` stores (issue #363). Those siblings are written
+        by separate tasks on the same icechunk branch, so in the stages that read
+        them (``fit_historical``, ``transform_scenario``) ``tasmin`` must not start
+        until they are committed and final — otherwise it fossilises a mid-flight
+        (still-NaN) ``dtr``/``tasmax``. Stages without that coupling run as one wave.
+
+        Parameters
+        ----------
+        stage : str
+            Pipeline stage being submitted.
+        configs : list[BCSDConfig]
+            Configs to be executed in this stage.
+
+        Returns
+        -------
+        list[list[int]]
+            Ordered list of waves, each a list of indices into ``configs``. Empty
+            waves are omitted.
+        """
+        if stage not in self._DERIVED_VARIABLE_STAGES:
+            return [list(range(len(configs)))] if configs else []
+        first = [i for i, c in enumerate(configs) if c.variable != "tasmin"]
+        later = [i for i, c in enumerate(configs) if c.variable == "tasmin"]
+        return [wave for wave in (first, later) if wave]
+
+    def _run_in_dependency_waves(
+        self,
+        executor: Callable[[str, list[BCSDConfig]], list[str]],
+        stage: str,
+        configs: list[BCSDConfig],
+    ) -> list[str]:
+        """Run ``configs`` through ``executor`` one dependency wave at a time.
+
+        Waves are executed sequentially (each blocks to completion before the next
+        starts), while output paths are returned in the original ``configs`` order.
+        """
+        completed: list[str | None] = [None] * len(configs)
+        for wave in self._dependency_waves(stage, configs):
+            wave_configs = [configs[i] for i in wave]
+            wave_paths = executor(stage, wave_configs)
+            for i, path in zip(wave, wave_paths):
+                completed[i] = path
+        return completed  # type: ignore[return-value]
 
     def submit_stage(
         self,
@@ -110,12 +182,14 @@ class BCSDOrchestrator:
 
         for config in configs:
             hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
-            output_path = cache.get_output_path(stage, config, hist_member=hist_member)
+            loc = self._stage_loc(cache, stage, config, hist_member=hist_member)
 
-            if cache.exists(output_path) and not force:
-                if self.options.verbose:
-                    logger.info(f"⊙ Skipping {config.run_id} - output exists: {output_path}")
-                output_paths.append(output_path)
+            if cache.exists(loc) and not force:
+                branch = cache._branch_for()
+                logger.info(
+                    f"⊙ Skipping {config.run_id} - {loc.group} already cached (branch: {branch})"
+                )
+                output_paths.append(f"{loc.store_path}::{loc.group}")
             else:
                 configs_to_run.append(config)
                 output_paths.append(None)  # Placeholder
@@ -129,11 +203,10 @@ class BCSDOrchestrator:
             f"({'Coiled' if use_coiled else 'local'})"
         )
 
-        # Submit to Coiled or run locally
-        if use_coiled:
-            completed_paths = self._submit_to_coiled(stage, configs_to_run)
-        else:
-            completed_paths = self._run_local(stage, configs_to_run)
+        # Submit to Coiled or run locally, respecting intra-stage dependency
+        # ordering (tasmin must run after its debiased-coarse tasmax/dtr inputs).
+        executor = self._submit_to_coiled if use_coiled else self._run_local
+        completed_paths = self._run_in_dependency_waves(executor, stage, configs_to_run)
 
         # Fill in the output_paths list
         completed_idx = 0
@@ -184,7 +257,7 @@ class BCSDOrchestrator:
         except ImportError:
             raise ImportError("Coiled is not installed. Install with: uv pip install coiled")
 
-        # Exclude computed fields (run_id, config_hash, detrend_data, etc.) since they
+        # Exclude computed fields (run_id, config_hash, is_sai_scenario) since they
         # are derived values and BCSDConfig does not accept them as constructor inputs.
         computed_fields = set(BCSDConfig.model_computed_fields.keys())
         cache = self._get_cache()
@@ -227,6 +300,7 @@ class BCSDOrchestrator:
                 region="us-west-2",
                 map_over_task_var_dicts=task_var_dicts,
                 forward_aws_credentials=False,
+                spot_policy="on-demand",
                 logger=logger,
                 tag={"Project": "SRM"},
                 disk_size="100GB",
@@ -246,7 +320,8 @@ class BCSDOrchestrator:
                 config
                 for config in remaining
                 if not cache.exists(
-                    cache.get_output_path(
+                    self._stage_loc(
+                        cache,
                         stage,
                         config,
                         hist_member=self._resolve_hist_member(config)
@@ -278,16 +353,18 @@ class BCSDOrchestrator:
         logger.info(f"✓ All {len(configs)} {stage} tasks completed")
 
         # Collect and return all output paths (now guaranteed to exist)
-        return [
-            cache.get_output_path(
+        result = []
+        for config in configs:
+            loc = self._stage_loc(
+                cache,
                 stage,
                 config,
                 hist_member=self._resolve_hist_member(config)
                 if stage == "fit_historical"
                 else None,
             )
-            for config in configs
-        ]
+            result.append(f"{loc.store_path}::{loc.group}")
+        return result
 
     def _run_local(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
         """
@@ -306,20 +383,23 @@ class BCSDOrchestrator:
             Output paths from completed tasks
         """
         completed_paths = []
+        cache = self._get_cache()
 
         for config in configs:
             pipeline = BCSDPipeline(config, self.options)
 
             if stage == "prepare_observations":
-                path = pipeline.prepare_observations()
+                pipeline.prepare_observations()
             elif stage == "fit_historical":
-                path = pipeline.fit_historical()
+                pipeline.fit_historical()
             elif stage == "transform_scenario":
-                path = pipeline.transform_scenario()
+                pipeline.transform_scenario()
             else:
                 raise ValueError(f"Unknown stage: {stage}")
 
-            completed_paths.append(path)
+            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
+            loc = self._stage_loc(cache, stage, config, hist_member=hist_member)
+            completed_paths.append(f"{loc.store_path}::{loc.group}")
 
         return completed_paths
 
@@ -384,7 +464,10 @@ class BCSDOrchestrator:
 
     def _deduplicate_obs_configs(self, configs: list[BCSDConfig]) -> list[BCSDConfig]:
         """
-        Extract unique (GCM, variable) combinations for obs regridding.
+        Extract unique (GCM, obs_dataset, variable) combinations for obs regridding.
+
+        obs_dataset is part of the key because the obs artifact store path embeds
+        it; two configs differing only in obs_dataset must each regrid.
 
         Parameters
         ----------
@@ -399,7 +482,7 @@ class BCSDOrchestrator:
         seen = set()
         unique = []
         for config in configs:
-            key = (config.gcm, config.variable)
+            key = (config.gcm, config.obs_dataset, config.variable)
             if key not in seen:
                 seen.add(key)
                 unique.append(config)
@@ -411,7 +494,9 @@ class BCSDOrchestrator:
 
         Deduplication uses the resolved historical ensemble member so that multiple
         scenario configs that share the same lineage parent are not submitted as
-        separate historical tasks.
+        separate historical tasks. obs_dataset is part of the key because the
+        historical artifact store path embeds it and fit_historical bias-corrects
+        against obs; different obs_datasets require separate historical fits.
 
         Parameters
         ----------
@@ -426,7 +511,12 @@ class BCSDOrchestrator:
         seen = set()
         unique = []
         for config in configs:
-            key = (config.gcm, config.variable, self._resolve_hist_member(config))
+            key = (
+                config.gcm,
+                config.obs_dataset,
+                config.variable,
+                self._resolve_hist_member(config),
+            )
             if key not in seen:
                 seen.add(key)
                 unique.append(config)
@@ -492,8 +582,8 @@ class BCSDOrchestrator:
         obs_configs = self._deduplicate_obs_configs(configs)
         status["prepare_observations"]["total"] = len(obs_configs)
         for config in obs_configs:
-            path = cache.get_obs_path(config)
-            if cache.exists(path):
+            loc = self._stage_loc(cache, "prepare_observations", config)
+            if cache.exists(loc):
                 status["prepare_observations"]["cached"] += 1
             else:
                 status["prepare_observations"]["missing"].append(config.run_id)
@@ -502,8 +592,10 @@ class BCSDOrchestrator:
         hist_configs = self._deduplicate_historical_configs(configs)
         status["fit_historical"]["total"] = len(hist_configs)
         for config in hist_configs:
-            path = cache.get_historical_path(config, hist_member=self._resolve_hist_member(config))
-            if cache.exists(path):
+            loc = self._stage_loc(
+                cache, "fit_historical", config, hist_member=self._resolve_hist_member(config)
+            )
+            if cache.exists(loc):
                 status["fit_historical"]["cached"] += 1
             else:
                 status["fit_historical"]["missing"].append(config.run_id)
@@ -512,8 +604,8 @@ class BCSDOrchestrator:
         status["transform_scenario"]["total"] = len(configs)
         for config in configs:
             if config.scenario:
-                path = cache.get_scenario_path(config)
-                if cache.exists(path):
+                loc = self._stage_loc(cache, "transform_scenario", config)
+                if cache.exists(loc):
                     status["transform_scenario"]["cached"] += 1
                 else:
                     status["transform_scenario"]["missing"].append(config.run_id)

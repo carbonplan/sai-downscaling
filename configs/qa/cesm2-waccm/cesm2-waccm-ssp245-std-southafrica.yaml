@@ -1,18 +1,19 @@
-# BCSD configuration: CESM2-WACCM / standard variables / SSP245 / all members / South Africa (QA)
+# BCSD configuration: CESM2-WACCM / standard variables / SSP245 / full-length members 001-005 / South Africa (QA)
 # Standard variables (tas, pr, rsds, hurs) are available for all 10 members.
 # tasmax/tasmin/dtr require the corrected run; see cesm2-waccm-ssp245-tmx-southafrica.yaml.
+# Truncated members 006-010 (~2069/2070) live in cesm2-waccm-ssp245-std-trunc-southafrica.yaml.
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds", "hurs"]
-ensemble_members: ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"]
+ensemble_members: ["001", "002", "003", "004", "005"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2100
+predict_period_end: 2099
 
 # === Spatial Subsetting ===
 # South Africa region: [lat_min, lat_max, lon_min, lon_max]
@@ -24,7 +25,7 @@ output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
 
 # === Bias Correction ===
-mapping_type: "nonparametric_hybrid"
+debias_approach: "nonparametric_hybrid_2sided"
 
 # === Additional Options ===
 verbose: true

@@ -14,7 +14,7 @@ import xarray as xr
 import zarr
 from obstore.store import from_url
 
-from srm.config import VarSpec, VarStandards, init_repo
+from srm.config import SCENARIO_TO_GROUP, VarSpec, VarStandards, init_repo
 from srm.input_data.etl_utils import (
     _display_dry_run_result,
     _init_repo_from_uri,
@@ -49,11 +49,6 @@ UKESM_VARIABLES = ["tas", "rsds", "hurs", "pr", "tasmax", "tasmin"]
 BUCKET = "carbonplan-srm"
 UNIFIED_PREFIX = "input/processed/ukesm.icechunk"
 
-SCENARIO_TO_GROUP: dict[str, str] = {
-    "historical": "historical",
-    "SSP245": "ssp245",
-    "G6-1.5K": "g6_1p5k",
-}
 
 # Raw NetCDF prefixes on S3 — primary source for each scenario
 S3_INPUT_PREFIX: dict[str, str] = {
@@ -125,7 +120,7 @@ TIME_RANGE: dict[str, str] = {
     "G6-1.5K": "2035-2084",
 }
 
-ALL_SCENARIOS = list(SCENARIO_TO_GROUP.keys())
+ALL_SCENARIOS = list(ENSEMBLE_MEMBERS.keys())
 
 # --- Historical fetch (CEDA -> S3) ---
 

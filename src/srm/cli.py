@@ -1,12 +1,18 @@
 """
-Command-line interface for BCSD downscaling pipeline.
+Command-line interface for the BCSD downscaling pipeline.
 
-Provides typer-based CLI for running BCSD downscaling with automatic caching,
-resumability, and Coiled integration for distributed execution.
+Provides a typer-based ``bcsd`` command with subcommands for running, validating, and
+inspecting the pipeline. Supports both single-config and matrix-expansion execution
+with automatic caching and optional Coiled integration.
 """
 
+import contextlib
 import itertools
+import json
 import logging
+import os
+from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 
 import typer
@@ -15,10 +21,12 @@ from rich import box
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
+from rich.tree import Tree
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
+from srm.validation import CheckResult, CheckStatus
 
 console = Console()
 logging.basicConfig(
@@ -29,7 +37,67 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_STATUS_SYMBOL = {
+    CheckStatus.PASS: "[green]✓[/green]",
+    CheckStatus.FAIL: "[red]✗[/red]",
+    CheckStatus.SKIP: "-",
+}
+
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
+
+
+@contextlib.contextmanager
+def _validation_cluster(
+    use_coiled: bool,
+    *,
+    n_workers: int,
+    worker_vm_type: str,
+    adaptive_max: int | None,
+) -> Iterator[None]:
+    """Yield with a Coiled Dask client active, or as a no-op when ``use_coiled`` is False.
+
+    Validation checks are lazy dask reductions; the active client makes every ``.compute()``
+    run on cluster workers while the driver keeps rendering tables and the exit gate — only
+    scalar results return to the driver, so full arrays never touch it. When ``use_coiled``
+    is False the reductions run in-process on the default scheduler.
+
+    Reuses :func:`srm.config.setup_cluster` (the canonical SRM Coiled setup, as in
+    ``input_data/era5.py``) so region, tags, and spot policy live in one place. ``n_workers``
+    with ``adaptive_max`` becomes an ``[min, max]`` range so Coiled scales adaptively, and the
+    scheduler VM type is pinned to the worker type so their processor architectures match
+    (Coiled rejects mixing x86_64 and aarch64 Graviton VMs).
+    """
+    if not use_coiled:
+        yield
+        return
+
+    from srm.config import ClusterConfig, setup_cluster
+
+    config = ClusterConfig(
+        worker_vm_types=[worker_vm_type],
+        scheduler_vm_types=worker_vm_type,
+        n_workers=[n_workers, adaptive_max] if adaptive_max is not None else n_workers,
+    )
+    with setup_cluster(config):
+        yield
+
+
+def _build_check_matrix_table(
+    check_ids: list[str],
+    columns: list[str],
+    index: dict[tuple[str, str], CheckResult],
+) -> Table:
+    tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+    tbl.add_column("check", style="dim", no_wrap=True)
+    for col in columns:
+        tbl.add_column(col, justify="center")
+    for cid in check_ids:
+        row = [cid]
+        for col in columns:
+            r = index.get((cid, col))
+            row.append(_STATUS_SYMBOL[r.status] if r else " ")
+        tbl.add_row(*row)
+    return tbl
 
 
 _MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
@@ -136,34 +204,50 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         console.print(tbl)
 
 
-def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
-    """Cross-scenario validation: check resolved members exist in target stores.
+def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
+    """Reject configs whose predict_period falls outside a member's valid data extent."""
+    from srm.validation import CheckStatus, check_config_time_domain
 
-    Uses static catalog ensemble_members metadata when available; falls back to
-    a lazy store open (reads coordinate metadata only, no data loaded). Silently
-    skips stores that are unreachable or have no member metadata.
+    failures = [r for c in configs if (r := check_config_time_domain(c)).status == CheckStatus.FAIL]
+    if failures:
+        raise ValueError(
+            "predict_period out of bounds for the following configs:\n"
+            + "\n".join(
+                f"  {r.gcm}/{r.scenario}/{r.ensemble_member}: {r.message}" for r in failures
+            )
+        )
+
+
+def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
+    """Cross-scenario validation: check resolved members exist in the unified datatree store.
+
+    Opens each GCM's unified datatree at most once and inspects group children to
+    determine which ensemble members are present. Silently skips stores that are
+    unreachable or whose groups cannot be navigated.
     """
+    from srm.config import SCENARIO_TO_GROUP
     from srm.datasets import catalog
     from srm.lineage import resolve_member_lineage
 
     errors: list[str] = []
-    _store_cache: dict[str, frozenset[str] | None] = {}
+    _dt_cache: dict[str, object] = {}  # gcm → DataTree or None
 
-    def _members(store_name: str) -> frozenset[str] | None:
-        if store_name not in _store_cache:
+    def _get_dt(gcm: str):
+        if gcm not in _dt_cache:
             try:
-                entry = catalog.get(store_name)
-                if entry.ensemble_members is not None:
-                    _store_cache[store_name] = frozenset(entry.ensemble_members)
-                else:
-                    ds = entry.to_xarray()
-                    coord = ds.coords.get("ensemble_member")
-                    _store_cache[store_name] = (
-                        frozenset(str(m) for m in coord.values) if coord is not None else None
-                    )
+                _dt_cache[gcm] = catalog.get(gcm).to_xarray()
             except Exception:
-                _store_cache[store_name] = None
-        return _store_cache[store_name]
+                _dt_cache[gcm] = None
+        return _dt_cache[gcm]
+
+    def _members(gcm: str, group: str) -> frozenset[str] | None:
+        dt = _get_dt(gcm)
+        if dt is None:
+            return None
+        try:
+            return frozenset(dt[group].children.keys())
+        except Exception:
+            return None
 
     for config in configs:
         if config.scenario is None:
@@ -174,24 +258,26 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
             )
         except KeyError:
             continue
-        # CESM2-WACCM r* historical members live in the pangeo-prefixed store; all other GCMs
-        # (including UKESM) keep r* members in their standard historical store.
-        hist_store = (
-            f"pangeo-{config.gcm}-historical-icechunk"
-            if config.gcm == "CESM2-WACCM" and hist.startswith("r")
-            else f"{config.gcm}-historical-icechunk"
-        )
-        known = _members(hist_store)
+
+        hist_group = f"historical/{config.variable}"
+        known = _members(config.gcm, hist_group)
         if known is not None and hist not in known:
             errors.append(
-                f"  {config.gcm}/{config.variable}: historical:{hist!r} not in {hist_store}"
+                f"  {config.gcm}/{config.variable}: historical:{hist!r} not in {hist_group}"
             )
-        ssp245_store = f"{config.gcm}-SSP245-icechunk"
-        known = _members(ssp245_store)
-        if ssp245 is not None and known is not None and ssp245 not in known:
-            errors.append(
-                f"  {config.gcm}/{config.variable}: ssp245:{ssp245!r} not in {ssp245_store}"
-            )
+
+        if ssp245 is not None:
+            try:
+                scenario_group = SCENARIO_TO_GROUP[config.scenario]
+            except KeyError:
+                scenario_group = None
+            if scenario_group is not None:
+                ssp245_group = f"{scenario_group}/{config.variable}"
+                known = _members(config.gcm, ssp245_group)
+                if known is not None and ssp245 not in known:
+                    errors.append(
+                        f"  {config.gcm}/{config.variable}: ssp245:{ssp245!r} not in {ssp245_group}"
+                    )
 
     if errors:
         raise ValueError("Resolved ensemble members not found in stores:\n" + "\n".join(errors))
@@ -297,10 +383,10 @@ def configs_from_matrix(
     scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
     output_dir: str = "s3://carbonplan-scratch/srm/outputs/",
     environment: str = "qa",
-    version: str = "v1",
+    branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
-    mapping_type: str = "nonparametric_hybrid_2sided",
+    debias_approach: str = "nonparametric_hybrid_2sided",
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
@@ -338,14 +424,14 @@ def configs_from_matrix(
         Directory for final downscaled outputs
     environment : str
         Environment name (qa, production)
-    version : str
-        Version identifier
+    branch : str
+        icechunk output branch (default: "main")
     subset_bounds : tuple[float, float, float, float] | None
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
-    mapping_type : str
-        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
+    debias_approach : str
+        Debias approach (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -370,7 +456,7 @@ def configs_from_matrix(
         scratch_dir=scratch_dir,
         output_dir=output_dir,
         environment=environment,
-        version=version,
+        branch=branch,
         verbose=verbose,
         save_intermediate=save_intermediate,
     )
@@ -402,7 +488,7 @@ def configs_from_matrix(
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
                 subset_bounds=subset_bounds,
-                mapping_type=mapping_type,
+                debias_approach=debias_approach,
                 variable_config=vc,
             )
         )
@@ -417,8 +503,11 @@ def run(
     stage: str = typer.Option(None, help="Run specific stage: obs, historical, scenario, or all"),
     force: bool = typer.Option(False, help="Force recompute even if cached"),
     coiled: bool = typer.Option(True, help="Use Coiled for execution"),
-    version: str | None = typer.Option(
-        None, "--version", help="Override the version from config (e.g. 'v2')"
+    branch: str | None = typer.Option(
+        None, "--branch", help="Override the output icechunk branch (e.g. 'v2')"
+    ),
+    save_intermediate: bool = typer.Option(
+        False, "--save-intermediate", help="Save and display intermediate artifacts"
     ),
 ):
     """Run BCSD pipeline with automatic caching and resumability"""
@@ -427,37 +516,63 @@ def run(
     loaded = [load_configs(path) for path in config_path]
     configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
     options = loaded[0][1] if loaded else PipelineOptions()
-    if version is not None:
-        options = options.model_copy(update={"version": version})
+    updates: dict = {}
+    if branch is not None:
+        updates["branch"] = branch
+    if save_intermediate:
+        updates["save_intermediate"] = True
+    options = options.model_copy(update=updates)
     logger.info("Loaded %d configuration(s)", len(configs))
     _print_lineage_summary(configs)
     _validate_lineage_members(configs)
+    _validate_predict_periods(configs)
 
     orchestrator = BCSDOrchestrator(options)
+
+    cache = orchestrator._get_cache()
 
     if stage == "obs" or stage == "prepare_observations":
         paths = orchestrator.submit_stage(
             "prepare_observations", configs, force=force, use_coiled=coiled
         )
-        _print_paths_summary(paths, configs, "prepare_observations")
+        _print_paths_summary(paths, configs, "prepare_observations", cache)
 
     elif stage == "historical" or stage == "fit_historical":
         paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
-        _print_paths_summary(paths, configs, "fit_historical")
+        _print_paths_summary(paths, configs, "fit_historical", cache)
+        _print_paths_summary(
+            _coarse_hist_paths(configs, cache), configs, "debiased_coarse_historical", cache
+        )
 
     elif stage == "scenario" or stage == "transform_scenario":
         paths = orchestrator.submit_stage(
             "transform_scenario", configs, force=force, use_coiled=coiled
         )
-        _print_paths_summary(paths, configs, "transform_scenario")
+        _print_paths_summary(paths, configs, "transform_scenario", cache)
+        _print_paths_summary(
+            _coarse_scenario_paths(configs, cache), configs, "debiased_coarse_scenario", cache
+        )
 
     elif stage == "all" or stage is None:
         all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
         obs_configs = orchestrator._deduplicate_obs_configs(configs)
         hist_configs = orchestrator._deduplicate_historical_configs(configs)
-        _print_paths_summary(all_paths["prepare_observations"], obs_configs, "prepare_observations")
-        _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical")
-        _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario")
+        _print_paths_summary(
+            all_paths["prepare_observations"], obs_configs, "prepare_observations", cache
+        )
+        _print_paths_summary(all_paths["fit_historical"], hist_configs, "fit_historical", cache)
+        _print_paths_summary(
+            _coarse_hist_paths(hist_configs, cache),
+            hist_configs,
+            "debiased_coarse_historical",
+            cache,
+        )
+        _print_paths_summary(all_paths["transform_scenario"], configs, "transform_scenario", cache)
+        _print_paths_summary(
+            _coarse_scenario_paths(configs, cache), configs, "debiased_coarse_scenario", cache
+        )
+        if options.save_intermediate:
+            _print_intermediate_summary(cache)
 
     else:
         raise ValueError(f"Unknown stage: {stage}")
@@ -465,17 +580,99 @@ def run(
     logger.info("✓ Complete!")
 
 
-def _print_paths_summary(paths: list[str], _configs: list[BCSDConfig], stage: str) -> None:
-    """Print output paths produced by a stage, one per line."""
+def _print_intermediate_summary(cache: ArtifactCache) -> None:
+    """Print a tree of intermediate artifacts on the current branch."""
+    stores = cache.list_intermediate_groups()
+    if not stores:
+        return
+
+    n_total = sum(len(groups) for groups in stores.values())
+    console.print(f"\n[bold]Intermediates[/bold] ({n_total} artifact(s))")
+    for store_path, groups in stores.items():
+        tree = Tree(f"[cyan]{store_path}[/cyan] [dim](branch: {cache.branch})[/dim]")
+        for group in groups:
+            _insert_group_path(tree, group.split("/"))
+        console.print(tree)
+
+
+def _insert_group_path(node: Tree, segments: list[str]) -> None:
+    """Recursively insert path segments into a Rich Tree, reusing existing nodes."""
+    if not segments:
+        return
+    label = segments[0]
+    for child in node.children:
+        if child.label == label:
+            _insert_group_path(child, segments[1:])
+            return
+    _insert_group_path(node.add(label), segments[1:])
+
+
+def _coarse_hist_paths(configs: list[BCSDConfig], cache: ArtifactCache) -> list[str]:
+    """Compute debiased_coarse_historical StoreLocation paths for each config."""
+    paths = []
+    for config in configs:
+        cache.config = config
+        hist_member = BCSDOrchestrator._resolve_hist_member(config)
+        loc = cache.debiased_coarse_historical_loc(hist_member)
+        paths.append(f"{loc.store_path}::{loc.group}")
+    return paths
+
+
+def _coarse_scenario_paths(configs: list[BCSDConfig], cache: ArtifactCache) -> list[str]:
+    """Compute debiased_coarse_scenario StoreLocation paths for each config."""
+    paths = []
+    for config in configs:
+        cache.config = config
+        loc = cache.debiased_coarse_scenario_loc()
+        paths.append(f"{loc.store_path}::{loc.group}")
+    return paths
+
+
+def _print_paths_summary(
+    paths: list[str],
+    _configs: list[BCSDConfig],
+    stage: str,
+    cache: ArtifactCache | None = None,
+) -> None:
+    """Print output paths produced by a stage as a nested tree grouped by store."""
     stage_label = {
         "prepare_observations": "Obs Regridded",
         "fit_historical": "Historical",
         "transform_scenario": "Scenario",
+        "debiased_coarse_historical": "Debiased Coarse Historical",
+        "debiased_coarse_scenario": "Debiased Coarse Scenario",
     }.get(stage, stage)
 
-    console.print(f"\n{stage_label} ({len(paths)} artifact(s)):")
+    n_artifacts = sum(1 for p in paths if p is not None)
+    n_failed = sum(1 for p in paths if p is None)
+    label = f"\n[bold]{stage_label}[/bold] ({n_artifacts} artifact(s)"
+    if n_failed:
+        label += f", [red]{n_failed} FAILED[/red]"
+    label += ")"
+    console.print(label)
+
+    # Group groups by store path, preserving insertion order.
+    stores: dict[str, list[str]] = {}
     for path in paths:
-        console.print(path or "FAILED")
+        if path is None:
+            stores.setdefault("FAILED", []).append("")
+        elif "::" in path:
+            store, group = path.split("::", 1)
+            stores.setdefault(store, []).append(group)
+        else:
+            stores.setdefault(path, []).append("")
+
+    for store, groups in stores.items():
+        branch = ""
+        if cache is not None:
+            branch = f" [dim](branch: {cache.branch})[/dim]"
+        tree = Tree(f"[cyan]{store}[/cyan]{branch}")
+        for group in groups:
+            if group:
+                _insert_group_path(tree, group.split("/"))
+            else:
+                tree.add("[red]FAILED[/red]")
+        console.print(tree)
 
 
 @app.command()
@@ -511,7 +708,7 @@ def run_matrix(
         "s3://carbonplan-scratch/srm/outputs/", help="Directory for final outputs"
     ),
     environment: str = typer.Option("qa", help="Environment (qa, production)"),
-    version: str = typer.Option("v1", help="Version identifier (e.g. 'v1', 'v2')"),
+    branch: str = typer.Option("main", help="icechunk output branch (e.g. 'v2', 'v3')"),
     subset_bounds: str | None = typer.Option(
         None,
         help="Spatial bounds as 'lat_min,lat_max,lon_min,lon_max' (e.g. '-35,-22,16,33')",
@@ -527,10 +724,10 @@ def run_matrix(
         "--save-intermediate",
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
-    mapping_type: str = typer.Option(
+    debias_approach: str = typer.Option(
         "nonparametric_hybrid_2sided",
-        "--mapping-type",
-        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
+        "--debias-approach",
+        help="Debias approach: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     # VariableConfig overrides
@@ -609,10 +806,10 @@ def run_matrix(
         scratch_dir=scratch_dir,
         output_dir=output_dir,
         environment=environment,
-        version=version,
+        branch=branch,
         subset_bounds=parsed_bounds,
         save_intermediate=save_intermediate,
-        mapping_type=mapping_type,
+        debias_approach=debias_approach,
         verbose=verbose,
         detrend_data=detrend_data,
         do_windowing=do_windowing,
@@ -623,6 +820,7 @@ def run_matrix(
     )
 
     _validate_lineage_members(configs)
+    _validate_predict_periods(configs)
 
     n = len(configs)
     logger.info(
@@ -685,34 +883,35 @@ def status(
         ..., help="Path to config(s) (can be specified multiple times)"
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed path information"),
-    version: str | None = typer.Option(
-        None, "--version", help="Override the version from config (e.g. 'v2')"
+    branch: str | None = typer.Option(
+        None, "--branch", help="Override the output icechunk branch (e.g. 'v2')"
     ),
 ):
     """Check status of cached artifacts for given configs"""
     loaded = [load_configs(path) for path in config_path]
     configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
     options = loaded[0][1] if loaded else PipelineOptions()
-    if version is not None:
-        options = options.model_copy(update={"version": version})
+    if branch is not None:
+        options = options.model_copy(update={"branch": branch})
     orchestrator = BCSDOrchestrator(options)
 
     # Show cache configuration if verbose
     if verbose and configs:
         cache = orchestrator._get_cache()
         config = configs[0]
+        cache.config = config
         lines = [
             "Cache Configuration:",
             f"  Cache Path: {cache.scratch_dir}",
             f"  Output Path: {cache.output_dir or '(same as cache)'}",
             f"  Environment: {cache.environment}",
-            f"  Version: {cache.version}",
+            f"  Branch: {cache.branch}",
             "Example Paths:",
-            f"  Obs: {cache.get_obs_path(config)}",
-            f"  Historical: {cache.get_historical_path(config)}",
+            f"  Obs: {cache.obs_loc.store_path}",
+            f"  Historical: {cache.historical_loc(config.ensemble_member).store_path}",
         ]
         if config.scenario:
-            lines.append(f"  Scenario: {cache.get_scenario_path(config)}")
+            lines.append(f"  Scenario: {cache.scenario_loc.store_path}")
         logger.info("\n".join(lines))
 
     status_info = orchestrator.get_status(configs)
@@ -769,7 +968,7 @@ def cache_clear(
     cache = ArtifactCache(
         scratch_dir=options.scratch_dir,
         environment=options.environment,
-        version=options.version,
+        branch=options.branch,
     )
 
     # Build description
@@ -810,7 +1009,7 @@ def cache_list(
     cache = ArtifactCache(
         scratch_dir=options.scratch_dir,
         environment=options.environment,
-        version=options.version,
+        branch=options.branch,
     )
     artifacts = cache.list_artifacts(stage=stage, gcm=gcm, variable=variable)
 
@@ -842,6 +1041,20 @@ def validate(
     scenario: list[str] | None = typer.Option(
         None, "--scenario", help="Scenario(s) to validate (repeatable). Defaults to all."
     ),
+    use_coiled: bool = typer.Option(
+        True,
+        "--coiled/--no-coiled",
+        help="Run validation reductions on a Coiled Dask cluster instead of locally.",
+    ),
+    n_workers: int = typer.Option(
+        4, "--n-workers", help="Coiled worker count (adaptive minimum when --adaptive-max is set)."
+    ),
+    worker_vm_type: str = typer.Option(
+        "r8g.2xlarge", "--worker-vm-type", help="Coiled worker VM type."
+    ),
+    adaptive_max: int | None = typer.Option(
+        None, "--adaptive-max", help="Enable adaptive scaling up to this many workers."
+    ),
 ) -> None:
     """Validate input datasets against the validation matrix.
 
@@ -849,18 +1062,18 @@ def validate(
 
     When --config-path is given, GCMs and scenarios are derived from those configs.
     Otherwise, --gcm and --scenario filter the check matrix (defaulting to all known values).
-    """
-    import json
 
+    By default the datasets' lazy dask reductions (spatial-range and negative-precip checks)
+    run on a short-lived Coiled Dask cluster; pass --no-coiled to run everything in-process.
+    """
     import pydantic
 
     from srm.validation import (
         BLOCKING_CHECKS,
         GCM_OPTIONS,
         SCENARIO_OPTIONS,
-        XFAIL_CHECKS,
-        CheckStatus,
         DatasetValidator,
+        check_config_time_domain,
     )
 
     if config_path:
@@ -872,23 +1085,23 @@ def validate(
         )
         logger.info("Validating %d GCM(s) x %d scenario(s) from configs", len(gcm), len(scenario))
 
-    _STATUS_SYMBOL = {
-        CheckStatus.PASS: "[green]✓[/green]",
-        CheckStatus.FAIL: "[red]✗[/red]",
-        CheckStatus.UNKNOWN: "[yellow]?[/yellow]",
-        CheckStatus.SKIP: "-",
-        CheckStatus.XFAIL: "[yellow]x[/yellow]",  # expected failure — not blocking
-        CheckStatus.XPASS: "[cyan]✓?[/cyan]",  # unexpected pass — worth investigating
-    }
-
     pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
 
+    # Reductions run on Coiled (see _validation_cluster) so the driver only handles scalars.
     all_results = []
-    for g, s in pairs:
-        try:
-            all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
-        except pydantic.ValidationError as exc:
-            logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
+    with _validation_cluster(
+        use_coiled, n_workers=n_workers, worker_vm_type=worker_vm_type, adaptive_max=adaptive_max
+    ):
+        for g, s in pairs:
+            try:
+                all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
+            except pydantic.ValidationError as exc:
+                logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
+
+    # Per-member config time-domain checks (only when configs are supplied). Driver-only
+    # metadata lookups, so kept outside the cluster block; merged into all_results after
+    # rendering so blocking-failure aggregation picks them up.
+    config_results = [check_config_time_domain(c) for c in configs] if config_path else []
 
     def _scenario_order(s: str) -> tuple[int, str]:
         if s == "historical":
@@ -924,17 +1137,7 @@ def validate(
                 table_checks.append(cid)
 
         if table_checks:
-            tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
-            tbl.add_column("check", style="dim", no_wrap=True)
-            for s in scenarios:
-                tbl.add_column(s, justify="center")
-            for cid in table_checks:
-                row = [cid]
-                for s in scenarios:
-                    r = index.get((cid, s))
-                    row.append(_STATUS_SYMBOL[r.status] if r else " ")
-                tbl.add_row(*row)
-            console.print(tbl)
+            console.print(_build_check_matrix_table(table_checks, scenarios, index))
 
         if scoped_checks:
             scoped_tbl = Table(
@@ -956,6 +1159,32 @@ def validate(
                 console.print(scoped_tbl)
 
         _print_validate_lineage_summary(gcm_name, scenarios)
+
+    if config_results:
+        cfg_tbl = Table(
+            title="Config time-domain checks (per ensemble member)",
+            show_header=True,
+            header_style="dim",
+            box=box.SIMPLE_HEAD,
+            padding=(0, 1),
+        )
+        cfg_tbl.add_column("gcm", style="dim", no_wrap=True)
+        cfg_tbl.add_column("scenario", style="dim")
+        cfg_tbl.add_column("member", style="dim")
+        cfg_tbl.add_column("result", justify="center")
+        cfg_tbl.add_column("message", style="dim")
+        for r in config_results:
+            cfg_tbl.add_row(
+                r.gcm,
+                r.scenario,
+                r.ensemble_member or "",
+                _STATUS_SYMBOL[r.status],
+                r.message,
+            )
+        console.print(cfg_tbl)
+
+    # Merge after rendering so the gcm/scenario matrix above is unaffected.
+    all_results.extend(config_results)
 
     blocking_failures = [
         r for r in all_results if r.status == CheckStatus.FAIL and r.check_id in BLOCKING_CHECKS
@@ -979,19 +1208,197 @@ def validate(
                 )
                 console.print_json(json.dumps(r.detail))
 
-    xfail_results = [r for r in all_results if r.status == CheckStatus.XFAIL]
-    xpass_results = [r for r in all_results if r.status == CheckStatus.XPASS]
-
-    if xfail_results:
-        logger.warning("--- Expected failures (xfail, non-blocking) ---")
-        for r in xfail_results:
-            reason = XFAIL_CHECKS.get((r.gcm, r.scenario, r.check_id), "")
-            logger.warning("x %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, reason)
-
-    if xpass_results:
-        logger.warning("--- Unexpected passes (xpass) — verify xfail entries are still needed ---")
-        for r in xpass_results:
-            logger.warning("✓? %s (%s/%s): %s", r.check_id, r.gcm, r.scenario, r.message)
-
     if blocking_failures:
         raise typer.Exit(1)
+
+
+@app.command()
+def validate_output(
+    store_uris: list[str] | None = typer.Argument(
+        None, help="One or more output datatree icechunk store URIs."
+    ),
+    config_path: list[str] | None = typer.Option(
+        None,
+        "--config-path",
+        "-c",
+        help="Path to YAML config or directory of configs (can be specified multiple times). "
+        "Output store URIs are derived from the configs instead of passing store_uris directly.",
+    ),
+    branch: str | None = typer.Option(None, "--branch", help="Icechunk branch to read."),
+    tag: str | None = typer.Option(None, "--tag", help="Icechunk tag to read."),
+    scenario: list[str] | None = typer.Option(
+        None, "--scenario", help="Scenario(s) to validate (repeatable). Defaults to all."
+    ),
+    variable: list[str] | None = typer.Option(
+        None, "--variable", help="Variable(s) to validate (repeatable). Defaults to all."
+    ),
+    use_coiled: bool = typer.Option(
+        True,
+        "--coiled/--no-coiled",
+        help="Run validation reductions on a Coiled Dask cluster instead of locally.",
+    ),
+    n_workers: int = typer.Option(
+        4, "--n-workers", help="Coiled worker count (adaptive minimum when --adaptive-max is set)."
+    ),
+    worker_vm_type: str = typer.Option(
+        "r8g.2xlarge", "--worker-vm-type", help="Coiled worker VM type."
+    ),
+    adaptive_max: int | None = typer.Option(
+        None, "--adaptive-max", help="Enable adaptive scaling up to this many workers."
+    ),
+) -> None:
+    """Validate output datatree store(s), one leaf (scenario/variable/member) at a time.
+
+    Renders a single table per store. Exits with code 1 if any blocking check fails in any
+    store, otherwise exits with code 0. --scenario and --variable restrict validation to
+    matching subtrees (defaulting to the whole store).
+
+    Store URIs can be given explicitly, or derived from the same config(s) used for
+    `bcsd run` via --config-path; in the latter case --branch defaults to the branch
+    those configs resolve to (the same branch `run` would write).
+
+    When $GITHUB_STEP_SUMMARY is set, a markdown report is appended there in addition
+    to the console tables.
+
+    By default the store's lazy dask reductions run on a short-lived Coiled Dask cluster
+    (the driver, tables, exit-code gate, and step summary stay local); only scalar results
+    return to the driver. Pass ``--no-coiled`` to run everything in-process instead.
+    local: `uv run bcsd validate-output <store_uri> [<store_uri> ...] --no-coiled`
+    coiled: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
+
+    """
+    from srm.config import SCENARIO_TO_GROUP
+    from srm.validation import (
+        BLOCKING_CHECKS,
+        parse_scenario,
+        parse_variable,
+        validate_output_store,
+    )
+
+    if bool(store_uris) == bool(config_path):
+        raise typer.BadParameter(
+            "Exactly one of store_uris or --config-path is required.",
+            param_hint="'store_uris' / '--config-path'",
+        )
+
+    if config_path:
+        loaded = [load_configs(p) for p in config_path]
+        configs = [cfg for cfgs, _ in loaded for cfg in cfgs]
+        options = loaded[0][1] if loaded else PipelineOptions()
+        store_uris = sorted(
+            {ArtifactCache.from_config(cfg, options).scenario_loc.store_path for cfg in configs}
+        )
+        if branch is None and tag is None:
+            branch = options.branch
+
+    provided = sum(x is not None for x in [branch, tag])
+    if provided != 1:
+        raise typer.BadParameter(
+            "Exactly one of --branch or --tag is required.",
+            param_hint="'--branch' / '--tag'",
+        )
+
+    # Translate/validate filters to on-disk group names (SSP245 -> ssp245; variables are
+    # already canonical). parse_* raise on unknown values.
+    scenarios = [SCENARIO_TO_GROUP[parse_scenario(s)] for s in scenario] if scenario else None
+    variables = [parse_variable(v) for v in variable] if variable else None
+    filtered = bool(scenarios or variables)
+
+    summary_lines: list[str] = []
+    any_blocking = False
+    # Reductions run on Coiled (see _validation_cluster) so the driver only handles scalars;
+    # the cluster tears down when this block exits, before the summary write / exit gate below.
+    with _validation_cluster(
+        use_coiled, n_workers=n_workers, worker_vm_type=worker_vm_type, adaptive_max=adaptive_max
+    ):
+        for store_uri in store_uris:
+            results = validate_output_store(
+                store_uri,
+                branch=branch,
+                tag=tag,
+                scenarios=scenarios,
+                variables=variables,
+            )
+            if not results:
+                # An explicit filter matching nothing is an error, not an empty success.
+                log = logger.error if filtered else logger.warning
+                log("No populated leaves found in %s", store_uri)
+                if filtered:
+                    any_blocking = True
+                continue
+
+            console.rule(f"[bold]{store_uri}[/bold]")
+            md_lines = [f"## {store_uri}\n", "| leaf | status | checks |", "| --- | --- | --- |"]
+
+            # Group results by leaf (scenario path).
+            leaf_results: dict[str, list[CheckResult]] = defaultdict(list)
+            for r in results:
+                leaf_results[r.scenario].append(r)
+
+            tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+            tbl.add_column("leaf", no_wrap=True)
+            tbl.add_column("status", justify="center")
+            tbl.add_column("checks", justify="right", style="dim")
+            for leaf, leaf_rs in sorted(leaf_results.items()):
+                n_total = len(leaf_rs)
+                n_pass = sum(1 for r in leaf_rs if r.status != CheckStatus.FAIL)
+                any_fail = any(r.status == CheckStatus.FAIL for r in leaf_rs)
+                status_sym = "[red]✗[/red]" if any_fail else "[green]✓[/green]"
+                checks_str = f"{n_pass}/{n_total}"
+                tbl.add_row(leaf, status_sym, checks_str)
+                md_lines.append(f"| {leaf} | {'❌' if any_fail else '✅'} | {checks_str} |")
+            console.print(tbl)
+
+            failures_by_leaf: dict[str, list[CheckResult]] = {
+                leaf: [r for r in leaf_rs if r.status == CheckStatus.FAIL]
+                for leaf, leaf_rs in leaf_results.items()
+                if any(r.status == CheckStatus.FAIL for r in leaf_rs)
+            }
+            blocking_failures = [
+                r
+                for leaf_rs in failures_by_leaf.values()
+                for r in leaf_rs
+                if r.check_id in BLOCKING_CHECKS
+            ]
+            if blocking_failures:
+                any_blocking = True
+
+            if failures_by_leaf:
+                n_fail_leaves = len(failures_by_leaf)
+                n_fail_checks = sum(len(v) for v in failures_by_leaf.values())
+                console.print(
+                    f"\n[bold]Failures[/bold] ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, {n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
+                )
+                md_lines.append(
+                    f"\n**Failures** ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, "
+                    f"{n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
+                )
+                for leaf, fail_rs in sorted(failures_by_leaf.items()):
+                    console.print(f"  [bold]{leaf}[/bold]")
+                    md_lines.append(f"- **{leaf}**")
+                    for r in fail_rs:
+                        blocking_marker = (
+                            " [dim](blocking)[/dim]" if r.check_id in BLOCKING_CHECKS else ""
+                        )
+                        console.print(
+                            f"    [red]✗[/red] [dim]{r.check_id}[/dim]{blocking_marker}    {r.message}"
+                        )
+                        md_blocking_marker = " (blocking)" if r.check_id in BLOCKING_CHECKS else ""
+                        md_lines.append(f"  - `{r.check_id}`{md_blocking_marker}: {r.message}")
+                        if r.detail:
+                            console.print_json(json.dumps(r.detail))
+                    console.print()
+
+            summary_lines.append("\n".join(md_lines))
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path and summary_lines:
+        with open(summary_path, "a") as f:
+            f.write("\n\n".join(summary_lines) + "\n")
+
+    if any_blocking:
+        raise typer.Exit(1)
+
+
+if __name__ == "__main__":
+    app()
