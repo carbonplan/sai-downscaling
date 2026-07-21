@@ -57,6 +57,22 @@ from srm.utils import get_variable
 logger = logging.getLogger(__name__)
 
 
+class _WeibullMinZeroBounded(type(scipy.stats.weibull_min)):
+    """Subclass of weibull_min_gen that constrains loc=0 during fitting.
+
+    Prevents degenerate negative loc values from the 3-parameter Weibull MLE,
+    which can produce physically impossible debiased DTR values (e.g. -300 K).
+    Must be defined at module level so multiprocessing can pickle it.
+    """
+
+    def fit(self, data, *args, **kwargs):
+        kwargs.setdefault("floc", 0)
+        return super().fit(data, *args, **kwargs)
+
+
+_weibull_min_zero_bounded = _WeibullMinZeroBounded(a=0.0, name="weibull_min_floc0")
+
+
 def _make_debiaser(variable: str, distribution=None, **kwargs):
     if distribution is None:
         if variable in ["tas", "tasmax"]:
@@ -1356,19 +1372,7 @@ class BCSDPipeline:
 
             if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:
                 # Use different parametric distributions for low vs. high tails
-                class _ZeroBoundedWeibull:
-                    """Wraps scipy.stats.weibull_min with floc=0 to prevent unrealistic negative loc fits."""
-
-                    def fit(self, data):
-                        return scipy.stats.weibull_min.fit(data, floc=0)
-
-                    def cdf(self, x, *args, **kwargs):
-                        return scipy.stats.weibull_min.cdf(x, *args, **kwargs)
-
-                    def ppf(self, p, *args, **kwargs):
-                        return scipy.stats.weibull_min.ppf(p, *args, **kwargs)
-
-                low_dist = _ZeroBoundedWeibull()
+                low_dist = _weibull_min_zero_bounded
                 high_dist = scipy.stats.gumbel_r
 
                 parametric_low_np = _make_debiaser(
