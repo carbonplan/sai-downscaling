@@ -747,21 +747,22 @@ def periodic_rolling(da, dim, window, agg="mean", **kwargs):
 
 
 def calculate_reasonable_bounds_doy(raw_scenario_subset, raw_historical_subset, obs_fine_subset):
+    obs_fine_subset = obs_fine_subset.chunk({"time": 365, "lat": 180, "lon": 360})
     scenario_doy_max = raw_scenario_subset.groupby("time.dayofyear").max(dim="time").compute()
     scenario_doy_min = raw_scenario_subset.groupby("time.dayofyear").min(dim="time").compute()
 
-    hist_doy_max = (
-        raw_historical_subset.groupby("time.dayofyear")
-        .max(dim="time")
-        .max(dim="ensemble_member")
-        .compute()
-    )
-    hist_doy_min = (
-        raw_historical_subset.groupby("time.dayofyear")
-        .min(dim="time")
-        .min(dim="ensemble_member")
-        .compute()
-    )
+    # hist_doy_max = (
+    #    raw_historical_subset.groupby("time.dayofyear")
+    #    .max(dim="time")
+    #    .max(dim="ensemble_member")
+    #    .compute()
+    # )
+    # hist_doy_min = (
+    #    raw_historical_subset.groupby("time.dayofyear")
+    #    .min(dim="time")
+    #    .min(dim="ensemble_member")
+    #    .compute()
+    # )
     hist_doy_mean = (
         raw_historical_subset.groupby("time.dayofyear")
         .mean(dim="time")
