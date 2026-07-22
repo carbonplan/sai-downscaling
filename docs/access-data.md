@@ -248,6 +248,5 @@ ds_scen_coarse = xr.open_zarr(
 ## See Also
 
 - [Pipeline architecture](explanation/pipeline-architecture.md) — how output stores are structured and written
-- [Compare outputs across versions](how-to/compare-outputs-across-versions.md) — using branches to validate pipeline changes
 - [Run the pipeline](how-to/run-pipeline.md) — producing output data from scratch
 - [Input data catalog](input-data.md) — raw GCM, ERA5, and NASA-NEX input datasets
