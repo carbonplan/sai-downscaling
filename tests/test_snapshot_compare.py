@@ -154,7 +154,9 @@ def test_report_passes_when_invariant_holds():
 def test_global_baseline_pointer_is_well_formed():
     from srm.snapshot.baselines import CESM2_WACCM_GLOBAL
 
-    assert CESM2_WACCM_GLOBAL.uri.startswith("s3://carbonplan-srm/")
+    assert CESM2_WACCM_GLOBAL.uri.startswith(
+        "s3://us-west-2.opendata.source.coop/carbonplan/output/"
+    )
     assert CESM2_WACCM_GLOBAL.uri.endswith(".icechunk")
     assert CESM2_WACCM_GLOBAL.branch
 
