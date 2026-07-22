@@ -73,10 +73,8 @@ how-to/pipeline-stage-debugger
 how-to/demo-new-pipeline
 how-to/run-pipeline
 how-to/manage-cache
-how-to/compare-outputs-across-versions
 how-to/run-snapshot-tests
 how-to/snapshot-comparison
-how-to/run-multi-model-ensemble
 how-to/deploy
 how-to/regenerate-input-data
 how-to/validate-input-data-stores
