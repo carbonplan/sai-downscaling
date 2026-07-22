@@ -2,7 +2,7 @@
 
 There are two ways to run multiple GCMs, variables, ensemble members, and scenarios. The orchestrator automatically deduplicates shared work in both cases, so each intermediate artifact is computed only once regardless of how many combinations need it.
 
-## Option A — Matrix config file (recommended for repeatable runs)
+## Option A — Matrix config file (recommended)
 
 Add list values to any YAML config and run it with `bcsd run`:
 
@@ -22,11 +22,11 @@ debias_approach: nonparametric_hybrid
 uv run bcsd run --config-path configs/production/
 ```
 
-This is the approach used for QA and production deploys. See the [configuration reference](../reference/configuration.md#matrix-config-format) for full details and restrictions (e.g. `variable_config` and multiple variables).
+This is the approach used for QA and production deploys, and the recommended one for any run you want to repeat or review. See the [configuration reference](../reference/configuration.md#matrix-config-format) for full details and restrictions (e.g. `variable_config` and multiple variables).
 
-## Option B — `bcsd run-matrix` CLI (recommended for ad-hoc runs)
+## Option B — `bcsd run-matrix` CLI (ad-hoc, no config file)
 
-Specify each dimension as a repeatable option without needing a config file:
+For quick one-off runs, specify each dimension as a repeatable option without needing a config file:
 
 ```bash
 # 3 GCMs x 1 variable x 3 members x 1 scenario = 9 runs
@@ -105,5 +105,5 @@ uv run bcsd status \
 ## See Also
 
 - [Run the pipeline](run-pipeline.md) — quick start and single-run guide
-- [CLI reference — bcsd run-matrix](../reference/cli.md#bcsd-run-matrix--run-pipeline-over-a-matrix-recommended) — full option listing
+- [CLI reference](../reference/cli.md) — full option listings for `bcsd run` and `bcsd run-matrix`
 - [Pipeline architecture](../explanation/pipeline-architecture.md) — how deduplication works across stages

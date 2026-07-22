@@ -19,7 +19,28 @@ For a complete walkthrough with visualizations, see [demo-new-pipeline.ipynb](./
 
 ## Quick Start
 
-The recommended way to run the pipeline — especially across multiple GCMs, variables, ensemble members, or scenarios — is `bcsd run-matrix`. It generates and runs every combination from the command line without needing any config files:
+The recommended way to run the pipeline is `bcsd run` with a config file. Config files are version-controlled and reproducible, and they are what the QA and production deploys consume, so they are the right choice for any run you want to repeat or review:
+
+```bash
+# Run from a config file
+uv run bcsd run --config-path configs/example.yaml
+
+# Override branch without editing the file
+uv run bcsd run --config-path configs/example.yaml --branch v2
+
+# Override environment via environment variable
+BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
+```
+
+A single config file can also expand into many runs. List values for `gcm`, `variables`, `ensemble_members`, and `scenarios` produce one run per cartesian-product combination — see [How to run a multi-model ensemble](run-multi-model-ensemble.md) for the matrix config format.
+
+Check pipeline status at any time:
+
+```bash
+uv run bcsd status --config-path configs/example.yaml --verbose
+```
+
+For quick ad-hoc runs from the command line without writing a config file, `bcsd run-matrix` takes each dimension as a repeatable option and generates every combination for you:
 
 ```bash
 # 2 GCMs × 2 variables × 3 members × 2 scenarios
@@ -42,28 +63,39 @@ uv run bcsd run-matrix \
   --dry-run
 ```
 
-For a **single run** or when you already have a config file, use `bcsd run`:
-
-```bash
-# Run from a config file
-uv run bcsd run --config-path configs/example.yaml
-
-# Override branch without editing the file
-uv run bcsd run --config-path configs/example.yaml --branch v2
-
-# Override environment via environment variable
-BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
-```
-
-Check pipeline status at any time:
-
-```bash
-uv run bcsd status --config-path configs/example.yaml --verbose
-```
-
 ## Batch Processing
 
-The recommended approach for all multi-run workflows is `bcsd run-matrix`. It takes the cartesian product of the dimensions you specify and handles everything — no config files to write or manage.
+For all multi-run workflows, the recommended approach is a directory of config files run through `bcsd run`. Version-controlled configs are what the QA and production deploys use, and the orchestrator applies the same deduplication logic regardless of how the runs are specified:
+
+<details>
+<summary>Example: generating and running a directory of config files</summary>
+
+```bash
+for member in r1i1p1f1 r2i1p1f1 r3i1p1f1; do
+  cat > configs/batch/cesm2-tas-ssp245-e${member}.yaml <<EOF
+gcm: "CESM2-WACCM"
+variable: "tas"
+ensemble_member: "${member}"
+scenario: "SSP245"
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
+output_dir: "s3://carbonplan-scratch/srm/outputs"
+environment: "qa"
+# branch defaults to installed package version; omit unless pinning a specific cache namespace
+EOF
+done
+
+uv run bcsd run --config-path configs/batch/
+```
+
+</details>
+
+A single matrix config file expresses the same set of runs more compactly, with list values for `gcm`/`variables`/`ensemble_members`/`scenarios`. See [How to run a multi-model ensemble](run-multi-model-ensemble.md) for that format and its restrictions.
+
+For a quick ad-hoc batch without config files, `bcsd run-matrix` takes the cartesian product of the dimensions you pass on the command line and handles everything itself:
 
 ```bash
 # 3 members × 2 scenarios for CESM2-WACCM tas, with deduplication
@@ -98,36 +130,6 @@ uv run bcsd run-matrix \
 # obs and historical artifacts are computed once and reused for both scenarios
 ```
 
-### Using Config Files (Alternative)
-
-For workflows that are driven by version-controlled YAML config files, `bcsd run` accepts a directory of configs and applies the same deduplication logic:
-
-<details>
-<summary>Example: generating and running a directory of config files</summary>
-
-```bash
-for member in r1i1p1f1 r2i1p1f1 r3i1p1f1; do
-  cat > configs/batch/cesm2-tas-ssp245-e${member}.yaml <<EOF
-gcm: "CESM2-WACCM"
-variable: "tas"
-ensemble_member: "${member}"
-scenario: "SSP245"
-train_period_start: 1978
-train_period_end: 2014
-predict_period_start: 2015
-predict_period_end: 2100
-scratch_dir: "s3://carbonplan-scratch/srm/cache"
-output_dir: "s3://carbonplan-scratch/srm/outputs"
-environment: "qa"
-# branch defaults to installed package version; omit unless pinning a specific cache namespace
-EOF
-done
-
-uv run bcsd run --config-path configs/batch/
-```
-
-</details>
-
 ## Local Execution
 
 For testing or small regions, disable Coiled and run locally:
@@ -149,5 +151,4 @@ uv run bcsd run-matrix \
 - [CLI reference](../reference/cli.md) — full option listings for every command
 - [Configuration reference](../reference/configuration.md) — all config fields and environment variable overrides
 - [Manage the cache](manage-cache.md) — resumability, force recompute, cache inspection and clearing
-- [Compare outputs across code versions](compare-outputs-across-versions.md) — validate pipeline changes on a test region
 - [Pipeline architecture](../explanation/pipeline-architecture.md) — how the three stages and caching work
