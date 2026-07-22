@@ -32,7 +32,7 @@ uv run bcsd run --config-path configs/example.yaml --branch v2
 BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
 ```
 
-A single config file can also expand into many runs. List values for `gcm`, `variables`, `ensemble_members`, and `scenarios` produce one run per cartesian-product combination — see [How to run a multi-model ensemble](run-multi-model-ensemble.md) for the matrix config format.
+A single config file can also expand into many runs. List values for `gcm`, `variables`, `ensemble_members`, and `scenarios` produce one run per cartesian-product combination — see the [matrix config format](../reference/configuration.md#matrix-config-format) reference for the syntax.
 
 Check pipeline status at any time:
 
@@ -93,7 +93,7 @@ uv run bcsd run --config-path configs/batch/
 
 </details>
 
-A single matrix config file expresses the same set of runs more compactly, with list values for `gcm`/`variables`/`ensemble_members`/`scenarios`. See [How to run a multi-model ensemble](run-multi-model-ensemble.md) for that format and its restrictions.
+A single matrix config file expresses the same set of runs more compactly, with list values for `gcm`/`variables`/`ensemble_members`/`scenarios`. See the [matrix config format](../reference/configuration.md#matrix-config-format) reference for the syntax and its restrictions.
 
 For a quick ad-hoc batch without config files, `bcsd run-matrix` takes the cartesian product of the dimensions you pass on the command line and handles everything itself:
 
@@ -128,6 +128,16 @@ uv run bcsd run-matrix \
   --scratch-dir "s3://carbonplan-scratch/srm/cache" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/"
 # obs and historical artifacts are computed once and reused for both scenarios
+```
+
+## Ensembles with mixed data extents
+
+Ensemble members rarely all cover the same period, and `bcsd run` rejects any config whose `predict_period_end` runs past a member's real data extent (see the [per-member data extents](../reference/configuration.md#prediction-period-and-per-member-data-extents) reference for the full table). Because a config carries a single `predict_period`, members with different extents have to be split into separate files, each with a `predict_period_end` matched to its group.
+
+The production CESM2-WACCM SSP245 configs are organized exactly this way. Member 006 runs to `predict_period_end: 2069` (`cesm2-waccm-ssp245-tas-global-trunc-2069.yaml`), members 007–010 run to 2070 (`cesm2-waccm-ssp245-tas-global-trunc-2070.yaml`), and the full-length members 001–005 run to 2099. Drop the per-extent files in one directory and run them together — deduplication still applies across the whole set:
+
+```bash
+uv run bcsd run --config-path configs/production/cesm2-waccm/
 ```
 
 ## Local Execution

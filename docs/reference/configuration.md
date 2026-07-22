@@ -18,15 +18,29 @@ Any of the four dimension fields can be a list. `load_configs` expands them into
 ```yaml
 gcm: "CESM2-WACCM"                              # singular — still works
 variables: ["tas", "pr"]                         # list — expands
-ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
-scenarios: ["SSP245", "G6-1.5K"]
+ensemble_members: ["001", "002", "003"]
+scenarios: ["SSP245"]
 predict_period_start: 2015
-predict_period_end: 2100
+predict_period_end: 2099                         # must fit every member's data extent (see below)
 ```
 
 Both singular (`variable`) and plural (`variables`) key names are accepted. All other fields are shared across every combination.
 
 **Restriction:** `variable_config` may not be set when `variables` contains more than one entry — it would silently apply to every variable, including those with incompatible settings (e.g. additive `tas` settings applied to `pr`). Remove it and rely on per-variable defaults (see [Variable-Specific Auto-Configuration](#variable-specific-auto-configuration)), or split into separate files.
+
+## Prediction period and per-member data extents
+
+`predict_period_start` and `predict_period_end` must fall within the valid data extent of every ensemble member the config expands to. Those extents are not uniform: some members are truncated years before the nominal scenario end and the unified store NaN-pads them to that end, so a predict period that overshoots would silently downscale padding. `bcsd run` and `bcsd run-matrix` guard against this with `check_config_time_domain` before submitting any work, raising a blocking error that lists every config whose predict period falls outside its member's bounds.
+
+The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/srm/validation.py`; the CESM2-WACCM SSP245 spread is representative:
+
+| Members | Valid end year |
+|---|---|
+| 001–005 | 2099 |
+| 006 | 2069 |
+| 007–010 | 2070 |
+
+MIROC-ES2H SSP245 and G6-1.5K members all end 2084, and UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios are the sole start-side asymmetry: `predict_period_start` may precede the scenario's data start (the pipeline bridges the gap with SSP245), so only the end bound is enforced for them. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
 
 ## BCSDConfig Fields (run identity)
 
