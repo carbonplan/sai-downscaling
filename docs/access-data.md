@@ -19,11 +19,14 @@ right branch, and load data.
 
 ## Anatomy of an output store
 
-Output stores live under `s3://carbonplan-srm/output/` and follow this path pattern:
+Output stores follow this path pattern:
 
 ```text
-s3://carbonplan-srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+s3://{bucket}/{prefix}/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
 ```
+
+Production stores live under `s3://us-west-2.opendata.source.coop/carbonplan/output/`. QA stores
+live under `s3://carbonplan-srm/output/`.
 
 | Component | Values | Example |
 | --- | --- | --- |
@@ -69,10 +72,10 @@ corresponding release tag as the branch name. Production releases are listed at
 [github.com/carbonplan/srm-downscaling/releases](https://github.com/carbonplan/srm-downscaling/releases).
 
 The **current production release is branch `v0.10.0`** of the global CESM2-WACCM store at
-`s3://carbonplan-srm/output/production/CESM2-WACCM-ERA5-global.icechunk`. The examples below read
-from it anonymously — no AWS credentials are needed for the public production bucket. For
-authenticated access (for example to QA stores under `carbonplan-scratch`), replace
-`anonymous=True, region="us-west-2"` with `from_env=True`.
+`s3://us-west-2.opendata.source.coop/carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk`.
+The examples below read from it anonymously — no AWS credentials are needed for the public
+production bucket. For authenticated access (for example to QA stores under `carbonplan-scratch`),
+replace `anonymous=True, region="us-west-2"` with `from_env=True`.
 
 ## Opening a single variable/member/scenario
 
@@ -82,8 +85,8 @@ import icechunk
 import xarray as xr
 
 storage = icechunk.s3_storage(
-    bucket="carbonplan-srm",
-    prefix="output/production/CESM2-WACCM-ERA5-global.icechunk",
+    bucket="us-west-2.opendata.source.coop",
+    prefix="carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk",
     anonymous=True,
     region="us-west-2",
 )
@@ -111,8 +114,8 @@ import icechunk
 import xarray as xr
 
 storage = icechunk.s3_storage(
-    bucket="carbonplan-srm",
-    prefix="output/production/CESM2-WACCM-ERA5-global.icechunk",
+    bucket="us-west-2.opendata.source.coop",
+    prefix="carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk",
     anonymous=True,
     region="us-west-2",
 )
@@ -141,8 +144,8 @@ import icechunk
 import xarray as xr
 
 storage = icechunk.s3_storage(
-    bucket="carbonplan-srm",
-    prefix="output/production/CESM2-WACCM-ERA5-global.icechunk",
+    bucket="us-west-2.opendata.source.coop",
+    prefix="carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk",
     anonymous=True,
     region="us-west-2",
 )
@@ -218,8 +221,8 @@ import icechunk
 import xarray as xr
 
 storage = icechunk.s3_storage(
-    bucket="carbonplan-srm",
-    prefix="output/production/CESM2-WACCM-ERA5-global.icechunk",
+    bucket="us-west-2.opendata.source.coop",
+    prefix="carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk",
     anonymous=True,
     region="us-west-2",
 )

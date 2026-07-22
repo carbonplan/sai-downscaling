@@ -25,7 +25,8 @@ debias_approach: "nonparametric_hybrid_2sided"
 
 # === PipelineOptions: Operational Settings ===
 scratch_dir: "s3://carbonplan-scratch/srm/cache"
-output_dir: "s3://carbonplan-srm/output"
+output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/output/"
+
 environment: "production"
 # version intentionally unset — derived from the installed package version at runtime
 verbose: true

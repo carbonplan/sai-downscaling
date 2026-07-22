@@ -32,6 +32,6 @@ class GlobalBaseline:
 # is an empty anchor and must not be used). Verified: "v0.10.0" holds the blessed
 # global run.
 CESM2_WACCM_GLOBAL = GlobalBaseline(
-    uri="s3://carbonplan-srm/output/production/CESM2-WACCM-ERA5-global.icechunk",
+    uri="s3://us-west-2.opendata.source.coop/carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk",
     branch="v0.10.0",
 )

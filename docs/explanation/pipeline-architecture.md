@@ -153,8 +153,9 @@ isolation: bumping the package version (or setting `BCSD_BRANCH`) starts a fresh
 inherited ancestry, so the existence checks never find stale artifacts from a previous run.
 
 The paths above are the scratch defaults. Production runs override `output_dir` to the public
-`carbonplan-srm` bucket, so the current published outputs live at
-`s3://carbonplan-srm/output/production/CESM2-WACCM-ERA5-global.icechunk` on branch `v0.10.0`. See
+`us-west-2.opendata.source.coop` bucket, so the current published outputs live at
+`s3://us-west-2.opendata.source.coop/carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk`
+on branch `v0.10.0`. See
 [How to Access Downscaled Output Data](../access-data.md) for reading published stores.
 
 ## Coiled Execution
