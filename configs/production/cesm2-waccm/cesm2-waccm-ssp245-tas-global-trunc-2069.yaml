@@ -1,15 +1,14 @@
-# BCSD configuration: CESM2-WACCM / tas / SSP245 / truncated member 006 / global (production)
-# Member 006's data ends 2069-12-31 (per srm.validation._MEMBER_TIME_BOUNDS), so
-# predict_period_end is 2069. Members 007-010 end 2070 and live in
-# cesm2-waccm-ssp245-tas-global-trunc-2070.yaml. Splitting the batch by true data end
-# keeps each member's tas extent consistent with its other variables and with the qa /
-# snapshot runs; batching all of 006-010 at the 2069 group min previously truncated
-# 007-010's tas by a year. Full-length members 001-005 reach 2099.
+# BCSD configuration: CESM2-WACCM / tas / SSP245 / truncated members 006-010 / global (production)
+# Members 006-010's data ends 2069-12-31 (per srm.validation._MEMBER_TIME_BOUNDS), so
+# predict_period_end is 2069. 007-010 each have one stray non-NaN day at 2070-01-01
+# (rest of 2070 is NaN in the raw GCM input) - not a valid extra year, previously
+# mis-truncated at 2070 in a separate cesm2-waccm-ssp245-tas-global-trunc-2070.yaml
+# config now folded in here. Full-length members 001-005 reach 2099.
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
 variables: ["tas"]
-ensemble_members: ["006"]
+ensemble_members: ["006", "007", "008", "009", "010"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===

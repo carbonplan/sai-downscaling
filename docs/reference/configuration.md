@@ -37,8 +37,9 @@ The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a pe
 | Members | Valid end year |
 |---|---|
 | 001–005 | 2099 |
-| 006 | 2069 |
-| 007–010 | 2070 |
+| 006–010 | 2069 |
+
+007–010 each have a single stray non-NaN day on 2070-01-01 in the raw GCM input, with the rest of 2070 NaN; that one day does not extend their valid extent past 2069.
 
 MIROC-ES2H SSP245 and G6-1.5K members all end 2084, and UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios are the sole start-side asymmetry: `predict_period_start` may precede the scenario's data start (the pipeline bridges the gap with SSP245), so only the end bound is enforced for them. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
 
