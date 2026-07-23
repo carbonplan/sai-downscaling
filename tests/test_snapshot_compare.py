@@ -155,7 +155,7 @@ def test_global_baseline_pointer_is_well_formed():
     from srm.snapshot.baselines import CESM2_WACCM_GLOBAL
 
     assert CESM2_WACCM_GLOBAL.uri.startswith(
-        "s3://us-west-2.opendata.source.coop/carbonplan/output/"
+        "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
     )
     assert CESM2_WACCM_GLOBAL.uri.endswith(".icechunk")
     assert CESM2_WACCM_GLOBAL.branch

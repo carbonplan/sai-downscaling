@@ -154,7 +154,7 @@ inherited ancestry, so the existence checks never find stale artifacts from a pr
 
 The paths above are the scratch defaults. Production runs override `output_dir` to the public
 `us-west-2.opendata.source.coop` bucket, so the current published outputs live at
-`s3://us-west-2.opendata.source.coop/carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk`
+`s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk`
 on branch `v0.10.0`. See
 [How to Access Downscaled Output Data](../access-data.md) for reading published stores.
 
