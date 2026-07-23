@@ -134,7 +134,7 @@ uv run bcsd run-matrix \
 
 Ensemble members rarely all cover the same period, and `bcsd run` rejects any config whose `predict_period_end` runs past a member's real data extent (see the [per-member data extents](../reference/configuration.md#prediction-period-and-per-member-data-extents) reference for the full table). Because a config carries a single `predict_period`, members with different extents have to be split into separate files, each with a `predict_period_end` matched to its group.
 
-The production CESM2-WACCM SSP245 configs are organized exactly this way. Member 006 runs to `predict_period_end: 2069` (`cesm2-waccm-ssp245-tas-global-trunc-2069.yaml`), members 007–010 run to 2070 (`cesm2-waccm-ssp245-tas-global-trunc-2070.yaml`), and the full-length members 001–005 run to 2099. Drop the per-extent files in one directory and run them together — deduplication still applies across the whole set:
+The production CESM2-WACCM SSP245 configs are organized exactly this way. Members 006–010 run to `predict_period_end: 2069` (`cesm2-waccm-ssp245-tas-global-trunc-2069.yaml`), and the full-length members 001–005 run to 2099. Drop the per-extent files in one directory and run them together — deduplication still applies across the whole set:
 
 ```bash
 uv run bcsd run --config-path configs/production/cesm2-waccm/
