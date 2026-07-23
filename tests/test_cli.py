@@ -162,7 +162,7 @@ class TestValidatePredictPeriods:
             predict_period_start=2015,
             predict_period_end=2100,
         )
-        with pytest.raises(ValueError, match="2070"):
+        with pytest.raises(ValueError, match="2069"):
             _validate_predict_periods(configs)
 
     def test_truncated_member_within_extent_does_not_raise(self):
@@ -172,7 +172,7 @@ class TestValidatePredictPeriods:
             members=["007"],
             scenarios=["ssp245"],
             predict_period_start=2015,
-            predict_period_end=2070,
+            predict_period_end=2069,
         )
         _validate_predict_periods(configs)  # should not raise
 
