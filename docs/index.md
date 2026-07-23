@@ -52,6 +52,7 @@ contributing
 explanation/scientific-approach
 explanation/pipeline-architecture
 explanation/snapshot-testing
+explanation/qa-qc/tas-tasmax-tasmin-plausible-value-check
 ```
 
 ```{toctree}
