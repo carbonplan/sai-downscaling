@@ -80,6 +80,9 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Notebook-generated data exports (e.g. subsetting-and-exporting tutorial)
+docs/data-access-notebooks/exports/
+
 # IPython
 profile_default/
 ipython_config.py

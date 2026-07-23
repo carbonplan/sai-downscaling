@@ -536,12 +536,12 @@ class TestCheckConfigTimeDomain:
         assert r.status == CheckStatus.FAIL
         assert r.check_id == "config_time_domain"
         assert r.ensemble_member == "007"
-        assert "2070" in r.message
+        assert "2069" in r.message
 
     def test_truncated_member_within_extent_passes(self):
         from srm.validation import check_config_time_domain
 
-        r = check_config_time_domain(self._config("007", 2070))
+        r = check_config_time_domain(self._config("007", 2069))
         assert r.status == CheckStatus.PASS
 
     def test_full_member_passes(self):
@@ -558,11 +558,14 @@ class TestCheckConfigTimeDomain:
         assert r.status == CheckStatus.FAIL
         assert "2099" in r.message
 
-    def test_member_006_ends_2069(self):
+    @pytest.mark.parametrize("member", ["006", "007", "008", "009", "010"])
+    def test_truncated_members_end_2069(self, member):
+        # 007-010 have a single stray non-NaN day at 2070-01-01; it must not extend the
+        # valid extent, or the detrend rolling mean is poisoned by a one-day January mean.
         from srm.validation import check_config_time_domain
 
-        assert check_config_time_domain(self._config("006", 2070)).status == CheckStatus.FAIL
-        assert check_config_time_domain(self._config("006", 2069)).status == CheckStatus.PASS
+        assert check_config_time_domain(self._config(member, 2070)).status == CheckStatus.FAIL
+        assert check_config_time_domain(self._config(member, 2069)).status == CheckStatus.PASS
 
     def test_sai_early_start_exempt(self):
         # G6/SAI runs intentionally start before the scenario data (bridged with SSP245),
@@ -591,3 +594,55 @@ class TestCheckConfigTimeDomain:
             gcm="MIROC-ES2H", variable="tas", ensemble_member="r1i1p4f2", scenario=None
         )
         assert check_config_time_domain(cfg).status == CheckStatus.SKIP
+
+
+# ── tasmax >= tasmin cross-variable output gate (issue #331) ──────────────────
+
+
+def _temp_leaf(var: str, data: np.ndarray) -> xr.Dataset:
+    time = np.arange("2035-01-01", "2035-01-04", dtype="datetime64[D]").astype("datetime64[ns]")
+    return xr.Dataset(
+        {var: (("time", "lat", "lon"), data.astype("float32"))},
+        coords={"time": time, "lat": [0.0, 1.0], "lon": [10.0, 11.0]},
+    )
+
+
+class TestTasmaxGeTasminOutputGate:
+    def _tree(self, tasmax_vals, tasmin_vals):
+        return xr.DataTree.from_dict(
+            {
+                "/g6_1p5k/tasmax/003": _temp_leaf("tasmax", tasmax_vals),
+                "/g6_1p5k/tasmin/003": _temp_leaf("tasmin", tasmin_vals),
+            }
+        )
+
+    def test_is_blocking(self):
+        from srm.validation import BLOCKING_CHECKS
+
+        assert "tasmax_ge_tasmin" in BLOCKING_CHECKS
+
+    def test_fails_on_inversion(self):
+        tmax = np.full((3, 2, 2), 300.0)
+        tmin = np.full((3, 2, 2), 290.0)
+        tmin[0, 0, 0] = 305.0  # tasmax(300) < tasmin(305) — an inversion
+        results = validate_output_store(self._tree(tmax, tmin))
+        gate = [r for r in results if r.check_id == "tasmax_ge_tasmin"]
+        assert len(gate) == 1
+        assert gate[0].status == CheckStatus.FAIL
+        assert "tasmax < tasmin at 1" in gate[0].message
+
+    def test_passes_when_monotone(self):
+        tmax = np.full((3, 2, 2), 300.0)
+        tmin = np.full((3, 2, 2), 290.0)
+        results = validate_output_store(self._tree(tmax, tmin))
+        gate = [r for r in results if r.check_id == "tasmax_ge_tasmin"]
+        assert len(gate) == 1
+        assert gate[0].status == CheckStatus.PASS
+
+    def test_nan_cells_do_not_trip_gate(self):
+        tmax = np.full((3, 2, 2), 300.0)
+        tmin = np.full((3, 2, 2), 290.0)
+        tmax[1, 1, 1] = np.nan  # NaN comparisons are False → no false inversion
+        results = validate_output_store(self._tree(tmax, tmin))
+        gate = [r for r in results if r.check_id == "tasmax_ge_tasmin"]
+        assert gate[0].status == CheckStatus.PASS

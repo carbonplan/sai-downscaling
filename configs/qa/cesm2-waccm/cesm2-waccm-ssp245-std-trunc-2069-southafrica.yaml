@@ -1,12 +1,15 @@
 # BCSD configuration: CESM2-WACCM / standard variables / SSP245 / truncated members 006-010 / South Africa (QA)
-# These members end early (006 -> 2069, 007-010 -> 2070); predict_period_end clamped to 2069
-# (group min) so no member is downscaled past its valid data extent. Full-length members
-# 001-005 live in cesm2-waccm-ssp245-std-southafrica.yaml.
+# Members 006-010's data ends 2069-12-31 (per srm.validation._MEMBER_TIME_BOUNDS), so
+# predict_period_end is 2069. 007-010 each have one stray non-NaN day at 2070-01-01
+# (rest of 2070 is NaN in the raw GCM input) - not a valid extra year, previously
+# mis-truncated at 2070 in a separate cesm2-waccm-ssp245-std-trunc-2070-southafrica.yaml
+# config now folded in here. Full-length members 001-005 live in
+# cesm2-waccm-ssp245-std-southafrica.yaml.
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds", "hurs"]
-ensemble_members: ["006", "007", "008", "009", "010"]
+ensemble_members: ["008"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
@@ -20,12 +23,12 @@ predict_period_end: 2069
 subset_bounds: [-35, -22, 16, 33]
 
 # === Storage ===
-scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
 output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
 
 # === Bias Correction ===
-mapping_type: "nonparametric_hybrid"
+debias_approach: "nonparametric_hybrid_2sided"
 
 # === Additional Options ===
 verbose: true

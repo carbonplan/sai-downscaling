@@ -15,11 +15,11 @@ from typing import Literal
 
 import pydantic_settings
 from packaging.version import Version as _Version
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 _cache_version = f"v{_Version(_pkg_version('srm')).public}"
 
-MappingType = Literal[
+DebiasApproach = Literal[
     "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided"
 ]
 DownscalingMethod = Literal["additive", "multiplicative"]
@@ -88,7 +88,7 @@ class VariableConfig(BaseModel):
                 "detrend_data": False,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
+                "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
             },
         }
@@ -119,9 +119,9 @@ class VariableConfig(BaseModel):
             f"-dtm{self.detrend_method}"
         )
 
-    def to_hash(self, mapping_type: MappingType) -> str:
+    def to_hash(self, debias_approach: DebiasApproach) -> str:
         """
-        8-character SHA-256 hash of VariableConfig fields + mapping_type.
+        8-character SHA-256 hash of VariableConfig fields + debias_approach.
 
         Uses the same stable-string pattern as ``BCSDConfig.config_hash`` so the
         hash is deterministic across Python versions and process restarts.
@@ -130,15 +130,15 @@ class VariableConfig(BaseModel):
 
         Parameters
         ----------
-        mapping_type : MappingType
-            Quantile mapping method. See ``MappingType`` for valid values.
+        debias_approach : DebiasApproach
+            Debias approach for bias correction. See ``DebiasApproach`` for valid values.
 
         Returns
         -------
         str
             8-character hex string, e.g. ``a3f8b2c1``.
         """
-        params = {**self.model_dump(), "mapping_type": mapping_type}
+        params = {**self.model_dump(), "debias_approach": debias_approach}
         raw = str(sorted(params.items()))
         return hashlib.sha256(raw.encode()).hexdigest()[:8]
 
@@ -196,9 +196,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         None, description="Spatial bounds as (lat_min, lat_max, lon_min, lon_max). None for global."
     )
 
-    mapping_type: MappingType = Field(
+    debias_approach: DebiasApproach = Field(
         "nonparametric_hybrid_2sided",
-        description="Quantile mapping method for bias correction. See MappingType for valid values.",
+        description="Debias approach for bias correction. See DebiasApproach for valid values.",
     )
 
     obs_dataset: str = Field(
@@ -208,15 +208,41 @@ class BCSDConfig(pydantic_settings.BaseSettings):
 
     model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 
-    # Variable-specific settings (auto-populated)
-    variable_config: VariableConfig | None = Field(
-        None, description="Variable-specific BCSD parameters. Auto-populated if None."
+    # Variable-specific settings. Always populated: when not supplied explicitly it is
+    # derived from ``variable`` in a ``mode="before"`` validator (see below), so it is
+    # never ``None`` after construction. This is the single source of truth for
+    # variable-specific parameters — there are deliberately no per-field accessors on
+    # BCSDConfig, since those silently mapped variables to the wrong method (issue #423).
+    variable_config: VariableConfig = Field(
+        default=None,  # type: ignore[assignment]  # populated by _populate_variable_config
+        description="Variable-specific BCSD parameters. Auto-populated from `variable`.",
     )
 
-    def model_post_init(self, __context) -> None:
-        """Post-initialization validation and auto-population"""
-        if self.variable_config is None:
-            self.variable_config = VariableConfig.for_variable(self.variable)
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed_mapping_type(cls, data):
+        """Fail loudly if the pre-rename ``mapping_type`` key is still used."""
+        if isinstance(data, dict) and "mapping_type" in data:
+            raise ValueError(
+                "'mapping_type' was renamed to 'debias_approach'. "
+                "Update your config/CLI/env to use 'debias_approach'."
+            )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_variable_config(cls, data):
+        """Derive ``variable_config`` from ``variable`` when it is not supplied.
+
+        Runs before field validation so ``variable_config`` can be declared as a
+        required (non-optional) field and is never ``None`` after construction. An
+        invalid ``variable`` raises here with a single clear "Unknown variable" error.
+        """
+        if isinstance(data, dict) and data.get("variable_config") is None:
+            variable = data.get("variable")
+            if variable is not None:
+                data["variable_config"] = VariableConfig.for_variable(variable)
+        return data
 
     @field_validator("predict_period_start", "predict_period_end")
     @classmethod
@@ -299,42 +325,12 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             "predict_period": (self.predict_period_start, self.predict_period_end),
             "subset_bounds": self.subset_bounds,
             "variable_config": self.variable_config.model_dump() if self.variable_config else None,
-            "mapping_type": self.mapping_type,
+            "debias_approach": self.debias_approach,
         }
 
         # Create stable string representation and hash
         hash_str = str(sorted(hash_params.items()))
         return hashlib.sha256(hash_str.encode()).hexdigest()[:12]
-
-    @computed_field
-    def detrend_data(self) -> bool:
-        """Convenience accessor for variable config"""
-        return self.variable_config.detrend_data if self.variable_config else False
-
-    @computed_field
-    def detrend_method(self) -> DetrendMethod:
-        """Convenience accessor for variable config"""
-        return self.variable_config.detrend_method if self.variable_config else "additive"
-
-    @computed_field
-    def do_windowing(self) -> bool:
-        """Convenience accessor for variable config"""
-        return self.variable_config.do_windowing if self.variable_config else False
-
-    @computed_field
-    def running_window_length(self) -> int:
-        """Convenience accessor for variable config"""
-        return self.variable_config.running_window_length if self.variable_config else 31
-
-    @computed_field
-    def downscaling_method(self) -> DownscalingMethod:
-        """Convenience accessor for variable config"""
-        return self.variable_config.downscaling_method if self.variable_config else "additive"
-
-    @computed_field
-    def downscaling_clim_method(self) -> DownscalingClimMethod:
-        """Convenience accessor for variable config"""
-        return self.variable_config.downscaling_clim_method if self.variable_config else "fft"
 
     @computed_field
     def is_sai_scenario(self) -> bool:
@@ -359,7 +355,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             predict_period_start=self.predict_period_start,
             predict_period_end=self.predict_period_end,
             subset_bounds=self.subset_bounds,
-            mapping_type=self.mapping_type,
+            debias_approach=self.debias_approach,
         )
 
 
@@ -470,8 +466,8 @@ config = BCSDConfig(
 )
 
 print(config.run_id)  # "CESM2-WACCM_tas_e00_ssp245"
-print(config.detrend_data)  # True (auto-loaded from variable config)
-print(config.downscaling_method)  # "additive"
+print(config.variable_config.detrend_data)  # True (auto-loaded from variable config)
+print(config.variable_config.downscaling_method)  # "additive"
 
 # 2. SAI scenario
 sai_config = BCSDConfig(
@@ -484,7 +480,7 @@ sai_config = BCSDConfig(
 )
 
 print(sai_config.is_sai_scenario)  # True
-print(sai_config.detrend_data)  # False (precipitation doesn't detrend)
+print(sai_config.variable_config.detrend_data)  # False (precipitation doesn't detrend)
 
 # 3. Regional subset
 subset_config = BCSDConfig(
@@ -523,8 +519,8 @@ scenario: ssp245
 predict_period_start: 2015
 predict_period_end: 2100
 environment: qa
-# version defaults to installed package version; override here if needed
-# version: 1.0.post3
+# branch defaults to installed package version; override here if needed
+# branch: v1.0.post3
 """
 
 import yaml
