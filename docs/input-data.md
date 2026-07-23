@@ -10,6 +10,7 @@ kernelspec:
   name: python3
 ---
 
+
 # Input Data Catalog
 
 Input datasets are stored as [icechunk](https://icechunk.io) stores on S3 and exposed through the
