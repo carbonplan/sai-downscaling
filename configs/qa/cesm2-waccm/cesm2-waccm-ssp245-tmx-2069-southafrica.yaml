@@ -9,7 +9,7 @@
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
 variables: ["tasmax", "tasmin", "dtr"]
-ensemble_members: ["006", "007", "008", "009", "010"]
+ensemble_members: ["008"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
