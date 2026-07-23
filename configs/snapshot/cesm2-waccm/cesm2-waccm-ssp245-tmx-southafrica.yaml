@@ -2,7 +2,8 @@
 # Mirrors configs/production/cesm2-waccm/cesm2-waccm-ssp245-tmx.yaml with SA
 # bounds + qa env. Corrected tasmax/tasmin (and derived dtr) only exist for SSP245
 # members 006-010 (CMIP6 bug); member 008 is the tmx bridge for G6-1.5K/003.
-# Member 008's data ends 2070, so predict_period_end is clamped to 2070. Standard
+# Member 008's data ends 2069-12-31 (one stray non-NaN day at 2070-01-01, rest of 2070
+# is NaN), so predict_period_end is clamped to 2069. Standard
 # variables live in cesm2-waccm-ssp245-std-southafrica.yaml (member 003) and
 # cesm2-waccm-ssp245-std-trunc-southafrica.yaml (member 008).
 gcm: "CESM2-WACCM"
@@ -13,7 +14,7 @@ scenarios: ["SSP245"]
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2070
+predict_period_end: 2069
 
 debias_approach: "nonparametric_hybrid_2sided"
 
