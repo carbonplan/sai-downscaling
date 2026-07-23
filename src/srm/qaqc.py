@@ -746,63 +746,136 @@ def periodic_rolling(da, dim, window, agg="mean", **kwargs):
     return out.isel({dim: slice(pad, -pad)})
 
 
-def calculate_reasonable_bounds_doy(raw_scenario_subset, raw_historical_subset, obs_fine_subset):
+def obs_doy_bounds(
+    obs_fine_subset: xr.DataArray, window: int = 30
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Lazy per-day-of-year lower/upper envelope of the fine-grid observations.
+
+    The bounds are the ``window``-day centered periodic-rolling minimum and
+    maximum of the observed day-of-year extremes. This ingredient depends only on
+    the variable, not on the scenario or member, so callers can compute it once
+    per variable and reuse it across leaves in a single ``dask.compute``.
+
+    Parameters
+    ----------
+    obs_fine_subset : xarray.DataArray
+        Fine-grid observations with a ``time`` dimension.
+    window : int, default 30
+        Width, in days, of the centered periodic rolling window.
+
+    Returns
+    -------
+    obs_min_rolling, obs_max_rolling : xarray.DataArray
+        Lazy ``(dayofyear, lat, lon)`` arrays; no computation is triggered.
+    """
     obs_fine_subset = obs_fine_subset.chunk({"time": 365, "lat": 180, "lon": 360})
-    scenario_doy_max = raw_scenario_subset.groupby("time.dayofyear").max(dim="time").compute()
-    scenario_doy_min = raw_scenario_subset.groupby("time.dayofyear").min(dim="time").compute()
+    obs_max = obs_fine_subset.groupby("time.dayofyear").max()
+    obs_min = obs_fine_subset.groupby("time.dayofyear").min()
+    obs_max_rolling = periodic_rolling(da=obs_max, dim="dayofyear", window=window, agg="max")
+    obs_min_rolling = periodic_rolling(da=obs_min, dim="dayofyear", window=window, agg="min")
+    return obs_min_rolling, obs_max_rolling
 
-    # hist_doy_max = (
-    #    raw_historical_subset.groupby("time.dayofyear")
-    #    .max(dim="time")
-    #    .max(dim="ensemble_member")
-    #    .compute()
-    # )
-    # hist_doy_min = (
-    #    raw_historical_subset.groupby("time.dayofyear")
-    #    .min(dim="time")
-    #    .min(dim="ensemble_member")
-    #    .compute()
-    # )
-    hist_doy_mean = (
-        raw_historical_subset.groupby("time.dayofyear")
-        .mean(dim="time")
-        .mean(dim="ensemble_member")
-        .compute()
-    )
 
-    obs_max = obs_fine_subset.groupby("time.dayofyear").max().compute()
-    obs_min = obs_fine_subset.groupby("time.dayofyear").min().compute()
+def scenario_delta_doy(
+    raw_scenario_subset: xr.DataArray,
+    raw_historical_subset: xr.DataArray,
+    window: int = 30,
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Lazy coarse-grid day-of-year change signal relative to the historical mean.
+
+    The upper (lower) delta is the ``window``-day centered periodic-rolling
+    maximum (minimum) of the scenario's day-of-year extremes, minus the
+    historical day-of-year mean climatology. When the historical input carries an
+    ``ensemble_member`` dimension the mean is taken across members as well; a
+    single pre-selected member is used as-is.
+
+    Parameters
+    ----------
+    raw_scenario_subset : xarray.DataArray
+        Coarse-grid scenario data with a ``time`` dimension.
+    raw_historical_subset : xarray.DataArray
+        Coarse-grid historical data with a ``time`` dimension and, optionally, an
+        ``ensemble_member`` dimension.
+    window : int, default 30
+        Width, in days, of the centered periodic rolling window.
+
+    Returns
+    -------
+    delta_doy_min, delta_doy_max : xarray.DataArray
+        Lazy ``(dayofyear, lat, lon)`` coarse-grid arrays.
+    """
+    scenario_doy_max = raw_scenario_subset.groupby("time.dayofyear").max(dim="time")
+    scenario_doy_min = raw_scenario_subset.groupby("time.dayofyear").min(dim="time")
+    hist_doy_mean = raw_historical_subset.groupby("time.dayofyear").mean(dim="time")
+    if "ensemble_member" in hist_doy_mean.dims:
+        hist_doy_mean = hist_doy_mean.mean(dim="ensemble_member")
 
     scenario_doy_max_rolling = periodic_rolling(
-        da=scenario_doy_max, dim="dayofyear", window=30, agg="max"
+        da=scenario_doy_max, dim="dayofyear", window=window, agg="max"
     )
     scenario_doy_min_rolling = periodic_rolling(
-        da=scenario_doy_min, dim="dayofyear", window=30, agg="min"
+        da=scenario_doy_min, dim="dayofyear", window=window, agg="min"
     )
-    # hist_doy_max_rolling = periodic_rolling(da=hist_doy_max, dim="dayofyear", window=30, agg="max")
-    # hist_doy_min_rolling = periodic_rolling(da=hist_doy_min, dim="dayofyear", window=30, agg="min")
     hist_doy_mean_rolling = periodic_rolling(
-        da=hist_doy_mean, dim="dayofyear", window=30, agg="mean"
+        da=hist_doy_mean, dim="dayofyear", window=window, agg="mean"
     )
-    obs_max_rolling = periodic_rolling(da=obs_max, dim="dayofyear", window=30, agg="max")
-    obs_min_rolling = periodic_rolling(da=obs_min, dim="dayofyear", window=30, agg="min")
 
     delta_doy_max = scenario_doy_max_rolling - hist_doy_mean_rolling
     delta_doy_min = scenario_doy_min_rolling - hist_doy_mean_rolling
+    return delta_doy_min, delta_doy_max
 
-    delta_doy_max_finegrid = delta_doy_max.interp(
-        lon=obs_fine_subset["lon"],
-        lat=obs_fine_subset["lat"],
-        method="nearest",
-    ).compute()
 
-    delta_doy_min_finegrid = delta_doy_min.interp(
-        lon=obs_fine_subset["lon"],
-        lat=obs_fine_subset["lat"],
-        method="nearest",
-    ).compute()
+def calculate_reasonable_bounds_doy(
+    raw_scenario_subset: xr.DataArray,
+    raw_historical_subset: xr.DataArray,
+    obs_fine_subset: xr.DataArray,
+    window: int = 30,
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Lazy per-day-of-year plausible lower/upper bounds on the fine grid.
 
-    high_bound = (obs_max_rolling + delta_doy_max_finegrid).compute()
-    low_bound = (obs_min_rolling + delta_doy_min_finegrid).compute()
+    Combines the fine-grid observed envelope (:func:`obs_doy_bounds`) with the
+    coarse-grid scenario change signal (:func:`scenario_delta_doy`) interpolated
+    to the observation grid: ``bound = obs_envelope + regridded_change``. The
+    result is lazy; call ``.compute()`` to materialize it.
 
+    The returned arrays satisfy ``high_bound >= low_bound`` wherever the
+    observations are defined, because both the observed envelope and the scenario
+    change contribute a non-negative max-minus-min span.
+
+    Parameters
+    ----------
+    raw_scenario_subset : xarray.DataArray
+        Coarse-grid scenario data with a ``time`` dimension.
+    raw_historical_subset : xarray.DataArray
+        Coarse-grid historical data (see :func:`scenario_delta_doy`).
+    obs_fine_subset : xarray.DataArray
+        Fine-grid observations with ``time``, ``lat``, and ``lon``.
+    window : int, default 30
+        Width, in days, of the centered periodic rolling window.
+
+    Returns
+    -------
+    low_bound, high_bound : xarray.DataArray
+        Lazy ``(dayofyear, lat, lon)`` fine-grid plausible bounds.
+    """
+    obs_min_rolling, obs_max_rolling = obs_doy_bounds(obs_fine_subset, window=window)
+    delta_doy_min, delta_doy_max = scenario_delta_doy(
+        raw_scenario_subset, raw_historical_subset, window=window
+    )
+
+    # Nearest-neighbor coarse -> fine regrid via reindex, not interp(method="nearest"). The two are
+    # numerically identical for nearest selection (differing only in edge fill: reindex fills the
+    # poles by nearest where interp leaves NaN). reindex is pure indexing and stays on a single dask
+    # backend, whereas interp routes through apply_ufunc and mixes classic dask arrays with the
+    # query-planning (dask_array) backend used on Coiled, raising "Mixing chunked array types".
+    regrid_kwargs = {
+        "lat": obs_fine_subset["lat"],
+        "lon": obs_fine_subset["lon"],
+        "method": "nearest",
+    }
+    delta_doy_max_finegrid = delta_doy_max.reindex(**regrid_kwargs)
+    delta_doy_min_finegrid = delta_doy_min.reindex(**regrid_kwargs)
+
+    high_bound = obs_max_rolling + delta_doy_max_finegrid
+    low_bound = obs_min_rolling + delta_doy_min_finegrid
     return low_bound, high_bound
