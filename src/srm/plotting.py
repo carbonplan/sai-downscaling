@@ -361,6 +361,127 @@ def plot_cdf(obs, raw, ds1, var=None, ds2=None, title=None, xlabel=None):
     plt.legend()
     plt.tight_layout()
 
+def plot_cdf_by_location(
+    debiased_downscaled,
+    coarse_debiased,
+    locations,
+    obs_fine=None,
+    obs_coarse=None,
+    raw_gcm=None,
+    var=None,
+    ncols=5,
+):
+    """Grid of per-location CDFs comparing debiased_downscaled (red),
+    coarse_debiased (blue), and raw_gcm (green), each against the obs at its
+    own resolution (obs_fine, obs_coarse) if provided. Every trace reports the
+    percent of dry days (zero precipitation); when an obs series is supplied,
+    each model trace's subplot annotation also reports mean bias and percent
+    bias relative to that obs.
+    """
+
+    def _prep(da, lat, lon):
+        v = da.sel(lat=lat, lon=lon, method="nearest").values.ravel()
+        return v[~np.isnan(v)]
+
+    # each model series is compared against the obs at matching resolution, if given
+    model_series = [
+        dict(
+            label="debiased_downscaled",
+            da=debiased_downscaled,
+            resolution="fine",
+            color="red",
+            linestyle="-",
+        ),
+        dict(
+            label="coarse_debiased",
+            da=coarse_debiased,
+            resolution="coarse",
+            color="blue",
+            linestyle="-",
+        ),
+        dict(
+            label="raw_gcm",
+            da=raw_gcm,
+            resolution="coarse",
+            color="green",
+            linestyle="-",
+        ),
+    ]
+    model_series = [series for series in model_series if series["da"] is not None]
+    obs_series = {
+        "fine": dict(label="obs_fine", da=obs_fine, color="black", linestyle="-"),
+        "coarse": dict(label="obs_coarse", da=obs_coarse, color="grey", linestyle="-"),
+    }
+    obs_series = {res: cfg for res, cfg in obs_series.items() if cfg["da"] is not None}
+
+    names = list(locations.keys())
+    nrows = int(np.ceil(len(names) / ncols))
+    fig, axarr = plt.subplots(nrows=nrows, ncols=ncols, figsize=(4 * ncols, 3.5 * nrows))
+    axarr = np.atleast_1d(axarr).ravel()
+    n_series = len(model_series) + len(obs_series)
+
+    for ax, name in zip(axarr, names):
+        lat, lon = locations[name]
+        obs_vals = {res: _prep(cfg["da"], lat, lon) for res, cfg in obs_series.items()}
+        # inset in the lower-right quarter of the panel, zoomed to the top 1% of the CDF
+        ax_inset = ax.inset_axes([0.52, 0.06, 0.46, 0.46])
+
+        stats_lines = []
+        all_vals = []
+        for series in [*model_series, *obs_series.values()]:
+            vals = _prep(series["da"], lat, lon)
+            all_vals.append(vals)
+            for target_ax in (ax, ax_inset):
+                sns.kdeplot(
+                    vals,
+                    ax=target_ax,
+                    label=series["label"],
+                    color=series["color"],
+                    linestyle=series["linestyle"],
+                    cumulative=True,
+                )
+            label = series["label"]
+            dry_pct = 100 * np.mean(vals == 0)
+            line = f"{label}: dry_days={dry_pct:.1f}%"
+            resolution = series.get("resolution")
+            if resolution in obs_vals:
+                obs_mean = obs_vals[resolution].mean()
+                mean_bias = vals.mean() - obs_mean
+                pct_bias = 100 * mean_bias / obs_mean
+                line += f", bias={mean_bias:.2e}, %bias={pct_bias:.2f}%"
+            stats_lines.append(line)
+
+        zoom_lo = min(np.percentile(v, 99) for v in all_vals)
+        zoom_hi = max(v.max() for v in all_vals)
+        ax_inset.set_xlim(zoom_lo, zoom_hi)
+        ax_inset.set_ylim(0.99, 1.0)
+        ax_inset.set_xlabel("")
+        ax_inset.set_ylabel("")
+        ax_inset.set_title("top 1%", fontsize=6)
+        ax_inset.tick_params(labelsize=6)
+
+        ax.set_title(name, fontsize=10)
+        ax.set_xlabel(var or "")
+        ax.set_ylabel("")
+        if stats_lines:
+            ax.text(
+                0.02,
+                0.98,
+                "\n".join(stats_lines),
+                transform=ax.transAxes,
+                fontsize=7,
+                va="top",
+                ha="left",
+            )
+
+    for ax in axarr[len(names) :]:
+        ax.axis("off")
+
+    handles, labels = axarr[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=n_series, bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle("CDF comparison by location", fontsize=16, y=1.01)
+    plt.tight_layout()
+    return fig
 
 locations = {
     "Cape Town": (-33.9221, 18.4231),
