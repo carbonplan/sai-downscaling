@@ -83,6 +83,15 @@ INVALID_FIRST_DAY: dict[str, tuple[str, list[str]]] = {
     "g6_1p5k": ("2035-01-01", ["001", "002", "003"]),
 }
 
+# SSP245 members 001-005 have tasmax == tasmin across the whole series (upstream
+# CMIP6 bug, issue #156). Values exist in the store but must never be used, so
+# mask them to NaN.
+# NOTE: keyed by SCENARIO ("SSP245"), unlike the sibling INVALID_FIRST_DAY which
+# is keyed by GROUP ("ssp245"). Different key spaces on purpose.
+INVALID_TASMAX_TASMIN_MEMBERS: dict[str, list[str]] = {
+    "SSP245": ["001", "002", "003", "004", "005"],
+}
+
 VAR_SPECS: dict[str, VarSpec] = {
     f.default.name: f.default for f in dataclasses.fields(VarStandards)
 }
@@ -341,6 +350,19 @@ def _fix_invalid_first_day(ds: xr.Dataset, scenario: str, member: str) -> xr.Dat
     return ds
 
 
+def _mask_invalid_tasmax_tasmin(ds: xr.Dataset, scenario: str, variable: str) -> xr.Dataset:
+    """Issue #156: NaN out tasmax/tasmin for members with a corrupt full series."""
+    if variable not in ("tasmax", "tasmin"):
+        return ds
+    members = INVALID_TASMAX_TASMIN_MEMBERS.get(scenario)
+    if not members or "ensemble_member" not in ds.dims:
+        return ds
+    keep = ~ds.ensemble_member.isin(members)
+    ds[variable] = ds[variable].where(keep)
+    log.info("variable=%s masked invalid members %s to NaN (issue #156)", variable, members)
+    return ds
+
+
 def _update_attrs(ds: xr.Dataset, var_specs: dict, scenario: str) -> xr.Dataset:
     for var_name in ds.data_vars:
         if var_name in CESM_UNIT_MAPPING:
@@ -448,6 +470,7 @@ def _process_single_variable(
     # reindex to full member list; fills any missing members with NaN
     if ensemble_members and "ensemble_member" in ds.dims:
         ds = ds.reindex(ensemble_member=ensemble_members)
+    ds = _mask_invalid_tasmax_tasmin(ds, scenario, variable)
     ds.ensemble_member.attrs["member_specific_provenance"] = json.dumps(member_manifest)
     log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
 
@@ -656,6 +679,61 @@ def process(
                 dry_run_output=dry_run_output,
                 commit_message=commit_message,
             )
+
+
+@app.command(name="mask-invalid-tasmax-tasmin")
+def mask_invalid_tasmax_tasmin(
+    store_prefix: str | None = typer.Option(None, "--store-prefix"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """One-off (issue #156): NaN SSP245 members 001-005 tasmax/tasmin in the
+    existing unified store.
+
+    """
+    scenario = "SSP245"
+    group = SCENARIO_TO_GROUP[scenario]  # "ssp245"
+    members = INVALID_TASMAX_TASMIN_MEMBERS[scenario]
+    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False)
+    existing = xr.open_dataset(
+        repo.readonly_session("main").store, engine="zarr", group=group, chunks="auto"
+    )
+
+    keep = ~existing.ensemble_member.isin(members)
+    kept_members = [m for m in existing.ensemble_member.values.tolist() if m not in members]
+    for var in ("tasmax", "tasmin"):
+        if var not in existing.data_vars:
+            log.warning("variable=%s not in group=%s, skipping", var, group)
+            continue
+        ds = existing[[var]]
+        ds[var] = ds[var].where(keep)
+
+        if dry_run:
+            # Run the actual mask with no write/commit.
+            sample = ds[var].isel(time=slice(0, 30))
+            masked_nan = bool(sample.sel(ensemble_member=members).isnull().all().compute())
+            kept_finite = bool(sample.sel(ensemble_member=kept_members).notnull().all().compute())
+            log.info(
+                "dry-run: %s -> members %s all-NaN=%s, kept members finite=%s (no write)",
+                var,
+                members,
+                masked_nan,
+                kept_finite,
+            )
+            continue
+
+        write_variable_to_icechunk(
+            ds,
+            repo,
+            variable=var,
+            scenario=scenario,
+            chunks=OUTPUT_CHUNKS,
+            shards=OUTPUT_SHARDS,
+            overwrite=True,
+            var_in_store=True,
+            group=group,
+            commit_message=f"issue #156: NaN {var} for ssp245 members {members}",
+        )
+        log.info("variable=%s masked invalid members %s to NaN in store", var, members)
 
 
 if __name__ == "__main__":
