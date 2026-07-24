@@ -1,12 +1,14 @@
 # BCSD configuration: CESM2-WACCM / tas / SSP245 / truncated members 006-010 / global (production)
-# These members end early (006 -> 2069, 007-010 -> 2070); predict_period_end clamped to 2069
-# (group min) so no member is downscaled past its valid data extent. Full-length members
-# 001-005 live in cesm2-waccm-ssp245-tas-global.yaml.
+# Members 006-010's data ends 2069-12-31 (per srm.validation._MEMBER_TIME_BOUNDS), so
+# predict_period_end is 2069. 007-010 each have one stray non-NaN day at 2070-01-01
+# (rest of 2070 is NaN in the raw GCM input) - not a valid extra year, previously
+# mis-truncated at 2070 in a separate cesm2-waccm-ssp245-tas-global-trunc-2070.yaml
+# config now folded in here. Full-length members 001-005 reach 2099.
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
 variables: ["tas"]
-ensemble_members: ["006", "007", "008", "009", "010"]
+ensemble_members: ["008"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
@@ -16,7 +18,7 @@ predict_period_start: 2015
 predict_period_end: 2069
 
 # === Storage ===
-scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
 output_dir: "s3://carbonplan-srm/output"
 environment: "production"
 # version intentionally unset — derived from the installed package version at runtime

@@ -208,6 +208,4 @@ for store_path, group_list in intermediates.items():
 
 - [Pipeline architecture](../explanation/pipeline-architecture.md) — how the cache system is
   designed and why
-- [Compare outputs across code versions](compare-outputs-across-versions.md) — using `--branch` to
-  track multiple datasets
 - [CLI reference](../reference/cli.md) — full option listings for status, cache-list, cache-clear

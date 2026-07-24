@@ -2,9 +2,59 @@
 
 This page is the exhaustive reference for all `bcsd` commands, their options, and usage examples.
 
-## `bcsd run-matrix` — Run Pipeline Over a Matrix (Recommended)
+## `bcsd run` — Execute Pipeline from Config File (Recommended)
 
-> **Recommended for multi-run workflows.** Specify each dimension as a repeatable option and the CLI runs every combination — no config files needed. The orchestrator automatically deduplicates shared work across stages.
+Run the BCSD downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format) — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination.
+
+> **Recommended for most workflows.** Config files are version-controlled and reproducible, and they are what the QA and production deploys consume. For quick ad-hoc runs from the command line without config files, use `bcsd run-matrix` instead.
+
+```bash
+uv run bcsd run --config-path PATH [OPTIONS]
+```
+
+**Options:**
+
+- `--config-path TEXT` (required, repeatable): path to YAML config file or directory of configs (can be specified multiple times)
+- `--stage TEXT`: run specific stage. Accepts either short (`obs`/`historical`/`scenario`) or long (`prepare_observations`/`fit_historical`/`transform_scenario`) names, or `all` (default: `all`)
+- `--force`: force recompute even if cached
+- `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
+- `--branch TEXT`: override the output icechunk branch (e.g. `v2`). Defaults to the branch resolved from the config (the installed package version).
+- `--save-intermediate`: save and display intermediate artifacts
+
+**Examples:**
+
+```bash
+# Run full pipeline for a single config
+uv run bcsd run --config-path configs/example.yaml
+
+# Run only observation regridding stage locally
+uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --no-coiled
+
+# Force recompute of historical stage (ignores cache)
+uv run bcsd run --config-path configs/example.yaml --stage fit_historical --force
+
+# Override branch (write outputs to the v2 icechunk branch without editing config files)
+uv run bcsd run --config-path configs/example.yaml --branch v2
+
+# Override environment for production run
+BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
+
+# Process all configs in a directory
+uv run bcsd run --config-path configs/cesm2-ensemble/
+```
+
+**Stage details:**
+
+- `prepare_observations`: regrid ERA5 to GCM grid (shared across ensembles)
+- `fit_historical`: debias and downscale historical period (shared across scenarios)
+- `transform_scenario`: debias and downscale future scenario (final output)
+- `all`: run all three stages in sequence (default)
+
+---
+
+## `bcsd run-matrix` — Run Pipeline Over a Matrix
+
+> Specify each dimension as a repeatable option and the CLI runs every combination — no config files needed. This is convenient for quick, ad-hoc runs; for repeatable or reviewable runs, prefer `bcsd run` with a config file. The orchestrator automatically deduplicates shared work across stages.
 
 ```bash
 uv run bcsd run-matrix [OPTIONS]
@@ -190,56 +240,6 @@ uv run bcsd validate-output --config-path configs/qa/
 # Validate only a specific scenario/variable subtree
 uv run bcsd validate-output --config-path configs/qa/ --scenario SSP245 --variable tas
 ```
-
----
-
-## `bcsd run` — Execute Pipeline from Config File
-
-Run the BCSD downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format) — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination.
-
-> For ad-hoc multi-run workflows from the command line without config files, use `bcsd run-matrix` instead.
-
-```bash
-uv run bcsd run --config-path PATH [OPTIONS]
-```
-
-**Options:**
-
-- `--config-path TEXT` (required, repeatable): path to YAML config file or directory of configs (can be specified multiple times)
-- `--stage TEXT`: run specific stage. Accepts either short (`obs`/`historical`/`scenario`) or long (`prepare_observations`/`fit_historical`/`transform_scenario`) names, or `all` (default: `all`)
-- `--force`: force recompute even if cached
-- `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
-- `--branch TEXT`: override the output icechunk branch (e.g. `v2`). Defaults to the branch resolved from the config (the installed package version).
-- `--save-intermediate`: save and display intermediate artifacts
-
-**Examples:**
-
-```bash
-# Run full pipeline for a single config
-uv run bcsd run --config-path configs/example.yaml
-
-# Run only observation regridding stage locally
-uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --no-coiled
-
-# Force recompute of historical stage (ignores cache)
-uv run bcsd run --config-path configs/example.yaml --stage fit_historical --force
-
-# Override branch (write outputs to the v2 icechunk branch without editing config files)
-uv run bcsd run --config-path configs/example.yaml --branch v2
-
-# Override environment for production run
-BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
-
-# Process all configs in a directory
-uv run bcsd run --config-path configs/cesm2-ensemble/
-```
-
-**Stage details:**
-
-- `prepare_observations`: regrid ERA5 to GCM grid (shared across ensembles)
-- `fit_historical`: debias and downscale historical period (shared across scenarios)
-- `transform_scenario`: debias and downscale future scenario (final output)
-- `all`: run all three stages in sequence (default)
 
 ---
 

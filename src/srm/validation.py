@@ -70,7 +70,9 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
 
 # Per-member valid daily extent, keyed gcm -> scenario -> ensemble_member -> (start, end).
 # First/last non-NaN day per member. Members not listed fall back to _SCENARIO_TIME_BOUNDS.
-# Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069-2070) while 001-005 reach 2099.
+# Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069) while 001-005 reach 2099.
+# 007-010 each have one stray non-NaN day at 2070-01-01 (rest of 2070 is NaN) - not a
+# valid extra year, so end date is 2069-12-31 like 006, not 2070-12-31.
 _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
     "CESM2-WACCM": {
         "G6-1.5K": {
@@ -91,10 +93,10 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "004": ("2015-01-01", "2099-12-31"),
             "005": ("2015-01-01", "2099-12-31"),
             "006": ("2015-01-01", "2069-12-31"),
-            "007": ("2015-01-01", "2070-12-31"),
-            "008": ("2015-01-01", "2070-12-31"),
-            "009": ("2015-01-01", "2070-12-31"),
-            "010": ("2015-01-01", "2070-12-31"),
+            "007": ("2015-01-01", "2069-12-31"),
+            "008": ("2015-01-01", "2069-12-31"),
+            "009": ("2015-01-01", "2069-12-31"),
+            "010": ("2015-01-01", "2069-12-31"),
         },
     },
     "MIROC-ES2H": {
@@ -226,9 +228,11 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
 
     Guards against configs whose ``predict_period`` extends past (or starts before) the
     real time coverage of a specific ensemble member — e.g. CESM2-WACCM SSP245 member
-    007 ends 2070 but is NaN-padded to the scenario end in the unified store. Without
-    this guard the pipeline slices the padded range and the downscaler emits garbage for
-    years with no real input.
+    007 ends 2069-12-31 but is NaN-padded to the scenario end in the unified store.
+    Without this guard the pipeline slices the padded range and the downscaler emits
+    garbage for years with no real input: a partially-NaN month yields a monthly mean
+    built from a handful of days, which then poisons the 9-year centred rolling mean in
+    :func:`srm.downscaling_utils.detrend` for the surrounding years.
 
     Returns a blocking FAIL when the requested predict period falls outside the member's
     valid bounds, PASS when it fits, and SKIP when no bounds are known for the member or

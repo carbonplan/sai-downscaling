@@ -21,6 +21,15 @@ def test_all_seven_variables_present():
     assert set(TOLERANCES) == {"tas", "tasmax", "tasmin", "pr", "rsds", "hurs", "dtr"}
 
 
+def test_tasmin_atol_covers_its_derived_inputs():
+    # tasmin is derived as tasmax - dtr (srm.downscaling_utils.derive_tasmin), so its
+    # snapshot drift is the difference of the two inputs' drifts and can reach
+    # atol(tasmax) + atol(dtr). Its atol must be at least that sum, or shared
+    # temperature noise that tasmax and dtr each absorb would trip tasmin as a false
+    # positive.
+    assert TOLERANCES["tasmin"].atol >= TOLERANCES["tasmax"].atol + TOLERANCES["dtr"].atol
+
+
 def test_tolerance_is_frozen():
     t = Tolerance(rtol=1e-5, atol=1e-3)
     with __import__("pytest").raises(Exception):

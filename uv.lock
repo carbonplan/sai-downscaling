@@ -1124,6 +1124,21 @@ wheels = [
 ]
 
 [[package]]
+name = "frisky"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "rich" },
+    { name = "typer" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/e8/07a9057b10fc00121eaf0da278c34218b75e518915e4140b6b3f8876dc8f/frisky-0.7.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:89a7886332d2e19efff34dcada1ab921ed7ffd7f121fb371ca3fbff261b33ece", size = 5686667, upload-time = "2026-07-20T21:29:47.96Z" },
+    { url = "https://files.pythonhosted.org/packages/af/24/3907fe9cf1ae3048fb1559733448a3fba567d5a97008a8abf0da91dfe92a/frisky-0.7.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7906ca76991eae186131162a440e769cdc4a19a748b7359bbc4df9ce0cb34890", size = 6157506, upload-time = "2026-07-20T21:29:49.923Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/b9/ab4baf9ae8e05584d9cada61e010476e6d8787a7019c953529ede437e2fb/frisky-0.7.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4151d5b63912bdef0e59ec90cede8fe3cff47208d7e6bfe078cace6fdb9df4fc", size = 6392616, upload-time = "2026-07-20T21:29:53.091Z" },
+]
+
+[[package]]
 name = "frozenlist"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4149,6 +4164,7 @@ dependencies = [
     { name = "dask", extra = ["complete"] },
     { name = "distributed" },
     { name = "flox" },
+    { name = "frisky" },
     { name = "geopandas" },
     { name = "ibicus" },
     { name = "icechunk" },
@@ -4260,6 +4276,7 @@ requires-dist = [
     { name = "dask", extras = ["complete"], specifier = ">=2025.12.0" },
     { name = "distributed", specifier = ">=2025.12.0" },
     { name = "flox", specifier = ">=0.11.1" },
+    { name = "frisky", specifier = ">=0.7" },
     { name = "geopandas", specifier = ">=1.1.3" },
     { name = "ibicus", specifier = ">=1.2.0" },
     { name = "icechunk", specifier = ">=2.0.0" },
