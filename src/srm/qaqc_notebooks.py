@@ -1,16 +1,27 @@
 """
 Papermill runner for QA/QC notebooks.
 
-Executes QA/QC notebooks in place against a production output store at a given
-icechunk ``branch`` (injected as a papermill parameter), keeping their rendered
-cells, then uploads the executed ``.ipynb`` to S3 so an off-VM caller (CI) can
-retrieve them. Mirrors :mod:`srm.batch_runner`: a typer entrypoint reads
-``QAQC_BRANCH`` / ``QAQC_NOTEBOOKS`` from the environment for Coiled batch jobs.
+Executes QA/QC notebooks against a production output store at a given icechunk
+``branch`` (injected as a papermill parameter), keeping their rendered cells,
+then uploads the executed ``.ipynb`` to S3 so an off-VM caller (CI) can retrieve
+them.
+
+Coiled batch VMs get ``srm`` as a site-packages wheel but *not* the repo's
+``notebooks/`` tree, so a notebook absent locally is seeded from S3 by the
+dispatcher (see :func:`seed_sources`) and downloaded here. Layout under
+``s3://carbonplan-scratch/srm/qaqc-notebooks/<branch>/<sha>/``:
+
+    src/<repo-relative-nb>   source notebooks uploaded by the dispatcher
+    out/<repo-relative-nb>   executed notebooks uploaded after render
+
+Mirrors :mod:`srm.batch_runner`: a typer entrypoint reads ``QAQC_BRANCH`` /
+``QAQC_NOTEBOOKS`` from the environment for Coiled batch jobs.
 """
 
 import logging
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import obstore as obs
@@ -56,18 +67,48 @@ def _git_sha() -> str:
         return "nogit"
 
 
-def _upload(local: Path, nb: str, branch: str, sha: str) -> str:
-    """Upload an executed notebook to S3 and return its ``s3://`` URI.
-
-    Keyed by the repo-relative notebook path so a caller can recursive-download
-    the prefix straight back onto the working tree.
-    """
+def _store():
+    """obstore handle for the scratch bucket using the active AWS session."""
     aws = get_aws_creds()
     region = aws.pop("region")
-    store = from_url(f"s3://{SCRATCH_BUCKET}", region=region, **aws)
-    key = f"{S3_PREFIX}/{branch}/{sha}/{nb}"
-    obs.put(store, key, local.read_bytes())
-    return f"s3://{SCRATCH_BUCKET}/{key}"
+    return from_url(f"s3://{SCRATCH_BUCKET}", region=region, **aws)
+
+
+def _src_key(nb: str, branch: str, sha: str) -> str:
+    return f"{S3_PREFIX}/{branch}/{sha}/src/{nb}"
+
+
+def _out_key(nb: str, branch: str, sha: str) -> str:
+    return f"{S3_PREFIX}/{branch}/{sha}/out/{nb}"
+
+
+def seed_sources(notebooks: list[str], branch: str, sha: str) -> None:
+    """Upload source notebooks (from the local repo) to the S3 ``src/`` prefix.
+
+    Called by the dispatcher, which has the repo checked out, so the Coiled VM
+    can fetch notebooks it does not have locally.
+    """
+    store = _store()
+    for nb in notebooks:
+        path = REPO_ROOT / nb
+        obs.put(store, _src_key(nb, branch, sha), path.read_bytes())
+        logger.info(f"Seeded source {nb} -> s3://{SCRATCH_BUCKET}/{_src_key(nb, branch, sha)}")
+
+
+def _resolve_source(nb: str, branch: str, sha: str, workdir: Path) -> Path:
+    """Return a local path to the source notebook.
+
+    Uses the repo copy when present (local runs); otherwise downloads the
+    S3-seeded source into ``workdir`` (Coiled VM runs).
+    """
+    local = REPO_ROOT / nb
+    if local.exists():
+        return local
+    dest = workdir / Path(nb).name
+    result = obs.get(_store(), _src_key(nb, branch, sha))
+    dest.write_bytes(bytes(result.bytes()))
+    logger.info(f"Downloaded seeded source {nb} from S3")
+    return dest
 
 
 def run_notebooks(
@@ -75,21 +116,28 @@ def run_notebooks(
     notebooks: list[str] | None = None,
     upload: bool = True,
 ) -> list[tuple[str, str | None]]:
-    """Execute each notebook in place at ``branch``; optionally upload to S3.
+    """Execute each notebook at ``branch``; optionally upload the executed copy.
 
     Returns ``(notebook, s3_uri | None)`` pairs.
     """
     notebooks = notebooks or PILOT_NOTEBOOKS
     sha = _git_sha()
+    store = _store() if upload else None
     results: list[tuple[str, str | None]] = []
-    for nb in notebooks:
-        path = REPO_ROOT / nb
-        logger.info(f"Executing {nb} at branch {branch}")
-        pm.execute_notebook(str(path), str(path), parameters={"branch": branch})
-        uri = _upload(path, nb, branch, sha) if upload else None
-        if uri:
-            logger.info(f"Uploaded {nb} -> {uri}")
-        results.append((nb, uri))
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp)
+        for nb in notebooks:
+            src = _resolve_source(nb, branch, sha, workdir)
+            out = workdir / f"executed_{Path(nb).name}"
+            logger.info(f"Executing {nb} at branch {branch}")
+            pm.execute_notebook(str(src), str(out), parameters={"branch": branch})
+            uri = None
+            if upload:
+                key = _out_key(nb, branch, sha)
+                obs.put(store, key, out.read_bytes())
+                uri = f"s3://{SCRATCH_BUCKET}/{key}"
+                logger.info(f"Uploaded executed {nb} -> {uri}")
+            results.append((nb, uri))
     return results
 
 

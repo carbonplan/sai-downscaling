@@ -11,6 +11,7 @@ import itertools
 import json
 import logging
 import os
+import re
 from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
@@ -1433,16 +1434,20 @@ def qaqc_notebooks(
 
     import coiled
 
-    from srm.qaqc_notebooks import _git_sha
+    from srm.qaqc_notebooks import _git_sha, seed_sources
 
     # Resolve the SHA once here so the VM uploads to the same S3 prefix the CI
     # runner will download from (the VM may not be a git checkout).
     sha = _git_sha()
+    # Seed source notebooks to S3 -- the Coiled VM has the srm wheel but not the
+    # repo's notebooks/ tree, so it downloads them from here.
+    seed_sources(notebooks, branch, sha)
     command = ["python", "-m", "srm.qaqc_notebooks"]
     task_var_dicts = [
         {"QAQC_BRANCH": branch, "QAQC_NOTEBOOKS": nb, "QAQC_SHA": sha} for nb in notebooks
     ]
-    job_name = f"qaqc-{branch.replace('/', '-')}"
+    safe_branch = re.sub(r"[^A-Za-z0-9_-]", "-", branch)
+    job_name = f"qaqc-{safe_branch}"
 
     job_result = coiled.batch.run(
         command=command,

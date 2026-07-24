@@ -48,7 +48,7 @@ jobs:
               run: |
                   SHA7="${GITHUB_SHA:0:7}"
                   aws s3 cp --recursive \
-                    "s3://carbonplan-scratch/srm/qaqc-notebooks/${BRANCH}/${SHA7}/" .
+                    "s3://carbonplan-scratch/srm/qaqc-notebooks/${BRANCH}/${SHA7}/out/" .
 
             - name: Open PR with rendered notebooks
               uses: peter-evans/create-pull-request@v7
