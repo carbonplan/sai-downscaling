@@ -361,6 +361,7 @@ def plot_cdf(obs, raw, ds1, var=None, ds2=None, title=None, xlabel=None):
     plt.legend()
     plt.tight_layout()
 
+
 def plot_cdf_by_location(
     debiased_downscaled,
     coarse_debiased,
@@ -482,6 +483,7 @@ def plot_cdf_by_location(
     fig.suptitle("CDF comparison by location", fontsize=16, y=1.01)
     plt.tight_layout()
     return fig
+
 
 locations = {
     "Cape Town": (-33.9221, 18.4231),
