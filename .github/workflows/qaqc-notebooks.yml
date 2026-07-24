@@ -1,0 +1,72 @@
+name: qaqc notebooks
+
+on:
+    workflow_dispatch:
+        inputs:
+            branch:
+                description: "Icechunk branch/tag to render against (e.g. v0.11.0)"
+                required: true
+                type: string
+            notebooks:
+                description: "Comma-separated repo-relative notebook paths (default: pilots)"
+                required: false
+                type: string
+                default: ""
+
+permissions:
+    id-token: write
+    contents: write
+    pull-requests: write
+
+jobs:
+    qaqc:
+        name: "QA/QC ${{ inputs.branch }}"
+        runs-on: ubuntu-latest
+        timeout-minutes: 240
+        steps:
+            - uses: actions/checkout@v7
+            - uses: ./.github/actions/setup
+
+            - name: Dispatch Coiled batch + render notebooks
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+                  BRANCH: ${{ inputs.branch }}
+                  NOTEBOOKS: ${{ inputs.notebooks }}
+              run: |
+                  NB_FLAGS=()
+                  if [ -n "$NOTEBOOKS" ]; then
+                    IFS=',' read -ra NBS <<< "$NOTEBOOKS"
+                    for n in "${NBS[@]}"; do
+                      NB_FLAGS+=(--notebook "$(echo "$n" | xargs)")
+                    done
+                  fi
+                  uv run bcsd qaqc-notebooks --branch "$BRANCH" "${NB_FLAGS[@]}"
+
+            - name: Download executed notebooks from S3
+              env:
+                  BRANCH: ${{ inputs.branch }}
+              run: |
+                  SHA7="${GITHUB_SHA:0:7}"
+                  aws s3 cp --recursive \
+                    "s3://carbonplan-scratch/srm/qaqc-notebooks/${BRANCH}/${SHA7}/" .
+
+            - name: Open PR with rendered notebooks
+              uses: peter-evans/create-pull-request@v7
+              with:
+                  branch: "qaqc/${{ inputs.branch }}-${{ github.run_id }}"
+                  title: "QA notebook run ${{ inputs.branch }}"
+                  commit-message: "QA notebook run ${{ inputs.branch }}"
+                  body: |
+                      Executed QA/QC notebooks rendered against icechunk branch
+                      `${{ inputs.branch }}` (source SHA ${{ github.sha }}).
+                  add-paths: |
+                      notebooks/QA_QC/**
+
+            - name: Job summary
+              if: always()
+              env:
+                  BRANCH: ${{ inputs.branch }}
+              run: |
+                  echo "### QA/QC notebooks" >> "$GITHUB_STEP_SUMMARY"
+                  echo "- branch: \`$BRANCH\`" >> "$GITHUB_STEP_SUMMARY"
+                  echo "- source SHA: \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"

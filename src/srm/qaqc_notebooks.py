@@ -39,7 +39,15 @@ S3_PREFIX = "srm/qaqc-notebooks"
 
 
 def _git_sha() -> str:
-    """Short git SHA of the current checkout, or ``"nogit"`` if unavailable."""
+    """Resolve the S3-prefix SHA.
+
+    Prefers ``QAQC_SHA`` then ``GITHUB_SHA`` so the dispatcher (CI runner) and the
+    Coiled VM agree on the upload/download location, since the VM may not be a git
+    checkout. Falls back to the local short SHA, or ``"nogit"``.
+    """
+    sha = os.environ.get("QAQC_SHA") or os.environ.get("GITHUB_SHA")
+    if sha:
+        return sha[:7]
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT, text=True
@@ -48,12 +56,16 @@ def _git_sha() -> str:
         return "nogit"
 
 
-def _upload(local: Path, branch: str, sha: str) -> str:
-    """Upload an executed notebook to S3 and return its ``s3://`` URI."""
+def _upload(local: Path, nb: str, branch: str, sha: str) -> str:
+    """Upload an executed notebook to S3 and return its ``s3://`` URI.
+
+    Keyed by the repo-relative notebook path so a caller can recursive-download
+    the prefix straight back onto the working tree.
+    """
     aws = get_aws_creds()
     region = aws.pop("region")
     store = from_url(f"s3://{SCRATCH_BUCKET}", region=region, **aws)
-    key = f"{S3_PREFIX}/{branch}/{sha}/{local.name}"
+    key = f"{S3_PREFIX}/{branch}/{sha}/{nb}"
     obs.put(store, key, local.read_bytes())
     return f"s3://{SCRATCH_BUCKET}/{key}"
 
@@ -74,7 +86,7 @@ def run_notebooks(
         path = REPO_ROOT / nb
         logger.info(f"Executing {nb} at branch {branch}")
         pm.execute_notebook(str(path), str(path), parameters={"branch": branch})
-        uri = _upload(path, branch, sha) if upload else None
+        uri = _upload(path, nb, branch, sha) if upload else None
         if uri:
             logger.info(f"Uploaded {nb} -> {uri}")
         results.append((nb, uri))
