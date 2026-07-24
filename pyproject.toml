@@ -99,12 +99,17 @@
         "sparse>=0.17.0",
     ]
 
+    qa-notebooks = [
+        "papermill>=2.6.0",
+    ]
+
     dev = [
         "gilknocker==0.4.1",
         "memory-profiler>=0.61.0",
         { include-group = "coiled-deploy" },
         { include-group = "input-data" },
         { include-group = "qa" },
+        { include-group = "qa-notebooks" },
         { include-group = "test" },
     ]
 
