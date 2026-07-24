@@ -9,6 +9,7 @@ import calendar
 import random
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import seaborn as sns
 import xarray as xr
@@ -411,15 +412,19 @@ def plot_cdf_by_location(
     model_series = [series for series in model_series if series["da"] is not None]
     obs_series = {
         "fine": dict(label="obs_fine", da=obs_fine, color="black", linestyle="-"),
-        "coarse": dict(label="obs_coarse", da=obs_coarse, color="grey", linestyle="-"),
+        "coarse": dict(label="obs_coarse", da=obs_coarse, color="dimgrey", linestyle="--"),
     }
     obs_series = {res: cfg for res, cfg in obs_series.items() if cfg["da"] is not None}
 
     names = list(locations.keys())
     nrows = int(np.ceil(len(names) / ncols))
-    fig, axarr = plt.subplots(nrows=nrows, ncols=ncols, figsize=(4 * ncols, 3.5 * nrows))
+    all_series = [*model_series, *obs_series.values()]
+    n_series = len(all_series)
+    # stats live under each panel, so reserve vertical room proportional to series count
+    row_height = 3.5 + 0.16 * n_series
+    fig, axarr = plt.subplots(nrows=nrows, ncols=ncols, figsize=(4 * ncols, row_height * nrows))
     axarr = np.atleast_1d(axarr).ravel()
-    n_series = len(model_series) + len(obs_series)
+    label_width = max(len(s["label"]) for s in all_series)
 
     for ax, name in zip(axarr, names):
         lat, lon = locations[name]
@@ -429,7 +434,7 @@ def plot_cdf_by_location(
 
         stats_lines = []
         all_vals = []
-        for series in [*model_series, *obs_series.values()]:
+        for series in all_series:
             vals = _prep(series["da"], lat, lon)
             all_vals.append(vals)
             for target_ax in (ax, ax_inset):
@@ -441,16 +446,15 @@ def plot_cdf_by_location(
                     linestyle=series["linestyle"],
                     cumulative=True,
                 )
-            label = series["label"]
             dry_pct = 100 * np.mean(vals == 0)
-            line = f"{label}: dry_days={dry_pct:.1f}%"
+            line = f"{series['label']:<{label_width}}  dry={dry_pct:5.1f}%"
             resolution = series.get("resolution")
             if resolution in obs_vals:
                 obs_mean = obs_vals[resolution].mean()
                 mean_bias = vals.mean() - obs_mean
                 pct_bias = 100 * mean_bias / obs_mean
-                line += f", bias={mean_bias:.2e}, %bias={pct_bias:.2f}%"
-            stats_lines.append(line)
+                line += f"  bias={mean_bias:+.2e}  %bias={pct_bias:+7.2f}%"
+            stats_lines.append((line, series["color"]))
 
         zoom_lo = min(np.percentile(v, 99) for v in all_vals)
         zoom_hi = max(v.max() for v in all_vals)
@@ -460,17 +464,28 @@ def plot_cdf_by_location(
         ax_inset.set_ylabel("")
         ax_inset.set_title("top 1%", fontsize=6)
         ax_inset.tick_params(labelsize=6)
+        ax_inset.xaxis.set_major_locator(mticker.MaxNLocator(3, prune="upper"))
+        ax_inset.ticklabel_format(axis="x", style="sci", scilimits=(0, 0))
+        ax_inset.xaxis.get_offset_text().set_fontsize(5)
 
         ax.set_title(name, fontsize=10)
         ax.set_xlabel(var or "")
         ax.set_ylabel("")
-        if stats_lines:
+        # keep x tick labels from colliding: few ticks, shared sci-notation offset
+        ax.xaxis.set_major_locator(mticker.MaxNLocator(4, prune="upper"))
+        ax.ticklabel_format(axis="x", style="sci", scilimits=(0, 0))
+        ax.xaxis.get_offset_text().set_fontsize(7)
+
+        # stats below the axes, one colored row per series, so nothing overlaps the curves
+        for i, (line, color) in enumerate(stats_lines):
             ax.text(
-                0.02,
-                0.98,
-                "\n".join(stats_lines),
+                0.0,
+                -0.30 - 0.07 * i,
+                line,
                 transform=ax.transAxes,
-                fontsize=7,
+                fontsize=6,
+                family="monospace",
+                color=color,
                 va="top",
                 ha="left",
             )
@@ -482,6 +497,8 @@ def plot_cdf_by_location(
     fig.legend(handles, labels, loc="lower center", ncol=n_series, bbox_to_anchor=(0.5, -0.02))
     fig.suptitle("CDF comparison by location", fontsize=16, y=1.01)
     plt.tight_layout()
+    # tight_layout ignores the stats text drawn outside the axes; open up the rows for it
+    fig.subplots_adjust(hspace=0.35 + 0.09 * n_series)
     return fig
 
 
