@@ -1400,5 +1400,71 @@ def validate_output(
         raise typer.Exit(1)
 
 
+@app.command()
+def qaqc_notebooks(
+    branch: str = typer.Option(..., "--branch", help="Icechunk branch/tag to render against."),
+    notebook: list[str] | None = typer.Option(
+        None, "--notebook", help="Repo-relative notebook path (repeatable). Default: pilots."
+    ),
+    use_coiled: bool = typer.Option(
+        True, "--coiled/--no-coiled", help="Dispatch a Coiled batch (one VM per notebook)."
+    ),
+    vm_type: str = typer.Option("m8gn.8xlarge", "--vm-type", help="Coiled batch VM type."),
+) -> None:
+    """Render QA/QC notebooks against an output store at ``branch`` via papermill.
+
+    Executes each notebook in place (keeping rendered cells) and uploads the executed
+    ``.ipynb`` to ``s3://carbonplan-scratch/srm/qaqc-notebooks/<branch>/<sha>/``.
+
+    By default dispatches a Coiled batch job (one VM per notebook, matching the manual
+    fat-VM flow); ``--no-coiled`` runs locally.
+
+    local:  `uv run bcsd qaqc-notebooks --branch v0.11.0 --no-coiled`
+    coiled: `uv run bcsd qaqc-notebooks --branch v0.11.0`
+    """
+    from srm.qaqc_notebooks import PILOT_NOTEBOOKS, run_notebooks
+
+    notebooks = notebook or PILOT_NOTEBOOKS
+
+    if not use_coiled:
+        for nb, uri in run_notebooks(branch, notebooks):
+            logger.info(f"Rendered {nb} -> {uri}")
+        return
+
+    import coiled
+
+    command = ["python", "-m", "srm.qaqc_notebooks"]
+    task_var_dicts = [{"QAQC_BRANCH": branch, "QAQC_NOTEBOOKS": nb} for nb in notebooks]
+    job_name = f"qaqc-{branch.replace('/', '-')}"
+
+    job_result = coiled.batch.run(
+        command=command,
+        name=job_name,
+        vm_type=[vm_type],
+        scheduler_vm_type=[vm_type],
+        region="us-west-2",
+        map_over_task_var_dicts=task_var_dicts,
+        forward_aws_credentials=True,
+        spot_policy="on-demand",
+        logger=logger,
+        tag={"Project": "SRM"},
+        disk_size="100GB",
+    )
+    job_id = job_result["job_id"]
+    logger.info(f"→ Submitted Coiled batch job {job_id} with {len(notebooks)} notebook(s)")
+    final_state = coiled.batch.wait_for_job_done(job_id)
+    logger.info(f"Batch job {job_id} finished with state: {final_state}")
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a") as f:
+            f.write(
+                f"### QA/QC notebooks\n\n"
+                f"- branch: `{branch}`\n"
+                f"- job: `{job_id}` (state: {final_state})\n"
+                f"- notebooks: {', '.join(f'`{n}`' for n in notebooks)}\n"
+            )
+
+
 if __name__ == "__main__":
     app()
