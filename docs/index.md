@@ -53,6 +53,7 @@ explanation/scientific-approach
 explanation/pipeline-architecture
 explanation/snapshot-testing
 explanation/qa-qc/tas-tasmax-tasmin-plausible-value-check
+explanation/qa-qc/tas-tasmax-tasmin-integrity-checks
 ```
 
 ```{toctree}
