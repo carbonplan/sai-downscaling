@@ -64,6 +64,8 @@ def _mock_fit_historical_compute():
         patch("srm.pipeline.xr.DataArray", return_value=MagicMock()),
         patch("srm.pipeline.rechunk"),
         patch("srm.pipeline.downscale_from_coarse"),
+        # MagicMock stand-ins are not arrays; these tests assert wiring, not data
+        patch("srm.pipeline.assert_no_nans"),
         patch("srm.pipeline.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
@@ -89,6 +91,8 @@ def _mock_transform_scenario_compute():
         patch("srm.pipeline.detrend"),
         patch("srm.pipeline.retrend"),
         patch("srm.pipeline.downscale_from_coarse"),
+        # MagicMock stand-ins are not arrays; these tests assert wiring, not data
+        patch("srm.pipeline.assert_no_nans"),
         patch("srm.pipeline.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
