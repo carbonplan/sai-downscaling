@@ -3,7 +3,8 @@
         "cartopy>=0.25.0",
         "cftime>=1.6.5",
         "cloudpathlib>=0.23.0",
-        "dask[complete]>=2025.12.0",
+        "dask-array>=0.7.1",
+        "dask[complete]>=2026.7.1",
         "distributed>=2025.12.0",
         "flox>=0.11.1",
         "frisky>=0.7",
@@ -23,7 +24,7 @@
         "tabulate>=0.9.0",
         "typer>=0.21.2",
         "xarray-regrid>=0.4.2",
-        "xarray[accel]>=2025.12.0",
+        "xarray[accel]>=2026.7.0",
         "zarr>=3.1.5",
 ]
     description = "SRM"
