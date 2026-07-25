@@ -18,3 +18,11 @@ repos:
     hooks:
       - id: check-yaml
       - id: end-of-file-fixer
+
+  - repo: local
+    hooks:
+      - id: no-cluster-tokens-in-nb
+        name: block cluster tokens in notebook outputs
+        entry: python scripts/check_nb_no_secrets.py
+        language: system
+        files: \.ipynb$
