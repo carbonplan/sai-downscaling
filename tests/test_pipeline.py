@@ -2128,3 +2128,129 @@ class TestDetrendScenarioBridge:
         mock_stitch.assert_not_called()
         assert out is model_scenario
         assert trend is None
+
+
+def _spatial_daily_da(start: str, end: str, value: float = 1.0) -> xr.DataArray:
+    """3D (time, lat, lon) daily series on a tiny grid."""
+    times = pd.date_range(start, end, freq="D")
+    return xr.DataArray(
+        np.full((len(times), 2, 2), value),
+        dims=["time", "lat", "lon"],
+        coords={"time": times, "lat": [0.0, 1.0], "lon": [10.0, 11.0]},
+        name="tas",
+    )
+
+
+class TestScenarioHistoricalSlice:
+    """``_load_scenario_data`` must slice model_hist to the training period (#518).
+
+    It previously sliced through ``predict_period_start - 1``, which only coincides with
+    ``train_period_end`` when the prediction period begins the year after training ends.
+    Every other case silently widened the bias-correction reference pool beyond the
+    configured training window.
+    """
+
+    @staticmethod
+    def _load(pipeline, hist_end: str = "2015-01-16"):
+        member = pipeline.config.ensemble_member
+        obs = _spatial_daily_da("1978-01-01", "2014-12-31").to_dataset(name="tas")
+        with (
+            patch.object(
+                BCSDPipeline,
+                "_open_from_icechunk",
+                return_value=obs,
+            ),
+            patch(
+                "srm.pipeline.get_obs", return_value=_spatial_daily_da("1978-01-01", "2014-12-31")
+            ),
+            patch(
+                "srm.pipeline.get_historical_experiment",
+                return_value=_spatial_daily_da("1978-01-01", hist_end),
+            ),
+            patch(
+                "srm.pipeline.get_experiment",
+                return_value=_spatial_daily_da("2015-01-01", "2060-12-31").expand_dims(
+                    ensemble_member=[member]
+                ),
+            ),
+            patch.object(
+                BCSDPipeline,
+                "_load_ssp245_bridge",
+                return_value=_spatial_daily_da("2015-01-01", "2060-12-31"),
+            ),
+            patch.object(
+                pipeline.cache,
+                "check_dependencies",
+                return_value={"obs_regridded": (True, MagicMock())},
+            ),
+        ):
+            return pipeline._load_scenario_data()
+
+    def test_sai_scenario_stops_at_train_period_end(self, pipeline_options):
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="001",
+            scenario="G6-1.5K",
+            train_period_end=2014,
+            predict_period_start=2035,
+            predict_period_end=2060,
+        )
+        _, _, model_hist, _, _ = self._load(BCSDPipeline(config, pipeline_options))
+
+        assert int(model_hist["time"].dt.year.max()) == 2014
+        # The fifteen all-NaN days after 2015-01-01 must not be reachable at all.
+        assert model_hist["time"].max() < np.datetime64("2015-01-01")
+
+    def test_training_window_shorter_than_scenario_start_is_respected(self, pipeline_options):
+        # configs/qa/obs-comparison/* pair train_period_end 2008 with a 2015 scenario start;
+        # the old slice leaked six extra years into the reference pool.
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
+            scenario="SSP245",
+            train_period_end=2008,
+            predict_period_start=2015,
+            predict_period_end=2060,
+        )
+        _, _, model_hist, _, _ = self._load(BCSDPipeline(config, pipeline_options))
+
+        assert int(model_hist["time"].dt.year.max()) == 2008
+
+    def test_matches_the_historical_stage_loader(self, pipeline_options):
+        """_load_gcm_obs already slices correctly; the two loaders must agree."""
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="001",
+            scenario="G6-1.5K",
+            train_period_end=2014,
+            predict_period_start=2035,
+            predict_period_end=2060,
+        )
+        pipeline = BCSDPipeline(config, pipeline_options)
+        _, _, scenario_hist, _, _ = self._load(pipeline)
+
+        obs = _spatial_daily_da("1978-01-01", "2014-12-31").to_dataset(name="tas")
+        with (
+            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=obs),
+            patch(
+                "srm.pipeline.get_obs",
+                return_value=_spatial_daily_da("1978-01-01", "2014-12-31"),
+            ),
+            patch(
+                "srm.pipeline.get_historical_experiment",
+                return_value=_spatial_daily_da("1978-01-01", "2015-01-16"),
+            ),
+            patch.object(
+                pipeline.cache,
+                "check_dependencies",
+                return_value={"obs_regridded": (True, MagicMock())},
+            ),
+        ):
+            _, _, historical_stage_hist = pipeline._load_gcm_obs()
+
+        np.testing.assert_array_equal(
+            scenario_hist["time"].values, historical_stage_hist["time"].values
+        )

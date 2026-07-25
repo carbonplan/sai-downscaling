@@ -1224,11 +1224,11 @@ class BCSDPipeline:
         train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
         obs_coarse = obs_coarse.sel(time=train_slice)
         obs_fine = obs_fine.sel(time=train_slice)
-        model_hist = model_hist.sel(
-            time=slice(
-                f"{self.config.train_period_start}", f"{self.config.predict_period_start - 1}"
-            )
-        )
+        # Slice to the training period, matching _load_gcm_obs. Slicing through
+        # predict_period_start - 1 instead only coincides with train_period_end when the
+        # prediction period starts the year after training ends, and otherwise widens the
+        # quantile-mapping reference pool beyond the configured window (issue #518).
+        model_hist = model_hist.sel(time=train_slice)
         model_scenario = model_scenario.sel(
             time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
         )
