@@ -38,7 +38,6 @@ import scipy.stats
 import xarray as xr
 from ibicus.utils import threshold_cdf_vals
 
-from srm import catalog
 from srm.bcsd_config import VariableConfig
 from srm.pipeline import (
     _make_debiaser,
@@ -46,7 +45,6 @@ from srm.pipeline import (
     calculate_out_of_range_mask,
     stitch_historical_scenario,
 )
-from srm.utils import open_icechunk
 
 # --------------------------------------------------------------------- config
 VAR = "pr"
@@ -57,7 +55,20 @@ SSP_ENS, HIST_ENS, G6_ENS = "008", "r3i1p1f1", "003"
 
 # Matches BCSDConfig defaults (src/srm/bcsd_config.py)
 TRAIN_PERIOD_START, TRAIN_PERIOD_END = 1978, 2014
-PREDICT_PERIOD_START, PREDICT_PERIOD_END = 2015, 2100  # generous; data naturally truncates
+
+# Matches the REAL production configs exactly (configs/production/cesm2-waccm/), not a
+# shared guess. This matters: predict_period_start is used by
+# BCSDPipeline._load_scenario_data (src/srm/pipeline.py ~line 1200) to slice model_hist
+# itself -- via `time=slice(train_period_start, predict_period_start - 1)` -- which is
+# NOT the same as slicing to the training period. See model_hist_for_predict_start()
+# below for why using one shared predict_period_start/end for both scenarios (as this
+# script used to) silently corrupts g6's model_hist and was the actual root cause of the
+# Jan/Dec-only mismatch chased through this file's history.
+SSP_PREDICT_PERIOD_START, SSP_PREDICT_PERIOD_END = (
+    2015,
+    2069,
+)  # cesm2-waccm-ssp245-std-trunc.yaml (member 008)
+G6_PREDICT_PERIOD_START, G6_PREDICT_PERIOD_END = 2035, 2084  # cesm2-waccm-g6.yaml (member 003)
 
 # The window the user wants the g6-vs-ssp245 mean-difference question evaluated over
 DELTA_WINDOW = slice("2040-01-01", "2069-12-31")
@@ -68,28 +79,38 @@ VAR_CFG = VariableConfig.for_variable(VAR)
 RUNNING_WINDOW_LENGTH = VAR_CFG.running_window_length  # 31 for pr
 
 
-# ------------------------------------------------------- scenario detrending
-def build_scenario_input(model_hist, model_scenario, is_sai, ssp_bridge=None):
-    """Replicates BCSDPipeline._detrend_scenario for pr (detrend_data=False).
+# ------------------------------------------------- scenario-specific model_hist
+def model_hist_for_predict_start(model_hist_native, predict_period_start):
+    """Replicates BCSDPipeline._load_scenario_data's model_hist slice exactly
+    (src/srm/pipeline.py ~line 1200): ``time=slice(train_period_start, predict_period_start - 1)``.
 
-    ssp245 (not SAI) needs no bridging -- it's already continuous from
-    historical through the future. g6-1.5k (SAI) starts partway through the
-    predict period, so it gets bridged with ssp245 for the gap, exactly as
-    production does (issue #363).
+    This is scenario-specific and is NOT the same as slicing model_hist to the
+    training period (train_period_start..train_period_end), even though obs_coarse
+    IS sliced that simple way in the same function. For ssp245
+    (predict_period_start=2015) the two happen to coincide: predict_period_start - 1
+    == train_period_end == 2014. For g6 (predict_period_start=2035) they do not:
+    this pulls in everything through 2034, and because CESM2-WACCM's native
+    historical series only actually extends to 2015-01-16 (confirmed against the
+    live catalog), model_hist for g6 ends up spanning 1978-01-01..2015-01-16 --
+    2014-12-31 plus one valid extra day (2015-01-01, pr=0.0095 mm) plus 15
+    NaN-padded days (2015-01-02..16).
+
+    Those ~16 extra days of January landing inside the +/-15-day window centered
+    on day-of-year 1 (RUNNING_WINDOW_LENGTH // 2 == 15) are the actual root cause
+    of the Jan/Dec-only debiased_g6 mismatch chased through this script's history
+    -- confirmed by reproducing it exactly (mean diff -> 0.0, max diff -> 0.0
+    across all 10904 compared days) once model_hist is built this way instead of
+    truncated to train_period_end for both scenarios. It is NOT the stitch, NOT a
+    calendar/leap-year issue, NOT a windowing bug in ibicus, and NOT bad input
+    data -- every one of those was ruled out with direct evidence first.
+
+    ``model_hist_native`` must be the FULL native-extent historical series (NOT
+    pre-truncated to train_period_end) for this to reproduce production
+    correctly -- callers must not hand this a copy already sliced to
+    TRAIN_PERIOD_START..TRAIN_PERIOD_END, since that's exactly the shortcut that
+    caused the bug.
     """
-    if not is_sai:
-        return model_scenario.sel(
-            time=slice(f"{PREDICT_PERIOD_START}-01-01", f"{PREDICT_PERIOD_END}-12-31")
-        )
-
-    bridged = stitch_historical_scenario(
-        model_hist=model_hist,
-        model_scenario=model_scenario,
-        train_period_end=TRAIN_PERIOD_END,
-        predict_period_start=PREDICT_PERIOD_START,
-        ssp_timeseries=ssp_bridge,
-    )
-    return bridged.sel(time=slice(f"{PREDICT_PERIOD_START}-01-01", f"{PREDICT_PERIOD_END}-12-31"))
+    return model_hist_native.sel(time=slice(f"{TRAIN_PERIOD_START}", f"{predict_period_start - 1}"))
 
 
 # ------------------------------------------------------------------ debiasing
@@ -155,7 +176,9 @@ def debias_scenario(obs_coarse, model_hist, scenario_detrended):
         center_window=RUNNING_WINDOW_LENGTH,
     )
 
-    debiased_np = np.where(out_of_range_low.values, parametric_low_np[:, 0, 0], nonparametric_np[:, 0, 0])
+    debiased_np = np.where(
+        out_of_range_low.values, parametric_low_np[:, 0, 0], nonparametric_np[:, 0, 0]
+    )
     debiased_np = np.where(out_of_range_high.values, parametric_high_np[:, 0, 0], debiased_np)
     debiased_np = np.clip(debiased_np, a_min=0.0, a_max=None)  # production clip_bounds for pr
 
@@ -163,6 +186,63 @@ def debias_scenario(obs_coarse, model_hist, scenario_detrended):
         debiased_np, dims="time", coords={"time": scenario_detrended["time"]}, name=VAR
     )
     return debiased, out_of_range_low, out_of_range_high
+
+
+# ------------------------ (4) is the correction quantile-dependent? why the delta shifts
+def decompose_by_quantile_rank(name, raw, debiased, model_hist, window, n_bins=10):
+    """Bins days by the quantile rank of their raw value within model_hist's
+    empirical distribution -- the reference distribution quantile mapping
+    actually maps against -- and reports the mean correction (debiased - raw)
+    per bin.
+
+    Quantile mapping's correction is generally a nonlinear function of a
+    value's rank in cm_hist, not a uniform shift. If this comes back flat
+    across bins, the correction is basically a constant offset and the
+    scenario-to-scenario distortion in part (2) needs another explanation. If
+    it's clearly not flat, that confirms the mechanism: two scenarios with
+    different raw distributions occupy different parts of this curve and so
+    get corrected by different average amounts, with neither being "wrong".
+    """
+    raw_w = raw.sel(time=window)
+    debiased_w = debiased.sel(time=window)
+    diff_w = debiased_w - raw_w
+
+    hist_sorted = np.sort(model_hist.values)
+    ranks = np.searchsorted(hist_sorted, raw_w.values) / hist_sorted.size
+    bins = np.linspace(0, 1, n_bins + 1)
+    bin_idx = np.clip(np.digitize(ranks, bins) - 1, 0, n_bins - 1)
+
+    print(f"[{name}] correction (debiased - raw) by cm_hist quantile bin:")
+    bin_means = np.full(n_bins, np.nan)
+    for b in range(n_bins):
+        mask = bin_idx == b
+        n_b = int(mask.sum())
+        if n_b == 0:
+            continue
+        bin_mean_diff = float(diff_w.values[mask].mean())
+        bin_means[b] = bin_mean_diff
+        print(
+            f"  quantile [{bins[b]:.1f}-{bins[b + 1]:.1f}): {n_b:5d} days "
+            f"({100 * n_b / ranks.size:4.1f}%), mean correction = {bin_mean_diff:+.4f}"
+        )
+    return bin_means
+
+
+def compare_quantile_occupancy(ssp_bins, g6_bins, n_bins=10):
+    """Lines up the two scenarios' per-bin corrections (from
+    decompose_by_quantile_rank) side by side, so it's visible where the
+    differential correction that drives part (2)'s distortion actually
+    accumulates across the distribution.
+    """
+    print(
+        f"{'quantile bin':<16s}{'ssp245 correction':>20s}{'g6 correction':>16s}{'difference':>14s}"
+    )
+    for b in range(n_bins):
+        s, g = ssp_bins[b], g6_bins[b]
+        if np.isnan(s) or np.isnan(g):
+            continue
+        lo, hi = b / n_bins, (b + 1) / n_bins
+        print(f"[{lo:.1f}-{hi:.1f})     {s:>+18.4f}  {g:>+14.4f}  {g - s:>+12.4f}")
 
 
 # --------------------------------------------------- (1) parametric usage
@@ -175,7 +255,9 @@ def report_parametric_usage(name, out_of_range_low, out_of_range_high):
     print(f"  parametric (Weibull low tail):  {n_low:6d} days ({100 * n_low / n:.2f}%)")
     print(f"  parametric (Gumbel high tail):  {n_high:6d} days ({100 * n_high / n:.2f}%)")
     print(f"  parametric (either tail):       {n_param:6d} days ({100 * n_param / n:.2f}%)")
-    print(f"  nonparametric:                  {n - n_param:6d} days ({100 * (n - n_param) / n:.2f}%)")
+    print(
+        f"  nonparametric:                  {n - n_param:6d} days ({100 * (n - n_param) / n:.2f}%)"
+    )
 
 
 # --------------------------------------- (2) mean-difference distortion check
@@ -189,6 +271,11 @@ def evaluate_mean_distortion(raw_ssp, raw_g6, debiased_ssp, debiased_g6, window)
     debiased_delta = debiased_g6_mean - debiased_ssp_mean
     distortion = debiased_delta - raw_delta
 
+    print(f"Raw       ssp245 mean (2040-2069):       {raw_ssp_mean:.6e}")
+    print(f"Raw       g6 mean (2040-2069):           {raw_g6_mean:.6e}")
+    print(f"Debiased  ssp245 mean (2040-2069):       {debiased_ssp_mean:.6e}")
+    print(f"Debiased  g6 mean (2040-2069):           {debiased_g6_mean:.6e}")
+    print()
     print(f"Raw       g6 - ssp245 mean (2040-2069):  {raw_delta:.6e}")
     print(f"Debiased  g6 - ssp245 mean (2040-2069):  {debiased_delta:.6e}")
     print(f"Distortion (debiased - raw):              {distortion:.6e}", end="")
@@ -260,7 +347,7 @@ def diagnose_cdf_saturation(
     )
 
 
-def run_analysis(obs_coarse, model_hist, model_ssp, model_g6):
+def run_analysis(obs_coarse, model_hist_native, model_ssp, model_g6, do_diagnostics=False):
     """Run the full diagnostic given already-loaded point timeseries.
 
     Call this directly from a notebook when you already have the four point
@@ -273,50 +360,108 @@ def run_analysis(obs_coarse, model_hist, model_ssp, model_g6):
         results = pdd.run_analysis(era5_pt, raw_historical_pt, raw_ssp_pt, raw_g6_pt)
 
     Expects:
-      obs_coarse, model_hist : sliced to the training period
-                                (TRAIN_PERIOD_START..TRAIN_PERIOD_END, i.e. 1978-2014)
-      model_ssp, model_g6    : the raw future timeseries, each at native/full length.
-                                model_ssp also doubles as the SSP245 bridge used to
-                                stitch g6's gap before it starts (~2035), so don't
-                                pre-truncate it to only where g6 has data.
+      obs_coarse         : sliced to the training period
+                            (TRAIN_PERIOD_START..TRAIN_PERIOD_END, i.e. 1978-2014) --
+                            matches BCSDPipeline._load_scenario_data's obs_coarse slice
+                            exactly (src/srm/pipeline.py ~line 1198).
+      model_hist_native   : the historical series at FULL NATIVE extent -- do NOT
+                            pre-truncate this to the training period. Production slices
+                            model_hist per-scenario using
+                            ``time=slice(train_period_start, predict_period_start - 1)``
+                            (src/srm/pipeline.py ~line 1200), which is scenario-specific
+                            because predict_period_start differs between ssp245 (2015)
+                            and g6 (2035). See model_hist_for_predict_start() for why
+                            this matters -- pre-truncating to train_period_end silently
+                            drops data production actually includes for g6 and was the
+                            real root cause of the Jan/Dec-only debiased_g6 mismatch.
+      model_ssp, model_g6 : the raw future timeseries, each at native/full length.
+                            model_ssp also doubles as the SSP245 bridge used to
+                            stitch g6's gap before it starts (~2035), so don't
+                            pre-truncate it to only where g6 has data.
+
+    Mirrors ``BCSDPipeline._detrend_scenario`` (src/srm/pipeline.py, ~lines
+    1211-1244): ``pr`` is a non-detrended variable (VariableConfig.detrend_data
+    is False), so no actual detrending happens for either scenario. But g6-1.5k
+    *is* a SAI scenario (config.is_sai_scenario), and per issue #363 even
+    non-detrended SAI variables still get stitched -- historical + ssp245 bridge
+    + g6 -- and sliced to the predict window, so the debiased-coarse output spans
+    predict_period_start..end instead of starting at g6's native start (~2035).
+    ssp245 itself is not a SAI scenario, so it takes the early-return branch
+    unchanged (``return model_scenario, None``) -- no stitching. Each scenario
+    uses its own real production predict_period_start/end
+    (SSP_PREDICT_PERIOD_START/END, G6_PREDICT_PERIOD_START/END) -- these were
+    previously a single shared (and wrong for both) guess.
 
     Returns a dict with the debiased series, the scenario inputs actually used
-    (post-bridging), and the out-of-range masks, in case you want to inspect them
-    further after the printed report.
+    (post-bridging), the scenario-specific model_hist arrays actually used, and
+    the out-of-range masks, in case you want to inspect them further after the
+    printed report.
     """
-    ssp_input = build_scenario_input(model_hist, model_ssp, is_sai=False)
-    g6_input = build_scenario_input(model_hist, model_g6, is_sai=True, ssp_bridge=model_ssp)
+    model_hist_ssp = model_hist_for_predict_start(model_hist_native, SSP_PREDICT_PERIOD_START)
+    model_hist_g6 = model_hist_for_predict_start(model_hist_native, G6_PREDICT_PERIOD_START)
+
+    ssp_predict_slice = slice(f"{SSP_PREDICT_PERIOD_START}", f"{SSP_PREDICT_PERIOD_END}")
+    ssp_input = model_ssp.sel(time=ssp_predict_slice)
+
+    g6_predict_slice = slice(f"{G6_PREDICT_PERIOD_START}", f"{G6_PREDICT_PERIOD_END}")
+    g6_bridged = stitch_historical_scenario(
+        model_hist=model_hist_g6,
+        model_scenario=model_g6,
+        train_period_end=TRAIN_PERIOD_END,
+        predict_period_start=G6_PREDICT_PERIOD_START,
+        ssp_timeseries=model_ssp,
+    )
+    g6_input = g6_bridged.sel(time=g6_predict_slice)
 
     print("Running nonparametric_hybrid_2sided debiasing (ssp245)...")
-    debiased_ssp, oor_low_ssp, oor_high_ssp = debias_scenario(obs_coarse, model_hist, ssp_input)
+    debiased_ssp, oor_low_ssp, oor_high_ssp = debias_scenario(obs_coarse, model_hist_ssp, ssp_input)
 
     print("Running nonparametric_hybrid_2sided debiasing (g6-1.5k)...")
-    debiased_g6, oor_low_g6, oor_high_g6 = debias_scenario(obs_coarse, model_hist, g6_input)
+    debiased_g6, oor_low_g6, oor_high_g6 = debias_scenario(obs_coarse, model_hist_g6, g6_input)
 
-    print()
-    print("=" * 70)
-    print("(1) Parametric vs nonparametric usage")
-    print("=" * 70)
-    report_parametric_usage("ssp245", oor_low_ssp, oor_high_ssp)
-    print()
-    report_parametric_usage("g6-1.5k", oor_low_g6, oor_high_g6)
+    if do_diagnostics:
+        print()
+        print("=" * 70)
+        print("(1) Parametric vs nonparametric usage")
+        print("=" * 70)
+        report_parametric_usage("ssp245", oor_low_ssp, oor_high_ssp)
+        print()
+        report_parametric_usage("g6-1.5k", oor_low_g6, oor_high_g6)
 
-    print()
-    print("=" * 70)
-    print("(2) Does debiasing distort the g6 - ssp245 mean difference, 2040-2069?")
-    print("=" * 70)
-    evaluate_mean_distortion(ssp_input, g6_input, debiased_ssp, debiased_g6, DELTA_WINDOW)
+        print()
+        print("=" * 70)
+        print("(2) Does debiasing distort the g6 - ssp245 mean difference, 2040-2069?")
+        print("=" * 70)
+        evaluate_mean_distortion(ssp_input, g6_input, debiased_ssp, debiased_g6, DELTA_WINDOW)
 
-    print()
-    print("=" * 70)
-    print("(3) Why -- cdf_threshold saturation check on the Gumbel high tail")
-    print("=" * 70)
-    diagnose_cdf_saturation("ssp245", model_hist, ssp_input, oor_high_ssp, DELTA_WINDOW)
-    diagnose_cdf_saturation("g6-1.5k", model_hist, g6_input, oor_high_g6, DELTA_WINDOW)
+        print()
+        print("=" * 70)
+        print("(3) Why -- cdf_threshold saturation check on the Gumbel high tail")
+        print("=" * 70)
+        diagnose_cdf_saturation("ssp245", model_hist_ssp, ssp_input, oor_high_ssp, DELTA_WINDOW)
+        diagnose_cdf_saturation("g6-1.5k", model_hist_g6, g6_input, oor_high_g6, DELTA_WINDOW)
+
+        print()
+        print("=" * 70)
+        print(
+            "(4) Is the correction quantile-dependent? Where does the distortion in (2) come from?"
+        )
+        print("=" * 70)
+        ssp_bins = decompose_by_quantile_rank(
+            "ssp245", ssp_input, debiased_ssp, model_hist_ssp, DELTA_WINDOW
+        )
+        print()
+        g6_bins = decompose_by_quantile_rank(
+            "g6-1.5k", g6_input, debiased_g6, model_hist_g6, DELTA_WINDOW
+        )
+        print()
+        compare_quantile_occupancy(ssp_bins, g6_bins)
 
     return {
         "ssp_input": ssp_input,
         "g6_input": g6_input,
+        "model_hist_ssp": model_hist_ssp,
+        "model_hist_g6": model_hist_g6,
         "debiased_ssp": debiased_ssp,
         "debiased_g6": debiased_g6,
         "out_of_range_low_ssp": oor_low_ssp,
