@@ -91,12 +91,11 @@ graph TB
     S1E -.-> S3A
     S2H -.-> S3B
     
-    style S1E fill:#90EE90
-    style S2H fill:#FFD700
-    style S3R fill:#FFD700
-    
-    classDef cacheNode fill:#90EE90,stroke:#228B22,stroke-width:2px
-    classDef outputNode fill:#FFD700,stroke:#FF8C00,stroke-width:2px
+    classDef cacheNode fill:#90EE90,stroke:#228B22,stroke-width:2px,color:#0f2417
+    classDef outputNode fill:#FFD700,stroke:#FF8C00,stroke-width:2px,color:#3d2b00
+
+    class S1E cacheNode
+    class S2H,S3R,S2FC,S3OC outputNode
 ```
 
 **Key points:**
