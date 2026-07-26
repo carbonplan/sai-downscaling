@@ -109,7 +109,7 @@ graph TB
 
 ## Derived variables: `tasmin`
 
-Daily minimum temperature is **not** bias-corrected directly. Bias-correcting `tasmax` and `tasmin` independently can leave the pair physically inconsistent, so the pipeline instead bias-corrects `tasmax` and the diurnal temperature range `dtr` (`= tasmax − tasmin`) and reconstructs `tasmin = tasmax − dtr` from their debiased-coarse outputs. This mirrors the NASA-NEX approach and is implemented in the dedicated stage variants `fit_historical_tasmin` and `transform_scenario_tasmin`, which read the `debiased_coarse` `tasmax` and `dtr` groups written by those stages (see [Managing the Cache](../how-to/manage-cache.md)). The reconstruction helper (`derive_tasmin`) requires its two inputs to share an identical time axis and raises if they do not, so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result (issue #363).
+Daily minimum temperature is **not** bias-corrected directly. Bias-correcting `tasmax` and `tasmin` independently can leave the pair physically inconsistent, so the pipeline instead bias-corrects `tasmax` and the diurnal temperature range `dtr` (`= tasmax − tasmin`) and reconstructs `tasmin = tasmax − dtr` from their debiased-coarse outputs. This mirrors the approach used by NASA's [NEX-GDDP-CMIP6](https://www.nccs.nasa.gov/data-collections/nex-gddp-cmip6/) dataset (NASA-NEX for short) and is implemented in the dedicated stage variants `fit_historical_tasmin` and `transform_scenario_tasmin`, which read the `debiased_coarse` `tasmax` and `dtr` groups written by those stages (see [Managing the Cache](../how-to/manage-cache.md)). The reconstruction helper (`derive_tasmin`) requires its two inputs to share an identical time axis and raises if they do not, so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result (issue #363).
 
 `tasmax` and `tasmin` are still spatially disaggregated **independently**, and that final interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step (`reconcile_temperature_extremes`) closes this gap: once both fine fields exist it swaps the offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields (issue #331). The swap is NaN-safe and structurally monotone, and the `bcsd validate-output` gate blocks any run whose stored output still contains an inversion.
 
@@ -198,7 +198,7 @@ sequenceDiagram
 
 1. **isolation**: each task runs on its own VM with dedicated resources
 2. **parallelization**: multiple ensemble members process simultaneously
-3. **auto-scaling**: VMs spin up on-demand and shut down when done
+3. **on-demand compute**: VMs are provisioned per task and torn down when it finishes, so nothing runs idle between batches
 4. **fault tolerance**: failed tasks can be retried independently
 5. **reproducibility**: configuration serialized and passed to each task
 
@@ -211,6 +211,11 @@ VM types are selected per pipeline stage to match resource requirements:
 | `prepare_observations` | `r8g.4xlarge` | Light data processing |
 | `fit_historical` | `r8g.12xlarge` | Memory-intensive QM fitting |
 | `transform_scenario` | `r8g.24xlarge` | 768GB RAM, 96 vCPUs, AWS Graviton |
+
+Instance sizing is driven by `ibicus`, which operates on eager NumPy arrays rather than dask. Before
+quantile mapping runs, `transform_scenario` must hold the coarse observations, the historical
+training data, and the full detrended scenario in memory simultaneously, which is what puts it on a
+768GB `r8g.24xlarge`.
 
 - **region**: `us-west-2` (same as S3 data)
 - **keepalive**: VMs stay alive briefly after task completion for follow-up work
@@ -226,11 +231,11 @@ The CLI is built on several key components:
    - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 
 2. **ArtifactCache** ([src/srm/cache.py](../../src/srm/cache.py))
-   - S3-based cache with fsspec backend
+   - icechunk-backed store on S3; every read and write goes through icechunk, with commit-based write verification
+   - existence checks walk icechunk commit history rather than listing S3 objects
+   - fsspec is confined to the recursive `.icechunk` globs in `clear_cache` and `list_artifacts`, never the data path
    - dependency tracking and validation
    - environment and spatial subset awareness
-   - icechunk format with commit-based write verification
-   - efficient prefix-based listing (not recursive globbing)
 
 3. **BCSDPipeline** ([src/srm/pipeline.py](../../src/srm/pipeline.py))
    - three-stage API
