@@ -21,7 +21,7 @@ variables, and ensemble members for a single `GCM/obs-dataset/spatial-subset` co
 as Zarr groups. This guide shows how to construct the correct store path, open a session on the
 right branch, and load the data into Xarray.
 
-## Anatomy of an output store
+## Output data store structure
 
 Output stores live under `s3://carbonplan-srm/output/` and follow this path pattern:
 
@@ -74,9 +74,7 @@ corresponding release tag as the branch name. Production releases are listed at
 
 The **current production release is branch `v0.12.0`** of the global CESM2-WACCM store at
 `s3://carbonplan-srm/output/production/CESM2-WACCM-ERA5-global.icechunk`. The examples below read
-from it anonymously — no AWS credentials are needed for the public production bucket. For
-authenticated access (for example to QA stores under `carbonplan-scratch`), replace
-`anonymous=True, region="us-west-2"` with `from_env=True`.
+from it anonymously — no AWS credentials are needed for the public production bucket. 
 
 ## Opening a single variable/member/scenario
 
@@ -252,4 +250,4 @@ ds_scen_coarse = xr.open_zarr(
 
 - [Pipeline architecture](explanation/pipeline-architecture.md) — how output stores are structured and written
 - [Run the pipeline](how-to/run-pipeline.md) — producing output data from scratch
-- [Input data catalog](input-data.md) — raw GCM, ERA5, and NASA-NEX input datasets
+- [Input data catalog](input-data.md) — GCM and observational (ERA5, GDEX-GMF) input datasets, plus NASA-NEX reference data
