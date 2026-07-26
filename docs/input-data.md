@@ -42,6 +42,8 @@ catalog.list()
 
 `Datatree` entries hold multiple scenarios as zarr group nodes within a single icechunk store.
 Calling `.to_xarray()` with no arguments returns the full `xr.DataTree`; passing a `group`
+`Datatree` entries hold multiple scenarios as Zarr group nodes within a single Icechunk store.
+Calling `.to_xarray()` with no arguments returns the full `xr.DataTree`; passing a `group`
 returns a flat `xr.Dataset` for that node only.
 
 ```{code-cell} python
