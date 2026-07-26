@@ -25,8 +25,8 @@ Output stores follow this path pattern:
 s3://{bucket}/{prefix}/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
 ```
 
-Production stores live under `s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/`. QA stores
-live under `s3://carbonplan-srm/output/`.
+Production stores live under `s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/`.
+
 
 | Component | Values | Example |
 | --- | --- | --- |
@@ -86,7 +86,7 @@ import xarray as xr
 
 storage = icechunk.s3_storage(
     bucket="us-west-2.opendata.source.coop",
-    prefix="carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk",
+    prefix="carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk",
     anonymous=True,
     region="us-west-2",
 )
@@ -115,7 +115,7 @@ import xarray as xr
 
 storage = icechunk.s3_storage(
     bucket="us-west-2.opendata.source.coop",
-    prefix="carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk",
+    prefix="carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk",
     anonymous=True,
     region="us-west-2",
 )
@@ -145,7 +145,7 @@ import xarray as xr
 
 storage = icechunk.s3_storage(
     bucket="us-west-2.opendata.source.coop",
-    prefix="carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk",
+    prefix="carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk",
     anonymous=True,
     region="us-west-2",
 )
@@ -222,7 +222,7 @@ import xarray as xr
 
 storage = icechunk.s3_storage(
     bucket="us-west-2.opendata.source.coop",
-    prefix="carbonplan/output/production/CESM2-WACCM-ERA5-global.icechunk",
+    prefix="carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk",
     anonymous=True,
     region="us-west-2",
 )
