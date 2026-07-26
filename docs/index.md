@@ -52,6 +52,8 @@ contributing
 explanation/scientific-approach
 explanation/pipeline-architecture
 explanation/snapshot-testing
+explanation/qa-qc/plausible-value-check
+explanation/qa-qc/output-integrity-checks
 ```
 
 ```{toctree}

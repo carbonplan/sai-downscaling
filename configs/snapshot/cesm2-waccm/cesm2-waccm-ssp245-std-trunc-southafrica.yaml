@@ -1,8 +1,9 @@
 # Snapshot proxy: CESM2-WACCM / SSP245 / standard variables / truncated member 008 / South Africa.
 # Mirrors configs/production/cesm2-waccm/cesm2-waccm-ssp245-std-trunc.yaml with SA bounds + qa env.
-# Member 008 is the std bridge for G6-1.5K/003; its SSP245 data ends 2070 (CMIP6 truncation of
-# members 006-010), so predict_period_end is clamped to 2070 to avoid downscaling past the valid
-# extent. Full-length member 003 lives in cesm2-waccm-ssp245-std-southafrica.yaml (2099).
+# Member 008 is the std bridge for G6-1.5K/003; its SSP245 data ends 2069-12-31 (CMIP6 truncation
+# of members 006-010; one stray non-NaN day at 2070-01-01, rest of 2070 is NaN), so
+# predict_period_end is clamped to 2069 to avoid downscaling past the valid extent.
+# Full-length member 003 lives in cesm2-waccm-ssp245-std-southafrica.yaml (2099).
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds", "hurs"]
 ensemble_members: ["008"]
@@ -11,7 +12,7 @@ scenarios: ["SSP245"]
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2070
+predict_period_end: 2069
 
 debias_approach: "nonparametric_hybrid_2sided"
 

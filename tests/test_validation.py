@@ -536,12 +536,12 @@ class TestCheckConfigTimeDomain:
         assert r.status == CheckStatus.FAIL
         assert r.check_id == "config_time_domain"
         assert r.ensemble_member == "007"
-        assert "2070" in r.message
+        assert "2069" in r.message
 
     def test_truncated_member_within_extent_passes(self):
         from srm.validation import check_config_time_domain
 
-        r = check_config_time_domain(self._config("007", 2070))
+        r = check_config_time_domain(self._config("007", 2069))
         assert r.status == CheckStatus.PASS
 
     def test_full_member_passes(self):
@@ -558,11 +558,14 @@ class TestCheckConfigTimeDomain:
         assert r.status == CheckStatus.FAIL
         assert "2099" in r.message
 
-    def test_member_006_ends_2069(self):
+    @pytest.mark.parametrize("member", ["006", "007", "008", "009", "010"])
+    def test_truncated_members_end_2069(self, member):
+        # 007-010 have a single stray non-NaN day at 2070-01-01; it must not extend the
+        # valid extent, or the detrend rolling mean is poisoned by a one-day January mean.
         from srm.validation import check_config_time_domain
 
-        assert check_config_time_domain(self._config("006", 2070)).status == CheckStatus.FAIL
-        assert check_config_time_domain(self._config("006", 2069)).status == CheckStatus.PASS
+        assert check_config_time_domain(self._config(member, 2070)).status == CheckStatus.FAIL
+        assert check_config_time_domain(self._config(member, 2069)).status == CheckStatus.PASS
 
     def test_sai_early_start_exempt(self):
         # G6/SAI runs intentionally start before the scenario data (bridged with SSP245),
