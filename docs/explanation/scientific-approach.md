@@ -44,7 +44,11 @@ We then spatially disaggregated the debiased coarse GCM data to the high-resolut
 
 ### Variable-specific implementation
 
-The implementation above applies to mean temperature (`tas`) and maximum temperature (`tasmax`). Minimum temperature (`tasmin`) is not bias-corrected directly: following the NASA-NEX approach, we bias-correct `tasmax` and the diurnal temperature range (`dtr = tasmax − tasmin`), reconstruct `tasmin = tasmax − dtr` on the debiased coarse grid, and then — because `tasmax` and `tasmin` are spatially disaggregated independently — swap any fine cells left with `tasmax < tasmin` so that the physical constraint `tasmax >= tasmin` holds everywhere in the published output. Precip: . Special constraints for relative humidity.
+The implementation above applies to mean temperature (`tas`) and maximum temperature (`tasmax`). Minimum temperature (`tasmin`) is not bias-corrected directly, because quantile mapping `tasmax` and `tasmin` against separate distributions can leave the pair physically inconsistent and yield cells where a day's minimum exceeds its maximum. Following NASA's [NEX-GDDP-CMIP6](https://www.nccs.nasa.gov/data-collections/nex-gddp-cmip6/) approach (NASA-NEX for short), we instead bias-correct `tasmax` and the diurnal temperature range (`dtr = tasmax − tasmin`) and reconstruct `tasmin = tasmax − dtr` on the debiased coarse grid, which keeps the pair consistent by construction.
+
+Spatial disaggregation then interpolates `tasmax` and `tasmin` independently, which can reintroduce a small number of fine cells where `tasmax < tasmin`. We swap those cells so the physical constraint `tasmax >= tasmin` holds everywhere in the published output. See [Pipeline architecture](pipeline-architecture.md) for how the derivation and the reconcile step are wired into the pipeline stages.
+
+Precip: . Special constraints for relative humidity.
 
 ## Quality checks
 
