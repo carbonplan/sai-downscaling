@@ -13,7 +13,7 @@ predict_period_start: 2015
 predict_period_end: 2099
 
 # === Storage ===
-scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
 output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
 
 environment: "production"
