@@ -82,6 +82,8 @@ gdex
 
 NASA-NEX stores are virtual: the icechunk store holds chunk references that point at the public
 `s3://nex-gddp-cmip6/` bucket. No credentials are needed to read NASA-NEX data; the virtual
+NASA-NEX stores are virtual: the Icechunk store holds chunk references that point at the public
+`s3://nex-gddp-cmip6/` bucket. No credentials are needed to read NASA-NEX data; the virtual
 chunk container is configured for anonymous access automatically.
 
 ```{code-cell} python
