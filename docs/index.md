@@ -13,17 +13,17 @@
 If you want to **access and analyze the downscaled data**:
 
 1. Visit [Access data](./access-data.md) for how to open downscaled output stores.
-2. Visit [Input data catalog](./input-data.md) for an overview of the raw GCM, ERA5, and NASA-NEX datasets fed into the pipeline.
+2. Visit [Input data catalog](./input-data.md) for an overview of the GCM and observational (ERA5, GDEX-GMF) datasets fed into the pipeline, plus the NASA-NEX reference data used for comparison.
 3. Check out the [Subsetting and exporting data](./data-access-notebooks/subsetting-and-exporting.ipynb) guide to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
 :::
 :::{tab-item} Running the Pipeline
 If you want to **run the downscaling pipeline**:
 
-4. Start with the [Interactive pipeline demo](./how-to/demo-new-pipeline.ipynb) notebook for a hands-on walkthrough with visualizations.
-5. Follow the [Run the pipeline](./how-to/run-pipeline.md) guide for installation, quick start, and batch processing.
-6. See the [CLI reference](./reference/cli.md) for all commands and options.
-7. See the [Configuration reference](./reference/configuration.md) for all config fields and validation rules.
-8. See [Deploy the pipeline](./how-to/deploy.md) for QA and production deployment via GitHub Actions.
+1. Start with the [Interactive pipeline demo](./how-to/demo-new-pipeline.ipynb) notebook for a hands-on walkthrough with visualizations.
+2. Follow the [Run the pipeline](./how-to/run-pipeline.md) guide for installation, quick start, and batch processing.
+3. See the [CLI reference](./reference/cli.md) for all commands and options.
+4. See the [Configuration reference](./reference/configuration.md) for all config fields and validation rules.
+5. See [Deploy the pipeline](./how-to/deploy.md) for QA and production deployment via GitHub Actions.
 :::
 ::::
 
