@@ -12,7 +12,7 @@
 :::{tab-item} Using SRM Downscaled Data
 If you want to **access and analyze the downscaled data**:
 
-1. Visit [Access data](./access-data.md) for how to open downscaled output stores, navigate scenarios, and discover available groups.
+1. Visit [Access data](./access-data.md) for how to open downscaled output stores.
 2. Visit [Input data catalog](./input-data.md) for an overview of the raw GCM, ERA5, and NASA-NEX datasets fed into the pipeline.
 3. Check out the [Subsetting and exporting data](./data-access-notebooks/subsetting-and-exporting.ipynb) guide to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
 :::

@@ -119,8 +119,8 @@ Both behaviours are keyed on the **variable**, not on which entry point runs the
 ## Cache Store Structure
 
 Each `(GCM, obs-dataset, spatial-subset)` combination gets exactly two icechunk repositories — one
-for scratch intermediates, one for final outputs. All artifact groups live inside those repos as
-zarr group paths on a named branch (defaulting to the installed package version):
+for scratch intermediates, one for final outputs. All artifact groups live inside these repositories as
+Zarr group paths on a named branch (defaulting to the installed package version):
 
 ```text
 # Scratch store — obs regridded + optional intermediates
@@ -309,7 +309,7 @@ flowchart TD
 ## Artifact Location and Existence Checks
 
 `ArtifactCache` translates a `BCSDConfig` into a `StoreLocation` — a pairing of an icechunk
-repository path and a zarr group path within it. The store path is derived from
+repository path and a Zarr group path within it. The store path is derived from
 `(environment, gcm, obs_dataset, subset_id)`; the group path encodes the stage and the specific
 run parameters (variable, ensemble member, scenario group). Because both components are
 deterministic given the config, the same config always maps to the same `StoreLocation` on every

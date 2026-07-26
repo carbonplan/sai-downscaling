@@ -16,7 +16,10 @@ kernelspec:
 The pipeline writes downscaled output into icechunk stores on S3. Each store holds all scenarios,
 variables, and ensemble members for a single GCM/obs-dataset/spatial-subset combination, organised
 as zarr groups. This guide shows how to construct the correct store path, open a session on the
-right branch, and load data.
+The pipeline writes downscaled output data in the [Icechunk format](https://icechunk.io/en/stable/) S3. Each Icechunk store holds all scenarios,
+variables, and ensemble members for a single `GCM/obs-dataset/spatial-subset` combination, organized
+as Zarr groups. This guide shows how to construct the correct store path, open a session on the
+right branch, and load the data into Xarray.
 
 ## Anatomy of an output store
 
@@ -69,7 +72,7 @@ follow semantic versioning rather than a date stamp. To read a specific run's ou
 corresponding release tag as the branch name. Production releases are listed at
 [github.com/carbonplan/srm-downscaling/releases](https://github.com/carbonplan/srm-downscaling/releases).
 
-The **current production release is branch `v0.10.0`** of the global CESM2-WACCM store at
+The **current production release is branch `v0.12.0`** of the global CESM2-WACCM store at
 `s3://carbonplan-srm/output/production/CESM2-WACCM-ERA5-global.icechunk`. The examples below read
 from it anonymously — no AWS credentials are needed for the public production bucket. For
 authenticated access (for example to QA stores under `carbonplan-scratch`), replace
@@ -101,7 +104,7 @@ ds = xr.open_zarr(
 print(ds)
 ```
 
-## Opening all scenarios as a DataTree
+## Opening all scenarios as an Xarray DataTree
 
 If you want a unified view across scenario groups, open the full store as an `xr.DataTree`. Each
 scenario group becomes a node in the tree, and you can navigate or select across them.
@@ -124,7 +127,6 @@ dt = xr.open_datatree(
     session.store,
     engine="zarr",
     consolidated=False,
-    zarr_format=3,
 )
 # Access a specific subtree or dataset
 g6_tasmax = dt["g6_1p5k/tasmax/003"].to_dataset()
