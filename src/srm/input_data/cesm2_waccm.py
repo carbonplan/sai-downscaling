@@ -65,7 +65,9 @@ ENSEMBLE_MEMBERS: dict[str, list[str]] = {
 }
 
 TIME_RANGE: dict[str, str] = {
+    "historical": "1850-2014",
     "SSP245": "2015-2099",
+    "G6-1.5K": "2035-2084",
 }
 
 OUTPUT_CHUNKS: dict[str, int] = {"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288}
@@ -301,6 +303,12 @@ def _is_pangeo_scenario(scenario: str) -> bool:
     return scenario.startswith("pangeo-")
 
 
+def _trim_time_range(ds: xr.Dataset, scenario: str) -> xr.Dataset:
+    """Clamp to the scenario's canonical extent; CESM source files overrun it."""
+    start_year, end_year = TIME_RANGE[scenario.removeprefix("pangeo-")].split("-")
+    return ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
+
+
 def _preprocess_cesm(ds: xr.Dataset, scenario: str, var: str, subset: bool = False) -> xr.Dataset:
     keep_coords = set(ds.dims) | {"lat", "lon", "time"}
     ds = ds.drop_vars([c for c in ds.coords if c not in keep_coords], errors="ignore")
@@ -315,9 +323,7 @@ def _preprocess_cesm(ds: xr.Dataset, scenario: str, var: str, subset: bool = Fal
     if var in CMORIZATION_FUNCTIONS:
         ds = CMORIZATION_FUNCTIONS[var](ds, var)
 
-    if scenario in TIME_RANGE:
-        start_year, end_year = TIME_RANGE[scenario].split("-")
-        ds = ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
+    ds = _trim_time_range(ds, scenario)
 
     if subset:
         ds = ds.isel(time=slice(0, 365))
@@ -552,6 +558,7 @@ def _run_pangeo_process(
     ds = ds[available]
     ds = to_proleptic_gregorian(ds)
     ds = trim_negative_precipitation(ds)
+    ds = _trim_time_range(ds, scenario)
     ds = lon_to_180(ds, lon_name="lon")
     ds = ds.sortby(["lat", "lon"])
     ds = _update_attrs(ds, VAR_SPECS, scenario)
