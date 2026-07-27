@@ -96,6 +96,33 @@ class TestBranchTargeting:
         np.testing.assert_array_equal(_read(repo, "main"), [0.0, 1.0, 2.0])
 
 
+class TestBranchReporting:
+    def test_commit_graph_reports_the_branch_written(self, repo, capsys):
+        """The run log must show the branch it wrote to, not always ``main``.
+
+        A graph showing main's history during a branch run reads as if the run were writing to
+        production, which is alarming and wrong.
+        """
+        _ensure_root_group(repo, branch=BRANCH)
+        write_variable_to_icechunk(
+            _sample(100),
+            repo,
+            variable="tas",
+            scenario="historical",
+            chunks={"time": 3},
+            shards={"time": 3},
+            overwrite=False,
+            var_in_store=False,
+            group="historical",
+            commit_message="written on the branch",
+            branch=BRANCH,
+        )
+
+        printed = capsys.readouterr().out
+        assert "written on the branch" in printed
+        assert "historical: original" not in printed, "leaked main's history into a branch run"
+
+
 class TestBranchCutFromRoot:
     def test_group_is_absent_so_the_write_mode_is_fresh(self, repo):
         """The reason this approach works at all.

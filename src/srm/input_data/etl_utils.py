@@ -238,6 +238,7 @@ def write_dataset_to_icechunk(
     write_mode: str = "a",
     repo: icechunk.Repository | None = None,
     group: str | None = None,
+    branch: str = "main",
 ):
     """
     Write dataset to icechunk with optional rechunking.
@@ -272,16 +273,23 @@ def write_dataset_to_icechunk(
         session.commit(commit_message, rebase_with=icechunk.BasicConflictSolver())
 
     if repo is not None and commit_message and is_overwrite:
-        console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
-        history = list(repo.ancestry(branch="main"))
-        if len(history) > 2:
-            # keep one rollback point: expire everything older than the second-to-last commit
-            keep_from = history[1].written_at
-            n_expired = len(repo.expire_snapshots(older_than=keep_from))
-            gc_result = repo.garbage_collect(keep_from)
-            logger.info("GC: expired %d snapshots, collected %s", n_expired, gc_result)
+        console.print(Text.from_ansi(str(repo.ancestry_graph(branch=branch))))
+        # Expiry and garbage collection are repository-wide, not per-branch, so only prune when
+        # writing main. Pruning during a regeneration would be computed from the wrong timeline
+        # and could drop snapshots that the other branch, or a rollback of main to its
+        # pre-regeneration tip, still depends on.
+        if branch == "main":
+            history = list(repo.ancestry(branch=branch))
+            if len(history) > 2:
+                # keep one rollback point: expire everything older than the second-to-last commit
+                keep_from = history[1].written_at
+                n_expired = len(repo.expire_snapshots(older_than=keep_from))
+                gc_result = repo.garbage_collect(keep_from)
+                logger.info("GC: expired %d snapshots, collected %s", n_expired, gc_result)
+        else:
+            logger.info("branch=%s: skipping snapshot expiry, only main is pruned", branch)
     if repo is not None:
-        console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
+        console.print(Text.from_ansi(str(repo.ancestry_graph(branch=branch))))
 
 
 def open_netcdf_from_s3(store, path: str, drop_variables: list[str] | None = None) -> xr.Dataset:
@@ -363,6 +371,7 @@ def write_variable_to_icechunk(
         write_mode=write_mode,
         repo=repo,
         group=group,
+        branch=branch,
     )
 
 
