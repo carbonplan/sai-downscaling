@@ -7,7 +7,7 @@
         "dask[complete]>=2025.12.0",
         "distributed>=2025.12.0",
         "flox>=0.11.1",
-        "frisky>=0.3.0",
+        "frisky>=0.7.1",
         "geopandas>=1.1.3",
         "ibicus>=1.2.0",
         "icechunk>=2.0.0",
