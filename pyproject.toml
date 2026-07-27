@@ -50,8 +50,6 @@
 
 [tool.uv.sources]
     srm = { workspace = true, editable = true }
-dask = { git = "https://github.com/dask/dask", rev = "main" }
-xarray = { git = "https://github.com/pydata/xarray", rev = "main" }
 
 [tool.pytest.ini_options]
     addopts = "-m 'not input_data and not slow' -ra --cov-report=term-missing --cov-report=xml --cov=src/srm "
