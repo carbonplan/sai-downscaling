@@ -45,15 +45,13 @@ SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 VARIABLE_OPTIONS = get_args(VariableName)
 
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
-# CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
-# as the first day of the month following the final data month.
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     "CESM2-WACCM": {
-        # historical merges ESGF '001' (1978–2015) + Pangeo r*i1p1f1 (1850–2015);
-        # the union time axis starts at 1850. End is first-of-next-month encoded.
-        "historical": ("1850-01-01", "2015-01-16"),
+        # historical merges ESGF '001' (1978–2014) + Pangeo r*i1p1f1 (1850–2014);
+        # the union time axis starts at 1850.
+        "historical": ("1850-01-01", "2014-12-31"),
         "SSP245": ("2015-01-01", "2099-12-31"),
-        "G6-1.5K": ("2035-01-01", "2085-01-01"),
+        "G6-1.5K": ("2035-01-01", "2084-12-31"),
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
@@ -76,15 +74,15 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
 _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
     "CESM2-WACCM": {
         "G6-1.5K": {
-            "001": ("2035-01-01", "2085-12-31"),
-            "002": ("2035-01-01", "2085-12-31"),
-            "003": ("2035-01-01", "2085-12-31"),
+            "001": ("2035-01-01", "2084-12-31"),
+            "002": ("2035-01-01", "2084-12-31"),
+            "003": ("2035-01-01", "2084-12-31"),
         },
         "historical": {
-            "001": ("1978-01-01", "2015-12-31"),
-            "r1i1p1f1": ("1850-01-01", "2015-12-31"),
-            "r2i1p1f1": ("1850-01-01", "2015-12-31"),
-            "r3i1p1f1": ("1850-01-01", "2015-12-31"),
+            "001": ("1978-01-01", "2014-12-31"),
+            "r1i1p1f1": ("1850-01-01", "2014-12-31"),
+            "r2i1p1f1": ("1850-01-01", "2014-12-31"),
+            "r3i1p1f1": ("1850-01-01", "2014-12-31"),
         },
         "SSP245": {
             "001": ("2015-01-01", "2099-12-31"),
