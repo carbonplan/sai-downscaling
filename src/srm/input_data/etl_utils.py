@@ -290,9 +290,11 @@ def open_netcdf_from_s3(store, path: str, drop_variables: list[str] | None = Non
     return xr.open_dataset(reader, engine="h5netcdf", chunks="auto", drop_variables=drop_variables)
 
 
-def variable_in_store(repo: icechunk.Repository, variable: str, group: str | None = None) -> bool:
+def variable_in_store(
+    repo: icechunk.Repository, variable: str, group: str | None = None, branch: str = "main"
+) -> bool:
     try:
-        session = repo.readonly_session("main")
+        session = repo.readonly_session(branch)
         existing = xr.open_dataset(session.store, engine="zarr", group=group, decode_times=False)
         return variable in existing.data_vars
     except Exception:
@@ -328,6 +330,7 @@ def write_variable_to_icechunk(
     var_in_store: bool,
     group: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     """Write one variable to icechunk with shared overwrite semantics.
 
@@ -335,14 +338,17 @@ def write_variable_to_icechunk(
     otherwise append/write with fresh chunk/shard encoding.
     group, if given, targets a zarr sub-group within the repo (e.g. ``"ssp245"``).
     commit_message, if given, overrides the default ``"{scenario}: {variable}"`` message.
+    branch selects the icechunk branch to write to; a branch cut from the root snapshot is how a
+    store gets regenerated when its time axis changed, since ``r+`` needs matching shapes and
+    ``determine_write_mode`` will not choose ``"w"`` for a group that already exists.
     """
-    session = repo.writable_session("main")
+    session = repo.writable_session(branch)
     if overwrite and var_in_store:
         write_mode = "r+"
     elif overwrite:
         write_mode = "a"
     else:
-        write_mode = determine_write_mode(repo, group=group)
+        write_mode = determine_write_mode(repo, branch=branch, group=group)
     encoding = build_encoding_dict(ds, chunks, shards)
     logger.info(
         "variable=%s group=%s writing to icechunk write_mode=%s", variable, group, write_mode

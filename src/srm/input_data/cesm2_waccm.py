@@ -403,6 +403,7 @@ def _process_single_variable(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     group = SCENARIO_TO_GROUP[scenario]
     ensemble_members = ENSEMBLE_MEMBERS[scenario]
@@ -412,7 +413,7 @@ def _process_single_variable(
     # avoids reading/concatenating the full time series just to truncate it later.
     subset = subset or dry_run
 
-    var_in_store = variable_in_store(repo, variable, group=group)
+    var_in_store = variable_in_store(repo, variable, group=group, branch=branch)
     if not dry_run and not overwrite and var_in_store:
         log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
         return
@@ -477,6 +478,7 @@ def _process_single_variable(
         var_in_store=var_in_store,
         group=group,
         commit_message=commit_message,
+        branch=branch,
     )
     log.info("variable=%s done", variable)
 
@@ -490,6 +492,7 @@ def _run_process(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     log.info(
         "scenario=%s group=%s variables=%s overwrite=%s subset=%s dry_run=%s",
@@ -500,7 +503,7 @@ def _run_process(
         subset,
         dry_run,
     )
-    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False)
+    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False, branch=branch)
     for var in variables:
         _process_single_variable(
             scenario,
@@ -512,6 +515,7 @@ def _run_process(
             dry_run=dry_run,
             dry_run_output=dry_run_output,
             commit_message=commit_message,
+            branch=branch,
         )
     log.info("scenario=%s all variables complete", scenario)
 
@@ -523,6 +527,7 @@ def _run_pangeo_process(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     """Merge Pangeo historical members (r1/r2/r3i1p1f1) into the ``historical`` group.
 
@@ -547,10 +552,10 @@ def _run_pangeo_process(
         _run_dry_run(ds, "pangeo-historical", group, dry_run_output, commit_message)
         return
 
-    repo, session = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False)
+    repo, session = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False, branch=branch)
     try:
         existing = xr.open_dataset(
-            repo.readonly_session("main").store, engine="zarr", group=group, chunks="auto"
+            repo.readonly_session(branch).store, engine="zarr", group=group, chunks="auto"
         )
     except (FileNotFoundError, KeyError) as err:
         raise RuntimeError(
@@ -629,6 +634,16 @@ def process(
     commit_message: str | None = typer.Option(
         None, "--commit-message", help="Override the default icechunk commit message."
     ),
+    branch: str = typer.Option(
+        "main",
+        "--branch",
+        help=(
+            "icechunk branch to write to. Use a branch cut from the repository's root snapshot "
+            "to regenerate a store whose time axis changed: the groups must be absent for a "
+            "fresh write, and promotion is then repo.reset_branch('main', tip) rather than a "
+            "copy of the whole store."
+        ),
+    ),
 ) -> None:
     """Open NetCDF files from S3, concat, rechunk, and write to the unified per-GCM
     icechunk store under each scenario's zarr group. One variable at a time.
@@ -654,6 +669,7 @@ def process(
                 dry_run=dry_run,
                 dry_run_output=dry_run_output,
                 commit_message=commit_message,
+                branch=branch,
             )
         else:
             _run_process(
@@ -665,6 +681,7 @@ def process(
                 dry_run=dry_run,
                 dry_run_output=dry_run_output,
                 commit_message=commit_message,
+                branch=branch,
             )
 
 
