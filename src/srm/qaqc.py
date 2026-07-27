@@ -583,8 +583,10 @@ def disagg_test_calculate_metrics(x, y, time_dim="time"):
     # rmse_perp = rmse / np.sqrt(2)
 
     # R² vs 1:1 (Nash–Sutcliffe): 1 = perfect, can go negative
+    # ss_tot uses x (the reference/observations), not y (the model) -- NSE measures
+    # how much of the *true* variability the model explains, not the model's own variance.
     ss_res = (resid**2).sum(time_dim)
-    ss_tot = ((y - y.mean(time_dim)) ** 2).sum(time_dim)
+    ss_tot = ((x - x.mean(time_dim)) ** 2).sum(time_dim)
     r2_oneone = 1 - ss_res / ss_tot
 
     # Pearson r per cell (shape agreement) for contrast
