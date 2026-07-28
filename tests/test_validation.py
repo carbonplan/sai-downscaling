@@ -366,13 +366,13 @@ class TestCheckTemporalCoverage:
         assert "end date" in result.message
 
     def test_pass_correct_g6_coverage(self, mock_datasets):
-        ds = _ds_with_time("2035-01-01", "2085-01-01")
+        ds = _ds_with_time("2035-01-01", "2084-12-31")
         mock_datasets["CESM2-WACCM"] = _datatree_entry(g6_1p5k=ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="G6-1.5K").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
 
     def test_pass_correct_historical_coverage(self, mock_datasets):
-        ds = _ds_with_time("1850-01-01", "2015-01-16")
+        ds = _ds_with_time("1850-01-01", "2014-12-31")
         mock_datasets["CESM2-WACCM"] = _datatree_entry(historical=ds)
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"
@@ -584,7 +584,7 @@ class TestCheckConfigTimeDomain:
             self._config("001", 2086, predict_start=2015, scenario="G6-1.5K")
         )
         assert r.status == CheckStatus.FAIL
-        assert "2085" in r.message
+        assert "2084" in r.message
 
     def test_historical_only_skips(self):
         from srm.bcsd_config import BCSDConfig
