@@ -191,6 +191,3 @@ cython_debug/
 
 # *input_data_old/
 qa_plots/
-
-# macOS
-.DS_Store
