@@ -4121,6 +4121,7 @@ name = "srm"
 source = { editable = "." }
 dependencies = [
     { name = "cartopy" },
+    { name = "cf-xarray" },
     { name = "cftime" },
     { name = "cloudpathlib" },
     { name = "dask", extra = ["complete"] },
@@ -4234,6 +4235,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "cartopy", specifier = ">=0.25.0" },
+    { name = "cf-xarray", specifier = ">=0.10.10" },
     { name = "cftime", specifier = ">=1.6.5" },
     { name = "cloudpathlib", specifier = ">=0.23.0" },
     { name = "dask", extras = ["complete"], specifier = ">=2026.7.1" },
