@@ -366,13 +366,13 @@ class TestCheckTemporalCoverage:
         assert "end date" in result.message
 
     def test_pass_correct_g6_coverage(self, mock_datasets):
-        ds = _ds_with_time("2035-01-01", "2085-01-01")
+        ds = _ds_with_time("2035-01-01", "2084-12-31")
         mock_datasets["CESM2-WACCM"] = _datatree_entry(g6_1p5k=ds)
         result = DatasetValidator(gcm="CESM2-WACCM", scenario="G6-1.5K").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
 
     def test_pass_correct_historical_coverage(self, mock_datasets):
-        ds = _ds_with_time("1850-01-01", "2015-01-16")
+        ds = _ds_with_time("1850-01-01", "2014-12-31")
         mock_datasets["CESM2-WACCM"] = _datatree_entry(historical=ds)
         result = DatasetValidator(
             gcm="CESM2-WACCM", scenario="historical"
@@ -560,8 +560,10 @@ class TestCheckConfigTimeDomain:
 
     @pytest.mark.parametrize("member", ["006", "007", "008", "009", "010"])
     def test_truncated_members_end_2069(self, member):
-        # 007-010 have a single stray non-NaN day at 2070-01-01; it must not extend the
-        # valid extent, or the detrend rolling mean is poisoned by a one-day January mean.
+        # These members are truncated mid-scenario, and asking for 2070 must fail rather than
+        # slice NaN-padding: a partially-NaN year poisons the detrend rolling mean. Before
+        # issue #521 the guard also had to reject a stray non-NaN day at 2070-01-01, which
+        # decoding the axis from time_bnds has since folded back into 2069.
         from srm.validation import check_config_time_domain
 
         assert check_config_time_domain(self._config(member, 2070)).status == CheckStatus.FAIL
@@ -584,7 +586,7 @@ class TestCheckConfigTimeDomain:
             self._config("001", 2086, predict_start=2015, scenario="G6-1.5K")
         )
         assert r.status == CheckStatus.FAIL
-        assert "2085" in r.message
+        assert "2084" in r.message
 
     def test_historical_only_skips(self):
         from srm.bcsd_config import BCSDConfig

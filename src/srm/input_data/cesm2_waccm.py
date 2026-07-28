@@ -10,7 +10,6 @@ import re
 import dask
 import icechunk
 import obstore as obs
-import pandas as pd
 import typer
 import xarray as xr
 import zarr
@@ -35,7 +34,7 @@ from srm.input_data.etl_utils import (
     write_dataset_to_icechunk,
     write_variable_to_icechunk,
 )
-from srm.utils import lon_to_180, to_proleptic_gregorian
+from srm.utils import decode_time_from_bounds, lon_to_180, to_proleptic_gregorian
 
 zarr.config.set({"async.concurrency": 128})
 dask.config.set(scheduler="threads")
@@ -65,7 +64,9 @@ ENSEMBLE_MEMBERS: dict[str, list[str]] = {
 }
 
 TIME_RANGE: dict[str, str] = {
+    "historical": "1850-2014",
     "SSP245": "2015-2099",
+    "G6-1.5K": "2035-2084",
 }
 
 OUTPUT_CHUNKS: dict[str, int] = {"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288}
@@ -73,21 +74,14 @@ OUTPUT_SHARDS: dict[str, int] = {"ensemble_member": 1, "time": 480, "lat": 192, 
 
 ALL_SCENARIOS = ["pangeo-historical", "historical", "SSP245", "G6-1.5K"]
 
-# TREFHTMX == TREFHTMN == TREFHT on each run's first day (issue #424).
-# Per group: (invalid first day, members to repair) — repair copies the next
-# day's tasmax/tasmin over the bad day. ssp245 members 001-005 are excluded:
-# their whole series has tasmax == tasmin (upstream issue, barred in lineage).
-INVALID_FIRST_DAY: dict[str, tuple[str, list[str]]] = {
-    "historical": ("1978-01-01", ["001"]),
-    "ssp245": ("2015-01-01", ["006", "007", "008", "009", "010"]),
-    "g6_1p5k": ("2035-01-01", ["001", "002", "003"]),
-}
+# Issue #424 (TREFHTMX == TREFHTMN == TREFHT on each run's first day) was a symptom of the
+# zero-width initial-state record described in issue #521: an instantaneous field has no
+# within-day spread, so its max, min and mean coincide. decode_time_from_bounds drops that
+# record outright, so the per-group backfill table this module used to carry is gone.
 
 # SSP245 members 001-005 have tasmax == tasmin across the whole series (upstream
 # CMIP6 bug, issue #156). Values exist in the store but must never be used, so
 # mask them to NaN.
-# NOTE: keyed by SCENARIO ("SSP245"), unlike the sibling INVALID_FIRST_DAY which
-# is keyed by GROUP ("ssp245"). Different key spaces on purpose.
 INVALID_TASMAX_TASMIN_MEMBERS: dict[str, list[str]] = {
     "SSP245": ["001", "002", "003", "004", "005"],
 }
@@ -136,7 +130,9 @@ CESM_DROP_VARIABLES: list[str] = [
     "mdt",
     "date",
     "datesec",
-    "time_bnds",
+    # NOTE: time_bnds is deliberately NOT dropped here. It is the CF authority for the time
+    # axis (issue #521) and is consumed by decode_time_from_bounds in _preprocess_cesm;
+    # to_proleptic_gregorian drops it afterwards.
     "date_written",
     "time_written",
     "ndcur",
@@ -231,6 +227,12 @@ def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:
             zarr_store, engine="zarr", consolidated=True, chunks="auto"
         ).drop_encoding()
 
+        # The CMORized CMIP6 copies carry CAM's convention unchanged: end-of-interval stamps
+        # and a zero-width initial-state record (issue #521). Decode per member, before the
+        # expand_dims/combine below gives time_bnds an ensemble_member dimension and makes
+        # the bounds axis ambiguous.
+        ds = decode_time_from_bounds(ds)
+
         member_id = ds.attrs.get("variant_label", "unknown")
         # Store all raw attributes and the URL for this specific member
         full_manifest[member_id] = _capture_provenance(ds, zstore_url)
@@ -301,7 +303,20 @@ def _is_pangeo_scenario(scenario: str) -> bool:
     return scenario.startswith("pangeo-")
 
 
+def _trim_time_range(ds: xr.Dataset, scenario: str) -> xr.Dataset:
+    """Clamp to the scenario's canonical extent; CESM source files overrun it."""
+    start_year, end_year = TIME_RANGE[scenario.removeprefix("pangeo-")].split("-")
+    return ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
+
+
 def _preprocess_cesm(ds: xr.Dataset, scenario: str, var: str, subset: bool = False) -> xr.Dataset:
+    # First, before anything else touches the time axis. CAM stamps interval statistics at the
+    # END of their averaging window and prefixes each history stream with a zero-width
+    # initial-state record (issue #521), so the raw `time` values label every daily mean one
+    # day late. This also has to precede the coord prune below, which would discard time_bnds,
+    # and to_proleptic_gregorian, which drops bounds variables outright.
+    ds = decode_time_from_bounds(ds)
+
     keep_coords = set(ds.dims) | {"lat", "lon", "time"}
     ds = ds.drop_vars([c for c in ds.coords if c not in keep_coords], errors="ignore")
     ds = ds.drop_duplicates(dim="time", keep="first")
@@ -315,38 +330,10 @@ def _preprocess_cesm(ds: xr.Dataset, scenario: str, var: str, subset: bool = Fal
     if var in CMORIZATION_FUNCTIONS:
         ds = CMORIZATION_FUNCTIONS[var](ds, var)
 
-    if scenario in TIME_RANGE:
-        start_year, end_year = TIME_RANGE[scenario].split("-")
-        ds = ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
+    ds = _trim_time_range(ds, scenario)
 
     if subset:
         ds = ds.isel(time=slice(0, 365))
-    return ds
-
-
-def _fix_invalid_first_day(ds: xr.Dataset, scenario: str, member: str) -> xr.Dataset:
-    """Issue #424: tasmax == tasmin == tas on the first day. bfill it from the next day."""
-    entry = INVALID_FIRST_DAY.get(SCENARIO_TO_GROUP[scenario])
-    if entry is None:
-        return ds
-    invalid_day, members = entry
-    if member not in members:
-        return ds
-
-    bad_day = pd.Timestamp(invalid_day)
-    next_day = bad_day + pd.Timedelta(days=1)
-    ds = ds.copy()
-    for var in ("tasmax", "tasmin"):
-        if var not in ds.data_vars:
-            continue
-        ds[var] = ds[var].where(ds.time != bad_day, ds[var].sel(time=next_day, drop=True))
-        log.info(
-            "member=%s %s: replaced %s with %s (issue #424)",
-            member,
-            var,
-            bad_day.date(),
-            next_day.date(),
-        )
     return ds
 
 
@@ -416,6 +403,7 @@ def _process_single_variable(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     group = SCENARIO_TO_GROUP[scenario]
     ensemble_members = ENSEMBLE_MEMBERS[scenario]
@@ -425,7 +413,7 @@ def _process_single_variable(
     # avoids reading/concatenating the full time series just to truncate it later.
     subset = subset or dry_run
 
-    var_in_store = variable_in_store(repo, variable, group=group)
+    var_in_store = variable_in_store(repo, variable, group=group, branch=branch)
     if not dry_run and not overwrite and var_in_store:
         log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
         return
@@ -454,7 +442,6 @@ def _process_single_variable(
             else time_slices[0]
         )
         member_ds = _preprocess_cesm(member_ds, scenario, variable, subset=subset)
-        member_ds = _fix_invalid_first_day(member_ds, scenario, member)
         member_ds = member_ds.expand_dims({"ensemble_member": [member]})
         member_datasets.append(member_ds)
         log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
@@ -491,6 +478,7 @@ def _process_single_variable(
         var_in_store=var_in_store,
         group=group,
         commit_message=commit_message,
+        branch=branch,
     )
     log.info("variable=%s done", variable)
 
@@ -504,6 +492,7 @@ def _run_process(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     log.info(
         "scenario=%s group=%s variables=%s overwrite=%s subset=%s dry_run=%s",
@@ -514,7 +503,7 @@ def _run_process(
         subset,
         dry_run,
     )
-    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False)
+    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False, branch=branch)
     for var in variables:
         _process_single_variable(
             scenario,
@@ -526,6 +515,7 @@ def _run_process(
             dry_run=dry_run,
             dry_run_output=dry_run_output,
             commit_message=commit_message,
+            branch=branch,
         )
     log.info("scenario=%s all variables complete", scenario)
 
@@ -537,6 +527,7 @@ def _run_pangeo_process(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     """Merge Pangeo historical members (r1/r2/r3i1p1f1) into the ``historical`` group.
 
@@ -552,6 +543,7 @@ def _run_pangeo_process(
     ds = ds[available]
     ds = to_proleptic_gregorian(ds)
     ds = trim_negative_precipitation(ds)
+    ds = _trim_time_range(ds, scenario)
     ds = lon_to_180(ds, lon_name="lon")
     ds = ds.sortby(["lat", "lon"])
     ds = _update_attrs(ds, VAR_SPECS, scenario)
@@ -560,10 +552,10 @@ def _run_pangeo_process(
         _run_dry_run(ds, "pangeo-historical", group, dry_run_output, commit_message)
         return
 
-    repo, session = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False)
+    repo, session = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False, branch=branch)
     try:
         existing = xr.open_dataset(
-            repo.readonly_session("main").store, engine="zarr", group=group, chunks="auto"
+            repo.readonly_session(branch).store, engine="zarr", group=group, chunks="auto"
         )
     except (FileNotFoundError, KeyError) as err:
         raise RuntimeError(
@@ -642,6 +634,16 @@ def process(
     commit_message: str | None = typer.Option(
         None, "--commit-message", help="Override the default icechunk commit message."
     ),
+    branch: str = typer.Option(
+        "main",
+        "--branch",
+        help=(
+            "icechunk branch to write to. Use a branch cut from the repository's root snapshot "
+            "to regenerate a store whose time axis changed: the groups must be absent for a "
+            "fresh write, and promotion is then repo.reset_branch('main', tip) rather than a "
+            "copy of the whole store."
+        ),
+    ),
 ) -> None:
     """Open NetCDF files from S3, concat, rechunk, and write to the unified per-GCM
     icechunk store under each scenario's zarr group. One variable at a time.
@@ -667,6 +669,7 @@ def process(
                 dry_run=dry_run,
                 dry_run_output=dry_run_output,
                 commit_message=commit_message,
+                branch=branch,
             )
         else:
             _run_process(
@@ -678,6 +681,7 @@ def process(
                 dry_run=dry_run,
                 dry_run_output=dry_run_output,
                 commit_message=commit_message,
+                branch=branch,
             )
 
 
