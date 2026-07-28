@@ -1,5 +1,6 @@
 # Configuration Reference
 
+
 Configuration files use YAML format with Pydantic validation. All fields are validated before execution to catch errors early.
 
 ## Two-class model
