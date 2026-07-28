@@ -27,6 +27,10 @@ from srm.validation import CheckStatus
 # ~100 GB of float32 held in memory, and np.isnan() over the whole thing would
 # allocate a 25 GB boolean temporary. Scanning in slabs bounds that temporary to a
 # few hundred MB and yields the offending time indices as a side effect.
+#
+# This is why the scan is not simply `.isnull()`: the two run at the same speed, since
+# both are bound by the same pass over memory, but the whole-array form asks for that
+# 25 GB temporary and reports a bare count rather than which time steps to go look at.
 _NAN_SCAN_BLOCK = 64
 
 # Offending labels quoted in the error message before it switches to "(+N more)".
@@ -143,6 +147,13 @@ def _scan_for_nans(
             # A lower-dimensional mask applies identically to every leading step.
             bad &= mask
             n_checked += int(np.count_nonzero(mask)) * (stop - start)
+        # Reducing per step costs about three times what testing the slab does, and a
+        # clean slab has nothing to report either way. Production arrays are clean end
+        # to end, so skipping the reduction takes a 130 GB fine-grid scan from roughly
+        # 11 s to 5 s with the lat/lon mask residuals_fine uses. n_checked is already
+        # accumulated above, so skipped slabs still count toward the reported percentage.
+        if not bad.any():
+            continue
         per_step = bad.reshape(stop - start, -1).sum(axis=1)
         n_nan += int(per_step.sum())
         offenders.extend(start + int(i) for i in np.nonzero(per_step)[0])

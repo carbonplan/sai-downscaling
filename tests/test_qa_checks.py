@@ -184,6 +184,85 @@ class TestBiasCorrectionInputChecks:
             )
 
 
+class TestSlabBoundaries:
+    """The scan walks the leading axis in ``_NAN_SCAN_BLOCK``-sized slabs.
+
+    Production arrays span hundreds of slabs and clean ones are skipped without being
+    reduced, so the per-slab bookkeeping (global offender offsets, and the checked-cell
+    total that the reported percentage divides by) has to survive that skip. Every other
+    test here fits inside a single slab and would not notice if it did not.
+    """
+
+    def test_offender_index_is_offset_by_the_slab_it_falls_in(self):
+        # 200 steps spans four slabs at block size 64; day 150 lands in the fourth,
+        # preceded by clean slabs that the scan skips over.
+        values = np.ones((200, 3, 4))
+        values[150, 1, 1] = np.nan
+
+        with pytest.raises(NaNCheckError, match="2015-05-31"):
+            assert_no_nans(_daily_da(values), name="residuals_fine")
+
+    def test_offenders_span_multiple_slabs_in_order(self):
+        values = np.ones((200, 3, 4))
+        values[10, 0, 0] = np.nan  # first slab
+        values[70, 0, 0] = np.nan  # second
+        values[199, 0, 0] = np.nan  # last, a short slab
+
+        with pytest.raises(NaNCheckError) as excinfo:
+            assert_no_nans(_daily_da(values), name="residuals_fine")
+
+        message = str(excinfo.value)
+        assert "3 NaN" in message
+        assert "2015-01-11, 2015-03-12, 2015-07-19" in message
+
+    def test_checked_cell_total_includes_skipped_clean_slabs(self):
+        # 200 * 5 * 5 = 5000 cells; a single NaN is 0.02%. If clean slabs were skipped
+        # before their cells were counted, the denominator would collapse to one slab.
+        values = np.ones((200, 5, 5))
+        values[150, 2, 2] = np.nan
+
+        with pytest.raises(NaNCheckError, match=r"0\.02% of 5000 checked cells"):
+            assert_no_nans(_daily_da(values), name="residuals_fine")
+
+    def test_masked_out_nans_pass_across_many_slabs(self):
+        values = np.ones((200, 3, 4))
+        values[:, 0, :] = np.nan  # excluded edge band, present in every slab
+        da = _daily_da(values)
+        mask = xr.DataArray(
+            np.array([[False] * 4, [True] * 4, [True] * 4]),
+            dims=["lat", "lon"],
+            coords={"lat": da["lat"], "lon": da["lon"]},
+        )
+
+        assert_no_nans(da, name="residuals_fine", where=mask)
+
+    def test_masked_scan_still_catches_a_nan_in_a_later_slab(self):
+        values = np.ones((200, 3, 4))
+        values[:, 0, :] = np.nan  # excluded edge band
+        values[150, 1, 1] = np.nan  # interior NaN in the fourth slab
+        da = _daily_da(values)
+        mask = xr.DataArray(
+            np.array([[False] * 4, [True] * 4, [True] * 4]),
+            dims=["lat", "lon"],
+            coords={"lat": da["lat"], "lon": da["lon"]},
+        )
+
+        with pytest.raises(NaNCheckError, match=r"1 NaN"):
+            assert_no_nans(da, name="residuals_fine", where=mask)
+
+    def test_full_shape_mask_tracks_its_own_slab(self):
+        # A full-shape mask is sliced per slab rather than broadcast; an excluded cell
+        # in one slab must not excuse the same cell in another.
+        values = np.ones((200, 3, 4))
+        values[10, 0, 0] = np.nan
+        values[150, 0, 0] = np.nan
+        mask = np.ones((200, 3, 4), dtype=bool)
+        mask[10, 0, 0] = False  # excuse the first, not the second
+
+        with pytest.raises(NaNCheckError, match=r"1 NaN"):
+            assert_no_nans(_daily_da(values), name="residuals_fine", where=mask)
+
+
 class TestMaskAlignmentGuards:
     """A ``where`` mask must never silently check the wrong cells.
 
