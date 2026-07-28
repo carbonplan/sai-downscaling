@@ -536,10 +536,14 @@ def check_units_and_range(
     return rows
 
 
-def check_ensemble_spread(ds: xr.Dataset, label: str, var: str = "tas", day_index: int = 0) -> dict:
+def check_ensemble_spread(
+    ds: xr.Dataset, label: str, var: str = "tas", day_index: int | None = None
+) -> dict:
     """Return an ensemble-spread summary dict for DataFrame/plot display.
 
-    Computes the global spatial mean of `var` for each ensemble member on `day_index`.
+    Computes the global spatial mean of `var` for each ensemble member on `day_index`,
+    defaulting to mid-record to avoid the gap-fill/merge seams at the start of a group
+    (e.g. MIROC-ES2H ssp245's 2015-2019 bridge.
     Returns spread_ok=True when all member means are distinct (no exact duplicates).
     Returns empty members/means lists when the dataset has no ensemble_member dimension
     or the variable is absent.
@@ -548,6 +552,9 @@ def check_ensemble_spread(ds: xr.Dataset, label: str, var: str = "tas", day_inde
     """
     if var not in ds or "ensemble_member" not in ds.dims:
         return {"source": label, "variable": var, "members": [], "means": [], "spread_ok": True}
+
+    if day_index is None:
+        day_index = ds.sizes["time"] // 2
 
     da = ds[var].isel(time=day_index)
     means_da = da.mean(dim=["lat", "lon"]).compute()
