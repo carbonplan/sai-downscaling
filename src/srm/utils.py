@@ -69,6 +69,58 @@ def convert_precip_units(da: xr.DataArray) -> xr.DataArray:
     return result
 
 
+def decode_time_from_bounds(ds: xr.Dataset) -> xr.Dataset:
+    """Rebuild the time axis from CF time bounds, dropping zero-width records.
+
+    CAM stamps interval statistics at the *end* of the averaging interval, and writes one
+    extra zero-width record per history stream holding the instantaneous initial state.
+    Both are documented conventions rather than defects (CAM User Guide "Model Output";
+    ESCOMP/CAM#159 calls the end-stamping a "longstanding quirk"). Reading ``time``
+    verbatim therefore labels every daily mean one day late and admits a snapshot as
+    though it were a mean, which is issue #521. That same snapshot is why ``tasmax ==
+    tasmin == tas`` on the first day, so it is also the root cause of issue #424.
+
+    ``time_bnds`` is the authority. Each record is restamped to the start of the interval
+    it covers, and records whose interval has zero width are dropped. The bounds variable
+    name is read from ``time.attrs["bounds"]`` rather than hardcoded, because CAM writes
+    ``time_bnds`` while CLM writes ``time_bounds`` (ESCOMP/CESM#194).
+
+    Apply this only where the bounds come from the source. Bounds we synthesise ourselves
+    via :func:`srm.input_data.etl_utils.add_cf_bounds` are derived from stamp midpoints and
+    do not describe the true aggregation window, so decoding from those would shift the
+    data rather than correct it.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset whose ``time`` coordinate declares CF bounds. A dataset that declares none
+        is returned unchanged, so the call is safe on sources that never carried them.
+
+    Returns
+    -------
+    xr.Dataset
+        Stamped at interval starts, with any zero-width records removed.
+    """
+    bounds_name = ds.time.attrs.get("bounds")
+    if bounds_name is None or bounds_name not in ds:
+        return ds
+
+    bounds = ds[bounds_name]
+    extra_dims = [d for d in bounds.dims if d != "time"]
+    if len(extra_dims) != 1:
+        raise ValueError(
+            f"ambiguous bounds layout for {bounds_name!r}: expected exactly one non-time "
+            f"dimension, found {extra_dims}. Decode each member before broadcasting the "
+            "bounds over other dimensions."
+        )
+
+    bounds_dim = extra_dims[0]
+    lower = bounds.isel({bounds_dim: 0})
+    upper = bounds.isel({bounds_dim: 1})
+    keep = (lower != upper).values
+    return ds.isel(time=keep).assign_coords(time=lower.isel(time=keep).values)
+
+
 def to_proleptic_gregorian(ds: xr.Dataset) -> xr.Dataset:
     """Convert any GCM Dataset to proleptic_gregorian via linear interpolation.
 

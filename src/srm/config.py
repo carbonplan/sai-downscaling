@@ -98,38 +98,47 @@ def _icechunk_storage_for_path(path: str):
     return icechunk.local_filesystem_storage(path=path)
 
 
-def _ensure_root_group(repo: icechunk.Repository) -> str:
-    """Commit an empty root group on a brand-new repo. Returns the _root snapshot ID.
+def _ensure_root_group(repo: icechunk.Repository, branch: str = "main") -> str:
+    """Commit an empty root group on a brand-new repo or branch. Returns the _root snapshot ID.
 
     Without this, concurrent first writers to different zarr groups each create
     the root node and their commits cannot rebase
     (NewNodeConflictsWithExistingNode at "/").
+
+    A branch cut from the repository's root snapshot carries no root group at all, so this has
+    to run against that branch before anything is written to it (issue #521).
     """
     import zarr
 
-    for snapshot in repo.ancestry(branch="main"):
+    for snapshot in repo.ancestry(branch=branch):
         if snapshot.message in _ROOT_MESSAGES:
             return snapshot.id
-    session = repo.writable_session("main")
+    session = repo.writable_session(branch)
     zarr.open_group(session.store, mode="a")
     try:
         session.commit("_root")
-        return repo.lookup_branch("main")
+        return repo.lookup_branch(branch)
     except (icechunk.ConflictError, icechunk.RebaseFailedError, icechunk.NoChangesToCommitError):
         # Another VM committed _root concurrently, or root group already exists
         # (old stores used "initialize root group" as commit message).
-        for snapshot in repo.ancestry(branch="main"):
+        for snapshot in repo.ancestry(branch=branch):
             if snapshot.message in _ROOT_MESSAGES:
                 return snapshot.id
-        return repo.lookup_branch("main")
+        return repo.lookup_branch(branch)
 
 
-def init_repo(bucket, prefix, region="us-west-2", readonly: bool = True):
+def init_repo(bucket, prefix, region="us-west-2", readonly: bool = True, branch: str = "main"):
+    """Open (or create) a store and return ``(repo, session)`` on ``branch``.
+
+    Writing to a branch other than ``main`` is how a store whose time axis changed gets
+    regenerated: the group must not already exist for ``determine_write_mode`` to choose a fresh
+    write, and promotion is then ``repo.reset_branch("main", tip)`` rather than a copy.
+    """
     storage = icechunk.s3_storage(bucket=bucket, prefix=prefix, region=region)
     repo = icechunk.Repository.open_or_create(storage)
     if readonly:
-        session = repo.readonly_session("main")
+        session = repo.readonly_session(branch)
     else:
-        _ensure_root_group(repo)
-        session = repo.writable_session("main")
+        _ensure_root_group(repo, branch=branch)
+        session = repo.writable_session(branch)
     return repo, session

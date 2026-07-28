@@ -52,7 +52,8 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, s
 
     # CESM2-WACCM SSP245 (no SAI bridge, ssp245_member is always None)
     # Members 001-005: standard variables only (tasmax/tasmin have the CMIP6 bug: not usable).
-    # Members 006-010: tasmax/tasmin available via corrected run ("001"); all end 2069-12-31.
+    # Members 006-010: tasmax/tasmin available via corrected run ("001"); all end in 2069
+    # (007-010 on 2069-12-31, 006 a day earlier - see _MEMBER_TIME_BOUNDS in srm.validation).
     # Scenario label matches catalog key case: "SSP245".
     add("CESM2-WACCM", "SSP245", "001", _std, "r1i1p1f1")
     add("CESM2-WACCM", "SSP245", "002", _std, "r2i1p1f1")
