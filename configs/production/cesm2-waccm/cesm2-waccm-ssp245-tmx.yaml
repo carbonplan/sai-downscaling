@@ -23,8 +23,9 @@ predict_period_end: 2069
 debias_approach: "nonparametric_hybrid_2sided"
 
 # === PipelineOptions: Operational Settings ===
-scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
-output_dir: "s3://carbonplan-srm/output"
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
+output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
+
 environment: "production"
 # version intentionally unset — derived from the installed package version at runtime
 verbose: true
