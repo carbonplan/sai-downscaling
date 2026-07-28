@@ -45,15 +45,20 @@ SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 VARIABLE_OPTIONS = get_args(VariableName)
 
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
-# CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
-# as the first day of the month following the final data month.
+#
+# These end dates used to run a day or more past the scenario's nominal end, which looked like
+# CESM writing an extra time step. It was not: CAM stamps interval statistics at the END of the
+# averaging interval and prefixes each history stream with a zero-width initial-state record, so
+# the raw axis labelled every daily mean one day late (issue #521). The ETL now rebuilds the axis
+# from time_bnds via srm.utils.decode_time_from_bounds, which is where that convention is
+# documented in full, and TIME_RANGE in srm.input_data.cesm2_waccm clamps what remains.
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     "CESM2-WACCM": {
-        # historical merges ESGF '001' (1978–2015) + Pangeo r*i1p1f1 (1850–2015);
-        # the union time axis starts at 1850. End is first-of-next-month encoded.
-        "historical": ("1850-01-01", "2015-01-16"),
+        # historical merges ESGF '001' (1978–2014) + Pangeo r*i1p1f1 (1850–2014);
+        # the union time axis starts at 1850.
+        "historical": ("1850-01-01", "2014-12-31"),
         "SSP245": ("2015-01-01", "2099-12-31"),
-        "G6-1.5K": ("2035-01-01", "2085-01-01"),
+        "G6-1.5K": ("2035-01-01", "2084-12-31"),
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
@@ -70,19 +75,26 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
 
 # Per-member valid daily extent, keyed gcm -> scenario -> ensemble_member -> (start, end).
 # First/last non-NaN day per member. Members not listed fall back to _SCENARIO_TIME_BOUNDS.
-# Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069-2070) while 001-005 reach 2099.
+# Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069) while 001-005 reach 2099.
+# These CESM end dates are one day earlier than they read before issue #521: the axis is now
+# decoded from time_bnds, so each daily mean is stamped at the start of its interval rather
+# than the end. What looked like a stray non-NaN day at 2070-01-01 on 007-010 was the last
+# real daily mean wearing an end-of-interval stamp, and it now sits contiguously at
+# 2069-12-31; 006, which had no such trailing record, ends a day earlier at 2069-12-30.
+# check_config_time_domain compares years only, so these day-level shifts do not move any
+# config's valid predict period.
 _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
     "CESM2-WACCM": {
         "G6-1.5K": {
-            "001": ("2035-01-01", "2085-12-31"),
-            "002": ("2035-01-01", "2085-12-31"),
-            "003": ("2035-01-01", "2085-12-31"),
+            "001": ("2035-01-01", "2084-12-31"),
+            "002": ("2035-01-01", "2084-12-31"),
+            "003": ("2035-01-01", "2084-12-31"),
         },
         "historical": {
-            "001": ("1978-01-01", "2015-12-31"),
-            "r1i1p1f1": ("1850-01-01", "2015-12-31"),
-            "r2i1p1f1": ("1850-01-01", "2015-12-31"),
-            "r3i1p1f1": ("1850-01-01", "2015-12-31"),
+            "001": ("1978-01-01", "2014-12-31"),
+            "r1i1p1f1": ("1850-01-01", "2014-12-31"),
+            "r2i1p1f1": ("1850-01-01", "2014-12-31"),
+            "r3i1p1f1": ("1850-01-01", "2014-12-31"),
         },
         "SSP245": {
             "001": ("2015-01-01", "2099-12-31"),
@@ -90,11 +102,11 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "003": ("2015-01-01", "2099-12-31"),
             "004": ("2015-01-01", "2099-12-31"),
             "005": ("2015-01-01", "2099-12-31"),
-            "006": ("2015-01-01", "2069-12-31"),
-            "007": ("2015-01-01", "2070-12-31"),
-            "008": ("2015-01-01", "2070-12-31"),
-            "009": ("2015-01-01", "2070-12-31"),
-            "010": ("2015-01-01", "2070-12-31"),
+            "006": ("2015-01-01", "2069-12-30"),
+            "007": ("2015-01-01", "2069-12-31"),
+            "008": ("2015-01-01", "2069-12-31"),
+            "009": ("2015-01-01", "2069-12-31"),
+            "010": ("2015-01-01", "2069-12-31"),
         },
     },
     "MIROC-ES2H": {
@@ -226,9 +238,11 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
 
     Guards against configs whose ``predict_period`` extends past (or starts before) the
     real time coverage of a specific ensemble member — e.g. CESM2-WACCM SSP245 member
-    007 ends 2070 but is NaN-padded to the scenario end in the unified store. Without
-    this guard the pipeline slices the padded range and the downscaler emits garbage for
-    years with no real input.
+    007 ends 2069-12-31 but is NaN-padded to the scenario end in the unified store.
+    Without this guard the pipeline slices the padded range and the downscaler emits
+    garbage for years with no real input: a partially-NaN month yields a monthly mean
+    built from a handful of days, which then poisons the 9-year centred rolling mean in
+    :func:`srm.downscaling_utils.detrend` for the surrounding years.
 
     Returns a blocking FAIL when the requested predict period falls outside the member's
     valid bounds, PASS when it fits, and SKIP when no bounds are known for the member or

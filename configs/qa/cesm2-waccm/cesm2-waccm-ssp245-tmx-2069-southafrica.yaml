@@ -1,15 +1,16 @@
-# BCSD configuration: CESM2-WACCM / tasmax+tasmin+dtr / SSP245 / member 006 / South Africa (QA)
+# BCSD configuration: CESM2-WACCM / tasmax+tasmin+dtr / SSP245 / members 006-010 / South Africa (QA)
 # Members 001-005 have the CMIP6 tasmax/tasmin bug and are excluded; 006-010 use the
-# corrected historical run ("001"). Member 006's data ends 2069-12-31 (per
-# srm.validation._MEMBER_TIME_BOUNDS), so predict_period_end is 2069. Members 007-010
-# end 2070 and live in cesm2-waccm-ssp245-tmx-2070-southafrica.yaml; splitting by true
-# data end keeps each member's temperature-extremes extent consistent with its standard
-# variables and with the production / snapshot runs.
+# corrected historical run ("001"). Members 006-010's data ends in 2069 (per
+# srm.validation._MEMBER_TIME_BOUNDS: 007-010 on 2069-12-31, 006 a day earlier), so
+# predict_period_end is 2069. These were previously mis-truncated at 2070 in a separate
+# cesm2-waccm-ssp245-tmx-2070-southafrica.yaml config now folded in here: the raw input's
+# apparent extra day at 2070-01-01 was the last 2069 daily mean carrying an end-of-interval
+# stamp, which issue #521 corrected at the ETL.
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
 variables: ["tasmax", "tasmin", "dtr"]
-ensemble_members: ["006"]
+ensemble_members: ["008"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
