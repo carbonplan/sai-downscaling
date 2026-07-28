@@ -52,6 +52,7 @@ from srm.encoding import (
     make_coarse_encoding,
     make_encoding,
 )
+from srm.qa_checks import assert_no_nans
 from srm.utils import get_variable
 
 logger = logging.getLogger(__name__)
@@ -379,6 +380,21 @@ class BCSDPipeline:
             if self._ssp245_member != config.ensemble_member:
                 parts.append(f"ssp245_bridge={self._ssp245_member!r}")
             logger.info("Lineage resolved — %s", "  ".join(parts))
+
+    def _nan_check_context(self, stage: str) -> dict[str, str | None]:
+        """Run-identity fields attached to a :class:`NaNCheckError` message.
+
+        Batch runs fan out over hundreds of Coiled tasks writing to the same store.
+        Without these fields the traceback names the offending array but not which
+        task produced it.
+        """
+        return {
+            "gcm": self.config.gcm,
+            "variable": self.config.variable,
+            "ensemble_member": self.config.ensemble_member,
+            "scenario": self.config.scenario,
+            "stage": stage,
+        }
 
     def _build_output_attrs(self) -> dict:
         """Build dataset-level attributes for pipeline output artifacts."""
@@ -779,8 +795,14 @@ class BCSDPipeline:
             running_window_mode_over_years_of_cm_future=False,
         )
 
-        obs_np = obs_coarse.as_numpy().values
-        cm_hist_np = model_hist.as_numpy().values
+        obs_coarse = obs_coarse.as_numpy()
+        model_hist = model_hist.as_numpy()
+        nan_context = self._nan_check_context("fit_historical")
+        assert_no_nans(obs_coarse, name="obs", context=nan_context)
+        assert_no_nans(model_hist, name="cm_hist", context=nan_context)
+
+        obs_np = obs_coarse.values
+        cm_hist_np = model_hist.values
 
         debiased_np = debiaser.apply(
             obs=obs_np,
@@ -792,8 +814,13 @@ class BCSDPipeline:
             parallel=True,
             nr_processes=dask.system.CPU_COUNT,
             progressbar=False,
-            failsafe=True,  # ocean pixels have NaN obs; fill with NaN rather than crash
+            # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
+            # distribution fit that fails to converge. Inputs are asserted NaN-free
+            # above, so anything NaN in the result was produced here, and the output
+            # assertion below catches it (issue #517).
+            failsafe=True,
         )
+        assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)
 
         return xr.DataArray(
             data=debiased_np,
@@ -1197,11 +1224,11 @@ class BCSDPipeline:
         train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
         obs_coarse = obs_coarse.sel(time=train_slice)
         obs_fine = obs_fine.sel(time=train_slice)
-        model_hist = model_hist.sel(
-            time=slice(
-                f"{self.config.train_period_start}", f"{self.config.predict_period_start - 1}"
-            )
-        )
+        # Slice to the training period, matching _load_gcm_obs. Slicing through
+        # predict_period_start - 1 instead only coincides with train_period_end when the
+        # prediction period starts the year after training ends, and otherwise widens the
+        # quantile-mapping reference pool beyond the configured window (issue #518).
+        model_hist = model_hist.sel(time=train_slice)
         model_scenario = model_scenario.sel(
             time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
         )
@@ -1323,9 +1350,17 @@ class BCSDPipeline:
         blends them — parametric where the scenario falls outside the historical range,
         nonparametric everywhere else.
         """
-        obs_np = obs_coarse.as_numpy().values
-        cm_hist_np = model_hist.as_numpy().values
-        cm_future_np = scenario_detrended.load().values
+        obs_coarse = obs_coarse.as_numpy()
+        model_hist = model_hist.as_numpy()
+        scenario_detrended = scenario_detrended.load()
+        nan_context = self._nan_check_context("transform_scenario")
+        assert_no_nans(obs_coarse, name="obs", context=nan_context)
+        assert_no_nans(model_hist, name="cm_hist", context=nan_context)
+        assert_no_nans(scenario_detrended, name="cm_future", context=nan_context)
+
+        obs_np = obs_coarse.values
+        cm_hist_np = model_hist.values
+        cm_future_np = scenario_detrended.values
 
         common_kwargs = dict(
             variable=self.config.variable,
@@ -1345,7 +1380,11 @@ class BCSDPipeline:
             parallel=True,
             nr_processes=dask.system.CPU_COUNT,
             progressbar=False,
-            failsafe=True,  # ocean pixels have NaN obs; fill with NaN rather than crash
+            # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
+            # distribution fit that fails to converge. Inputs are asserted NaN-free
+            # above, so anything NaN in the result was produced here, and the output
+            # assertion below catches it (issue #517).
+            failsafe=True,
         )
 
         if self.config.debias_approach in ["parametric", "nonparametric"]:
@@ -1408,6 +1447,8 @@ class BCSDPipeline:
             raise ValueError(
                 "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
+
+        assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)
 
         if self.options.clip_values:
             var = self.config.variable
