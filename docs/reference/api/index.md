@@ -1,6 +1,5 @@
 # API Reference
 
-
 The API reference is the authoritative description of all public classes, functions,
 and modules in the `srm` package. Entries describe the interface; they do not instruct.
 See [How-to guides](../../how-to/run-pipeline.md) for task-oriented usage and
