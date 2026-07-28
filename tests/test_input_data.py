@@ -261,9 +261,17 @@ class TestDataIntegrity:
             pytest.skip(result.message)
         assert result.status == CheckStatus.PASS, f"{result.message} | {result.detail}"
 
-    # variable-checks: invalid first day repaired (issue #424)
-    def test_cesm2_waccm_invalid_first_day_repaired(self):
-        from srm.input_data.cesm2_waccm import INVALID_FIRST_DAY
+    # variable-checks: no instantaneous initialisation record (issues #424, #521)
+    def test_cesm2_waccm_first_record_is_a_daily_mean(self):
+        """CAM prefixes each history stream with a zero-width initial-state record.
+
+        The ETL drops it via ``decode_time_from_bounds``; this asserts none survived. An
+        instantaneous shortwave field is dark over exactly the night hemisphere, so a first-day
+        dark fraction anywhere near 0.5 means a snapshot is still being served as a daily mean.
+        A genuine daily mean is dark only where the sun never rises, which in early January is
+        the polar-night cap at roughly 13%.
+        """
+        import numpy as np
 
         entry = catalog.get("CESM2-WACCM")
         if entry is None or not isinstance(entry, Datatree):
@@ -271,15 +279,19 @@ class TestDataIntegrity:
 
         dt = entry.to_xarray()
         issues = []
-        for group, (date, members) in INVALID_FIRST_DAY.items():
-            if group not in dt.children:
-                continue
+        for group in dt.children:
             ds = dt[group].to_dataset()
-            for member in members:
-                day = ds[["tasmax", "tasmin"]].sel(ensemble_member=member, time=date).compute()
-                if bool((day["tasmax"] == day["tasmin"]).all()):
+            if "rsds" not in ds.data_vars:
+                continue
+            for member in [str(m) for m in ds.ensemble_member.values]:
+                first = ds["rsds"].sel(ensemble_member=member).isel(time=0).compute()
+                if bool(np.isnan(first).all()):
+                    continue  # member is NaN-padded before its own coverage starts
+                dark = float((first == 0).mean())
+                if dark > 0.4:
                     issues.append(
-                        f"{group}/{member} {date}: tasmax == tasmin everywhere (unrepaired)"
+                        f"{group}/{member} {str(ds.time.values[0])[:10]}: first record is "
+                        f"{dark:.0%} dark, i.e. an instantaneous snapshot rather than a daily mean"
                     )
         assert not issues, "\n".join(issues)
 
