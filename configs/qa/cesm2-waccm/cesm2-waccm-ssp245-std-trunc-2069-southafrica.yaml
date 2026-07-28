@@ -1,10 +1,10 @@
 # BCSD configuration: CESM2-WACCM / standard variables / SSP245 / truncated members 006-010 / South Africa (QA)
-# Members 006-010's data ends 2069-12-31 (per srm.validation._MEMBER_TIME_BOUNDS), so
-# predict_period_end is 2069. 007-010 each have one stray non-NaN day at 2070-01-01
-# (rest of 2070 is NaN in the raw GCM input) - not a valid extra year, previously
+# Members 006-010's data ends in 2069 (per srm.validation._MEMBER_TIME_BOUNDS: 007-010 on
+# 2069-12-31, 006 a day earlier), so predict_period_end is 2069. These were previously
 # mis-truncated at 2070 in a separate cesm2-waccm-ssp245-std-trunc-2070-southafrica.yaml
-# config now folded in here. Full-length members 001-005 live in
-# cesm2-waccm-ssp245-std-southafrica.yaml.
+# config now folded in here: the raw input's apparent extra day at 2070-01-01 was the last
+# 2069 daily mean carrying an end-of-interval stamp, which issue #521 corrected at the ETL.
+# Full-length members 001-005 live in cesm2-waccm-ssp245-std-southafrica.yaml.
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"

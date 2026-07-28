@@ -560,8 +560,10 @@ class TestCheckConfigTimeDomain:
 
     @pytest.mark.parametrize("member", ["006", "007", "008", "009", "010"])
     def test_truncated_members_end_2069(self, member):
-        # 007-010 have a single stray non-NaN day at 2070-01-01; it must not extend the
-        # valid extent, or the detrend rolling mean is poisoned by a one-day January mean.
+        # These members are truncated mid-scenario, and asking for 2070 must fail rather than
+        # slice NaN-padding: a partially-NaN year poisons the detrend rolling mean. Before
+        # issue #521 the guard also had to reject a stray non-NaN day at 2070-01-01, which
+        # decoding the axis from time_bnds has since folded back into 2069.
         from srm.validation import check_config_time_domain
 
         assert check_config_time_domain(self._config(member, 2070)).status == CheckStatus.FAIL

@@ -45,6 +45,13 @@ SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
 VARIABLE_OPTIONS = get_args(VariableName)
 
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
+#
+# These end dates used to run a day or more past the scenario's nominal end, which looked like
+# CESM writing an extra time step. It was not: CAM stamps interval statistics at the END of the
+# averaging interval and prefixes each history stream with a zero-width initial-state record, so
+# the raw axis labelled every daily mean one day late (issue #521). The ETL now rebuilds the axis
+# from time_bnds via srm.utils.decode_time_from_bounds, which is where that convention is
+# documented in full, and TIME_RANGE in srm.input_data.cesm2_waccm clamps what remains.
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     "CESM2-WACCM": {
         # historical merges ESGF '001' (1978–2014) + Pangeo r*i1p1f1 (1850–2014);
@@ -69,8 +76,13 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
 # Per-member valid daily extent, keyed gcm -> scenario -> ensemble_member -> (start, end).
 # First/last non-NaN day per member. Members not listed fall back to _SCENARIO_TIME_BOUNDS.
 # Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069) while 001-005 reach 2099.
-# 007-010 each have one stray non-NaN day at 2070-01-01 (rest of 2070 is NaN) - not a
-# valid extra year, so end date is 2069-12-31 like 006, not 2070-12-31.
+# These CESM end dates are one day earlier than they read before issue #521: the axis is now
+# decoded from time_bnds, so each daily mean is stamped at the start of its interval rather
+# than the end. What looked like a stray non-NaN day at 2070-01-01 on 007-010 was the last
+# real daily mean wearing an end-of-interval stamp, and it now sits contiguously at
+# 2069-12-31; 006, which had no such trailing record, ends a day earlier at 2069-12-30.
+# check_config_time_domain compares years only, so these day-level shifts do not move any
+# config's valid predict period.
 _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
     "CESM2-WACCM": {
         "G6-1.5K": {
@@ -90,7 +102,7 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "003": ("2015-01-01", "2099-12-31"),
             "004": ("2015-01-01", "2099-12-31"),
             "005": ("2015-01-01", "2099-12-31"),
-            "006": ("2015-01-01", "2069-12-31"),
+            "006": ("2015-01-01", "2069-12-30"),
             "007": ("2015-01-01", "2069-12-31"),
             "008": ("2015-01-01", "2069-12-31"),
             "009": ("2015-01-01", "2069-12-31"),
