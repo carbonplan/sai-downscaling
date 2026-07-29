@@ -27,11 +27,20 @@ class GlobalBaseline:
     branch: str
 
 
-# Bump ``branch`` here to start a new baseline version; the comparison notebook and
-# ``compare_runs`` both read this value. Data must live on the named branch ("main"
-# is an empty anchor and must not be used). Verified: "v0.10.0" holds the approved
-# global run.
+# Bump ``uri``/``branch`` here to start a new baseline version; the comparison notebook
+# and ``compare_runs`` both read this value. Data must live on the named branch ("main"
+# is an empty anchor and must not be used). Verified 2026-07-28: this store's branches
+# are {"main", "v0.12.0"}, and "v0.12.0" holds the approved global run.
+#
+# Published production output moved off the private ``carbonplan-srm`` bucket to
+# CarbonPlan's Source Cooperative repository. The bucket is public, but
+# ``srm.validation._open_output_datatree`` opens it with ``from_env=True``; signed
+# requests from another account are accepted, so no anonymous-access special case is
+# needed here.
 CESM2_WACCM_GLOBAL = GlobalBaseline(
-    uri="s3://carbonplan-srm/output/production/CESM2-WACCM-ERA5-global.icechunk",
-    branch="v0.11.1",
+    uri=(
+        "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling"
+        "/output/production/CESM2-WACCM-ERA5-global.icechunk"
+    ),
+    branch="v0.12.0",
 )
