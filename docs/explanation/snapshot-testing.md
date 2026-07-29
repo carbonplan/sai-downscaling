@@ -9,7 +9,7 @@ A cheap South Africa run produces candidate output, and `compare_runs` aligns th
 ```mermaid
 graph TB
     RUN[bcsd run<br/>South Africa configs] -->|produces| CAND[Candidate output store]
-    SNAP[("Global snapshot on carbonplan-srm<br/>pointer in baselines.py")]
+    SNAP[("Global snapshot on source.coop<br/>pointer in baselines.py")]
 
     SNAP -->|align to candidate extent| ALN[Snapshot on candidate grid]
     CAND --> CMP
@@ -61,7 +61,7 @@ One global tolerance cannot fit every variable, because they live on different s
 
 ## The baseline
 
-There is one canonical baseline: the approved global run on the `carbonplan-srm` bucket, recorded as a store URI and icechunk branch in `srm.snapshot.baselines.CESM2_WACCM_GLOBAL`. Which run serves as the baseline is therefore a version-controlled value that the notebook and `compare_runs` both read, so repointing it is a reviewed edit to `baselines.py` rather than an untracked change on a bucket.
+There is one canonical baseline: the approved global run in CarbonPlan's public [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling), recorded as a store URI and icechunk branch in `srm.snapshot.baselines.CESM2_WACCM_GLOBAL`. Which run serves as the baseline is therefore a version-controlled value that the notebook and `compare_runs` both read, so repointing it is a reviewed edit to `baselines.py` rather than an untracked change on a bucket.
 
 ## Why the cheap proxy is only partial
 
