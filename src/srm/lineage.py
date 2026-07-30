@@ -50,6 +50,13 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, s
     add("CESM2-WACCM", "G6-1.5K", "003", _std, "r3i1p1f1", "003")
     add("CESM2-WACCM", "G6-1.5K", "003", _tmx, "001", "008")
 
+    # CESM2-WACCM G6-1.5K-END ("002") mapping
+    # std vars: [('historical','r2i1p1f1'),('ssp245','002'),('g6_1p5k','002')]
+    # tmx vars: [[('historical','001'),('ssp245','007'),('g6_1p5k','002')]
+
+    add("CESM2-WACCM", "G6-1.5K-END", "002", _std, "r2i1p1f1", "002")
+    add("CESM2-WACCM", "G6-1.5K-END", "002", _tmx, "001", "007")
+
     # CESM2-WACCM SSP245 (no SAI bridge, ssp245_member is always None)
     # Members 001-005: standard variables only (tasmax/tasmin have the CMIP6 bug: not usable).
     # Members 006-010: tasmax/tasmin available via corrected run ("001"); all end in 2069
