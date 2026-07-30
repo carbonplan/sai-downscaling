@@ -299,6 +299,9 @@ class Catalog:
                     VarStandards.TASMAX,
                     VarStandards.PR,
                     VarStandards.RLDS,
+                    VarStandards.RSDS,
+                    VarStandards.PS,
+                    VarStandards.HUSS,
                 ],
             ),
             "ocean-mask": VectorDataset(

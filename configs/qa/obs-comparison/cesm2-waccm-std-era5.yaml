@@ -2,12 +2,12 @@
 # Standard variables (tas, pr) shared with GDEX-GMF, member 003, full-length (2099).
 
 gcm: "CESM2-WACCM"
-variable: ["tas", "pr"]
+variable: ["tas", "pr", "rsds"]
 ensemble_member: "003"
 scenario: "SSP245"
 obs_dataset: "ERA5"
 
-subset_bounds: [-35, -22, 16, 33]
+# subset_bounds: [-35, -22, 16, 33]
 
 train_period_start: 1960
 train_period_end: 2008

@@ -1,4 +1,4 @@
-# COILED vm-type r8g.2xlarge
+# COILED vm-type r8g.16xlarge
 # COILED region us-west-2
 # COILED tag project=SRM
 
@@ -49,6 +49,9 @@ THRHRLY_TO_CMIP6: dict[str, str] = {"tas": "tas"}
 DAILY_TO_CMIP6: dict[str, str] = {
     "prcp": "pr",
     "dlwrf": "rlds",
+    "dswrf": "rsds",
+    "pres": "ps",
+    "shum": "huss",
     "tmin": "tasmin",
     "tmax": "tasmax",
 }

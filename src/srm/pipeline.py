@@ -1139,12 +1139,14 @@ class BCSDPipeline:
 
     def _load_scenario_data(
         self,
-    ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None]:
-        """Load obs_coarse, obs_fine, model_hist, model_scenario, and optionally ssp_timeseries.
+    ) -> tuple[
+        xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None
+    ]:
+        """Load obs_coarse, obs_fine, model_hist, model_hist_stitch, model_scenario, ssp_timeseries.
 
-        Returns (obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries).
-        obs_coarse/obs_fine/model_hist are subsetted to the training period;
-        model_scenario to the predict period. ssp_timeseries is None for non-SAI scenarios.
+        obs_coarse/obs_fine/model_hist are subsetted to the training period,
+        model_hist_stitch to ``train_period_start`` onward, and model_scenario to the
+        predict period. ssp_timeseries is None for non-SAI scenarios.
         """
         deps = self.cache.check_dependencies(
             "transform_scenario", self.config, hist_member=self._hist_member
@@ -1224,6 +1226,8 @@ class BCSDPipeline:
         train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
         obs_coarse = obs_coarse.sel(time=train_slice)
         obs_fine = obs_fine.sel(time=train_slice)
+
+        model_hist_stitch = model_hist.sel(time=slice(f"{self.config.train_period_start}", None))
         # Slice to the training period, matching _load_gcm_obs. Slicing through
         # predict_period_start - 1 instead only coincides with train_period_end when the
         # prediction period starts the year after training ends, and otherwise widens the
@@ -1233,11 +1237,11 @@ class BCSDPipeline:
             time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
         )
 
-        return obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries
+        return obs_coarse, obs_fine, model_hist, model_hist_stitch, model_scenario, ssp_timeseries
 
     def _detrend_scenario(
         self,
-        model_hist: xr.DataArray,
+        model_hist_stitch: xr.DataArray,
         model_scenario: xr.DataArray,
         ssp_timeseries: xr.DataArray | None,
     ) -> tuple[xr.DataArray, xr.DataArray | None]:
@@ -1245,6 +1249,9 @@ class BCSDPipeline:
 
         Returns (scenario_detrended, scenario_trend). When detrending is disabled,
         returns (scenario, None) and scenario_trend will be None.
+
+        ``model_hist_stitch`` is the historical run reaching the scenario start, not the
+        training-window slice used for QM'ing.
 
         For SAI scenarios, stitches in SSP245 data to bridge the gap between the end of
         historical (2014/2015) and the SAI simulation start (~2035). This bridge is
@@ -1261,7 +1268,7 @@ class BCSDPipeline:
                     f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
                 )
                 bridged = stitch_historical_scenario(
-                    model_hist=model_hist,
+                    model_hist=model_hist_stitch,
                     model_scenario=model_scenario,
                     train_period_end=self.config.train_period_end,
                     predict_period_start=self.config.predict_period_start,
@@ -1272,7 +1279,7 @@ class BCSDPipeline:
 
         if self.options.rechunk_workflow:
             t0 = time.perf_counter()
-            model_hist = rechunk(model_hist, pattern="full_time").persist()
+            model_hist_stitch = rechunk(model_hist_stitch, pattern="full_time").persist()
             model_scenario = rechunk(model_scenario, pattern="full_time").persist()
             if ssp_timeseries is not None:
                 ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time").persist()
@@ -1280,7 +1287,7 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         historical_scenario = stitch_historical_scenario(
-            model_hist=model_hist,
+            model_hist=model_hist_stitch,
             model_scenario=model_scenario,
             train_period_end=self.config.train_period_end,
             predict_period_start=self.config.predict_period_start,
@@ -1288,7 +1295,7 @@ class BCSDPipeline:
         )
 
         da_baseline_clim = calculate_baseline_climatology(
-            da_baseline=model_hist,
+            da_baseline=model_hist_stitch,
             baseline_period_start=self.config.train_period_start,
             baseline_period_end=self.config.train_period_end,
         )
@@ -1500,7 +1507,7 @@ class BCSDPipeline:
         )
 
         t0 = time.perf_counter()
-        obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
+        obs_coarse, obs_fine, model_hist, _, model_scenario, ssp_timeseries = (
             self._load_scenario_data()
         )
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
@@ -1644,13 +1651,13 @@ class BCSDPipeline:
         )
 
         t0 = time.perf_counter()
-        obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
+        obs_coarse, obs_fine, model_hist, model_hist_stitch, model_scenario, ssp_timeseries = (
             self._load_scenario_data()
         )
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         scenario_detrended, scenario_trend = self._detrend_scenario(
-            model_hist, model_scenario, ssp_timeseries
+            model_hist_stitch, model_scenario, ssp_timeseries
         )
 
         t0 = time.perf_counter()

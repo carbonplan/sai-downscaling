@@ -2,7 +2,7 @@
 # Standard variables (tas, pr) shared with ERA5, member 003, full-length (2099).
 
 gcm: "CESM2-WACCM"
-variable: ["tas", "pr"]
+variable: ["tas","pr", "rsds"]
 ensemble_member: "003"
 scenario: "SSP245"
 obs_dataset: "GDEX-GMF"
