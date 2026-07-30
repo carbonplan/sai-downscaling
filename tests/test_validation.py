@@ -648,3 +648,147 @@ class TestTasmaxGeTasminOutputGate:
         results = validate_output_store(self._tree(tmax, tmin))
         gate = [r for r in results if r.check_id == "tasmax_ge_tasmin"]
         assert gate[0].status == CheckStatus.PASS
+
+
+class TestObsCompatibility:
+    """Obs datasets are not interchangeable; a config must be checked against one."""
+
+    @staticmethod
+    def _config(obs_dataset: str, variable: str = "tas", train_end: int = 2008):
+        from srm.bcsd_config import BCSDConfig
+
+        return BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable=variable,
+            ensemble_member="003",
+            scenario="SSP245",
+            obs_dataset=obs_dataset,
+            train_period_start=1960,
+            train_period_end=train_end,
+            predict_period_start=2015,
+            predict_period_end=2099,
+        )
+
+    def test_gdex_within_its_record_passes(self):
+        from srm.validation import check_obs_compatibility
+
+        assert check_obs_compatibility(self._config("GDEX-GMF")).status == CheckStatus.PASS
+
+    def test_gdex_past_2008_fails(self):
+        from srm.validation import check_obs_compatibility
+
+        r = check_obs_compatibility(self._config("GDEX-GMF", train_end=2014))
+        assert r.status == CheckStatus.FAIL
+        assert "2008" in r.message
+
+    def test_era5_reaches_2014(self):
+        from srm.validation import check_obs_compatibility
+
+        assert (
+            check_obs_compatibility(self._config("ERA5", train_end=2014)).status == CheckStatus.PASS
+        )
+
+    def test_hurs_against_gdex_fails(self):
+        """ERA5 derives hurs; GDEX carries huss and has no equivalent."""
+        from srm.validation import check_obs_compatibility
+
+        r = check_obs_compatibility(self._config("GDEX-GMF", variable="hurs"))
+        assert r.status == CheckStatus.FAIL
+        assert "hurs" in r.message
+
+    def test_hurs_against_era5_passes(self):
+        from srm.validation import check_obs_compatibility
+
+        assert check_obs_compatibility(self._config("ERA5", variable="hurs")).status == (
+            CheckStatus.PASS
+        )
+
+    def test_unknown_obs_dataset_fails(self):
+        from srm.validation import check_obs_compatibility
+
+        r = check_obs_compatibility(self._config("NOT-A-DATASET"))
+        assert r.status == CheckStatus.FAIL
+        assert "not in the catalog" in r.message
+
+    def test_shared_variables_work_against_both(self):
+        from srm.validation import check_obs_compatibility
+
+        for variable in ("tas", "pr", "rsds"):
+            for obs in ("ERA5", "GDEX-GMF"):
+                r = check_obs_compatibility(self._config(obs, variable=variable))
+                assert r.status == CheckStatus.PASS, f"{obs}/{variable}: {r.message}"
+
+
+class TestTrainPeriodCoverage:
+    """Train period must fit the historical member, the sibling of the predict check."""
+
+    @staticmethod
+    def _config(member: str, train_start: int, train_end: int = 2014):
+        from srm.bcsd_config import BCSDConfig
+
+        return BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member=member,
+            scenario="SSP245",
+            train_period_start=train_start,
+            train_period_end=train_end,
+            predict_period_start=2015,
+            predict_period_end=2099,
+        )
+
+    def test_within_the_historical_record_passes(self):
+        from srm.validation import check_train_period_coverage
+
+        # 003 resolves to r3i1p1f1, whose record starts 1850.
+        assert check_train_period_coverage(self._config("003", 1960)).status == CheckStatus.PASS
+
+    def test_before_the_historical_record_fails(self):
+        from srm.bcsd_config import BCSDConfig
+        from srm.validation import check_train_period_coverage
+
+        # 006 resolves to r1i1p1f1 for tas; use tasmax to reach the "001" record (1978-).
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmax",
+            ensemble_member="006",
+            scenario="SSP245",
+            train_period_start=1960,
+            train_period_end=2014,
+            predict_period_start=2015,
+            predict_period_end=2069,
+        )
+        r = check_train_period_coverage(cfg)
+        assert r.status == CheckStatus.FAIL
+        assert "1978" in r.message
+
+    def test_boundary_exact_window_passes(self):
+        """cesm2-waccm-g6-southafrica trains 1978-2014 against a 1978-2014 record."""
+        from srm.bcsd_config import BCSDConfig
+        from srm.validation import check_train_period_coverage
+
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmax",
+            ensemble_member="006",
+            scenario="SSP245",
+            train_period_start=1978,
+            train_period_end=2014,
+            predict_period_start=2015,
+            predict_period_end=2069,
+        )
+        assert check_train_period_coverage(cfg).status == CheckStatus.PASS
+
+    def test_unregistered_lineage_skips(self):
+        from srm.bcsd_config import BCSDConfig
+        from srm.validation import check_train_period_coverage
+
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="not-a-member",
+            scenario="SSP245",
+            predict_period_start=2015,
+            predict_period_end=2099,
+        )
+        assert check_train_period_coverage(cfg).status == CheckStatus.SKIP

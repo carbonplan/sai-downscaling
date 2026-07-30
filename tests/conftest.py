@@ -41,15 +41,20 @@ class DatatreeGroupEntry:
     """Wraps one scenario group in a unified datatree store for test parametrization.
 
     Provides the same duck-type interface as BaseDataset (name, expected_vars,
-    to_xarray) so DatasetChecker works without modification. The datatree is opened
-    lazily at test runtime — never at collection time — and cached per GCM per worker
-    process so each store is opened at most once.
+    expected_years, to_xarray) so DatasetChecker works without modification. The
+    datatree is opened lazily at test runtime — never at collection time — and cached
+    per GCM per worker process so each store is opened at most once.
+
+    GCM stores declare neither expectation: per-member time bounds live in
+    ``srm.validation._MEMBER_TIME_BOUNDS``, which is finer-grained than a single
+    per-store range, and variable sets differ by group.
     """
 
     name: str
     _entry: Datatree = field(repr=False)
     _group: str = field(repr=False)
     expected_vars: None = None
+    expected_years: None = None
 
     _dt_cache: ClassVar[dict[str, xr.DataTree]] = {}
 

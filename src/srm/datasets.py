@@ -40,6 +40,10 @@ class BaseDataset(BaseCatalogEntry, ABC):
     format: typing.Literal["zarr", "icechunk"]
     region: str = "us-west-2"
     expected_vars: list[VarSpec] | None = None
+    # Inclusive (first, last) year the store covers. Declared rather than read, so
+    # config validation stays free of S3 access; tests/test_input_data.py checks it
+    # against the real store, the same way it checks expected_vars.
+    expected_years: tuple[int, int] | None = None
     ensemble_members: list[str] | None = None
     ensemble_member: list[str] | None = None
 
@@ -259,6 +263,7 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"time": 1, "lat": 721, "lon": 1440},
                 expected_shards={"time": 30, "lat": 721, "lon": 1440},
+                expected_years=(1950, 2014),
                 expected_vars=[
                     VarStandards.PR,
                     VarStandards.RLDS,
@@ -267,6 +272,9 @@ class Catalog:
                     VarStandards.TAS,
                     VarStandards.PS,
                     VarStandards.TASMIN,
+                    # Derived from 2m temperature and dewpoint by the ETL, not a raw
+                    # ERA5 field. Production downscales it, so it belongs here.
+                    VarStandards.HURS,
                 ],
             ),
             "NASA-NEX-SSP245": VirtualDataset(
@@ -293,6 +301,11 @@ class Catalog:
                 format="icechunk",
                 expected_chunks={"time": 1, "lat": 720, "lon": 1440},
                 expected_shards={"time": 30, "lat": 720, "lon": 1440},
+                # Princeton Global Forcing stops at 2008, six years short of ERA5. Any
+                # comparison against ERA5 has to train inside this window.
+                expected_years=(1950, 2008),
+                # huss/ps are materialised but not downscaled; the pipeline uses ERA5's
+                # derived hurs and has no GDEX equivalent.
                 expected_vars=[
                     VarStandards.TAS,
                     VarStandards.TASMIN,

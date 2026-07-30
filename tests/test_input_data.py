@@ -88,6 +88,25 @@ class TestCatalogDatasets:
         result = validator.validate_expected_variables()
         assert result, f"variable mismatch {ds_info.name}: {result.issues}"
 
+    # temporal-checks: declared coverage matches the store
+    def test_expected_years(self, ds_info: Dataset):
+        """``expected_years`` drives config validation, so it must track the real store.
+
+        ``check_obs_compatibility`` rejects training windows outside these bounds without
+        opening the store. Stale bounds would either reject valid configs or let an
+        out-of-range one through to fail mid-pipeline.
+        """
+        self._skip_if_virtual(ds_info)
+        if not ds_info.expected_years:
+            pytest.skip(f"{ds_info.name} has no year expectations.")
+
+        ds = ds_info.to_xarray()
+        actual = (int(ds.time.dt.year.min()), int(ds.time.dt.year.max()))
+        assert actual == tuple(ds_info.expected_years), (
+            f"{ds_info.name}: store covers {actual}, catalog declares "
+            f"{tuple(ds_info.expected_years)}"
+        )
+
     # variable-checks: units
     def test_variable_units(self, ds_info: Dataset, validator: DatasetValidator):
         """check variable units match"""

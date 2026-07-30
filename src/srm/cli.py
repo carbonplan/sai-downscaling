@@ -222,13 +222,18 @@ def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
     from srm.validation import (
         CheckStatus,
         check_config_time_domain,
+        check_obs_compatibility,
         check_train_period_coverage,
     )
 
     failures = [
         r
         for c in configs
-        for check in (check_config_time_domain, check_train_period_coverage)
+        for check in (
+            check_config_time_domain,
+            check_train_period_coverage,
+            check_obs_compatibility,
+        )
         if (r := check(c)).status == CheckStatus.FAIL
     ]
     if failures:
@@ -1098,6 +1103,7 @@ def validate(
         SCENARIO_OPTIONS,
         DatasetValidator,
         check_config_time_domain,
+        check_obs_compatibility,
         check_train_period_coverage,
     )
 
@@ -1130,7 +1136,11 @@ def validate(
         [
             check(c)
             for c in configs
-            for check in (check_config_time_domain, check_train_period_coverage)
+            for check in (
+                check_config_time_domain,
+                check_train_period_coverage,
+                check_obs_compatibility,
+            )
         ]
         if config_path
         else []

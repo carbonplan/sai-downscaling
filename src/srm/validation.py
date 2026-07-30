@@ -24,6 +24,7 @@ BLOCKING_CHECKS = {
     "ensemble_member_dim",
     "config_time_domain",
     "train_period_coverage",
+    "obs_compatibility",
     "g6_not_identical_to_ssp245",
     "lineage_member_availability",
     "temporal_coverage",
@@ -392,6 +393,87 @@ def check_train_period_coverage(config: BCSDConfig) -> CheckResult:
         status=CheckStatus.PASS,
         message=f"train period {config.train_period_start}–{config.train_period_end} within "
         f"historical extent {valid_start_year}–{valid_end_year} for member {hist_member}.",
+        detail=detail,
+    )
+
+
+def check_obs_compatibility(config: BCSDConfig) -> CheckResult:
+    """C3: the observation dataset must carry the variable, over the training window.
+
+    Observation datasets are not interchangeable. ERA5 runs to 2014 and carries a
+    derived ``hurs``; GDEX-GMF stops at 2008 and carries ``huss`` instead. Neither
+    difference is visible from a config, which names the obs dataset as a plain string.
+
+    Without this, a training window past an obs record's end fails deep inside
+    ``transform_scenario`` as a stitch continuity error, and an unavailable variable
+    fails as a ``KeyError`` from ``get_variable`` once a Coiled VM is already running.
+
+    Returns a blocking FAIL on either mismatch, PASS when both fit, and SKIP when the
+    catalog entry declares no expectations.
+    """
+    base = {
+        "check_id": "obs_compatibility",
+        "gcm": config.gcm,
+        "scenario": config.scenario or "historical",
+        "ensemble_member": config.ensemble_member,
+    }
+
+    try:
+        obs = catalog.get(config.obs_dataset)
+    except KeyError:
+        return CheckResult(
+            **base,
+            status=CheckStatus.FAIL,
+            message=f"obs_dataset {config.obs_dataset!r} is not in the catalog. "
+            f"Known datasets: {sorted(catalog.list())}.",
+        )
+
+    expected_vars = getattr(obs, "expected_vars", None)
+    expected_years = getattr(obs, "expected_years", None)
+    if not expected_vars and not expected_years:
+        return CheckResult(
+            **base,
+            status=CheckStatus.SKIP,
+            message=f"{config.obs_dataset} declares no variable or year expectations.",
+        )
+
+    detail = {
+        "obs_dataset": config.obs_dataset,
+        "variable": config.variable,
+        "train_period_start": config.train_period_start,
+        "train_period_end": config.train_period_end,
+        "obs_years": list(expected_years) if expected_years else None,
+    }
+
+    issues: list[str] = []
+    if expected_vars:
+        available = {spec.name for spec in expected_vars}
+        if config.variable not in available:
+            issues.append(
+                f"{config.obs_dataset} has no {config.variable!r}; it carries {sorted(available)}"
+            )
+    if expected_years:
+        obs_start, obs_end = expected_years
+        if config.train_period_start < obs_start:
+            issues.append(
+                f"train_period_start {config.train_period_start} is before "
+                f"{config.obs_dataset} data start {obs_start}"
+            )
+        if config.train_period_end > obs_end:
+            issues.append(
+                f"train_period_end {config.train_period_end} is past "
+                f"{config.obs_dataset} data end {obs_end}"
+            )
+
+    if issues:
+        return CheckResult(
+            **base, status=CheckStatus.FAIL, message="; ".join(issues), detail=detail
+        )
+    return CheckResult(
+        **base,
+        status=CheckStatus.PASS,
+        message=f"{config.obs_dataset} covers {config.variable} over "
+        f"{config.train_period_start}–{config.train_period_end}.",
         detail=detail,
     )
 
