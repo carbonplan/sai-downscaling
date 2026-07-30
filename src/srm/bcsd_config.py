@@ -307,6 +307,12 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         if self.subset_bounds:
             parts.append("subset")
 
+        # obs_dataset is unconditional, not "only when it differs from the default".
+        # The orchestrator reports failures by run_id, and the obs-comparison configs
+        # expand over ERA5 and GDEX-GMF with every other part identical, so a
+        # conditional suffix would leave the ERA5 half of each pair unlabelled.
+        parts.append(self.obs_dataset)
+
         return "_".join(parts)
 
     @computed_field
@@ -321,6 +327,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             "variable": self.variable,
             "ensemble_member": self.ensemble_member,
             "scenario": self.scenario,
+            "obs_dataset": self.obs_dataset,
             "train_period": (self.train_period_start, self.train_period_end),
             "predict_period": (self.predict_period_start, self.predict_period_end),
             "subset_bounds": self.subset_bounds,
@@ -344,19 +351,15 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         Useful for grabbing paths to intermediate artifacts for a sibling variable (e.g. dtr or
         tasmax when processing tasmin) without redefining the entire config. Variable-specific
         parameters are auto-populated based on the new variable.
+
+        Rebuilt from the full field set rather than an explicit field list. ``variable_config`` is excluded so the validator repopulates it for the
+        new variable.
         """
-        return BCSDConfig(
-            gcm=self.gcm,
-            variable=variable,
-            ensemble_member=self.ensemble_member,
-            scenario=self.scenario,
-            train_period_start=self.train_period_start,
-            train_period_end=self.train_period_end,
-            predict_period_start=self.predict_period_start,
-            predict_period_end=self.predict_period_end,
-            subset_bounds=self.subset_bounds,
-            debias_approach=self.debias_approach,
+        data = self.model_dump(
+            exclude={"run_id", "config_hash", "is_sai_scenario", "variable_config"}
         )
+        data["variable"] = variable
+        return BCSDConfig(**data)
 
 
 class VariableClipBounds(BaseModel):

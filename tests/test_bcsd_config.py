@@ -283,10 +283,62 @@ class TestBCSDConfigComputedFields:
     """run_id, config_hash, and is_sai_scenario computed fields."""
 
     def test_run_id_historical_only(self, minimal_config):
-        assert minimal_config.run_id == "CESM2-WACCM_tas_r1i1p1f1"
+        assert minimal_config.run_id == "CESM2-WACCM_tas_r1i1p1f1_ERA5"
 
     def test_run_id_with_scenario(self, scenario_config):
-        assert scenario_config.run_id == "CESM2-WACCM_tas_r1i1p1f1_SSP245"
+        assert scenario_config.run_id == "CESM2-WACCM_tas_r1i1p1f1_SSP245_ERA5"
+
+    def test_run_id_distinguishes_obs_datasets(self):
+        """The orchestrator reports failures by run_id, so the two obs sides must differ.
+
+        A run of configs/qa/obs-comparison reported
+        `Failed run_ids: ['CESM2-WACCM_pr_003_SSP245_subset']`, which matched both the
+        ERA5 and the GDEX-GMF task.
+        """
+
+        def _cfg(obs_dataset: str) -> BCSDConfig:
+            return BCSDConfig(
+                gcm="CESM2-WACCM",
+                variable="pr",
+                ensemble_member="003",
+                scenario="SSP245",
+                obs_dataset=obs_dataset,
+                subset_bounds=(-35, -22, 16, 33),
+                train_period_start=1960,
+                train_period_end=2008,
+                predict_period_start=2015,
+                predict_period_end=2099,
+            )
+
+        assert _cfg("ERA5").run_id != _cfg("GDEX-GMF").run_id
+
+    def test_sibling_config_keeps_the_obs_dataset(self):
+        """make_config_for_variable resolves sibling artifact paths, which embed obs."""
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmin",
+            ensemble_member="006",
+            scenario="SSP245",
+            obs_dataset="GDEX-GMF",
+            predict_period_start=2015,
+            predict_period_end=2069,
+        )
+
+        assert cfg.make_config_for_variable("dtr").obs_dataset == "GDEX-GMF"
+
+    def test_sibling_config_repopulates_variable_config(self):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmin",
+            ensemble_member="006",
+            scenario="SSP245",
+            predict_period_start=2015,
+            predict_period_end=2069,
+        )
+        sibling = cfg.make_config_for_variable("dtr")
+
+        assert sibling.variable_config.downscaling_method == "multiplicative"
+        assert cfg.variable_config.downscaling_method == "additive"
 
     def test_run_id_includes_subset_marker(self, regional_config):
         assert "subset" in regional_config.run_id
@@ -318,6 +370,29 @@ class TestBCSDConfigComputedFields:
         for label, cfg_a, cfg_b in pairs:
             with subtests.test(pair=label):
                 assert cfg_a.config_hash != cfg_b.config_hash
+
+    def test_config_hash_differs_by_obs_dataset(self):
+        """obs_dataset is the observational target, so it changes the computed result.
+
+        The obs-comparison config expands over ERA5 and GDEX-GMF with every other field
+        shared. A collision here makes the batch job name ambiguous and stamps identical
+        provenance on outputs calibrated against different observations.
+        """
+
+        def _cfg(obs_dataset: str) -> BCSDConfig:
+            return BCSDConfig(
+                gcm="CESM2-WACCM",
+                variable="pr",
+                ensemble_member="003",
+                scenario="SSP245",
+                obs_dataset=obs_dataset,
+                train_period_start=1960,
+                train_period_end=2008,
+                predict_period_start=2015,
+                predict_period_end=2099,
+            )
+
+        assert _cfg("ERA5").config_hash != _cfg("GDEX-GMF").config_hash
 
     def test_is_sai_false_for_ssp(self, scenario_config):
         assert not scenario_config.is_sai_scenario
