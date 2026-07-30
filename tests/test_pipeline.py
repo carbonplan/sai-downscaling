@@ -28,6 +28,7 @@ from conftest import make_icechunk_group as _make_icechunk_group
 from ibicus.debias import QuantileMapping
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.downscaling_utils import select_training_window
 from srm.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
 from srm.pipeline import (
     BCSDPipeline,
@@ -1151,13 +1152,18 @@ class TestWeibullZeroBounded:
             variable="rsds",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
+            # Matches the 2014 timestamps built below: bias correction narrows its
+            # inputs to the training window, so the 1978-2014 default would keep only
+            # the days that fall inside it.
+            train_period_start=2014,
+            train_period_end=2014,
             predict_period_start=2015,
             predict_period_end=2100,
         )
         assert cfg.debias_approach == "nonparametric_hybrid_2sided"
         pipeline = BCSDPipeline(cfg, pipeline_options)
 
-        time = pd.date_range("2015-01-01", periods=6)
+        time = pd.date_range("2014-01-01", periods=6)
         coords = {"time": time, "lat": [10.0, 20.0], "lon": [0.0, 1.0, 2.0]}
         dims = ["time", "lat", "lon"]
         da = xr.DataArray(
@@ -2141,13 +2147,99 @@ def _spatial_daily_da(start: str, end: str, value: float = 1.0) -> xr.DataArray:
     )
 
 
-class TestScenarioHistoricalSlice:
-    """``_load_scenario_data`` must slice model_hist to the training period (#518).
+class TestTrainingWindowSelection:
+    """``select_training_window`` is the single point that establishes the QM pool (#518)."""
 
-    It previously sliced through ``predict_period_start - 1``, which only coincides with
-    ``train_period_end`` when the prediction period begins the year after training ends.
-    Every other case silently widened the bias-correction reference pool beyond the
-    configured training window.
+    def test_narrows_to_the_configured_window(self):
+        out = select_training_window(_spatial_daily_da("1978-01-01", "2014-12-31"), 1978, 2008)
+
+        assert int(out["time"].dt.year.min()) == 1978
+        assert int(out["time"].dt.year.max()) == 2008
+
+    def test_keeps_a_record_that_matches_the_window_exactly(self):
+        da = _spatial_daily_da("1978-01-01", "2014-12-31")
+        out = select_training_window(da, 1978, 2014)
+
+        np.testing.assert_array_equal(out["time"].values, da["time"].values)
+
+    def test_excludes_the_all_nan_tail_past_the_window(self):
+        # The CESM historical axis runs to 2015-01-16; those days are all-NaN on some
+        # members and must never reach the debiaser (#517/#518).
+        out = select_training_window(_spatial_daily_da("1978-01-01", "2015-01-16"), 1978, 2014)
+
+        assert out["time"].max() < np.datetime64("2015-01-01")
+
+    def test_raises_when_the_window_selects_nothing(self):
+        with pytest.raises(ValueError, match="selects no timesteps"):
+            select_training_window(_spatial_daily_da("2015-01-01", "2015-01-10"), 1978, 2014)
+
+
+class TestBiasCorrectionEstablishesItsOwnWindow:
+    """Bias correction narrows whatever it is handed, so no caller can widen the pool.
+
+    ``_load_scenario_data`` returns the full historical record reaching the scenario
+    start, because ``stitch_historical_scenario`` needs the years past
+    ``train_period_end``. If narrowing were the caller's job instead, passing that same
+    record to the debiaser would silently reintroduce #518.
+    """
+
+    def test_scenario_debias_uses_only_the_training_window(self, pipeline_options):
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
+            scenario="SSP245",
+            train_period_start=1978,
+            train_period_end=2008,
+            predict_period_start=2015,
+            predict_period_end=2020,
+            debias_approach="nonparametric",
+        )
+        pipeline = BCSDPipeline(config, pipeline_options)
+        # Deliberately hand over the full record, exactly as the stitch consumer needs it.
+        full_record = _spatial_daily_da("1978-01-01", "2014-12-31")
+        scenario = _spatial_daily_da("2015-01-01", "2020-12-31")
+
+        spy = MagicMock()
+        spy.return_value.apply.return_value = np.zeros(scenario.shape)
+        with patch("srm.pipeline._make_debiaser", spy):
+            pipeline._apply_bias_correction_scenario(full_record, full_record, scenario)
+
+        kwargs = spy.return_value.apply.call_args.kwargs
+        assert pd.Timestamp(kwargs["time_cm_hist"].max()).year == 2008
+        assert pd.Timestamp(kwargs["time_obs"].max()).year == 2008
+        assert kwargs["cm_hist"].shape[0] == kwargs["time_cm_hist"].shape[0]
+
+    def test_historical_debias_uses_only_the_training_window(self, pipeline_options):
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
+            train_period_start=1978,
+            train_period_end=2008,
+            debias_approach="nonparametric",
+        )
+        pipeline = BCSDPipeline(config, pipeline_options)
+        full_record = _spatial_daily_da("1978-01-01", "2014-12-31")
+
+        spy = MagicMock()
+        spy.return_value.apply.return_value = np.zeros(
+            select_training_window(full_record, 1978, 2008).shape
+        )
+        with patch("srm.pipeline._make_debiaser", spy):
+            pipeline._apply_bias_correction(full_record, full_record)
+
+        kwargs = spy.return_value.apply.call_args.kwargs
+        assert pd.Timestamp(kwargs["time_cm_hist"].max()).year == 2008
+        assert pd.Timestamp(kwargs["time_obs"].max()).year == 2008
+
+
+class TestScenarioLoaderReachesTheScenarioStart:
+    """``_load_scenario_data`` returns the record the stitch needs, not the QM window.
+
+    The obs-comparison configs train to 2008 against a 2015 scenario start, so the
+    2009-2014 years must survive the loader or ``stitch_historical_scenario`` raises a
+    year-level gap. Narrowing happens later, per consumer.
     """
 
     @staticmethod
@@ -2186,71 +2278,48 @@ class TestScenarioHistoricalSlice:
         ):
             return pipeline._load_scenario_data()
 
-    def test_sai_scenario_stops_at_train_period_end(self, pipeline_options):
-        config = BCSDConfig(
-            gcm="CESM2-WACCM",
-            variable="tas",
-            ensemble_member="001",
-            scenario="G6-1.5K",
-            train_period_end=2014,
-            predict_period_start=2035,
-            predict_period_end=2060,
-        )
-        _, _, model_hist, _, _ = self._load(BCSDPipeline(config, pipeline_options))
-
-        assert int(model_hist["time"].dt.year.max()) == 2014
-        # The fifteen all-NaN days after 2015-01-01 must not be reachable at all.
-        assert model_hist["time"].max() < np.datetime64("2015-01-01")
-
-    def test_training_window_shorter_than_scenario_start_is_respected(self, pipeline_options):
-        # configs/qa/obs-comparison/* pair train_period_end 2008 with a 2015 scenario start;
-        # the old slice leaked six extra years into the reference pool.
+    def test_keeps_the_years_between_train_end_and_the_scenario_start(self, pipeline_options):
+        # configs/qa/obs-comparison/* pair train_period_end 2008 with a 2015 scenario
+        # start. Losing 2009-2014 here makes stitch_historical_scenario raise
+        # "year-level gap(s): [(2008, 2015)]" (#518 fix regression).
         config = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
+            train_period_start=1978,
             train_period_end=2008,
             predict_period_start=2015,
             predict_period_end=2060,
         )
         _, _, model_hist, _, _ = self._load(BCSDPipeline(config, pipeline_options))
 
-        assert int(model_hist["time"].dt.year.max()) == 2008
+        assert int(model_hist["time"].dt.year.min()) == 1978
+        assert int(model_hist["time"].dt.year.max()) >= 2014
 
-    def test_matches_the_historical_stage_loader(self, pipeline_options):
-        """_load_gcm_obs already slices correctly; the two loaders must agree."""
+    def test_stitch_is_continuous_when_training_ends_before_the_scenario(self, pipeline_options):
+        """End-to-end complement: the loader's output must actually stitch."""
         config = BCSDConfig(
             gcm="CESM2-WACCM",
             variable="tas",
-            ensemble_member="001",
-            scenario="G6-1.5K",
-            train_period_end=2014,
-            predict_period_start=2035,
+            ensemble_member="r1i1p1f1",
+            scenario="SSP245",
+            train_period_start=1978,
+            train_period_end=2008,
+            predict_period_start=2015,
             predict_period_end=2060,
         )
         pipeline = BCSDPipeline(config, pipeline_options)
-        _, _, scenario_hist, _, _ = self._load(pipeline)
+        _, _, model_hist, model_scenario, _ = self._load(pipeline)
 
-        obs = _spatial_daily_da("1978-01-01", "2014-12-31").to_dataset(name="tas")
-        with (
-            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=obs),
-            patch(
-                "srm.pipeline.get_obs",
-                return_value=_spatial_daily_da("1978-01-01", "2014-12-31"),
-            ),
-            patch(
-                "srm.pipeline.get_historical_experiment",
-                return_value=_spatial_daily_da("1978-01-01", "2015-01-16"),
-            ),
-            patch.object(
-                pipeline.cache,
-                "check_dependencies",
-                return_value={"obs_regridded": (True, MagicMock())},
-            ),
-        ):
-            _, _, historical_stage_hist = pipeline._load_gcm_obs()
-
-        np.testing.assert_array_equal(
-            scenario_hist["time"].values, historical_stage_hist["time"].values
+        stitched = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=model_scenario,
+            train_period_end=2008,
+            predict_period_start=2015,
         )
+
+        years = np.unique(stitched["time.year"].values)
+        assert list(years) == list(range(1978, 2061))
+        # The all-NaN days after 2015-01-01 on the historical axis are excluded.
+        assert stitched.sel(time=slice("2015", "2015"))["time"].size == 365

@@ -220,6 +220,55 @@ def get_obs(var: str = "tas", coord_bounds_list: list | None = None, dataset_nam
     return da
 
 
+def select_training_window(
+    da: xr.DataArray, train_period_start: int, train_period_end: int
+) -> xr.DataArray:
+    """Narrow a series to the bias-correction reference window.
+
+    This is the single point where the quantile-mapping reference pool is established.
+    Callers hand over whatever record they hold and this function decides the window,
+    so no call site can widen the pool (issue #518).
+
+    The scenario loader deliberately returns the historical record from
+    ``train_period_start`` onward, because ``stitch_historical_scenario`` needs the
+    years between ``train_period_end`` and the scenario start to build a continuous
+    timeseries for detrending. Bias correction must not see those years.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Series with a ``time`` coordinate, covering at least the training window.
+    train_period_start, train_period_end : int
+        Inclusive year bounds of the training window.
+
+    Returns
+    -------
+    xr.DataArray
+        ``da`` restricted to ``train_period_start``–``train_period_end``.
+
+    Raises
+    ------
+    ValueError
+        If the window selects no timesteps at all, which means the series and the
+        configured window do not overlap.
+
+    Notes
+    -----
+    This deliberately does not assert that ``da`` *spans* the window. Partial coverage
+    is a config-versus-data mismatch, caught before any compute by
+    ``srm.validation.check_train_period_coverage``. Re-checking it here would make
+    every caller responsible for modelling a full-length record while adding nothing
+    a deploy-gate check has not already rejected.
+    """
+    out = da.sel(time=slice(f"{train_period_start}", f"{train_period_end}"))
+    if out["time"].size == 0:
+        raise ValueError(
+            f"Training window {train_period_start}-{train_period_end} selects no timesteps. "
+            f"Series spans {str(da['time'].values[0])[:10]} to {str(da['time'].values[-1])[:10]}."
+        )
+    return out
+
+
 def calculate_baseline_climatology(
     da_baseline: xr.DataArray,
     baseline_period_start: int = 1978,

@@ -17,11 +17,13 @@ import xarray as xr
 from srm.bcsd_config import BCSDConfig, VariableName
 from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
+from srm.lineage import resolve_member_lineage
 from srm.qaqc import DatasetChecker, ValidationResult
 
 BLOCKING_CHECKS = {
     "ensemble_member_dim",
     "config_time_domain",
+    "train_period_coverage",
     "g6_not_identical_to_ssp245",
     "lineage_member_availability",
     "temporal_coverage",
@@ -305,6 +307,91 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
         status=CheckStatus.PASS,
         message=f"predict period {config.predict_period_start}–{config.predict_period_end} "
         f"within data extent {valid_start_year}–{valid_end_year}.",
+        detail=detail,
+    )
+
+
+def check_train_period_coverage(config: BCSDConfig) -> CheckResult:
+    """C2: config train period must fit the resolved historical member's data extent.
+
+    The sibling of :func:`check_config_time_domain`, which guards the predict period
+    against the *scenario* member. This guards the train period against the
+    *historical* member the lineage resolves to, which nothing checked before.
+
+    A train period reaching past the historical record does not fail loudly. The
+    pipeline slices to whatever exists and quantile-maps against a shorter reference
+    pool than the config declares, changing the debiased result with no other symptom.
+    Catching it here costs milliseconds; catching it downstream costs a Coiled run.
+
+    Returns a blocking FAIL when the train period falls outside the historical member's
+    bounds, PASS when it fits, and SKIP when no bounds or lineage are known.
+
+    Notes
+    -----
+    Years are compared, not days, matching :func:`check_config_time_domain`. Configs
+    legitimately train over a member's entire record (``cesm2-waccm-g6-southafrica``
+    trains 1978–2014 against historical ``001``, whose record is exactly 1978–2014), so
+    day-level comparison would reject valid configs on the boundary.
+    """
+    base = {
+        "check_id": "train_period_coverage",
+        "gcm": config.gcm,
+        "scenario": config.scenario or "historical",
+        "ensemble_member": config.ensemble_member,
+    }
+
+    try:
+        hist_member, _, _ = resolve_member_lineage(
+            config.gcm, config.scenario or "historical", config.ensemble_member, config.variable
+        )
+    except KeyError:
+        return CheckResult(
+            **base,
+            status=CheckStatus.SKIP,
+            message=f"No lineage registered for {config.gcm}/{config.scenario}/"
+            f"{config.ensemble_member}/{config.variable}; cannot resolve historical member.",
+        )
+
+    bounds = resolve_member_time_bounds(config.gcm, "historical", hist_member)
+    if bounds is None:
+        return CheckResult(
+            **base,
+            status=CheckStatus.SKIP,
+            message=f"No historical time bounds known for {config.gcm}/{hist_member}; "
+            "cannot validate train period.",
+        )
+
+    valid_start_year = int(bounds[0][:4])
+    valid_end_year = int(bounds[1][:4])
+    detail = {
+        "train_period_start": config.train_period_start,
+        "train_period_end": config.train_period_end,
+        "historical_member": hist_member,
+        "valid_start": bounds[0],
+        "valid_end": bounds[1],
+    }
+
+    issues: list[str] = []
+    if config.train_period_start < valid_start_year:
+        issues.append(
+            f"train_period_start {config.train_period_start} is before historical data start "
+            f"{valid_start_year} for member {hist_member}"
+        )
+    if config.train_period_end > valid_end_year:
+        issues.append(
+            f"train_period_end {config.train_period_end} is past historical data end "
+            f"{valid_end_year} for member {hist_member}"
+        )
+
+    if issues:
+        return CheckResult(
+            **base, status=CheckStatus.FAIL, message="; ".join(issues), detail=detail
+        )
+    return CheckResult(
+        **base,
+        status=CheckStatus.PASS,
+        message=f"train period {config.train_period_start}–{config.train_period_end} within "
+        f"historical extent {valid_start_year}–{valid_end_year} for member {hist_member}.",
         detail=detail,
     )
 

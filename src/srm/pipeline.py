@@ -39,6 +39,7 @@ from srm.downscaling_utils import (
     interpolate_fine_to_coarse_grid,
     rechunk,
     retrend,
+    select_training_window,
     subset_space,
     swap_temperature_extremes,
 )
@@ -778,7 +779,17 @@ class BCSDPipeline:
 
         Uses nonparametric mapping for the nonparametric_hybrid case because modeled
         historical is always within its own range, making the parametric tail unnecessary.
+
+        The reference pool is established here rather than by the caller (issue #518);
+        see :func:`~srm.downscaling_utils.select_training_window`.
         """
+        obs_coarse = select_training_window(
+            obs_coarse, self.config.train_period_start, self.config.train_period_end
+        )
+        model_hist = select_training_window(
+            model_hist, self.config.train_period_start, self.config.train_period_end
+        )
+
         mapping_type = (
             "nonparametric"
             if self.config.debias_approach
@@ -1139,14 +1150,18 @@ class BCSDPipeline:
 
     def _load_scenario_data(
         self,
-    ) -> tuple[
-        xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None
-    ]:
-        """Load obs_coarse, obs_fine, model_hist, model_hist_stitch, model_scenario, ssp_timeseries.
+    ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None]:
+        """Load obs_coarse, obs_fine, model_hist, model_scenario, and optionally ssp_timeseries.
 
-        obs_coarse/obs_fine/model_hist are subsetted to the training period,
-        model_hist_stitch to ``train_period_start`` onward, and model_scenario to the
-        predict period. ssp_timeseries is None for non-SAI scenarios.
+        Returns (obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries).
+        obs_coarse/obs_fine are subsetted to the training period and model_scenario to
+        the predict period. ssp_timeseries is None for non-SAI scenarios.
+
+        ``model_hist`` is the full historical record from ``train_period_start`` onward,
+        not the training window, because ``stitch_historical_scenario`` needs the years
+        between ``train_period_end`` and the scenario start to build a continuous
+        timeseries. Consumers that need the training window narrow it themselves via
+        :func:`~srm.downscaling_utils.select_training_window` (issue #518).
         """
         deps = self.cache.check_dependencies(
             "transform_scenario", self.config, hist_member=self._hist_member
@@ -1227,21 +1242,20 @@ class BCSDPipeline:
         obs_coarse = obs_coarse.sel(time=train_slice)
         obs_fine = obs_fine.sel(time=train_slice)
 
-        model_hist_stitch = model_hist.sel(time=slice(f"{self.config.train_period_start}", None))
-        # Slice to the training period, matching _load_gcm_obs. Slicing through
-        # predict_period_start - 1 instead only coincides with train_period_end when the
-        # prediction period starts the year after training ends, and otherwise widens the
-        # quantile-mapping reference pool beyond the configured window (issue #518).
-        model_hist = model_hist.sel(time=train_slice)
+        # No upper bound: the stitch consumer needs the years between train_period_end and
+        # the scenario start, and the quantile-mapping consumer narrows to the training
+        # window itself (issue #518). Both boundaries are applied at the point of use, so
+        # neither depends on this loader or on a call site picking the right array.
+        model_hist = model_hist.sel(time=slice(f"{self.config.train_period_start}", None))
         model_scenario = model_scenario.sel(
             time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
         )
 
-        return obs_coarse, obs_fine, model_hist, model_hist_stitch, model_scenario, ssp_timeseries
+        return obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries
 
     def _detrend_scenario(
         self,
-        model_hist_stitch: xr.DataArray,
+        model_hist: xr.DataArray,
         model_scenario: xr.DataArray,
         ssp_timeseries: xr.DataArray | None,
     ) -> tuple[xr.DataArray, xr.DataArray | None]:
@@ -1250,8 +1264,10 @@ class BCSDPipeline:
         Returns (scenario_detrended, scenario_trend). When detrending is disabled,
         returns (scenario, None) and scenario_trend will be None.
 
-        ``model_hist_stitch`` is the historical run reaching the scenario start, not the
-        training-window slice used for QM'ing.
+        ``model_hist`` is the full historical record reaching the scenario start, not the
+        training window used as the quantile-mapping reference pool. The two boundaries
+        differ whenever training ends before the scenario begins, which is the case for
+        the obs-comparison configs (train ends 2008, SSP245 starts 2015).
 
         For SAI scenarios, stitches in SSP245 data to bridge the gap between the end of
         historical (2014/2015) and the SAI simulation start (~2035). This bridge is
@@ -1268,7 +1284,7 @@ class BCSDPipeline:
                     f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
                 )
                 bridged = stitch_historical_scenario(
-                    model_hist=model_hist_stitch,
+                    model_hist=model_hist,
                     model_scenario=model_scenario,
                     train_period_end=self.config.train_period_end,
                     predict_period_start=self.config.predict_period_start,
@@ -1279,7 +1295,7 @@ class BCSDPipeline:
 
         if self.options.rechunk_workflow:
             t0 = time.perf_counter()
-            model_hist_stitch = rechunk(model_hist_stitch, pattern="full_time").persist()
+            model_hist = rechunk(model_hist, pattern="full_time").persist()
             model_scenario = rechunk(model_scenario, pattern="full_time").persist()
             if ssp_timeseries is not None:
                 ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time").persist()
@@ -1287,7 +1303,7 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         historical_scenario = stitch_historical_scenario(
-            model_hist=model_hist_stitch,
+            model_hist=model_hist,
             model_scenario=model_scenario,
             train_period_end=self.config.train_period_end,
             predict_period_start=self.config.predict_period_start,
@@ -1295,7 +1311,7 @@ class BCSDPipeline:
         )
 
         da_baseline_clim = calculate_baseline_climatology(
-            da_baseline=model_hist_stitch,
+            da_baseline=model_hist,
             baseline_period_start=self.config.train_period_start,
             baseline_period_end=self.config.train_period_end,
         )
@@ -1356,7 +1372,19 @@ class BCSDPipeline:
         For nonparametric_hybrid: runs both parametric and nonparametric debiasers and
         blends them — parametric where the scenario falls outside the historical range,
         nonparametric everywhere else.
+
+        ``model_hist`` arrives as the full historical record from ``train_period_start``,
+        because the detrend stitch needs the years past ``train_period_end``. Narrowing
+        it to the reference pool is this method's job, not the caller's (issue #518);
+        see :func:`~srm.downscaling_utils.select_training_window`.
         """
+        obs_coarse = select_training_window(
+            obs_coarse, self.config.train_period_start, self.config.train_period_end
+        )
+        model_hist = select_training_window(
+            model_hist, self.config.train_period_start, self.config.train_period_end
+        )
+
         obs_coarse = obs_coarse.as_numpy()
         model_hist = model_hist.as_numpy()
         scenario_detrended = scenario_detrended.load()
@@ -1507,9 +1535,9 @@ class BCSDPipeline:
         )
 
         t0 = time.perf_counter()
-        obs_coarse, obs_fine, model_hist, _, model_scenario, ssp_timeseries = (
-            self._load_scenario_data()
-        )
+        # model_hist is unused here: coarse tasmin is derived from the cached debiased
+        # tasmax and dtr rather than quantile-mapped from the historical run.
+        obs_coarse, obs_fine, _, model_scenario, ssp_timeseries = self._load_scenario_data()
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
@@ -1651,13 +1679,13 @@ class BCSDPipeline:
         )
 
         t0 = time.perf_counter()
-        obs_coarse, obs_fine, model_hist, model_hist_stitch, model_scenario, ssp_timeseries = (
+        obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
             self._load_scenario_data()
         )
         logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
 
         scenario_detrended, scenario_trend = self._detrend_scenario(
-            model_hist_stitch, model_scenario, ssp_timeseries
+            model_hist, model_scenario, ssp_timeseries
         )
 
         t0 = time.perf_counter()

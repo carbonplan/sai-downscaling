@@ -113,9 +113,22 @@ def pipeline_options(tmp_path) -> PipelineOptions:
     )
 
 
+# Bias correction narrows its inputs to the configured training window, so tests that
+# call it must build data inside that window. These fixtures declare 2014, the latest
+# year BCSDConfig accepts for a training period, and the tests below pass
+# `start=_TRAIN_YEAR` rather than relying on the `_daily_da` default.
+_TRAIN_YEAR = "2014-01-01"
+
+
 @pytest.fixture
 def historical_pipeline(pipeline_options) -> BCSDPipeline:
-    config = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+    config = BCSDConfig(
+        gcm="CESM2-WACCM",
+        variable="tas",
+        ensemble_member="r1i1p1f1",
+        train_period_start=2014,
+        train_period_end=2014,
+    )
     return BCSDPipeline(config, pipeline_options)
 
 
@@ -126,6 +139,8 @@ def scenario_pipeline(pipeline_options) -> BCSDPipeline:
         variable="tas",
         ensemble_member="001",
         scenario="G6-1.5K",
+        train_period_start=2014,
+        train_period_end=2014,
         predict_period_start=2035,
         predict_period_end=2040,
     )
@@ -142,10 +157,10 @@ class TestBiasCorrectionInputChecks:
     """
 
     def test_nan_in_model_hist_aborts_historical_bias_correction(self, historical_pipeline):
-        obs_coarse = _daily_da(np.ones((10, 3, 4)))
+        obs_coarse = _daily_da(np.ones((10, 3, 4)), start=_TRAIN_YEAR)
         values = np.ones((10, 3, 4))
         values[4] = np.nan
-        model_hist = _daily_da(values)
+        model_hist = _daily_da(values, start=_TRAIN_YEAR)
 
         with pytest.raises(NaNCheckError, match="cm_hist"):
             historical_pipeline._apply_bias_correction(obs_coarse, model_hist)
@@ -153,17 +168,17 @@ class TestBiasCorrectionInputChecks:
     def test_nan_in_obs_aborts_historical_bias_correction(self, historical_pipeline):
         values = np.ones((10, 3, 4))
         values[:, 0, 0] = np.nan
-        obs_coarse = _daily_da(values)
-        model_hist = _daily_da(np.ones((10, 3, 4)))
+        obs_coarse = _daily_da(values, start=_TRAIN_YEAR)
+        model_hist = _daily_da(np.ones((10, 3, 4)), start=_TRAIN_YEAR)
 
         with pytest.raises(NaNCheckError, match="obs"):
             historical_pipeline._apply_bias_correction(obs_coarse, model_hist)
 
     def test_nan_in_model_hist_aborts_scenario_bias_correction(self, scenario_pipeline):
-        obs_coarse = _daily_da(np.ones((10, 3, 4)))
+        obs_coarse = _daily_da(np.ones((10, 3, 4)), start=_TRAIN_YEAR)
         values = np.ones((10, 3, 4))
         values[4] = np.nan
-        model_hist = _daily_da(values)
+        model_hist = _daily_da(values, start=_TRAIN_YEAR)
         scenario_detrended = _daily_da(np.ones((10, 3, 4)), start="2035-01-01")
 
         with pytest.raises(NaNCheckError, match="cm_hist"):
@@ -172,8 +187,8 @@ class TestBiasCorrectionInputChecks:
             )
 
     def test_nan_in_scenario_aborts_scenario_bias_correction(self, scenario_pipeline):
-        obs_coarse = _daily_da(np.ones((10, 3, 4)))
-        model_hist = _daily_da(np.ones((10, 3, 4)))
+        obs_coarse = _daily_da(np.ones((10, 3, 4)), start=_TRAIN_YEAR)
+        model_hist = _daily_da(np.ones((10, 3, 4)), start=_TRAIN_YEAR)
         values = np.ones((10, 3, 4))
         values[7] = np.nan
         scenario_detrended = _daily_da(values, start="2035-01-01")
@@ -339,7 +354,8 @@ class TestDebiaserOutputCheck:
         with patch("srm.pipeline._make_debiaser", return_value=debiaser):
             with pytest.raises(NaNCheckError, match="debiased_coarse"):
                 historical_pipeline._apply_bias_correction(
-                    _daily_da(np.ones((10, 3, 4))), _daily_da(np.ones((10, 3, 4)))
+                    _daily_da(np.ones((10, 3, 4)), start=_TRAIN_YEAR),
+                    _daily_da(np.ones((10, 3, 4)), start=_TRAIN_YEAR),
                 )
 
     def test_clean_debiaser_output_is_not_aborted(self, historical_pipeline):
@@ -348,7 +364,8 @@ class TestDebiaserOutputCheck:
 
         with patch("srm.pipeline._make_debiaser", return_value=debiaser):
             result = historical_pipeline._apply_bias_correction(
-                _daily_da(np.ones((10, 3, 4))), _daily_da(np.ones((10, 3, 4)))
+                _daily_da(np.ones((10, 3, 4)), start=_TRAIN_YEAR),
+                _daily_da(np.ones((10, 3, 4)), start=_TRAIN_YEAR),
             )
 
         assert result.dims == ("time", "lat", "lon")
