@@ -254,11 +254,12 @@ def select_training_window(
 
     Notes
     -----
-    This deliberately does not assert that ``da`` *spans* the window. Partial coverage
-    is a config-versus-data mismatch, caught before any compute by
-    ``srm.validation.check_train_period_coverage``. Re-checking it here would make
-    every caller responsible for modelling a full-length record while adding nothing
-    a deploy-gate check has not already rejected.
+    This deliberately does not assert that ``da`` *spans* the window. Partial coverage is
+    a config-versus-data mismatch, caught before any compute by
+    ``srm.validation.check_train_period_coverage`` for the historical GCM member and by
+    ``srm.validation.check_obs_compatibility`` for the observation dataset. Re-checking it
+    here would make every caller responsible for modelling a full-length record while
+    adding nothing those deploy-gate checks have not already rejected.
     """
     out = da.sel(time=slice(f"{train_period_start}", f"{train_period_end}"))
     if out["time"].size == 0:

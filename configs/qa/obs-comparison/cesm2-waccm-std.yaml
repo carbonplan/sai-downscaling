@@ -1,13 +1,13 @@
 # BCSD obs-comparison config: CESM2-WACCM / tas+pr+rsds / ERA5 vs GDEX-GMF
 #
 # One config, both obs datasets. Every other field is shared by construction, which is
-# the point: when this was two files they drifted, and a comparison whose two sides use
-# different domains is not a comparison.
+# the point: when this was two files they drifted
 #
 # tasmax/tasmin/dtr are out of scope here. They need the corrected run (members 006-010)
 # and would not change the obs-dataset conclusion.
 #
-# Expands to 3 variables x 2 obs datasets = 6 runs.
+# Expands to 3 variables x 2 obs datasets = 6 runs. Adding a variable or an obs dataset
+# scales that product, so keep the list short enough for the runs to stay affordable.
 
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds"]
@@ -28,8 +28,8 @@ train_period_end: 2008
 predict_period_start: 2015
 predict_period_end: 2099
 
-scratch_dir: "s3://carbonplan-srm/output/qa/bcsd-cache"
-output_dir: "s3://carbonplan-srm/output/obs-comparison"
+scratch_dir: "s3://carbonplan-srm/obs-comparison/cache"
+output_dir: "s3://carbonplan-srm/obs-comparison/output"
 environment: "qa"
 debias_approach: "nonparametric_hybrid_2sided"
 verbose: true

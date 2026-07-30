@@ -47,7 +47,8 @@ class DatatreeGroupEntry:
 
     GCM stores declare neither expectation: per-member time bounds live in
     ``srm.validation._MEMBER_TIME_BOUNDS``, which is finer-grained than a single
-    per-store range, and variable sets differ by group.
+    per-store range, and variable sets differ by group. Both fields stay ``None`` so the
+    catalog-level checks skip these entries rather than failing them.
     """
 
     name: str

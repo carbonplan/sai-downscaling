@@ -213,11 +213,13 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         console.print(tbl)
 
 
-def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
-    """Reject configs whose train or predict period falls outside a member's data extent.
+def _validate_config_preconditions(configs: list[BCSDConfig]) -> None:
+    """Reject configs that cannot run, before any store is opened.
 
     predict_period is checked against the scenario member, train_period against the
-    historical member the lineage resolves to.
+    historical member the lineage resolves to, and the observation dataset against the
+    variable and training window it is asked for. All three are metadata lookups, so this
+    stays cheap enough to run at the head of every ``bcsd run``.
     """
     from srm.validation import (
         CheckStatus,
@@ -238,7 +240,7 @@ def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
     ]
     if failures:
         raise ValueError(
-            "time period out of bounds for the following configs:\n"
+            "config preconditions failed for the following configs:\n"
             + "\n".join(
                 f"  {r.gcm}/{r.scenario}/{r.ensemble_member} [{r.check_id}]: {r.message}"
                 for r in failures
@@ -554,7 +556,7 @@ def run(
     logger.info("Loaded %d configuration(s)", len(configs))
     _print_lineage_summary(configs)
     _validate_lineage_members(configs)
-    _validate_predict_periods(configs)
+    _validate_config_preconditions(configs)
 
     orchestrator = BCSDOrchestrator(options)
 
@@ -849,7 +851,7 @@ def run_matrix(
     )
 
     _validate_lineage_members(configs)
-    _validate_predict_periods(configs)
+    _validate_config_preconditions(configs)
 
     n = len(configs)
     logger.info(
@@ -1129,7 +1131,8 @@ def validate(
             except pydantic.ValidationError as exc:
                 logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
 
-    # Per-member config time-domain checks (only when configs are supplied). Driver-only
+    # Per-config precondition checks: time domain, train-period coverage, and obs
+    # compatibility (only when configs are supplied). Driver-only
     # metadata lookups, so kept outside the cluster block; merged into all_results after
     # rendering so blocking-failure aggregation picks them up.
     config_results = (

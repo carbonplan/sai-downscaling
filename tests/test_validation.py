@@ -710,6 +710,18 @@ class TestObsCompatibility:
         assert r.status == CheckStatus.FAIL
         assert "not in the catalog" in r.message
 
+    def test_dtr_is_derivable_from_any_dataset_with_tasmax_and_tasmin(self):
+        """dtr is never stored; get_variable derives it as tasmax - tasmin on read.
+
+        Rejecting it blocks two production configs (cesm2-waccm-g6.yaml and
+        cesm2-waccm-ssp245-tmx.yaml), and deploy.yml exits 1 on a blocking failure.
+        """
+        from srm.validation import check_obs_compatibility
+
+        for obs in ("ERA5", "GDEX-GMF"):
+            r = check_obs_compatibility(self._config(obs, variable="dtr"))
+            assert r.status == CheckStatus.PASS, f"{obs}: {r.message}"
+
     def test_shared_variables_work_against_both(self):
         from srm.validation import check_obs_compatibility
 
@@ -778,6 +790,39 @@ class TestTrainPeriodCoverage:
             predict_period_end=2069,
         )
         assert check_train_period_coverage(cfg).status == CheckStatus.PASS
+
+    def test_historical_only_config_uses_its_own_member(self):
+        """scenario=None means ensemble_member IS the historical member.
+
+        The lineage table registers no "historical" scenario, so routing this through
+        resolve_member_lineage would SKIP the one case where the member is unambiguous.
+        """
+        from srm.bcsd_config import BCSDConfig
+        from srm.validation import check_train_period_coverage
+
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
+            train_period_start=1960,
+            train_period_end=2014,
+        )
+        assert check_train_period_coverage(cfg).status == CheckStatus.PASS
+
+    def test_historical_only_config_still_catches_an_out_of_range_window(self):
+        from srm.bcsd_config import BCSDConfig
+        from srm.validation import check_train_period_coverage
+
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="001",  # ESGF historical record starts 1978
+            train_period_start=1960,
+            train_period_end=2014,
+        )
+        r = check_train_period_coverage(cfg)
+        assert r.status == CheckStatus.FAIL
+        assert "1978" in r.message
 
     def test_unregistered_lineage_skips(self):
         from srm.bcsd_config import BCSDConfig

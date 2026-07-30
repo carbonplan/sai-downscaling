@@ -325,7 +325,9 @@ def check_train_period_coverage(config: BCSDConfig) -> CheckResult:
     Catching it here costs milliseconds; catching it downstream costs a Coiled run.
 
     Returns a blocking FAIL when the train period falls outside the historical member's
-    bounds, PASS when it fits, and SKIP when no bounds or lineage are known.
+    bounds, PASS when it fits, and SKIP when no bounds or lineage are known. Skipping on
+    unknown bounds keeps a newly added GCM from failing the gate before its extents are
+    registered in ``_MEMBER_TIME_BOUNDS``.
 
     Notes
     -----
@@ -341,17 +343,24 @@ def check_train_period_coverage(config: BCSDConfig) -> CheckResult:
         "ensemble_member": config.ensemble_member,
     }
 
-    try:
-        hist_member, _, _ = resolve_member_lineage(
-            config.gcm, config.scenario or "historical", config.ensemble_member, config.variable
-        )
-    except KeyError:
-        return CheckResult(
-            **base,
-            status=CheckStatus.SKIP,
-            message=f"No lineage registered for {config.gcm}/{config.scenario}/"
-            f"{config.ensemble_member}/{config.variable}; cannot resolve historical member.",
-        )
+    if config.scenario is None:
+        # Historical-only run: ensemble_member is already the historical member, and the
+        # lineage table registers no "historical" scenario. Mirrors BCSDPipeline.__init__,
+        # which skips the lookup for the same reason; routing through it here would make
+        # this check silently SKIP the one case where the member is unambiguous.
+        hist_member = config.ensemble_member
+    else:
+        try:
+            hist_member, _, _ = resolve_member_lineage(
+                config.gcm, config.scenario, config.ensemble_member, config.variable
+            )
+        except KeyError:
+            return CheckResult(
+                **base,
+                status=CheckStatus.SKIP,
+                message=f"No lineage registered for {config.gcm}/{config.scenario}/"
+                f"{config.ensemble_member}/{config.variable}; cannot resolve historical member.",
+            )
 
     bounds = resolve_member_time_bounds(config.gcm, "historical", hist_member)
     if bounds is None:
@@ -404,12 +413,14 @@ def check_obs_compatibility(config: BCSDConfig) -> CheckResult:
     derived ``hurs``; GDEX-GMF stops at 2008 and carries ``huss`` instead. Neither
     difference is visible from a config, which names the obs dataset as a plain string.
 
-    Without this, a training window past an obs record's end fails deep inside
-    ``transform_scenario`` as a stitch continuity error, and an unavailable variable
-    fails as a ``KeyError`` from ``get_variable`` once a Coiled VM is already running.
+    Without this, a training window past an obs record's end silently truncates the
+    reference pool, or raises "selects no timesteps" from ``select_training_window`` when
+    the two do not overlap at all, and an unavailable variable fails as a ``KeyError``
+    from ``get_variable``. All of those surface only once a Coiled VM is already running.
 
     Returns a blocking FAIL on either mismatch, PASS when both fit, and SKIP when the
-    catalog entry declares no expectations.
+    catalog entry declares no expectations. Skipping on a bare entry means adding an obs
+    dataset does not force both fields to be filled in before it can be used.
     """
     base = {
         "check_id": "obs_compatibility",
@@ -448,6 +459,11 @@ def check_obs_compatibility(config: BCSDConfig) -> CheckResult:
     issues: list[str] = []
     if expected_vars:
         available = {spec.name for spec in expected_vars}
+        # dtr is never stored. srm.utils.get_variable derives it as tasmax - tasmin on
+        # read, so it is available from any obs dataset carrying both. Without this,
+        # every dtr config fails, including two under configs/production/.
+        if {"tasmax", "tasmin"} <= available:
+            available.add("dtr")
         if config.variable not in available:
             issues.append(
                 f"{config.obs_dataset} has no {config.variable!r}; it carries {sorted(available)}"

@@ -13,7 +13,7 @@ from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cli import (
     _expand_matrix_config,
     _is_matrix_config,
-    _validate_predict_periods,
+    _validate_config_preconditions,
     app,
     configs_from_matrix,
     load_configs,
@@ -172,7 +172,7 @@ class TestValidatePredictPeriods:
             predict_period_end=2100,
         )
         with pytest.raises(ValueError, match="2069"):
-            _validate_predict_periods(configs)
+            _validate_config_preconditions(configs)
 
     def test_truncated_member_within_extent_does_not_raise(self):
         configs, _ = configs_from_matrix(
@@ -183,7 +183,7 @@ class TestValidatePredictPeriods:
             predict_period_start=2015,
             predict_period_end=2069,
         )
-        _validate_predict_periods(configs)  # should not raise
+        _validate_config_preconditions(configs)  # should not raise
 
 
 class TestValidateOutputConfigPath:
@@ -277,7 +277,8 @@ class TestObsDatasetMatrixAxis:
 
     When the ERA5 and GDEX-GMF runs lived in separate YAMLs they diverged: one went
     global while the other stayed on the South Africa subset, which silently turned the
-    comparison into two unrelated runs.
+    comparison into two unrelated runs. Expanding a single config over the axis makes
+    that divergence unrepresentable rather than merely discouraged.
     """
 
     _BASE = {
@@ -364,4 +365,4 @@ class TestShippedObsComparisonConfig:
     def test_passes_the_time_domain_gates(self):
         configs, _ = load_configs(str(self._PATH))
 
-        _validate_predict_periods(configs)
+        _validate_config_preconditions(configs)

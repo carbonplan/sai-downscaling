@@ -781,7 +781,9 @@ class BCSDPipeline:
         historical is always within its own range, making the parametric tail unnecessary.
 
         The reference pool is established here rather than by the caller (issue #518);
-        see :func:`~srm.downscaling_utils.select_training_window`.
+        see :func:`~srm.downscaling_utils.select_training_window`. ``_load_gcm_obs``
+        already applies the same slice, so this is idempotent for the historical stage
+        and exists so both stages derive the window from one function.
         """
         obs_coarse = select_training_window(
             obs_coarse, self.config.train_period_start, self.config.train_period_end
