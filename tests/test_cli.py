@@ -1,6 +1,8 @@
 """Tests for CLI helper functions."""
 
 import itertools
+from collections import defaultdict
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -8,7 +10,14 @@ from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cli import _validate_predict_periods, app, configs_from_matrix
+from srm.cli import (
+    _expand_matrix_config,
+    _is_matrix_config,
+    _validate_predict_periods,
+    app,
+    configs_from_matrix,
+    load_configs,
+)
 from srm.validation import CheckResult, CheckStatus
 
 
@@ -261,3 +270,98 @@ branch: "v9"
     def test_neither_store_uris_nor_config_path_errors(self):
         result = CliRunner().invoke(app, ["validate-output"])
         assert result.exit_code != 0
+
+
+class TestObsDatasetMatrixAxis:
+    """``obs_dataset`` expands like any other axis, so a comparison cannot drift.
+
+    When the ERA5 and GDEX-GMF runs lived in separate YAMLs they diverged: one went
+    global while the other stayed on the South Africa subset, which silently turned the
+    comparison into two unrelated runs.
+    """
+
+    _BASE = {
+        "gcm": "CESM2-WACCM",
+        "ensemble_member": "003",
+        "scenario": "SSP245",
+        "train_period_start": 1960,
+        "train_period_end": 2008,
+        "predict_period_start": 2015,
+        "predict_period_end": 2099,
+    }
+
+    def test_expands_over_obs_datasets(self):
+        configs = _expand_matrix_config(
+            {**self._BASE, "variables": ["tas", "pr", "rsds"], "obs_datasets": ["ERA5", "GDEX-GMF"]}
+        )
+
+        assert len(configs) == 6
+        assert {c.obs_dataset for c in configs} == {"ERA5", "GDEX-GMF"}
+
+    def test_only_the_obs_dataset_differs_between_the_two_sides(self):
+        configs = _expand_matrix_config(
+            {
+                **self._BASE,
+                "variables": ["tas", "pr", "rsds"],
+                "obs_datasets": ["ERA5", "GDEX-GMF"],
+                "subset_bounds": [-35, -22, 16, 33],
+            }
+        )
+
+        by_var = defaultdict(list)
+        for c in configs:
+            by_var[c.variable].append(c)
+        for variable, pair in by_var.items():
+            era5, gdex = sorted(pair, key=lambda c: c.obs_dataset)
+            assert era5.subset_bounds == gdex.subset_bounds, variable
+            assert era5.train_period_start == gdex.train_period_start, variable
+            assert era5.train_period_end == gdex.train_period_end, variable
+            assert era5.predict_period_end == gdex.predict_period_end, variable
+
+    def test_omitted_obs_dataset_keeps_the_field_default(self):
+        """Absent axes must fall through to BCSDConfig, not be overridden with None."""
+        configs = _expand_matrix_config({**self._BASE, "variables": ["tas", "pr"]})
+
+        assert [c.obs_dataset for c in configs] == ["ERA5", "ERA5"]
+
+    def test_singular_obs_dataset_key_is_accepted(self):
+        configs = _expand_matrix_config(
+            {**self._BASE, "variables": ["tas", "pr"], "obs_dataset": "GDEX-GMF"}
+        )
+
+        assert {c.obs_dataset for c in configs} == {"GDEX-GMF"}
+
+    def test_obs_datasets_alone_marks_a_config_as_a_matrix(self):
+        assert _is_matrix_config({**self._BASE, "variable": "tas", "obs_datasets": ["ERA5"]})
+
+    def test_absent_scenario_still_resolves_to_none(self):
+        """The _UNSET sentinel must not change behaviour for None-defaulting fields."""
+        configs = _expand_matrix_config(
+            {"gcm": "CESM2-WACCM", "variables": ["tas"], "ensemble_member": "r1i1p1f1"}
+        )
+
+        assert configs[0].scenario is None
+
+
+class TestShippedObsComparisonConfig:
+    """The obs-comparison config on disk is the deliverable; pin its shape."""
+
+    _PATH = Path(__file__).parent.parent / "configs/qa/obs-comparison/cesm2-waccm-std.yaml"
+
+    def test_expands_to_three_variables_across_two_obs_datasets(self):
+        configs, _ = load_configs(str(self._PATH))
+
+        assert len(configs) == 6
+        assert {c.variable for c in configs} == {"tas", "pr", "rsds"}
+        assert {c.obs_dataset for c in configs} == {"ERA5", "GDEX-GMF"}
+
+    def test_training_window_stops_where_gdex_data_stops(self):
+        configs, _ = load_configs(str(self._PATH))
+
+        # GDEX-GMF ends 2008-12-31; both sides must share the window to be comparable.
+        assert {c.train_period_end for c in configs} == {2008}
+
+    def test_passes_the_time_domain_gates(self):
+        configs, _ = load_configs(str(self._PATH))
+
+        _validate_predict_periods(configs)

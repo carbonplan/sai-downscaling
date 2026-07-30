@@ -1,0 +1,36 @@
+# BCSD obs-comparison config: CESM2-WACCM / tas+pr+rsds / ERA5 vs GDEX-GMF
+#
+# One config, both obs datasets. Every other field is shared by construction, which is
+# the point: when this was two files they drifted, and a comparison whose two sides use
+# different domains is not a comparison.
+#
+# tasmax/tasmin/dtr are out of scope here. They need the corrected run (members 006-010)
+# and would not change the obs-dataset conclusion.
+#
+# Expands to 3 variables x 2 obs datasets = 6 runs.
+
+gcm: "CESM2-WACCM"
+variables: ["tas", "pr", "rsds"]
+ensemble_members: ["003"]
+scenarios: ["SSP245"]
+obs_datasets: ["ERA5", "GDEX-GMF"]
+
+# South Africa region: [lat_min, lat_max, lon_min, lon_max].
+# Comment out for a global run; both obs datasets follow automatically.
+subset_bounds: [-35, -22, 16, 33]
+
+# GDEX-GMF ends 2008-12-31 while ERA5 runs to 2014-12-31. Both sides must train on the
+# same window for the comparison to mean anything, so 2008 is the binding constraint.
+# This leaves 2009-2014 between training and the scenario start; the historical record
+# still covers it, and stitch_historical_scenario bridges it for detrending.
+train_period_start: 1960
+train_period_end: 2008
+predict_period_start: 2015
+predict_period_end: 2099
+
+scratch_dir: "s3://carbonplan-srm/output/qa/bcsd-cache"
+output_dir: "s3://carbonplan-srm/output/obs-comparison"
+environment: "qa"
+debias_approach: "nonparametric_hybrid_2sided"
+verbose: true
+save_intermediate: true

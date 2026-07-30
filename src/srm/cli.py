@@ -105,7 +105,16 @@ _MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("variables", "variable", "variable"),
     ("ensemble_members", "ensemble_member", "ensemble_member"),
     ("scenarios", "scenario", "scenario"),
+    ("obs_datasets", "obs_dataset", "obs_dataset"),
 )
+
+# Product order, derived from _MATRIX_FIELDS so a new axis is declared in one place.
+_AXIS_ORDER: tuple[str, ...] = tuple(field for _, _, field in _MATRIX_FIELDS)
+
+# Marks an axis the config does not mention. Passing None instead would override
+# BCSDConfig's own default, which is wrong for any field whose default is not None:
+# obs_dataset defaults to "ERA5" and every config predating that axis omits the key.
+_UNSET = object()
 
 
 def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
@@ -205,15 +214,29 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
 
 
 def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
-    """Reject configs whose predict_period falls outside a member's valid data extent."""
-    from srm.validation import CheckStatus, check_config_time_domain
+    """Reject configs whose train or predict period falls outside a member's data extent.
 
-    failures = [r for c in configs if (r := check_config_time_domain(c)).status == CheckStatus.FAIL]
+    predict_period is checked against the scenario member, train_period against the
+    historical member the lineage resolves to.
+    """
+    from srm.validation import (
+        CheckStatus,
+        check_config_time_domain,
+        check_train_period_coverage,
+    )
+
+    failures = [
+        r
+        for c in configs
+        for check in (check_config_time_domain, check_train_period_coverage)
+        if (r := check(c)).status == CheckStatus.FAIL
+    ]
     if failures:
         raise ValueError(
-            "predict_period out of bounds for the following configs:\n"
+            "time period out of bounds for the following configs:\n"
             + "\n".join(
-                f"  {r.gcm}/{r.scenario}/{r.ensemble_member}: {r.message}" for r in failures
+                f"  {r.gcm}/{r.scenario}/{r.ensemble_member} [{r.check_id}]: {r.message}"
+                for r in failures
             )
         )
 
@@ -301,7 +324,7 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
         elif singular in d:
             val = d.pop(singular)
         else:
-            val = None
+            val = _UNSET
         axes[field] = val if isinstance(val, list) else [val]
 
     if "variable_config" in d and len(axes["variable"]) > 1:
@@ -312,10 +335,11 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
         )
 
     return [
-        BCSDConfig(gcm=gcm, variable=variable, ensemble_member=member, scenario=scenario, **d)
-        for gcm, variable, member, scenario in itertools.product(
-            axes["gcm"], axes["variable"], axes["ensemble_member"], axes["scenario"]
+        BCSDConfig(
+            **{f: v for f, v in zip(_AXIS_ORDER, combo, strict=True) if v is not _UNSET},
+            **d,
         )
+        for combo in itertools.product(*(axes[f] for f in _AXIS_ORDER))
     ]
 
 
@@ -1074,6 +1098,7 @@ def validate(
         SCENARIO_OPTIONS,
         DatasetValidator,
         check_config_time_domain,
+        check_train_period_coverage,
     )
 
     if config_path:
@@ -1101,7 +1126,15 @@ def validate(
     # Per-member config time-domain checks (only when configs are supplied). Driver-only
     # metadata lookups, so kept outside the cluster block; merged into all_results after
     # rendering so blocking-failure aggregation picks them up.
-    config_results = [check_config_time_domain(c) for c in configs] if config_path else []
+    config_results = (
+        [
+            check(c)
+            for c in configs
+            for check in (check_config_time_domain, check_train_period_coverage)
+        ]
+        if config_path
+        else []
+    )
 
     def _scenario_order(s: str) -> tuple[int, str]:
         if s == "historical":
