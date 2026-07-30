@@ -370,3 +370,45 @@ class TestDebiaserOutputCheck:
 
         assert result.dims == ("time", "lat", "lon")
         assert not bool(result.isnull().any())
+
+
+class TestNaNContextIdentifiesTheRun:
+    """The NaN context must name the obs dataset, since it is a matrix axis.
+
+    configs/qa/obs-comparison expands over ERA5 and GDEX-GMF, so two tasks share gcm,
+    variable, ensemble_member, scenario and stage. Without obs_dataset a NaNCheckError
+    from that config cannot be traced to a run.
+    """
+
+    def test_context_includes_obs_dataset(self, pipeline_options):
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="pr",
+            ensemble_member="003",
+            scenario="SSP245",
+            obs_dataset="GDEX-GMF",
+            train_period_start=1960,
+            train_period_end=2008,
+            predict_period_start=2015,
+            predict_period_end=2099,
+        )
+        context = BCSDPipeline(config, pipeline_options)._nan_check_context("transform_scenario")
+
+        assert context["obs_dataset"] == "GDEX-GMF"
+
+    def test_two_obs_datasets_produce_distinguishable_contexts(self, pipeline_options):
+        def _context(obs_dataset: str) -> dict:
+            config = BCSDConfig(
+                gcm="CESM2-WACCM",
+                variable="pr",
+                ensemble_member="003",
+                scenario="SSP245",
+                obs_dataset=obs_dataset,
+                train_period_start=1960,
+                train_period_end=2008,
+                predict_period_start=2015,
+                predict_period_end=2099,
+            )
+            return BCSDPipeline(config, pipeline_options)._nan_check_context("transform_scenario")
+
+        assert _context("ERA5") != _context("GDEX-GMF")

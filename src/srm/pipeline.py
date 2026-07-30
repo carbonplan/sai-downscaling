@@ -388,12 +388,17 @@ class BCSDPipeline:
         Batch runs fan out over hundreds of Coiled tasks writing to the same store.
         Without these fields the traceback names the offending array but not which
         task produced it.
+
+        ``obs_dataset`` is part of the run identity because it is a matrix axis: the
+        obs-comparison configs expand over ERA5 and GDEX-GMF, so two tasks share every
+        other field here and are otherwise indistinguishable in a traceback.
         """
         return {
             "gcm": self.config.gcm,
             "variable": self.config.variable,
             "ensemble_member": self.config.ensemble_member,
             "scenario": self.config.scenario,
+            "obs_dataset": self.config.obs_dataset,
             "stage": stage,
         }
 
