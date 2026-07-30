@@ -17,6 +17,7 @@ import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid name
 from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
 from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
+from srm.qa_checks import assert_no_nans
 from srm.utils import get_variable
 
 _dt_cache: dict[str, xr.DataTree] = {}
@@ -418,6 +419,73 @@ def interpolate_fine_to_coarse_grid(
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
 
+def _lon_spans_globe(lon_vals: np.ndarray) -> bool:
+    """Whether an ascending longitude coordinate wraps the whole planet.
+
+    A global grid covers the whole planet minus the gap between its last cell center
+    and the wrap-around back to the first (~one grid step, dlon), so its span
+    (last - first) is roughly 360 - dlon. A regional grid spans much less. The
+    1.5 * dlon just leaves room for floating-point / uneven-spacing wobble; it is not
+    tied to any particular resolution.
+    """
+    if lon_vals.size <= 1:
+        return False
+    dlon = np.median(np.diff(lon_vals))
+    return bool((lon_vals[-1] - lon_vals[0]) >= 360.0 - 1.5 * dlon)
+
+
+def coarse_domain_mask(
+    da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray
+) -> xr.DataArray:
+    """Boolean fine-grid mask marking cells inside the coarse interpolation domain.
+
+    This mirrors the domain that :func:`interpolate_coarse_to_fine_grid` interpolates
+    over, including its periodic longitude pad. The result is therefore exactly
+    ``~isnan(...)`` of that function's output whenever the coarse input is itself
+    NaN-free.
+
+    Parameters
+    ----------
+    da_coarse_to_regrid : xr.DataArray
+        Coarse-resolution source, supplying the interpolation domain.
+    da_fine_grid : xr.DataArray
+        DataArray providing target fine-grid ``lat``/``lon`` coordinates.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean array over ``(lat, lon)`` of the fine grid, True where a fine cell
+        falls inside the coarse domain.
+
+    Notes
+    -----
+    Global runs come out all-True, so a NaN check masked by this is a strict zero-NaN
+    assertion in production. Regional (subset) runs exclude the frame of fine cells
+    lying outside the outermost coarse cell centres, which interpolate to NaN by
+    design — see the Notes of :func:`interpolate_coarse_to_fine_grid`.
+    """
+    coarse = da_coarse_to_regrid
+    if not coarse.indexes["lon"].is_monotonic_increasing:
+        coarse = coarse.sortby("lon")
+
+    lon_vals = coarse["lon"].values
+    lat_vals = coarse["lat"].values
+    fine_lat = da_fine_grid["lat"].values
+    fine_lon = da_fine_grid["lon"].values
+
+    lat_ok = (fine_lat >= lat_vals.min()) & (fine_lat <= lat_vals.max())
+    # The periodic pad appends the first coarse cell at +360, extending the domain to
+    # a full turn starting from the first coarse longitude.
+    lon_hi = lon_vals[0] + 360.0 if _lon_spans_globe(lon_vals) else lon_vals[-1]
+    lon_ok = (fine_lon >= lon_vals[0]) & (fine_lon <= lon_hi)
+
+    return xr.DataArray(
+        lat_ok[:, np.newaxis] & lon_ok[np.newaxis, :],
+        dims=["lat", "lon"],
+        coords={"lat": da_fine_grid["lat"], "lon": da_fine_grid["lon"]},
+    )
+
+
 def interpolate_coarse_to_fine_grid(
     da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray
 ) -> xr.DataArray:
@@ -466,13 +534,7 @@ def interpolate_coarse_to_fine_grid(
 
     lon = da_coarse_to_regrid["lon"]
     lon_vals = lon.values
-    dlon = np.median(np.diff(lon_vals)) if lon_vals.size > 1 else np.nan
-    # A global grid covers the whole planet minus the gap between its last cell
-    # center and the wrap-around back to the first (~one grid step, dlon). So its
-    # span (last - first) is roughly 360 - dlon. A regional grid spans much less.
-    # The 1.5 * dlon just leaves room for floating-point / uneven-spacing wobble;
-    # it is not tied to any particular resolution.
-    spans_globe = lon_vals.size > 1 and (lon_vals[-1] - lon_vals[0]) >= 360.0 - 1.5 * dlon
+    spans_globe = _lon_spans_globe(lon_vals)
 
     if spans_globe:
         # Right-only wrap relies on -180 already being an exact coarse lon point,
@@ -631,11 +693,13 @@ def downscale_from_coarse(
     obs_fine_doy_means = calculate_doy_means(
         obs_fine, clim_method=clim_method, allow_negative_values=allow_negative_values
     )
+    assert_no_nans(obs_fine_doy_means, name="obs_fine_doy_means")
 
     # Step 2: Aggregate daily climatology to the low-resolution grid of the GCM being processed
     obs_coarse_doy_means = interpolate_fine_to_coarse_grid(
         da_fine_to_coarsen=obs_fine_doy_means, da_coarse_grid=obs_coarse
     )
+    assert_no_nans(obs_coarse_doy_means, name="obs_coarse_doy_means")
 
     # Step 3: Remove coarsened daily climatology from the bias-corrected fields
     if method == "additive":
@@ -655,12 +719,19 @@ def downscale_from_coarse(
         zero_clim_on_time = zero_clim.sel(dayofyear=da["time"].dt.dayofyear)
         residuals = residuals.where(~zero_clim_on_time, 0.0).clip(max=max_residual)
 
+    assert_no_nans(residuals, name="residuals")
+
     # Step 4: Bilinearly interpolate residuals to the high-res grid
     # this creates a smooth layer of how different the particular simulated february 10 is
     # from the average february 10.
     residuals_fine = interpolate_coarse_to_fine_grid(
         da_coarse_to_regrid=residuals, da_fine_grid=obs_fine
     )
+    # Global runs mask to all-True, making this a strict zero-NaN assertion. Regional
+    # runs exclude the frame of fine cells outside the coarse domain, which
+    # interpolate to NaN by design; interior NaNs still abort the run.
+    fine_domain_mask = coarse_domain_mask(residuals, obs_fine)
+    assert_no_nans(residuals_fine, name="residuals_fine", where=fine_domain_mask)
 
     # Step 5: Return high-res climatology
     # Add or multiply a constant value to the residuals based on DOY
@@ -690,6 +761,12 @@ def downscale_from_coarse(
             )
             downscaled_corrected = downscaled * ratio_fine
         downscaled = downscaled_corrected
+        # This branch is the one NaN source downstream of the residual gates. Recoarsening
+        # yields NaN for any coarse cell with no valid fine contributors, and the nearest
+        # neighbour interpolation then spreads it across interior cells the earlier checks
+        # already certified clean. Step 5 needs no such check, since it only combines two
+        # arrays this function has already asserted NaN-free.
+        assert_no_nans(downscaled, name="downscaled", where=fine_domain_mask)
 
     return downscaled
 

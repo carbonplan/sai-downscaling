@@ -583,13 +583,20 @@ def disagg_test_calculate_metrics(x, y, time_dim="time"):
     # rmse_perp = rmse / np.sqrt(2)
 
     # R² vs 1:1 (Nash–Sutcliffe): 1 = perfect, can go negative
+    # ss_tot uses x (the reference/observations), not y (the model) -- NSE measures
+    # how much of the *true* variability the model explains, not the model's own variance.
     ss_res = (resid**2).sum(time_dim)
-    ss_tot = ((y - y.mean(time_dim)) ** 2).sum(time_dim)
+    ss_tot = ((x - x.mean(time_dim)) ** 2).sum(time_dim)
     r2_oneone = 1 - ss_res / ss_tot
 
-    # Pearson r per cell (shape agreement) for contrast
-    # xm, ym = x - x.mean(time_dim), y - y.mean(time_dim)
-    # pearson = (xm * ym).sum(time_dim) / np.sqrt((xm**2).sum(time_dim) * (ym**2).sum(time_dim))
+    # Kling-Gupta Efficiency (Gupta et al. 2009): decomposes skill into
+    # correlation (r), variability ratio (alpha), and bias ratio (beta), so
+    # errors from timing/pattern, spread, and mean bias can be told apart
+    # instead of collapsing into one NSE number. 1 = perfect.
+    kge_r = xr.corr(x, y, dim=time_dim)
+    kge_alpha = y.std(time_dim) / x.std(time_dim)
+    kge_beta = y.mean(time_dim) / x.mean(time_dim)
+    kge = 1 - np.sqrt((kge_r - 1) ** 2 + (kge_alpha - 1) ** 2 + (kge_beta - 1) ** 2)
 
     metrics = xr.Dataset(
         {
@@ -599,6 +606,10 @@ def disagg_test_calculate_metrics(x, y, time_dim="time"):
             "max_dev": max_dev,
             "std_resid": std_resid,
             "r2_oneone": r2_oneone,
+            "kge": kge,
+            "kge_r": kge_r,
+            "kge_alpha": kge_alpha,
+            "kge_beta": kge_beta,
         }
     )
 

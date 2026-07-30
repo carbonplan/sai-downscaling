@@ -1,6 +1,7 @@
 [project]
     dependencies = [
         "cartopy>=0.25.0",
+        "cf-xarray>=0.10.10",
         "cftime>=1.6.5",
         "cloudpathlib>=0.23.0",
         "dask-array>=0.7.1",
