@@ -50,7 +50,7 @@ jobs:
                   case "$GCM" in
                     "CESM2-WACCM")
                       SCRIPT="src/srm/input_data/cesm2_waccm.py"
-                      SUBCOMMAND="process"
+                      SUBCOMMAND=""
                       FLAGS="--all-variables"
                       ;;
                     "MIROC-ES2H")
