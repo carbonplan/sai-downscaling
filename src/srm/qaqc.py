@@ -21,6 +21,8 @@ import pandas as pd
 import xarray as xr
 
 from srm import catalog
+from srm.config import GROUP_TO_SCENARIO
+from srm.lineage import resolve_member_lineage
 
 # Spatial range bounds for unit-mismatch detection (e.g. Celsius instead of Kelvin).
 # Ranges are wide intentionally — based on ERA5 observed range +/- large margins.
@@ -583,13 +585,20 @@ def disagg_test_calculate_metrics(x, y, time_dim="time"):
     # rmse_perp = rmse / np.sqrt(2)
 
     # R² vs 1:1 (Nash–Sutcliffe): 1 = perfect, can go negative
+    # ss_tot uses x (the reference/observations), not y (the model) -- NSE measures
+    # how much of the *true* variability the model explains, not the model's own variance.
     ss_res = (resid**2).sum(time_dim)
-    ss_tot = ((y - y.mean(time_dim)) ** 2).sum(time_dim)
+    ss_tot = ((x - x.mean(time_dim)) ** 2).sum(time_dim)
     r2_oneone = 1 - ss_res / ss_tot
 
-    # Pearson r per cell (shape agreement) for contrast
-    # xm, ym = x - x.mean(time_dim), y - y.mean(time_dim)
-    # pearson = (xm * ym).sum(time_dim) / np.sqrt((xm**2).sum(time_dim) * (ym**2).sum(time_dim))
+    # Kling-Gupta Efficiency (Gupta et al. 2009): decomposes skill into
+    # correlation (r), variability ratio (alpha), and bias ratio (beta), so
+    # errors from timing/pattern, spread, and mean bias can be told apart
+    # instead of collapsing into one NSE number. 1 = perfect.
+    kge_r = xr.corr(x, y, dim=time_dim)
+    kge_alpha = y.std(time_dim) / x.std(time_dim)
+    kge_beta = y.mean(time_dim) / x.mean(time_dim)
+    kge = 1 - np.sqrt((kge_r - 1) ** 2 + (kge_alpha - 1) ** 2 + (kge_beta - 1) ** 2)
 
     metrics = xr.Dataset(
         {
@@ -599,6 +608,10 @@ def disagg_test_calculate_metrics(x, y, time_dim="time"):
             "max_dev": max_dev,
             "std_resid": std_resid,
             "r2_oneone": r2_oneone,
+            "kge": kge,
+            "kge_r": kge_r,
+            "kge_alpha": kge_alpha,
+            "kge_beta": kge_beta,
         }
     )
 
@@ -879,3 +892,299 @@ def calculate_reasonable_bounds_doy(
     high_bound = obs_max_rolling + delta_doy_max_finegrid
     low_bound = obs_min_rolling + delta_doy_min_finegrid
     return low_bound, high_bound
+
+
+# ---------------------------------------------------------------------------
+# Trend-distortion analysis
+#
+# "Distortion" is a difference of differences: how much a scenario-to-scenario delta changes once
+# debiasing and downscaling are applied, relative to the same delta computed on raw GCM output.
+# These are the pure pieces of that analysis; plotting and cache IO live in the notebook.
+# ---------------------------------------------------------------------------
+
+# The four pipeline stages a delta can be computed at. `coarsened_downscaled_debiased` is the
+# fine-grid downscaled output recoarsened onto the raw grid, which is what makes it comparable to
+# `raw` and `coarse_debiased` cell for cell.
+DISTORTION_STAGES = (
+    "raw",
+    "coarse_debiased",
+    "downscaled_debiased",
+    "coarsened_downscaled_debiased",
+)
+
+# {name: (tested_stage, reference_stage)}. The third pair isolates what downscaling adds on top of
+# debiasing; the first two measure debiasing alone and the two together.
+DISTORTION_STAGE_PAIRS: dict[str, tuple[str, str]] = {
+    "coarse_debiased_vs_raw": ("coarse_debiased", "raw"),
+    "downscaled_debiased_vs_raw": ("coarsened_downscaled_debiased", "raw"),
+    "downscaled_debiased_vs_coarse_debiased": (
+        "coarsened_downscaled_debiased",
+        "coarse_debiased",
+    ),
+}
+
+# {family: (after_scenario_group, before_scenario_group)}. `g6_ssp` isolates the effect of SAI by
+# differencing the intervention against its no-SAI counterfactual over the same window.
+DISTORTION_FAMILIES: dict[str, tuple[str, str]] = {
+    "ssp_hist": ("ssp245", "historical"),
+    "g6_hist": ("g6_1p5k", "historical"),
+    "g6_ssp": ("g6_1p5k", "ssp245"),
+}
+
+_COMPARISON_COLUMNS = [
+    "comparison_id",
+    "family",
+    "variable",
+    "after_scenario",
+    "after_member",
+    "before_scenario",
+    "before_member",
+]
+
+_SKIPPED_COMPARISON_COLUMNS = [
+    "family",
+    "variable",
+    "after_scenario",
+    "after_member",
+    "before_scenario",
+    "reason",
+]
+
+
+def _baseline_member(
+    gcm: str, after_group: str, after_member: str, variable: str, before_group: str
+) -> str | None:
+    """Member of ``before_group`` that a leaf of ``after_group`` should be differenced against.
+
+    Resolved through :mod:`srm.lineage`, never guessed. Returns ``None`` when the lineage table
+    registers no such parent for the combination.
+    """
+    label = GROUP_TO_SCENARIO[after_group]
+    historical_member, ssp245_member, _ = resolve_member_lineage(gcm, label, after_member, variable)
+    if before_group == "historical":
+        return historical_member
+    if before_group == "ssp245":
+        return ssp245_member
+    raise ValueError(f"no lineage rule for a {before_group!r} baseline")
+
+
+def enumerate_scenario_comparisons(
+    leaves,
+    *,
+    gcm: str,
+    families: dict[str, tuple[str, str]] | None = None,
+    variables=None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Every scenario comparison the available leaves support, with its baseline member resolved.
+
+    The baseline member comes from :func:`srm.lineage.resolve_member_lineage`, which is what makes
+    this safe to run across variables. For the ``g6_ssp`` family the correct SSP245 bridge member
+    varies by variable on CESM2-WACCM: ``tas``/``pr``/``rsds``/``hurs`` bridge member ``003`` while
+    ``tasmax``/``tasmin``/``dtr`` bridge ``008`` (issue #448). A hand-written member therefore cannot
+    be reused across variables, and pairing on one would compare different realizations.
+
+    Parameters
+    ----------
+    leaves : iterable of tuple
+        ``(scenario_group, variable, member)`` triples present in the store, in group naming
+        (``historical``, ``ssp245``, ``g6_1p5k``).
+    gcm : str
+        GCM name as registered in :mod:`srm.lineage`.
+    families : dict, optional
+        ``{family: (after_group, before_group)}``. Defaults to :data:`DISTORTION_FAMILIES`.
+    variables : container, optional
+        Restrict to these variables. ``None`` keeps every variable found in ``leaves``.
+
+    Returns
+    -------
+    comparisons : pandas.DataFrame
+        Columns ``comparison_id``, ``family``, ``variable``, ``after_scenario``, ``after_member``,
+        ``before_scenario``, ``before_member``.
+    skipped : pandas.DataFrame
+        Comparisons that could not be built, with a ``reason`` column. Skipping rather than
+        fabricating a baseline is what keeps a lineage gap or a missing leaf visible.
+    """
+    available = {tuple(key) for key in leaves}
+    families = DISTORTION_FAMILIES if families is None else families
+
+    rows, skips = [], []
+    for family, (after_group, before_group) in families.items():
+        for scenario, variable, member in sorted(available):
+            if scenario != after_group:
+                continue
+            if variables is not None and variable not in variables:
+                continue
+            skip = dict(
+                family=family,
+                variable=variable,
+                after_scenario=scenario,
+                after_member=member,
+                before_scenario=before_group,
+            )
+            try:
+                before_member = _baseline_member(gcm, scenario, member, variable, before_group)
+            except KeyError as exc:
+                skips.append({**skip, "reason": f"no registered lineage: {exc.args[0][:80]}"})
+                continue
+            if before_member is None:
+                skips.append({**skip, "reason": f"lineage registers no {before_group} parent"})
+                continue
+            if (before_group, variable, before_member) not in available:
+                missing = "/".join((before_group, variable, before_member))
+                skips.append({**skip, "reason": f"baseline leaf {missing} absent from the store"})
+                continue
+            rows.append(
+                {
+                    "comparison_id": f"{family}_{variable}_{member}-vs-{before_member}",
+                    "family": family,
+                    "variable": variable,
+                    "after_scenario": scenario,
+                    "after_member": member,
+                    "before_scenario": before_group,
+                    "before_member": before_member,
+                }
+            )
+
+    return (
+        pd.DataFrame(rows, columns=_COMPARISON_COLUMNS),
+        pd.DataFrame(skips, columns=_SKIPPED_COMPARISON_COLUMNS),
+    )
+
+
+def compute_deltas(
+    after: dict[str, xr.DataArray],
+    before: dict[str, xr.DataArray],
+    stages=DISTORTION_STAGES,
+) -> tuple[dict[str, xr.DataArray], dict[str, xr.DataArray]]:
+    """``after - before`` per pipeline stage, in absolute terms and as a percent of ``before``.
+
+    Both arguments map a stage name to that stage's period-mean grid. Nothing is computed here, so
+    the caller decides when to materialize.
+
+    Cells where ``before`` is exactly zero give an undefined percent change and come back as NaN
+    rather than infinity. That matters because an infinity would propagate into the percent extremes
+    and, since a distortion flag requires both tolerances, silently flag the cell.
+    """
+    deltas = {stage: after[stage] - before[stage] for stage in stages}
+    deltas_pct = {
+        stage: deltas[stage] * 100 / before[stage].where(before[stage] != 0) for stage in stages
+    }
+    return deltas, deltas_pct
+
+
+def distortion_fields(
+    deltas_absolute: dict[str, xr.DataArray],
+    deltas_pct: dict[str, xr.DataArray],
+    stage_pair: str,
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Absolute and percent distortion for one entry of :data:`DISTORTION_STAGE_PAIRS`."""
+    tested, reference = DISTORTION_STAGE_PAIRS[stage_pair]
+    return (
+        deltas_absolute[tested] - deltas_absolute[reference],
+        deltas_pct[tested] - deltas_pct[reference],
+    )
+
+
+def calculate_distortion_flags(
+    distortion_absolute: xr.DataArray,
+    distortion_pct: xr.DataArray,
+    *,
+    tolerance_absolute: float,
+    tolerance_pct: float,
+) -> xr.DataArray:
+    """Flag cells where a distortion exceeds *both* tolerances.
+
+    Requiring both is what keeps the flag off tiny absolute swings in already-dry cells (large
+    percent, small absolute) and off modest percent swings in very wet ones (large absolute, small
+    percent).
+
+    ``tolerance_pct=0`` disables the percent condition rather than applying it as ``abs(pct) > 0``.
+    The two differ: the literal reading is true almost everywhere, so it looks like a no-op, but it
+    would drop any cell whose percent change is NaN. That is the intended setting for temperature in
+    kelvin, where a 1 K change on a 300 K mean reads as 0.3 %.
+    """
+    is_distorted = abs(distortion_absolute) > tolerance_absolute
+    if tolerance_pct == 0:
+        return is_distorted
+    return is_distorted & (abs(distortion_pct) > tolerance_pct)
+
+
+def sign_flip_mask(
+    delta_tested: xr.DataArray, delta_reference: xr.DataArray, *, threshold: float
+) -> xr.DataArray:
+    """Flag cells where two stages disagree on the *sign* of a delta by more than ``threshold``.
+
+    Stricter and more literal than a tolerance on the size of the distortion: this is the case where
+    "does the intervention increase or decrease this variable here" gets a different answer depending
+    on which pipeline stage you read it from. Both stages must clear ``threshold`` in magnitude, so a
+    pair straddling zero by a hair does not count.
+    """
+    return ((delta_reference > threshold) & (delta_tested < -threshold)) | (
+        (delta_reference < -threshold) & (delta_tested > threshold)
+    )
+
+
+def area_weights(lat: xr.DataArray) -> xr.DataArray:
+    """``cos(latitude)`` weights for area-weighted means on a rectilinear grid.
+
+    A plain spatial mean gives a polar cell the same weight as an equatorial one. On the 192 x 288
+    coarse grid a cell at 89 degrees covers roughly a sixtieth of the area of one at the equator, so
+    an unweighted flagged fraction overstates whatever happens near the poles. Values are clipped at
+    zero so floating-point noise at the poles cannot contribute a negative weight.
+    """
+    weights = xr.DataArray(
+        np.cos(np.deg2rad(np.asarray(lat, dtype="float64"))), dims=lat.dims, coords=lat.coords
+    )
+    return weights.clip(min=0.0).rename("area_weights")
+
+
+def weighted_fraction(
+    mask: xr.DataArray,
+    weights: xr.DataArray,
+    *,
+    valid: xr.DataArray | None = None,
+    dims=("lat", "lon"),
+) -> float:
+    """Area-weighted fraction of ``mask``, over the cells where ``valid`` is true.
+
+    The denominator is the valid area, not the whole grid. Conservative recoarsening can leave NaN
+    cells at the grid edge, and counting those as "not distorted" would deflate every reported
+    fraction by the size of that band rather than excluding it from the question.
+
+    Returns NaN when no valid cell has weight, which is the honest answer for an empty domain.
+    """
+    if valid is None:
+        valid = mask.notnull()
+    flagged = xr.where(mask.fillna(False).astype(bool), 1.0, 0.0)
+    weights = weights.broadcast_like(flagged).where(valid, 0.0)
+    total = float(weights.sum(dims))
+    if total == 0:
+        return float("nan")
+    return float((flagged * weights).sum(dims)) / total
+
+
+def distortion_summary(
+    distortion_absolute: xr.DataArray,
+    distortion_pct: xr.DataArray,
+    flag: xr.DataArray,
+    *,
+    weights: xr.DataArray,
+    sign_flip: xr.DataArray | None = None,
+) -> dict:
+    """Scalar summary of one stage pair's distortion, for one row of the summary CSV.
+
+    The distortion fields are expected to already be in reporting units, because the tolerances that
+    produced ``flag`` are. Converting here instead would put the flag and the magnitude it reports on
+    two different scales.
+    """
+    valid = distortion_absolute.notnull()
+    summary = {
+        "frac_area_distorted": weighted_fraction(flag, weights, valid=valid),
+        "distortion_abs_max": float(distortion_absolute.max()),
+        "distortion_abs_min": float(distortion_absolute.min()),
+        "distortion_pct_max": float(distortion_pct.max()),
+        "distortion_pct_min": float(distortion_pct.min()),
+    }
+    if sign_flip is not None:
+        summary["frac_area_sign_flip"] = weighted_fraction(sign_flip, weights, valid=valid)
+    return summary

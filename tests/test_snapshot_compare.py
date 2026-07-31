@@ -154,9 +154,14 @@ def test_report_passes_when_invariant_holds():
 def test_global_baseline_pointer_is_well_formed():
     from srm.snapshot.baselines import CESM2_WACCM_GLOBAL
 
-    assert CESM2_WACCM_GLOBAL.uri.startswith("s3://carbonplan-srm/")
+    assert CESM2_WACCM_GLOBAL.uri.startswith(
+        "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/"
+    )
     assert CESM2_WACCM_GLOBAL.uri.endswith(".icechunk")
     assert CESM2_WACCM_GLOBAL.branch
+    # "main" is an empty anchor commit, not a run (see baselines.py). Repointing the
+    # baseline at it would make every comparison diff against nothing.
+    assert CESM2_WACCM_GLOBAL.branch != "main"
 
 
 def test_partial_coordinate_overlap_not_within_tol():

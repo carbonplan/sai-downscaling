@@ -52,8 +52,10 @@ contributing
 explanation/scientific-approach
 explanation/pipeline-architecture
 explanation/snapshot-testing
+explanation/qa-qc/input-data-global-timeseries
 explanation/qa-qc/plausible-value-check
 explanation/qa-qc/output-integrity-checks
+explanation/qa-qc/trend-distortion-check
 ```
 
 ```{toctree}

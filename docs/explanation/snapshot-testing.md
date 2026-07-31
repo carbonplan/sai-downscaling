@@ -9,7 +9,7 @@ A cheap South Africa run produces candidate output, and `compare_runs` aligns th
 ```mermaid
 graph TB
     RUN[bcsd run<br/>South Africa configs] -->|produces| CAND[Candidate output store]
-    SNAP[("Global snapshot on carbonplan-srm<br/>pointer in baselines.py")]
+    SNAP[("Global snapshot on source.coop<br/>pointer in baselines.py")]
 
     SNAP -->|align to candidate extent| ALN[Snapshot on candidate grid]
     CAND --> CMP
@@ -38,7 +38,7 @@ One global tolerance cannot fit every variable, because they live on different s
 
 ## The baseline and the cheap proxy
 
-There is one canonical baseline: the blessed global run on the `carbonplan-srm` bucket, recorded as a store URI and icechunk branch in `srm.snapshot.baselines.CESM2_WACCM_GLOBAL`. "Which run is the baseline" is therefore a version-controlled value that the notebook and `compare_runs` both read, so repointing it is a reviewed edit to `baselines.py` rather than an untracked change on a bucket. Comparing full global output on every change would be prohibitively expensive, so the routine check runs over a small South Africa subset instead; the [how-to guide](../how-to/run-snapshot-tests.md) covers the halo and trimming mechanics that make the subset comparable to the global baseline.
+There is one canonical baseline: the blessed global run in CarbonPlan's public [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling), recorded as a store URI and icechunk branch in `srm.snapshot.baselines.CESM2_WACCM_GLOBAL`. "Which run is the baseline" is therefore a version-controlled value that the notebook and `compare_runs` both read, so repointing it is a reviewed edit to `baselines.py` rather than an untracked change on a bucket. Comparing full global output on every change would be prohibitively expensive, so the routine check runs over a small South Africa subset instead; the [how-to guide](../how-to/run-snapshot-tests.md) covers the halo and trimming mechanics that make the subset comparable to the global baseline.
 
 The subset proxy has one limitation worth knowing. The bias correction fits a per-variable distribution: `tas`, `tasmax`, and `tasmin` use a numerically stable Gaussian, but `hurs`, `rsds`, and `dtr` use iterative maximum-likelihood fits (a beta distribution, with Weibull and Gumbel tails) that are sensitive to tiny input perturbations. Windowing the domain changes the `dask` and regrid reduction order and perturbs those fits at the floating-point level, so `hurs`, `rsds`, and `dtr` can diff spuriously in a South-Africa-versus-global comparison — interior differences that a wider halo cannot fix. Judge those three from the full global comparison (`mode = "global"`), where both runs feed identical inputs to the fits; the cheap proxy is a reliable regression signal only for the numerically stable variables (`tas`, `tasmax`, `tasmin`, `pr`).
 

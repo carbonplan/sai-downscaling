@@ -8,8 +8,10 @@ import xarray as xr
 from srm import downscaling_utils
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
+    coarse_domain_mask,
     derive_tasmin,
     detrend,
+    downscale_from_coarse,
     fft_smooth_3harmonics,
     get_historical_experiment,
     interpolate_coarse_to_fine_grid,
@@ -18,6 +20,7 @@ from srm.downscaling_utils import (
     subset_space,
     swap_temperature_extremes,
 )
+from srm.qa_checks import NaNCheckError
 
 
 @pytest.fixture
@@ -757,3 +760,162 @@ class TestDeriveTasmin:
         t2 = np.arange("2015-01-01", "2018-01-01", dtype="datetime64[D]")
         with pytest.raises(ValueError, match="time ax"):
             derive_tasmin(_temp_series(t1, 300.0, "tasmax"), _temp_series(t2, 10.0, "dtr"))
+
+
+# ---------------------------------------------------------------------------
+# NaN guards in spatial disaggregation (issue #517)
+# ---------------------------------------------------------------------------
+
+
+def _regional_grids(n_time: int = 40) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+    """Coarse simulation, coarse obs, and fine obs on a regional (non-global) domain.
+
+    The fine grid deliberately extends past the outermost coarse cell centres, which is
+    what production subset runs do. Those out-of-domain fine cells interpolate to NaN,
+    and the guards must tolerate exactly that frame and nothing more.
+    """
+    time = pd.date_range("2015-01-01", periods=n_time, freq="D")
+    coarse_lat = np.array([-30.0, -20.0, -10.0])
+    coarse_lon = np.array([20.0, 30.0, 40.0])
+    fine_lat = np.arange(-35.0, -4.9, 5.0)
+    fine_lon = np.arange(15.0, 45.1, 5.0)
+
+    def _da(lat, lon, offset):
+        shape = (time.size, lat.size, lon.size)
+        values = offset + np.arange(np.prod(shape), dtype="float64").reshape(shape) % 7
+        return xr.DataArray(
+            values,
+            dims=["time", "lat", "lon"],
+            coords={"time": time, "lat": lat, "lon": lon},
+            name="tas",
+        )
+
+    return (
+        _da(coarse_lat, coarse_lon, 300.0),
+        _da(coarse_lat, coarse_lon, 299.0),
+        _da(fine_lat, fine_lon, 298.0),
+    )
+
+
+def _global_grids() -> tuple[xr.DataArray, xr.DataArray]:
+    coarse = _make_global_coarse_da()
+    fine_lat = np.array([-90.0, -45.0, 0.0, 45.0, 90.0])
+    fine_lon = np.arange(-180.0, 180.0, 10.0)
+    fine = xr.DataArray(
+        np.zeros((fine_lat.size, fine_lon.size)),
+        dims=["lat", "lon"],
+        coords={"lat": fine_lat, "lon": fine_lon},
+    )
+    coarse = coarse.assign_coords(lat=np.array([-90.0, -45.0, 0.0, 45.0, 90.0]))
+    return coarse, fine
+
+
+class TestCoarseDomainMask:
+    def test_global_coarse_grid_covers_every_fine_cell(self):
+        coarse, fine = _global_grids()
+
+        mask = coarse_domain_mask(coarse, fine)
+
+        assert bool(mask.all())
+
+    def test_mask_matches_where_interpolation_produces_values_globally(self):
+        coarse, fine = _global_grids()
+
+        mask = coarse_domain_mask(coarse, fine)
+        interpolated = interpolate_coarse_to_fine_grid(coarse, fine)
+
+        np.testing.assert_array_equal(mask.values, ~np.isnan(interpolated.values))
+
+    def test_mask_matches_where_interpolation_produces_values_regionally(self):
+        coarse_sim, _, obs_fine = _regional_grids()
+        coarse = coarse_sim.isel(time=0, drop=True)
+        fine = obs_fine.isel(time=0, drop=True)
+
+        mask = coarse_domain_mask(coarse, fine)
+        interpolated = interpolate_coarse_to_fine_grid(coarse, fine)
+
+        np.testing.assert_array_equal(mask.values, ~np.isnan(interpolated.values))
+
+    def test_regional_mask_excludes_the_out_of_domain_frame(self):
+        coarse_sim, _, obs_fine = _regional_grids()
+
+        mask = coarse_domain_mask(
+            coarse_sim.isel(time=0, drop=True), obs_fine.isel(time=0, drop=True)
+        )
+
+        assert not bool(mask.isel(lat=0).any())  # fine lat -35 is below coarse lat -30
+        assert not bool(mask.isel(lon=0).any())  # fine lon 15 is west of coarse lon 20
+        assert bool(mask.isel(lat=3, lon=3))  # interior stays valid
+
+
+class TestDownscaleFromCoarseNanGuards:
+    def test_regional_edge_nans_do_not_abort_the_run(self):
+        """configs/qa/ subsets legitimately produce a NaN frame — that must still run."""
+        coarse_sim, obs_coarse, obs_fine = _regional_grids()
+
+        result = downscale_from_coarse(da=coarse_sim, obs_coarse=obs_coarse, obs_fine=obs_fine)
+
+        # The legitimate out-of-domain frame is preserved, not silently filled.
+        assert bool(np.isnan(result.isel(time=0, lat=0)).all())
+        assert not bool(np.isnan(result.isel(time=0, lat=3, lon=3)))
+
+    def test_nan_in_debiased_input_aborts(self):
+        coarse_sim, obs_coarse, obs_fine = _regional_grids()
+        coarse_sim = coarse_sim.copy()
+        coarse_sim[5, :, :] = np.nan
+
+        with pytest.raises(NaNCheckError, match="residuals"):
+            downscale_from_coarse(da=coarse_sim, obs_coarse=obs_coarse, obs_fine=obs_fine)
+
+    def test_nan_in_fine_observations_aborts(self):
+        coarse_sim, obs_coarse, obs_fine = _regional_grids()
+        obs_fine = obs_fine.copy()
+        obs_fine[:, 3, 3] = np.nan
+
+        with pytest.raises(NaNCheckError, match="doy_means"):
+            downscale_from_coarse(da=coarse_sim, obs_coarse=obs_coarse, obs_fine=obs_fine)
+
+
+class TestEnforceConservationNanGuard:
+    """The conservation correction runs after the residual gates, so it needs its own.
+
+    Its nearest-neighbour spreading of a coarse correction can push NaN into interior
+    fine cells that the earlier checks already certified clean. The parameter is public
+    and documented, so the guarantee has to hold when a caller turns it on.
+    """
+
+    def test_clean_conservation_run_is_not_aborted(self):
+        coarse_sim, obs_coarse, obs_fine = _regional_grids()
+
+        result = downscale_from_coarse(
+            da=coarse_sim,
+            obs_coarse=obs_coarse,
+            obs_fine=obs_fine,
+            enforce_conservation=True,
+        )
+
+        assert not bool(np.isnan(result.isel(time=0, lat=3, lon=3)))
+
+    def test_nan_introduced_by_the_correction_aborts(self):
+        coarse_sim, obs_coarse, obs_fine = _regional_grids()
+        real = downscaling_utils.interpolate_fine_to_coarse_grid
+        calls = []
+
+        def _recoarsen_returns_nan(*args, **kwargs):
+            out = real(*args, **kwargs)
+            calls.append(1)
+            # Second call is the recoarsen step inside the conservation branch.
+            return out.where(False) if len(calls) == 2 else out
+
+        with patch.object(
+            downscaling_utils,
+            "interpolate_fine_to_coarse_grid",
+            side_effect=_recoarsen_returns_nan,
+        ):
+            with pytest.raises(NaNCheckError, match="downscaled"):
+                downscale_from_coarse(
+                    da=coarse_sim,
+                    obs_coarse=obs_coarse,
+                    obs_fine=obs_fine,
+                    enforce_conservation=True,
+                )
