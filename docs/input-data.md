@@ -66,9 +66,7 @@ cesm2_waccm_g6 = catalog.get("CESM2-WACCM").to_xarray(group="g6_1p5k")
 cesm2_waccm_g6
 ```
 
-`g6_1p5k_end` is the termination-shock continuation of `g6_1p5k` member `002`: SAI stops after
-2084 and the run continues to 2100. The group holds only those years — the 2035–2084 SAI years it
-continues stay in `g6_1p5k`.
+`g6_1p5k_end` is the termination-shock continuation of `g6_1p5k` member `002`: SAI stops at the end of year 2084 and then the termination shock run continues to the end of 2100. The group holds only those years — the 2035–2084 SAI years it continues stay in `g6_1p5k`.`
 
 ```{code-cell} python
 cesm2_waccm_g6_end = catalog.get("CESM2-WACCM").to_xarray(group="g6_1p5k_end")
