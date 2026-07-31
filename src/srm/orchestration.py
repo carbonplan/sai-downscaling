@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Callable
 from typing import Literal
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
@@ -91,6 +92,59 @@ class BCSDOrchestrator:
         else:
             raise ValueError(f"Unknown stage: {stage}")
 
+    # Stages where tasmin reconstructs itself from its sibling tasmax/dtr stores
+    # and therefore must run after them. Other stages (obs regridding) have no
+    # cross-variable dependency and are never wave-split.
+    _DERIVED_VARIABLE_STAGES: frozenset[str] = frozenset({"fit_historical", "transform_scenario"})
+
+    def _dependency_waves(self, stage: str, configs: list[BCSDConfig]) -> list[list[int]]:
+        """Split config indices into ordered execution waves within a stage.
+
+        ``tasmin`` is never bias-corrected directly; it is reconstructed from its
+        sibling ``tasmax``/``dtr`` stores (issue #363). Those siblings are written
+        by separate tasks on the same icechunk branch, so in the stages that read
+        them (``fit_historical``, ``transform_scenario``) ``tasmin`` must not start
+        until they are committed and final — otherwise it fossilises a mid-flight
+        (still-NaN) ``dtr``/``tasmax``. Stages without that coupling run as one wave.
+
+        Parameters
+        ----------
+        stage : str
+            Pipeline stage being submitted.
+        configs : list[BCSDConfig]
+            Configs to be executed in this stage.
+
+        Returns
+        -------
+        list[list[int]]
+            Ordered list of waves, each a list of indices into ``configs``. Empty
+            waves are omitted.
+        """
+        if stage not in self._DERIVED_VARIABLE_STAGES:
+            return [list(range(len(configs)))] if configs else []
+        first = [i for i, c in enumerate(configs) if c.variable != "tasmin"]
+        later = [i for i, c in enumerate(configs) if c.variable == "tasmin"]
+        return [wave for wave in (first, later) if wave]
+
+    def _run_in_dependency_waves(
+        self,
+        executor: Callable[[str, list[BCSDConfig]], list[str]],
+        stage: str,
+        configs: list[BCSDConfig],
+    ) -> list[str]:
+        """Run ``configs`` through ``executor`` one dependency wave at a time.
+
+        Waves are executed sequentially (each blocks to completion before the next
+        starts), while output paths are returned in the original ``configs`` order.
+        """
+        completed: list[str | None] = [None] * len(configs)
+        for wave in self._dependency_waves(stage, configs):
+            wave_configs = [configs[i] for i in wave]
+            wave_paths = executor(stage, wave_configs)
+            for i, path in zip(wave, wave_paths):
+                completed[i] = path
+        return completed  # type: ignore[return-value]
+
     def submit_stage(
         self,
         stage: Literal["prepare_observations", "fit_historical", "transform_scenario"],
@@ -149,11 +203,10 @@ class BCSDOrchestrator:
             f"({'Coiled' if use_coiled else 'local'})"
         )
 
-        # Submit to Coiled or run locally
-        if use_coiled:
-            completed_paths = self._submit_to_coiled(stage, configs_to_run)
-        else:
-            completed_paths = self._run_local(stage, configs_to_run)
+        # Submit to Coiled or run locally, respecting intra-stage dependency
+        # ordering (tasmin must run after its debiased-coarse tasmax/dtr inputs).
+        executor = self._submit_to_coiled if use_coiled else self._run_local
+        completed_paths = self._run_in_dependency_waves(executor, stage, configs_to_run)
 
         # Fill in the output_paths list
         completed_idx = 0
@@ -204,7 +257,7 @@ class BCSDOrchestrator:
         except ImportError:
             raise ImportError("Coiled is not installed. Install with: uv pip install coiled")
 
-        # Exclude computed fields (run_id, config_hash, detrend_data, etc.) since they
+        # Exclude computed fields (run_id, config_hash, is_sai_scenario) since they
         # are derived values and BCSDConfig does not accept them as constructor inputs.
         computed_fields = set(BCSDConfig.model_computed_fields.keys())
         cache = self._get_cache()
@@ -247,7 +300,7 @@ class BCSDOrchestrator:
                 region="us-west-2",
                 map_over_task_var_dicts=task_var_dicts,
                 forward_aws_credentials=False,
-                spot_policy="spot_with_fallback",
+                spot_policy="on-demand",
                 logger=logger,
                 tag={"Project": "SRM"},
                 disk_size="100GB",
@@ -411,7 +464,10 @@ class BCSDOrchestrator:
 
     def _deduplicate_obs_configs(self, configs: list[BCSDConfig]) -> list[BCSDConfig]:
         """
-        Extract unique (GCM, variable) combinations for obs regridding.
+        Extract unique (GCM, obs_dataset, variable) combinations for obs regridding.
+
+        obs_dataset is part of the key because the obs artifact store path embeds
+        it; two configs differing only in obs_dataset must each regrid.
 
         Parameters
         ----------
@@ -426,7 +482,7 @@ class BCSDOrchestrator:
         seen = set()
         unique = []
         for config in configs:
-            key = (config.gcm, config.variable)
+            key = (config.gcm, config.obs_dataset, config.variable)
             if key not in seen:
                 seen.add(key)
                 unique.append(config)
@@ -438,7 +494,9 @@ class BCSDOrchestrator:
 
         Deduplication uses the resolved historical ensemble member so that multiple
         scenario configs that share the same lineage parent are not submitted as
-        separate historical tasks.
+        separate historical tasks. obs_dataset is part of the key because the
+        historical artifact store path embeds it and fit_historical bias-corrects
+        against obs; different obs_datasets require separate historical fits.
 
         Parameters
         ----------
@@ -453,7 +511,12 @@ class BCSDOrchestrator:
         seen = set()
         unique = []
         for config in configs:
-            key = (config.gcm, config.variable, self._resolve_hist_member(config))
+            key = (
+                config.gcm,
+                config.obs_dataset,
+                config.variable,
+                self._resolve_hist_member(config),
+            )
             if key not in seen:
                 seen.add(key)
                 unique.append(config)

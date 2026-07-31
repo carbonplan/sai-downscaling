@@ -4,13 +4,14 @@
 # === Model and Scenario ===
 gcm: "MIROC-ES2H"
 variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
-ensemble_members: ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
+ensemble_members:
+  ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
 scenarios: ["G6-1.5K"]
 
 # === Time Periods ===
 train_period_start: 1978
 train_period_end: 2014
-predict_period_start: 2015
+predict_period_start: 2035
 predict_period_end: 2084
 
 # === Spatial Subsetting ===
@@ -23,7 +24,7 @@ output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
 
 # === Bias Correction ===
-mapping_type: "nonparametric_hybrid"
+debias_approach: "nonparametric_hybrid_2sided"
 
 # === Additional Options ===
 verbose: true

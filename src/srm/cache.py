@@ -9,12 +9,13 @@ plus intermediate artifacts when save_intermediate is enabled.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import icechunk
 
-from srm.bcsd_config import BCSDConfig, MappingType, PipelineOptions, VariableConfig
+from srm.bcsd_config import BCSDConfig, DebiasApproach, PipelineOptions, VariableConfig
 from srm.config import _ROOT_MESSAGES, SCENARIO_TO_GROUP, _icechunk_storage_for_path
 
 logger = logging.getLogger(__name__)
@@ -134,9 +135,9 @@ class ArtifactCache:
         return f"lat{lat_min}to{lat_max}_lon{lon_min}to{lon_max}"
 
     @staticmethod
-    def _get_varconfig_id(variable_config: VariableConfig, mapping_type: MappingType) -> str:
-        """8-character hash of VariableConfig fields + mapping_type. See ``VariableConfig.to_hash``."""
-        return variable_config.to_hash(mapping_type)
+    def _get_varconfig_id(variable_config: VariableConfig, debias_approach: DebiasApproach) -> str:
+        """8-character hash of VariableConfig fields + debias_approach. See ``VariableConfig.to_hash``."""
+        return variable_config.to_hash(debias_approach)
 
     def _require_config(self) -> BCSDConfig:
         if self.config is None:
@@ -172,32 +173,51 @@ class ArtifactCache:
         config = self._require_config()
         return StoreLocation(self._scratch_store, f"obs/{config.variable}")
 
-    def historical_loc(self, hist_member: str) -> StoreLocation:
-        """StoreLocation for the historical bias-correction artifact.
+    def historical_loc(self, hist_member: str, variable: str | None = None) -> StoreLocation:
+        """StoreLocation for the fully downscaled historical artifact.
+
+        Written to the output store — the fine-resolution downscaled historical
+        is a deliverable, the analog of the fine scenario output.
 
         Parameters
         ----------
         hist_member : str
             Resolved historical ensemble member ID.
+        variable : str, optional
+            Override the variable from config. Used by tasmin to read/rewrite the
+            sibling fine tasmax output during the tasmax<tasmin swap (issue #331).
         """
         config = self._require_config()
+        var = variable or config.variable
         return StoreLocation(
-            self._scratch_store,
-            f"historical/{config.variable}/{hist_member}",
+            self._output_store,
+            f"historical/{var}/{hist_member}",
         )
 
     def _scenario_group(self) -> str:
         """Return the icechunk group prefix for the bound config's scenario."""
         return SCENARIO_TO_GROUP[self._require_config().scenario]
 
+    def scenario_output_loc(self, variable: str | None = None) -> StoreLocation:
+        """StoreLocation for the fine scenario downscaling output.
+
+        Parameters
+        ----------
+        variable : str, optional
+            Override the variable from config. Used by tasmin to read/rewrite the
+            sibling fine tasmax output during the tasmax<tasmin swap (issue #331).
+        """
+        config = self._require_config()
+        var = variable or config.variable
+        return StoreLocation(
+            self._output_store,
+            f"{self._scenario_group()}/{var}/{config.ensemble_member}",
+        )
+
     @property
     def scenario_loc(self) -> StoreLocation:
         """StoreLocation for the scenario downscaling output."""
-        config = self._require_config()
-        return StoreLocation(
-            self._output_store,
-            f"{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
-        )
+        return self.scenario_output_loc()
 
     def debiased_coarse_historical_loc(
         self, hist_member: str, variable: str | None = None
@@ -270,7 +290,7 @@ class ArtifactCache:
 
     # ── existence check ───────────────────────────────────────────────────────
 
-    def exists(self, loc: StoreLocation) -> bool:
+    def exists(self, loc: StoreLocation, *, max_attempts: int = 4) -> bool:
         """
         Check if an artifact exists by scanning the icechunk commit ancestry.
 
@@ -278,33 +298,67 @@ class ArtifactCache:
         exists on ``self.branch`` of the store. This is atomic — partial writes
         leave no matching commit.
 
+        A store or branch that does not exist yet is a genuine cache miss and
+        returns ``False``. Transient infrastructure errors — e.g. reading a
+        branch ref while other workers concurrently commit to it — are retried
+        with exponential backoff. A persistent failure raises
+        :class:`CacheCheckError` rather than being silently reported as a miss,
+        so a momentarily unreadable store never causes valid, already-committed
+        outputs to be discarded and recomputed (or reported as failed).
+
         Parameters
         ----------
         loc : StoreLocation
             Location to check.
+        max_attempts : int, optional
+            Number of attempts before giving up on a transient error (default 4).
 
         Returns
         -------
         bool
-            True if a commit with message ``loc.group`` is in the ancestry.
-        """
-        import icechunk
+            True if a commit with message ``loc.group`` is in the ancestry;
+            False if the store or branch does not exist.
 
+        Raises
+        ------
+        CacheCheckError
+            If an existing store cannot be read after ``max_attempts`` attempts.
+        """
         branch = self._branch_for()
-        try:
-            storage = _icechunk_storage_for_path(loc.store_path)
-            repo = icechunk.Repository.open(storage)
-            result = any(snapshot.message == loc.group for snapshot in repo.ancestry(branch=branch))
-            if result:
-                logger.debug("Cache hit: %s / %s", loc.store_path, loc.group)
-            else:
+        storage = _icechunk_storage_for_path(loc.store_path)
+
+        last_error: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                if not icechunk.Repository.exists(storage):
+                    logger.debug("Cache miss (store does not exist): %s", loc.store_path)
+                    return False
+                repo = icechunk.Repository.open(storage)
+                if branch not in repo.list_branches():
+                    logger.debug("Cache miss (branch %r not created): %s", branch, loc.store_path)
+                    return False
+                hit = any(s.message == loc.group for s in repo.ancestry(branch=branch))
                 logger.debug(
-                    "Cache miss (group not in ancestry): %s / %s", loc.store_path, loc.group
+                    "Cache %s: %s / %s", "hit" if hit else "miss", loc.store_path, loc.group
                 )
-            return result
-        except Exception:
-            logger.debug("Cache miss (store does not exist): %s", loc.store_path)
-            return False
+                return hit
+            except Exception as err:  # transient infra error against an existing store
+                last_error = err
+                if attempt < max_attempts - 1:
+                    logger.debug(
+                        "Cache check error on %s / %s (attempt %d/%d), retrying: %s",
+                        loc.store_path,
+                        loc.group,
+                        attempt + 1,
+                        max_attempts,
+                        err,
+                    )
+                    time.sleep(0.5 * 2**attempt)
+
+        raise CacheCheckError(
+            f"Could not verify {loc.store_path} / {loc.group} on branch {branch!r} "
+            f"after {max_attempts} attempts"
+        ) from last_error
 
     def list_groups_on_branch(self, store_path: str) -> list[str]:
         """Return all zarr group paths committed on the current branch of a store.
@@ -410,15 +464,38 @@ class ArtifactCache:
 
         elif stage == "fit_historical":
             loc = self.obs_loc
-            return {"obs_regridded": (self.exists(loc), loc)}
+            deps = {"obs_regridded": (self.exists(loc), loc)}
+            if config.variable == "tasmin":
+                member = hist_member or config.ensemble_member
+                for name, var in (
+                    ("debiased_coarse_dtr", "dtr"),
+                    ("debiased_coarse_tasmax", "tasmax"),
+                ):
+                    dep_loc = self.debiased_coarse_historical_loc(member, variable=var)
+                    deps[name] = (self.exists(dep_loc), dep_loc)
+                # the tasmax<tasmin swap reads/rewrites the fine tasmax output
+                fine_tasmax = self.historical_loc(member, variable="tasmax")
+                deps["fine_tasmax"] = (self.exists(fine_tasmax), fine_tasmax)
+            return deps
 
         elif stage == "transform_scenario":
             obs_loc = self.obs_loc
             hist_loc = self.historical_loc(hist_member or config.ensemble_member)
-            return {
+            deps = {
                 "obs_regridded": (self.exists(obs_loc), obs_loc),
                 "historical": (self.exists(hist_loc), hist_loc),
             }
+            if config.variable == "tasmin":
+                for name, var in (
+                    ("debiased_coarse_dtr", "dtr"),
+                    ("debiased_coarse_tasmax", "tasmax"),
+                ):
+                    dep_loc = self.debiased_coarse_scenario_loc(variable=var)
+                    deps[name] = (self.exists(dep_loc), dep_loc)
+                # the tasmax<tasmin swap reads/rewrites the fine tasmax output
+                fine_tasmax = self.scenario_output_loc(variable="tasmax")
+                deps["fine_tasmax"] = (self.exists(fine_tasmax), fine_tasmax)
+            return deps
 
         else:
             raise ValueError(f"Unknown stage: {stage}")

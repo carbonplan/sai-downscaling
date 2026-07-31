@@ -4,7 +4,7 @@ TK high level overview.
 
 ## Input data used
 
-We downscaled three main model scenarios: historical, ssp245, and G6-1pt5k. TK what are these scenarios, how do they relate to each other. Big caveat: scenarios =/= reality of how SRM would go, these are idealized, see Sanderson paper.
+We downscaled three main model scenarios: historical, ssp245, and G6-1.5K. TK what are these scenarios, how do they relate to each other. Big caveat: scenarios =/= reality of how SRM would go, these are idealized, see Sanderson paper.
 
 We also added a new model run.
 
@@ -32,7 +32,7 @@ In BCSD the bias correction requires training a different independent model for 
 
 ### Detrending
 
-Next, we detrended the GCM model output from future scenarios (ssp245 and G6-1pt5k). We did this by first calculating the modelled historical mean monthly climatology from 1978 to 2014 (historical). Then, we calculated the GCM scenario trend as the 9-year running average for each month (e.g. running mean of all Februaries) minus the historical mean monthly climatology. We then removed the trend (either additively for temperature, or multiplicatively for precipitation and solar radiation) from the GCM scenario data and used this detrended GCM data for the subsequent bias correction step. We saved the trend, which we reapplied to the data at the end of the bias correction step.
+Next, we detrended the GCM model output from future scenarios (ssp245 and G6-1.5K). We did this by first calculating the modelled historical mean monthly climatology from 1978 to 2014 (historical). Then, we calculated the GCM scenario trend as the 9-year running average for each month (e.g. running mean of all Februaries) minus the historical mean monthly climatology. We then removed the trend (either additively for temperature, or multiplicatively for precipitation and solar radiation) from the GCM scenario data and used this detrended GCM data for the subsequent bias correction step. We saved the trend, which we reapplied to the data at the end of the bias correction step.
 
 ### Bias correction
 
@@ -44,7 +44,7 @@ We then spatially disaggregated the debiased coarse GCM data to the high-resolut
 
 ### Variable-specific implementation
 
-The implementation above applies to mean temperature (tas) and maximum temperature (tasmax). For tasmin, we did the workflow above for the diurnal temperature range and max temperature (see ref in NASA NEX). Precip: . Special constraints for relative humidity.
+The implementation above applies to mean temperature (`tas`) and maximum temperature (`tasmax`). Minimum temperature (`tasmin`) is not bias-corrected directly: following the NASA-NEX approach, we bias-correct `tasmax` and the diurnal temperature range (`dtr = tasmax − tasmin`), reconstruct `tasmin = tasmax − dtr` on the debiased coarse grid, and then — because `tasmax` and `tasmin` are spatially disaggregated independently — swap any fine cells left with `tasmax < tasmin` so that the physical constraint `tasmax >= tasmin` holds everywhere in the published output. Precip: . Special constraints for relative humidity.
 
 ## Quality checks
 

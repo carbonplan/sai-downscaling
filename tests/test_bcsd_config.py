@@ -163,20 +163,28 @@ class TestBCSDConfigConstruction:
         assert minimal_config.variable_config is not None
         assert isinstance(minimal_config.variable_config, VariableConfig)
 
-    def test_convenience_accessors_match_variable_config(self, subtests, minimal_config):
-        vc = minimal_config.variable_config
-        checks = {
-            "detrend_data": (minimal_config.detrend_data, vc.detrend_data),
-            "do_windowing": (minimal_config.do_windowing, vc.do_windowing),
-            "downscaling_method": (minimal_config.downscaling_method, vc.downscaling_method),
-            "downscaling_clim_method": (
-                minimal_config.downscaling_clim_method,
-                vc.downscaling_clim_method,
-            ),
-        }
-        for accessor, (actual, expected) in checks.items():
-            with subtests.test(accessor=accessor):
-                assert actual == expected
+    def test_variable_params_not_shadowed_on_bcsd_config(self, subtests, minimal_config):
+        """VariableConfig-derived params must live only on ``variable_config``.
+
+        Exposing them as computed fields on ``BCSDConfig`` (issue #423) silently
+        mapped variables to the wrong method/attrs when the accessor's hardcoded
+        fallback diverged from the variable's real config. They must be reached
+        through ``config.variable_config`` so there is a single source of truth.
+        """
+        shadowed = (
+            "detrend_data",
+            "detrend_method",
+            "do_windowing",
+            "running_window_length",
+            "downscaling_method",
+            "downscaling_clim_method",
+        )
+        for attr in shadowed:
+            with subtests.test(attr=attr):
+                assert not hasattr(minimal_config, attr), (
+                    f"BCSDConfig must not expose {attr!r}; use config.variable_config.{attr}"
+                )
+                assert hasattr(minimal_config.variable_config, attr)
 
     def test_default_train_period(self, minimal_config):
         assert minimal_config.train_period_start == 1978
@@ -186,6 +194,19 @@ class TestBCSDConfigConstruction:
         opts = PipelineOptions()
         assert opts.environment == "qa"
         assert opts.branch == _cache_version
+
+    def test_debias_approach_defaults_to_nonparametric_hybrid_2sided(self, minimal_config):
+        assert minimal_config.debias_approach == "nonparametric_hybrid_2sided"
+
+    def test_renamed_mapping_type_key_raises(self):
+        """The pre-rename ``mapping_type`` key must fail loudly, not be silently ignored."""
+        with pytest.raises(ValidationError, match="renamed to 'debias_approach'"):
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                mapping_type="parametric",
+            )
 
     def test_explicit_variable_config_not_overwritten(self):
         """Explicitly supplied variable_config must survive post-init."""
@@ -319,10 +340,10 @@ class TestBCSDConfigComputedFields:
         assert cfg.is_sai_scenario
 
     def test_pr_does_not_detrend(self, sai_config):
-        assert sai_config.detrend_data is False
+        assert sai_config.variable_config.detrend_data is False
 
     def test_tas_does_detrend(self, scenario_config):
-        assert scenario_config.detrend_data is True
+        assert scenario_config.variable_config.detrend_data is True
 
 
 # ---------------------------------------------------------------------------

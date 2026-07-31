@@ -6,11 +6,13 @@ inspecting the pipeline. Supports both single-config and matrix-expansion execut
 with automatic caching and optional Coiled integration.
 """
 
+import contextlib
 import itertools
 import json
 import logging
 import os
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 
 import typer
@@ -42,6 +44,42 @@ _STATUS_SYMBOL = {
 }
 
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
+
+
+@contextlib.contextmanager
+def _validation_cluster(
+    use_coiled: bool,
+    *,
+    n_workers: int,
+    worker_vm_type: str,
+    adaptive_max: int | None,
+) -> Iterator[None]:
+    """Yield with a Coiled Dask client active, or as a no-op when ``use_coiled`` is False.
+
+    Validation checks are lazy dask reductions; the active client makes every ``.compute()``
+    run on cluster workers while the driver keeps rendering tables and the exit gate — only
+    scalar results return to the driver, so full arrays never touch it. When ``use_coiled``
+    is False the reductions run in-process on the default scheduler.
+
+    Reuses :func:`srm.config.setup_cluster` (the canonical SRM Coiled setup, as in
+    ``input_data/era5.py``) so region, tags, and spot policy live in one place. ``n_workers``
+    with ``adaptive_max`` becomes an ``[min, max]`` range so Coiled scales adaptively, and the
+    scheduler VM type is pinned to the worker type so their processor architectures match
+    (Coiled rejects mixing x86_64 and aarch64 Graviton VMs).
+    """
+    if not use_coiled:
+        yield
+        return
+
+    from srm.config import ClusterConfig, setup_cluster
+
+    config = ClusterConfig(
+        worker_vm_types=[worker_vm_type],
+        scheduler_vm_types=worker_vm_type,
+        n_workers=[n_workers, adaptive_max] if adaptive_max is not None else n_workers,
+    )
+    with setup_cluster(config):
+        yield
 
 
 def _build_check_matrix_table(
@@ -164,6 +202,20 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
             tbl.add_row(*row)
 
         console.print(tbl)
+
+
+def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
+    """Reject configs whose predict_period falls outside a member's valid data extent."""
+    from srm.validation import CheckStatus, check_config_time_domain
+
+    failures = [r for c in configs if (r := check_config_time_domain(c)).status == CheckStatus.FAIL]
+    if failures:
+        raise ValueError(
+            "predict_period out of bounds for the following configs:\n"
+            + "\n".join(
+                f"  {r.gcm}/{r.scenario}/{r.ensemble_member}: {r.message}" for r in failures
+            )
+        )
 
 
 def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
@@ -334,7 +386,7 @@ def configs_from_matrix(
     branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
-    mapping_type: str = "nonparametric_hybrid_2sided",
+    debias_approach: str = "nonparametric_hybrid_2sided",
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
@@ -372,14 +424,14 @@ def configs_from_matrix(
         Directory for final downscaled outputs
     environment : str
         Environment name (qa, production)
-    version : str
-        Version identifier
+    branch : str
+        icechunk output branch (default: "main")
     subset_bounds : tuple[float, float, float, float] | None
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
-    mapping_type : str
-        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
+    debias_approach : str
+        Debias approach (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -436,7 +488,7 @@ def configs_from_matrix(
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
                 subset_bounds=subset_bounds,
-                mapping_type=mapping_type,
+                debias_approach=debias_approach,
                 variable_config=vc,
             )
         )
@@ -473,6 +525,7 @@ def run(
     logger.info("Loaded %d configuration(s)", len(configs))
     _print_lineage_summary(configs)
     _validate_lineage_members(configs)
+    _validate_predict_periods(configs)
 
     orchestrator = BCSDOrchestrator(options)
 
@@ -671,10 +724,10 @@ def run_matrix(
         "--save-intermediate",
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
-    mapping_type: str = typer.Option(
+    debias_approach: str = typer.Option(
         "nonparametric_hybrid_2sided",
-        "--mapping-type",
-        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
+        "--debias-approach",
+        help="Debias approach: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     # VariableConfig overrides
@@ -756,7 +809,7 @@ def run_matrix(
         branch=branch,
         subset_bounds=parsed_bounds,
         save_intermediate=save_intermediate,
-        mapping_type=mapping_type,
+        debias_approach=debias_approach,
         verbose=verbose,
         detrend_data=detrend_data,
         do_windowing=do_windowing,
@@ -767,6 +820,7 @@ def run_matrix(
     )
 
     _validate_lineage_members(configs)
+    _validate_predict_periods(configs)
 
     n = len(configs)
     logger.info(
@@ -987,6 +1041,20 @@ def validate(
     scenario: list[str] | None = typer.Option(
         None, "--scenario", help="Scenario(s) to validate (repeatable). Defaults to all."
     ),
+    use_coiled: bool = typer.Option(
+        True,
+        "--coiled/--no-coiled",
+        help="Run validation reductions on a Coiled Dask cluster instead of locally.",
+    ),
+    n_workers: int = typer.Option(
+        4, "--n-workers", help="Coiled worker count (adaptive minimum when --adaptive-max is set)."
+    ),
+    worker_vm_type: str = typer.Option(
+        "r8g.2xlarge", "--worker-vm-type", help="Coiled worker VM type."
+    ),
+    adaptive_max: int | None = typer.Option(
+        None, "--adaptive-max", help="Enable adaptive scaling up to this many workers."
+    ),
 ) -> None:
     """Validate input datasets against the validation matrix.
 
@@ -994,6 +1062,9 @@ def validate(
 
     When --config-path is given, GCMs and scenarios are derived from those configs.
     Otherwise, --gcm and --scenario filter the check matrix (defaulting to all known values).
+
+    By default the datasets' lazy dask reductions (spatial-range and negative-precip checks)
+    run on a short-lived Coiled Dask cluster; pass --no-coiled to run everything in-process.
     """
     import pydantic
 
@@ -1016,16 +1087,20 @@ def validate(
 
     pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
 
+    # Reductions run on Coiled (see _validation_cluster) so the driver only handles scalars.
     all_results = []
-    for g, s in pairs:
-        try:
-            all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
-        except pydantic.ValidationError as exc:
-            logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
+    with _validation_cluster(
+        use_coiled, n_workers=n_workers, worker_vm_type=worker_vm_type, adaptive_max=adaptive_max
+    ):
+        for g, s in pairs:
+            try:
+                all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
+            except pydantic.ValidationError as exc:
+                logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
 
-    # Per-member config time-domain checks (only when configs are supplied). Kept out of
-    # the gcm/scenario matrix below since they have member granularity; merged into
-    # all_results after rendering so blocking-failure aggregation picks them up.
+    # Per-member config time-domain checks (only when configs are supplied). Driver-only
+    # metadata lookups, so kept outside the cluster block; merged into all_results after
+    # rendering so blocking-failure aggregation picks them up.
     config_results = [check_config_time_domain(c) for c in configs] if config_path else []
 
     def _scenario_order(s: str) -> tuple[int, str]:
@@ -1157,6 +1232,20 @@ def validate_output(
     variable: list[str] | None = typer.Option(
         None, "--variable", help="Variable(s) to validate (repeatable). Defaults to all."
     ),
+    use_coiled: bool = typer.Option(
+        True,
+        "--coiled/--no-coiled",
+        help="Run validation reductions on a Coiled Dask cluster instead of locally.",
+    ),
+    n_workers: int = typer.Option(
+        4, "--n-workers", help="Coiled worker count (adaptive minimum when --adaptive-max is set)."
+    ),
+    worker_vm_type: str = typer.Option(
+        "r8g.2xlarge", "--worker-vm-type", help="Coiled worker VM type."
+    ),
+    adaptive_max: int | None = typer.Option(
+        None, "--adaptive-max", help="Enable adaptive scaling up to this many workers."
+    ),
 ) -> None:
     """Validate output datatree store(s), one leaf (scenario/variable/member) at a time.
 
@@ -1171,9 +1260,11 @@ def validate_output(
     When $GITHUB_STEP_SUMMARY is set, a markdown report is appended there in addition
     to the console tables.
 
-    Runs locally or with coiled batch.
-    local: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
-    coiled batch: uv run coiled batch run --region us-west-2 "bcsd validate-output <store_uri> [<store_uri> ...]"
+    By default the store's lazy dask reductions run on a short-lived Coiled Dask cluster
+    (the driver, tables, exit-code gate, and step summary stay local); only scalar results
+    return to the driver. Pass ``--no-coiled`` to run everything in-process instead.
+    local: `uv run bcsd validate-output <store_uri> [<store_uri> ...] --no-coiled`
+    coiled: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
 
     """
     from srm.config import SCENARIO_TO_GROUP
@@ -1215,85 +1306,90 @@ def validate_output(
 
     summary_lines: list[str] = []
     any_blocking = False
-    for store_uri in store_uris:
-        results = validate_output_store(
-            store_uri,
-            branch=branch,
-            tag=tag,
-            scenarios=scenarios,
-            variables=variables,
-        )
-        if not results:
-            # An explicit filter matching nothing is an error, not an empty success.
-            log = logger.error if filtered else logger.warning
-            log("No populated leaves found in %s", store_uri)
-            if filtered:
+    # Reductions run on Coiled (see _validation_cluster) so the driver only handles scalars;
+    # the cluster tears down when this block exits, before the summary write / exit gate below.
+    with _validation_cluster(
+        use_coiled, n_workers=n_workers, worker_vm_type=worker_vm_type, adaptive_max=adaptive_max
+    ):
+        for store_uri in store_uris:
+            results = validate_output_store(
+                store_uri,
+                branch=branch,
+                tag=tag,
+                scenarios=scenarios,
+                variables=variables,
+            )
+            if not results:
+                # An explicit filter matching nothing is an error, not an empty success.
+                log = logger.error if filtered else logger.warning
+                log("No populated leaves found in %s", store_uri)
+                if filtered:
+                    any_blocking = True
+                continue
+
+            console.rule(f"[bold]{store_uri}[/bold]")
+            md_lines = [f"## {store_uri}\n", "| leaf | status | checks |", "| --- | --- | --- |"]
+
+            # Group results by leaf (scenario path).
+            leaf_results: dict[str, list[CheckResult]] = defaultdict(list)
+            for r in results:
+                leaf_results[r.scenario].append(r)
+
+            tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+            tbl.add_column("leaf", no_wrap=True)
+            tbl.add_column("status", justify="center")
+            tbl.add_column("checks", justify="right", style="dim")
+            for leaf, leaf_rs in sorted(leaf_results.items()):
+                n_total = len(leaf_rs)
+                n_pass = sum(1 for r in leaf_rs if r.status != CheckStatus.FAIL)
+                any_fail = any(r.status == CheckStatus.FAIL for r in leaf_rs)
+                status_sym = "[red]✗[/red]" if any_fail else "[green]✓[/green]"
+                checks_str = f"{n_pass}/{n_total}"
+                tbl.add_row(leaf, status_sym, checks_str)
+                md_lines.append(f"| {leaf} | {'❌' if any_fail else '✅'} | {checks_str} |")
+            console.print(tbl)
+
+            failures_by_leaf: dict[str, list[CheckResult]] = {
+                leaf: [r for r in leaf_rs if r.status == CheckStatus.FAIL]
+                for leaf, leaf_rs in leaf_results.items()
+                if any(r.status == CheckStatus.FAIL for r in leaf_rs)
+            }
+            blocking_failures = [
+                r
+                for leaf_rs in failures_by_leaf.values()
+                for r in leaf_rs
+                if r.check_id in BLOCKING_CHECKS
+            ]
+            if blocking_failures:
                 any_blocking = True
-            continue
 
-        console.rule(f"[bold]{store_uri}[/bold]")
-        md_lines = [f"## {store_uri}\n", "| leaf | status | checks |", "| --- | --- | --- |"]
+            if failures_by_leaf:
+                n_fail_leaves = len(failures_by_leaf)
+                n_fail_checks = sum(len(v) for v in failures_by_leaf.values())
+                console.print(
+                    f"\n[bold]Failures[/bold] ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, {n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
+                )
+                md_lines.append(
+                    f"\n**Failures** ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, "
+                    f"{n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
+                )
+                for leaf, fail_rs in sorted(failures_by_leaf.items()):
+                    console.print(f"  [bold]{leaf}[/bold]")
+                    md_lines.append(f"- **{leaf}**")
+                    for r in fail_rs:
+                        blocking_marker = (
+                            " [dim](blocking)[/dim]" if r.check_id in BLOCKING_CHECKS else ""
+                        )
+                        console.print(
+                            f"    [red]✗[/red] [dim]{r.check_id}[/dim]{blocking_marker}    {r.message}"
+                        )
+                        md_blocking_marker = " (blocking)" if r.check_id in BLOCKING_CHECKS else ""
+                        md_lines.append(f"  - `{r.check_id}`{md_blocking_marker}: {r.message}")
+                        if r.detail:
+                            console.print_json(json.dumps(r.detail))
+                    console.print()
 
-        # Group results by leaf (scenario path).
-        leaf_results: dict[str, list[CheckResult]] = defaultdict(list)
-        for r in results:
-            leaf_results[r.scenario].append(r)
-
-        tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
-        tbl.add_column("leaf", no_wrap=True)
-        tbl.add_column("status", justify="center")
-        tbl.add_column("checks", justify="right", style="dim")
-        for leaf, leaf_rs in sorted(leaf_results.items()):
-            n_total = len(leaf_rs)
-            n_pass = sum(1 for r in leaf_rs if r.status != CheckStatus.FAIL)
-            any_fail = any(r.status == CheckStatus.FAIL for r in leaf_rs)
-            status_sym = "[red]✗[/red]" if any_fail else "[green]✓[/green]"
-            checks_str = f"{n_pass}/{n_total}"
-            tbl.add_row(leaf, status_sym, checks_str)
-            md_lines.append(f"| {leaf} | {'❌' if any_fail else '✅'} | {checks_str} |")
-        console.print(tbl)
-
-        failures_by_leaf: dict[str, list[CheckResult]] = {
-            leaf: [r for r in leaf_rs if r.status == CheckStatus.FAIL]
-            for leaf, leaf_rs in leaf_results.items()
-            if any(r.status == CheckStatus.FAIL for r in leaf_rs)
-        }
-        blocking_failures = [
-            r
-            for leaf_rs in failures_by_leaf.values()
-            for r in leaf_rs
-            if r.check_id in BLOCKING_CHECKS
-        ]
-        if blocking_failures:
-            any_blocking = True
-
-        if failures_by_leaf:
-            n_fail_leaves = len(failures_by_leaf)
-            n_fail_checks = sum(len(v) for v in failures_by_leaf.values())
-            console.print(
-                f"\n[bold]Failures[/bold] ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, {n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
-            )
-            md_lines.append(
-                f"\n**Failures** ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, "
-                f"{n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
-            )
-            for leaf, fail_rs in sorted(failures_by_leaf.items()):
-                console.print(f"  [bold]{leaf}[/bold]")
-                md_lines.append(f"- **{leaf}**")
-                for r in fail_rs:
-                    blocking_marker = (
-                        " [dim](blocking)[/dim]" if r.check_id in BLOCKING_CHECKS else ""
-                    )
-                    console.print(
-                        f"    [red]✗[/red] [dim]{r.check_id}[/dim]{blocking_marker}    {r.message}"
-                    )
-                    md_blocking_marker = " (blocking)" if r.check_id in BLOCKING_CHECKS else ""
-                    md_lines.append(f"  - `{r.check_id}`{md_blocking_marker}: {r.message}")
-                    if r.detail:
-                        console.print_json(json.dumps(r.detail))
-                console.print()
-
-        summary_lines.append("\n".join(md_lines))
+            summary_lines.append("\n".join(md_lines))
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path and summary_lines:

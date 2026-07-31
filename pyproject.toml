@@ -1,11 +1,14 @@
 [project]
     dependencies = [
         "cartopy>=0.25.0",
+        "cf-xarray>=0.10.10",
         "cftime>=1.6.5",
         "cloudpathlib>=0.23.0",
-        "dask[complete]>=2025.12.0",
+        "dask-array>=0.7.1",
+        "dask[complete]>=2026.7.1",
         "distributed>=2025.12.0",
         "flox>=0.11.1",
+        "frisky>=0.7.1",
         "geopandas>=1.1.3",
         "ibicus>=1.2.0",
         "icechunk>=2.0.0",
@@ -22,14 +25,14 @@
         "tabulate>=0.9.0",
         "typer>=0.21.2",
         "xarray-regrid>=0.4.2",
-        "xarray[accel]>=2025.12.0",
+        "xarray[accel]>=2026.7.0",
         "zarr>=3.1.5",
-    ]
+]
     description = "SRM"
     dynamic = ["version"]
     name = "srm"
     readme = "README.md"
-    requires-python = ">=3.13, <3.13.6"
+    requires-python = ">=3.13, <3.13.14"
 
 [project.scripts]
     bcsd = "srm.cli:app"
@@ -50,9 +53,11 @@
     srm = { workspace = true, editable = true }
 
 [tool.pytest.ini_options]
-    addopts = "-m 'not input_data' -ra --cov-report=term-missing --cov-report=xml --cov=src/srm "
+    addopts = "-m 'not input_data and not slow' -ra --cov-report=term-missing --cov-report=xml --cov=src/srm "
     markers = [
         "input_data: marks tests that validate external input datasets (run with 'pytest -m input_data')",
+        "slow: marks tests that require S3/source data access (run with 'pytest -m slow')",
+        "snapshot: marks snapshot regression tests against the stored baseline (run with 'pytest -m snapshot')",
     ]
 
 [dependency-groups]

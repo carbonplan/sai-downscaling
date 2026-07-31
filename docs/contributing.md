@@ -27,10 +27,10 @@ uv sync --all-groups
 
 ## Linting
 
-We use `pre-commit` for linting and code formatting. Run the following command to check all files:
+We use [`prek`](https://github.com/j178/prek) (a drop-in `pre-commit` replacement that reads the same `.pre-commit-config.yaml`) for linting and code formatting. Run the following command to check all files:
 
 ```bash
-uv run pre-commit run --all-files
+uv run prek run --all-files
 ```
 
 ## Testing
