@@ -84,14 +84,16 @@ variable_overrides:
 
 **Required:** `gcm`, `variable`, `ensemble_member`. All others have defaults or are conditionally required (e.g. `predict_period_*` when `scenario` is set).
 
-> **Note:** `debias_approach` is our own field and is a superset of ibicus's `mapping_type` argument. ibicus only accepts `parametric` or `nonparametric`; the `nonparametric_hybrid` and `nonparametric_hybrid_2sided` values are hybrid strategies the pipeline composes on top of ibicus. It has moved twice: `mapping_type` was renamed to `debias_approach`, and `debias_approach` then moved from the top level of the config onto `variable_config` so it can vary per variable. Both old spellings now raise an error naming their replacement rather than being silently ignored.
+:::{note}
+`debias_approach` is our own field and is a superset of ibicus's `mapping_type` argument. ibicus only accepts `parametric` or `nonparametric`; the `nonparametric_hybrid` and `nonparametric_hybrid_2sided` values are hybrid strategies the pipeline composes on top of ibicus.
+:::
 
 ## Per-variable overrides
 
 `debias_approach` and every other `VariableConfig` field resolve per variable through three tiers, last writer wins:
 
 | Tier | Source | Scope |
-|---|---|---|
+| --- | --- | --- |
 | 1 | `VariableConfig.for_variable()` table | Built-in default for that variable |
 | 2 | `--debias-approach` and the other `VariableConfig` CLI flags | Every variable in the run (CLI only) |
 | 3 | `variable_overrides` (YAML) or `--variable-override` (CLI) | One named variable |
@@ -108,7 +110,9 @@ bcsd run-matrix --gcm CESM2-WACCM \
   --variable-override dtr:debias_approach=nonparametric
 ```
 
-> **Note:** `dtr` overrides propagate into `tasmin`, which the pipeline reconstructs as `tasmax - dtr`. The `tasmin` output's `srm_downscaling:bias_correction_method` attribute reports only `tasmin`'s own approach.
+:::{note}
+`dtr` overrides propagate into `tasmin`, which the pipeline reconstructs as `tasmax - dtr`. The `tasmin` output's `srm_downscaling:bias_correction_method` attribute reports only `tasmin`'s own approach.
+:::
 
 ## Overrides and the artifact cache
 
@@ -123,7 +127,7 @@ BCSD_BRANCH=v0.13.0-dtr-nonparam bcsd run-matrix ... --variable-override dtr:deb
 ```
 
 | Case | Behavior |
-|---|---|
+| --- | --- |
 | Stored `variable_config` matches | Normal cache hit |
 | Stored `variable_config` differs | `CacheConfigMismatchError`, naming each differing field |
 | No `config_json` attribute (artifact predates config provenance) | Hit allowed, logged at debug; unverifiable is not the same as mismatched |

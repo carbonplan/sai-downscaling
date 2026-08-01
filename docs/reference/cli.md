@@ -6,7 +6,9 @@ This page is the exhaustive reference for all `bcsd` commands, their options, an
 
 Run the BCSD downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format) — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination.
 
-> **Recommended for most workflows.** Config files are version-controlled and reproducible, and they are what the QA and production deploys consume. For quick ad-hoc runs from the command line without config files, use `bcsd run-matrix` instead.
+:::{tip} Recommended for most workflows
+Config files are version-controlled and reproducible, and they are what the QA and production deploys consume. For quick ad-hoc runs from the command line without config files, use `bcsd run-matrix` instead.
+:::
 
 ```bash
 uv run bcsd run --config-path PATH [OPTIONS]
