@@ -75,7 +75,7 @@ uv run bcsd run-matrix [OPTIONS]
 - `--environment TEXT`: environment (default: `qa`)
 - `--branch TEXT`: icechunk output branch (default: `main`)
 - `--subset-bounds TEXT`: spatial bounds as `'lat_min,lat_max,lon_min,lon_max'`
-- `--debias-approach TEXT`: bias-correction approach — `parametric`, `nonparametric`, `nonparametric_hybrid`, `nonparametric_hybrid_2sided` (default: `nonparametric_hybrid_2sided`)
+- `--debias-approach TEXT`: bias-correction approach — `parametric`, `nonparametric`, `nonparametric_hybrid`, `nonparametric_hybrid_2sided`. Applies to every variable in the matrix; omit to use each variable's own default.
 - `--stage TEXT`: run specific stage (`obs`/`historical`/`scenario`/`all`, default: `all`)
 - `--force`: force recompute even if cached
 - `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
@@ -83,7 +83,7 @@ uv run bcsd run-matrix [OPTIONS]
 - `--save-intermediate`: save intermediate artifacts (detrended, debiased, etc.) to cache
 - `--verbose / -v`: enable verbose logging
 
-**Per-variable config overrides** (applied to every variable in the matrix; normally auto-set from the variable — see [Variable-Specific Auto-Configuration](../reference/configuration.md#variable-specific-auto-configuration)):
+**Run-wide config overrides** (applied to every variable in the matrix; normally auto-set from the variable — see [Variable-Specific Auto-Configuration](../reference/configuration.md#variable-specific-auto-configuration)):
 
 - `--detrend-data / --no-detrend-data`: override `detrend_data`
 - `--do-windowing / --no-do-windowing`: override `do_windowing`
@@ -91,6 +91,10 @@ uv run bcsd run-matrix [OPTIONS]
 - `--downscaling-method TEXT`: override `downscaling_method` (`additive`, `multiplicative`)
 - `--downscaling-clim-method TEXT`: override `downscaling_clim_method` (`simple`, `fft`)
 - `--detrend-method TEXT`: override `detrend_method` (`additive`, `multiplicative`)
+
+**Per-variable overrides:**
+
+- `--variable-override TEXT` (repeatable): a single variable's setting as `'variable:field=value'`, e.g. `'dtr:debias_approach=nonparametric'`. Takes precedence over the run-wide flags above. Repeat it to set several fields or several variables. Naming a variable outside the run is an error, as is naming a field that is not a `VariableConfig` field. See [Per-variable overrides](../reference/configuration.md#per-variable-overrides) for the full precedence order.
 
 **Examples:**
 
@@ -104,6 +108,14 @@ uv run bcsd run-matrix \
   --predict-period-start 2015 --predict-period-end 2100 \
   --scratch-dir "s3://carbonplan-scratch/srm/cache/" \
   --output-dir "s3://carbonplan-scratch/srm/outputs/"
+
+# Give one variable a different bias-correction approach
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM \
+  --variable tasmax --variable dtr \
+  --member 007 --scenario ssp245 \
+  --predict-period-start 2015 --predict-period-end 2069 \
+  --variable-override dtr:debias_approach=nonparametric
 
 # Preview what would run without executing
 uv run bcsd run-matrix \
