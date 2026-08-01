@@ -1154,7 +1154,7 @@ def cache_clear(
     if not confirm:
         confirm = typer.confirm(f"Really delete {desc}?")
         if not confirm:
-            logger.warning("Cancelled")
+            logger.warning("Canceled")
             return
 
     deleted = cache.clear_cache(stage=stage, gcm=gcm, variable=variable)

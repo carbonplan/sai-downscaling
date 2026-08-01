@@ -14,7 +14,7 @@ kernelspec:
 
 Input datasets are stored as [icechunk](https://icechunk.io) stores on S3 and exposed through the
 built-in catalog. The catalog holds three dataset types: `Datatree` (unified per-GCM stores
-organised as zarr group trees), `Dataset` (flat icechunk stores), and `VirtualDataset` (virtual
+organized as zarr group trees), `Dataset` (flat icechunk stores), and `VirtualDataset` (virtual
 icechunk stores that reference external chunks).
 
 ## Listing available datasets

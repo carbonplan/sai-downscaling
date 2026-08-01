@@ -205,7 +205,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _reject_unsupported_keys(cls, data):
-        """Fail loudly if a key that BCSDConfig does not honour is still used.
+        """Fail loudly if a key that BCSDConfig does not honor is still used.
 
         Checks the supplied data and the ``BCSD_*`` environment. Both need covering:
         pydantic-settings filters env vars against the model's fields before any
@@ -350,7 +350,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             predict_period_end=self.predict_period_end,
             subset_bounds=self.subset_bounds,
             # The sibling gets its own per-variable defaults but inherits this run's
-            # debias_approach, matching the pre-move behaviour. model_copy is safe here
+            # debias_approach, matching the pre-move behavior. model_copy is safe here
             # because the source value is an already-validated Literal.
             variable_config=VariableConfig.for_variable(variable).model_copy(
                 update={"debias_approach": self.variable_config.debias_approach}
