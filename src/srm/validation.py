@@ -249,6 +249,12 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
     built from a handful of days, which then poisons the 9-year centred rolling mean in
     :func:`srm.downscaling_utils.detrend` for the surrounding years.
 
+    Both bounds are enforced for every scenario, SAI included. A SAI run whose
+    ``predict_period_start`` precedes its own data start still executes, because the
+    pipeline bridges the gap, but the bridged years are another scenario's data wearing
+    this scenario's label (see :meth:`BCSDPipeline._load_ssp245_bridge`), so they are
+    rejected here rather than silently published.
+
     Returns a blocking FAIL when the requested predict period falls outside the member's
     valid bounds, PASS when it fits, and SKIP when no bounds are known for the member or
     the config has no scenario/predict period (historical-only).
@@ -288,13 +294,23 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
     }
 
     issues: list[str] = []
-    # SAI/G6 runs intentionally start before the scenario data (predict_period_start may
-    # be 2015 while G6 data begins 2035); the pipeline bridges that gap with SSP245. Only
-    # enforce the start bound for non-SAI scenarios.
-    if not config.is_sai_scenario and config.predict_period_start < valid_start_year:
+    # The start bound is enforced for SAI scenarios too, even though the pipeline *can* run
+    # with an earlier start by bridging the gap. Those bridge years are not scenario data:
+    # for G6-1.5K they are SSP245, and for G6-1.5K-END they are SSP245 followed by G6-1.5K.
+    # Emitting them under the scenario's own label is what issue #448 hit, where pre-2035
+    # g6_1p5k output was bridged from different SSP245 realizations per variable (tas from
+    # 003, tasmax/tasmin from 008) and produced tas > tasmax. The fix there was to start at
+    # the scenario's own data year, which is what this check now requires of every config.
+    if config.predict_period_start < valid_start_year:
         issues.append(
             f"predict_period_start {config.predict_period_start} is before data start "
             f"{valid_start_year}"
+            + (
+                f"; {config.scenario} data begins in {valid_start_year} and earlier years "
+                f"would be emitted as bridge data carrying the scenario's label"
+                if config.is_sai_scenario
+                else ""
+            )
         )
     if config.predict_period_end is not None and config.predict_period_end > valid_end_year:
         issues.append(
