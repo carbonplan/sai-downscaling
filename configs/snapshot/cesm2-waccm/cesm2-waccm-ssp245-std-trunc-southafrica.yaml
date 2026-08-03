@@ -21,7 +21,7 @@ debias_approach: "nonparametric_hybrid_2sided"
 # trims back to the region of interest (roi_bounds) before diffing.
 subset_bounds: [-38, -19, 13, 36]
 
-scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
 output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
 verbose: true
