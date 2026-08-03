@@ -9,6 +9,9 @@ relationships.
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 # Lineage lookup: (gcm, scenario, ensemble_member, variable) ->
 #   (historical_member, ssp245_member, ssp245_esgf_member, sai_parent)
 # ssp245_member is None for non-SAI scenarios.
@@ -166,4 +169,106 @@ def get_lineage_entries(gcm: str, scenario: str) -> dict[tuple[str, str], Lineag
     """
     return {
         (m, v): parents for (g, s, m, v), parents in _LINEAGE.items() if g == gcm and s == scenario
+    }
+
+
+def all_lineage_keys() -> list[tuple[str, str, str, str]]:
+    """Return every registered ``(gcm, scenario, ensemble_member, variable)`` key, sorted."""
+    return sorted(_LINEAGE)
+
+
+# The provenance sheet labels GCMs and one scenario differently from the code. These maps
+# are only for reconciling the two; nothing in the pipeline reads the sheet at runtime.
+PROVENANCE_GCM_ALIASES: dict[str, str] = {
+    "CESM2(WACCM)": "CESM2-WACCM",
+    "MIROC-ES2H": "MIROC-ES2H",
+    "UKESM1-0-LL": "UKESM",
+}
+PROVENANCE_SCENARIO_ALIASES: dict[str, str] = {
+    "G6-1.5K-end": "G6-1.5K-END",
+}
+
+
+def diff_against_provenance(
+    csv_path: str | Path,
+) -> dict[str, list[tuple[str, str, str, str]] | list[str]]:
+    """Reconcile the lineage table against the provenance sheet.
+
+    The pipeline resolves members from :data:`_LINEAGE`, while ``docs/srm-provenance.csv``
+    is a re-export of the upstream tracking sheet. The two can drift, and nothing else
+    notices when they do, so this returns the differences rather than assuming they agree.
+
+    The sheet is the source of truth, so anything this reports is a defect to fix upstream
+    rather than something to work around locally. ``docs/srm-provenance.csv`` is a verbatim
+    re-export and must not be hand-patched: an edit there is clobbered by the next export
+    and hides the very disagreement this function exists to surface.
+
+    Returns a dict with five keys. ``only_in_code`` and ``only_in_sheet`` hold
+    ``(gcm, scenario, member, variable)`` keys present on one side alone,
+    ``parent_mismatch`` holds human-readable descriptions of keys both sides carry but
+    disagree about, ``uncertain`` lists keys whose sheet entry is prefixed ``???``, and
+    ``malformed`` lists cells the sheet writes in a form that cannot be parsed.
+    ``historical`` rows in the sheet are ignored, since the lineage table registers
+    scenarios only.
+
+    The ``???`` prefix is the sheet's own marker for a parent nobody has confirmed. Those
+    rows are still compared, because a flagged row that disagrees with the code is exactly
+    what needs resolving, but they are reported separately so an unconfirmed value is never
+    mistaken for a verified one.
+    """
+    import csv as _csv
+
+    sheet: dict[tuple[str, str, str, str], dict[str, str]] = {}
+    uncertain: list[tuple[str, str, str, str]] = []
+    malformed: list[str] = []
+    with open(csv_path, newline="") as handle:
+        for row in _csv.DictReader(handle):
+            gcm = PROVENANCE_GCM_ALIASES.get((row["gcm"] or "").strip())
+            scenario_raw = (row["experiment_id"] or "").strip()
+            parents_raw = (row["parent_experiment_ensemble_ids"] or "").strip()
+            if gcm is None or scenario_raw in ("", "historical") or not parents_raw:
+                continue
+            scenario = PROVENANCE_SCENARIO_ALIASES.get(scenario_raw, scenario_raw)
+            member = (row["ensemble_id"] or "").strip()
+            variable = (row["variable"] or "").strip()
+            key = (gcm, scenario, member, variable)
+            if parents_raw.startswith("???"):
+                uncertain.append(key)
+                parents_raw = parents_raw.removeprefix("???").strip()
+            try:
+                parents = dict(ast.literal_eval(parents_raw))
+            except (SyntaxError, ValueError):
+                # Reported rather than skipped. The sheet is the source of truth, so a cell
+                # it cannot express is a defect to fix upstream, and swallowing it here
+                # would drop the row from every comparison below without a trace.
+                malformed.append(f"{'/'.join(key)}: cannot parse {parents_raw!r}")
+                continue
+            sheet[key] = parents
+
+    code = {k: v for k, v in _LINEAGE.items()}
+    only_in_code = sorted(set(code) - set(sheet))
+    only_in_sheet = sorted(set(sheet) - set(code))
+
+    parent_mismatch: list[str] = []
+    for key in sorted(set(code) & set(sheet)):
+        hist, ssp245, _, sai_parent = code[key]
+        parents = sheet[key]
+        expected = {"historical": hist}
+        if ssp245 is not None:
+            expected["ssp245"] = ssp245
+        if sai_parent is not None:
+            expected["g6_1p5k"] = sai_parent[1]
+        for role, want in expected.items():
+            got = parents.get(role)
+            if got != want:
+                parent_mismatch.append(
+                    f"{'/'.join(key)}: {role} is {want!r} in code, {got!r} in the sheet"
+                )
+
+    return {
+        "only_in_code": only_in_code,
+        "only_in_sheet": only_in_sheet,
+        "parent_mismatch": parent_mismatch,
+        "uncertain": sorted(uncertain),
+        "malformed": sorted(malformed),
     }

@@ -300,3 +300,75 @@ class TestMirocLineage:
         _, ssp245, ssp245_esgf, _ = resolve_member_lineage("MIROC-ES2H", "SSP245", member, "tas")
         assert ssp245 is None
         assert ssp245_esgf == expected_hist
+
+
+# ---------------------------------------------------------------------------
+# diff_against_provenance: reconciliation with docs/srm-provenance.csv
+# ---------------------------------------------------------------------------
+
+
+class TestProvenanceReconciliation:
+    """The lineage table and the provenance sheet are maintained separately.
+
+    Nothing else notices when they drift, so these tests pin the parts that must
+    agree and leave the known, tracked disagreements out of the assertions.
+    """
+
+    @staticmethod
+    def _diff():
+        from pathlib import Path
+
+        from srm.lineage import diff_against_provenance
+
+        csv_path = Path(__file__).resolve().parent.parent / "docs" / "srm-provenance.csv"
+        return diff_against_provenance(csv_path)
+
+    def test_returns_all_sections(self):
+        diff = self._diff()
+        assert set(diff) == {
+            "only_in_code",
+            "only_in_sheet",
+            "parent_mismatch",
+            "uncertain",
+            "malformed",
+        }
+
+    def test_every_sheet_parent_cell_is_parseable(self):
+        # A malformed cell would otherwise be skipped silently, hiding real drift.
+        # The '???' uncertainty prefix must be handled rather than treated as a parse error.
+        diff = self._diff()
+        assert diff["uncertain"], "the '???' prefix is no longer being detected"
+
+    @pytest.mark.parametrize("variable", _STANDARD_VARS + ("tasmax", "tasmin"))
+    def test_termination_run_agrees_with_sheet(self, variable):
+        # dtr is excluded: it is derived, so it has no provenance row by design.
+        key = ("CESM2-WACCM", "G6-1.5K-END", "002", variable)
+        diff = self._diff()
+        assert key not in diff["only_in_code"], f"{variable} missing from the provenance sheet"
+        assert key not in diff["only_in_sheet"]
+
+    def test_no_malformed_parent_cells(self):
+        """Every parent cell must parse.
+
+        A cell the parser cannot read drops that row out of every comparison above, so an
+        unparseable cell would quietly shrink the reconciliation rather than fail it.
+        """
+        diff = self._diff()
+        assert diff["malformed"] == [], diff["malformed"]
+
+    def test_no_parent_disagreement_for_cesm_sai_runs(self):
+        """The CESM G6 and termination entries must match the sheet exactly.
+
+        Other disagreements exist and are tracked separately; this narrows the
+        assertion to the runs this lineage work is responsible for.
+        """
+        diff = self._diff()
+        offending = [
+            line for line in diff["parent_mismatch"] if line.startswith("CESM2-WACCM/G6-1.5K")
+        ]
+        assert offending == [], offending
+
+    def test_derived_dtr_is_the_expected_kind_of_code_only_key(self):
+        diff = self._diff()
+        dtr_keys = [k for k in diff["only_in_code"] if k[3] == "dtr"]
+        assert dtr_keys, "dtr should be registered in code without a sheet row"
