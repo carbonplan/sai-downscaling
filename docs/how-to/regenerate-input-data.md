@@ -33,7 +33,7 @@ and one for ERA5. Use the appropriate workflow for the dataset you want to regen
 
 | GCM | Valid scenarios |
 |-----|----------------|
-| `CESM2-WACCM` | `historical`, `ssp245`, `G6-1.5K` |
+| `CESM2-WACCM` | `historical`, `ssp245`, `G6-1.5K`, `G6-1.5K-END` |
 | `MIROC-ES2H` | `historical`, `esgf-ssp245`, `ssp245`, `G6-1.5K` |
 | `UKESM` | `historical`, `SSP245`, `G6-1.5K` |
 | `NASA-NEX` | `historical`, `SSP245` |
