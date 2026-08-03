@@ -154,10 +154,16 @@ def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
 def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
     """Print a per-scenario lineage table for the validate command.
 
-    Deduplicated by (member, hist, ssp245_bridge, ssp245_esgf_bridge); variables
-    sharing the same parents are listed together. Skipped when no lineage is
-    registered for the GCM/scenario pair.
+    Deduplicated by (member, hist, ssp245_bridge, ssp245_esgf_bridge, sai_parent);
+    variables sharing the same parents are listed together. Skipped when no lineage
+    is registered for the GCM/scenario pair.
     """
+
+    def _sort_token(field: str | tuple[str, str] | None) -> str:
+        if field is None:
+            return ""
+        return "/".join(field) if isinstance(field, tuple) else field
+
     from srm.lineage import get_lineage_entries
 
     for scenario in scenarios:
@@ -168,7 +174,8 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
             continue
 
         has_ssp245 = any(ssp is not None for _, ssp, *_ in entries.values())
-        has_ssp245_esgf = any(esgf is not None for _, _, esgf in entries.values())
+        has_ssp245_esgf = any(esgf is not None for _, _, esgf, _ in entries.values())
+        has_sai_parent = any(parent is not None for *_, parent in entries.values())
 
         tbl = Table(
             title=f"Lineage — {scenario}",
@@ -184,21 +191,30 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
             tbl.add_column("→ SSP245 bridge", style="yellow", justify="right")
         if has_ssp245_esgf:
             tbl.add_column("→ SSP245 ESGF bridge", style="magenta", justify="right")
+        if has_sai_parent:
+            tbl.add_column("→ SAI parent", style="blue", justify="right")
 
-        seen: dict[tuple[str, str, str | None, str | None], list[str]] = {}
-        for (member, var), (hist, ssp245, ssp245_esgf) in sorted(entries.items()):
-            key = (member, hist, ssp245, ssp245_esgf)
+        seen: dict[tuple[str, str, str | None, str | None, tuple[str, str] | None], list[str]] = {}
+        for (member, var), (hist, ssp245, ssp245_esgf, sai_parent) in sorted(entries.items()):
+            key = (member, hist, ssp245, ssp245_esgf, sai_parent)
             if key not in seen:
                 seen[key] = []
             if var not in seen[key]:
                 seen[key].append(var)
 
-        for (member, hist, ssp245, ssp245_esgf), variables in sorted(seen.items()):
+        # Sort on rendered tokens rather than the raw key: the key mixes str, None, and
+        # tuple, and Python compares element-wise only once the earlier fields tie, so a
+        # raw sort raises TypeError the moment two rows differ only in a None-vs-set field.
+        for (member, hist, ssp245, ssp245_esgf, sai_parent), variables in sorted(
+            seen.items(), key=lambda item: tuple(_sort_token(field) for field in item[0])
+        ):
             row = [member, "/".join(sorted(variables)), hist]
             if has_ssp245:
                 row.append(ssp245 or "—")
             if has_ssp245_esgf:
                 row.append(ssp245_esgf or "—")
+            if has_sai_parent:
+                row.append("/".join(sai_parent) if sai_parent else "—")
             tbl.add_row(*row)
 
         console.print(tbl)

@@ -2,22 +2,34 @@
 Ensemble member lineage resolution for GCM scenarios.
 
 Maps ``(gcm, scenario, ensemble_member, variable)`` tuples to the corresponding
-historical and SSP245 bridge members required by the BCSD detrending workflow. All
-lineage logic belongs here; no other module should encode member relationships.
+historical, SSP245 bridge, and parent SAI members required by the BCSD detrending
+workflow. All lineage logic belongs here; no other module should encode member
+relationships.
 """
 
 from __future__ import annotations
 
-# Lineage lookup: (gcm, scenario, ensemble_member, variable) -> (historical_member, ssp245_member, ssp245_esgf_member)
+# Lineage lookup: (gcm, scenario, ensemble_member, variable) ->
+#   (historical_member, ssp245_member, ssp245_esgf_member, sai_parent)
 # ssp245_member is None for non-SAI scenarios.
 # ssp245_esgf_member is set when an ESGF SSP245 dataset is needed to fill a gap before the primary
 # SSP245 bridge starts (MIROC G6-1.5K only: GeoMIP SSP245 starts 2020, leaving 2015–2019 gap).
+# sai_parent is (scenario, member) and is set when a scenario continues an earlier SAI run rather
+# than branching off SSP245 (CESM G6-1.5K-END only: it resumes G6-1.5K 002 in 2085, so the bridge
+# needs the parent's 2035–2084 years on top of the SSP245 years).
 # Source: docs/srm-provenance.csv parent_experiment_ensemble_ids column,
 # confirmed by emails from Walker Lee (G6→SSP245) and Simone Tilmes (historical "001").
+# That column carries a third entry for G6-1.5K-END, which is what sai_parent records.
+
+# (historical_member, ssp245_member, ssp245_esgf_member, sai_parent)
+LineageEntry = tuple[str, str | None, str | None, tuple[str, str] | None]
+
+# The one SAI run that another scenario continues.
+_G6_002 = ("G6-1.5K", "002")
 
 
-def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, str | None]]:
-    table: dict[tuple[str, str, str, str], tuple[str, str | None, str | None]] = {}
+def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
+    table: dict[tuple[str, str, str, str], LineageEntry] = {}
 
     def add(
         gcm: str,
@@ -27,9 +39,10 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, s
         hist: str,
         ssp245: str | None = None,
         ssp245_esgf: str | None = None,
+        sai_parent: tuple[str, str] | None = None,
     ) -> None:
         for var in variables:
-            table[(gcm, scenario, member, var)] = (hist, ssp245, ssp245_esgf)
+            table[(gcm, scenario, member, var)] = (hist, ssp245, ssp245_esgf, sai_parent)
 
     _std = (
         "tas",
@@ -49,6 +62,17 @@ def _build_lineage() -> dict[tuple[str, str, str, str], tuple[str, str | None, s
     add("CESM2-WACCM", "G6-1.5K", "002", _tmx, "001", "007")
     add("CESM2-WACCM", "G6-1.5K", "003", _std, "r3i1p1f1", "003")
     add("CESM2-WACCM", "G6-1.5K", "003", _tmx, "001", "008")
+
+    # CESM2-WACCM G6-1.5K-END: SAI stops after 2084 and member 002 runs on to 2100.
+    # The store holds only 2085-2100, so the bridge spans two runs: SSP245 for 2015-2034,
+    # then the parent G6-1.5K 002 for the 2035-2084 SAI years the termination continues.
+    # All three parents come from the provenance sheet, which records this run's chain as
+    # [('historical','r2i1p1f1'),('ssp245','002'),('g6_1p5k','002')] for the standard
+    # variables and [('historical','001'),('ssp245','007'),('g6_1p5k','002')] for
+    # tasmax/tasmin. The first two match G6-1.5K 002 exactly, as expected for a run that
+    # continues that realization rather than branching afresh.
+    add("CESM2-WACCM", "G6-1.5K-END", "002", _std, "r2i1p1f1", "002", sai_parent=_G6_002)
+    add("CESM2-WACCM", "G6-1.5K-END", "002", _tmx, "001", "007", sai_parent=_G6_002)
 
     # CESM2-WACCM SSP245 (no SAI bridge, ssp245_member is always None)
     # Members 001-005: standard variables only (tasmax/tasmin have the CMIP6 bug: not usable).
@@ -115,12 +139,14 @@ def resolve_member_lineage(
     scenario: str,
     ensemble_member: str,
     variable: str,
-) -> tuple[str, str | None, str | None]:
-    """Return (historical_member, ssp245_member, ssp245_esgf_member).
+) -> LineageEntry:
+    """Return (historical_member, ssp245_member, ssp245_esgf_member, sai_parent).
 
     ssp245_member is None for non-SAI scenarios.
     ssp245_esgf_member is set when an ESGF SSP245 dataset is needed to fill
     a gap before the primary SSP245 bridge starts (MIROC G6-1.5K only).
+    sai_parent is ``(scenario, member)`` when this scenario continues an earlier
+    SAI run whose years the bridge must also cover (CESM G6-1.5K-END only).
     Raises KeyError if the combination has no registered lineage.
     """
     key = (gcm, scenario, ensemble_member, variable)
@@ -133,10 +159,8 @@ def resolve_member_lineage(
     return _LINEAGE[key]
 
 
-def get_lineage_entries(
-    gcm: str, scenario: str
-) -> dict[tuple[str, str], tuple[str, str | None, str | None]]:
-    """Return {(member, variable): (historical_member, ssp245_member, ssp245_esgf_member)}.
+def get_lineage_entries(gcm: str, scenario: str) -> dict[tuple[str, str], LineageEntry]:
+    """Return {(member, variable): (historical, ssp245, ssp245_esgf, sai_parent)}.
 
     Returns an empty dict if no lineage is registered for the given gcm/scenario.
     """

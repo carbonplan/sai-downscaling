@@ -960,7 +960,9 @@ def _baseline_member(
     registers no such parent for the combination.
     """
     label = GROUP_TO_SCENARIO[after_group]
-    historical_member, ssp245_member, _ = resolve_member_lineage(gcm, label, after_member, variable)
+    historical_member, ssp245_member, *_ = resolve_member_lineage(
+        gcm, label, after_member, variable
+    )
     if before_group == "historical":
         return historical_member
     if before_group == "ssp245":

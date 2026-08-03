@@ -67,6 +67,67 @@ class TestG6Lineage:
 
 
 # ---------------------------------------------------------------------------
+# resolve_member_lineage: CESM2-WACCM G6-1.5K-END
+# ---------------------------------------------------------------------------
+
+
+class TestG6EndLineage:
+    """G6-1.5K-END is the termination-shock continuation of G6-1.5K 002 from 2085.
+
+    Its store holds only 2085-2100, so the detrend stitch needs both an SSP245
+    segment (2015-2034) and the parent SAI segment (2035-2084) to reach it. The
+    lineage table is what supplies all three parents to the bridge.
+    """
+
+    @pytest.mark.parametrize("variable", _STANDARD_VARS)
+    def test_g6_end_standard_vars(self, variable):
+        hist, ssp245, ssp245_esgf, sai_parent = resolve_member_lineage(
+            "CESM2-WACCM", "G6-1.5K-END", "002", variable
+        )
+        assert hist == "r2i1p1f1"
+        assert ssp245 == "002"
+        assert ssp245_esgf is None
+        assert sai_parent == ("G6-1.5K", "002")
+
+    @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
+    def test_g6_end_tmax_tmin(self, variable):
+        hist, ssp245, ssp245_esgf, sai_parent = resolve_member_lineage(
+            "CESM2-WACCM", "G6-1.5K-END", "002", variable
+        )
+        assert hist == "001"
+        assert ssp245 == "007"
+        assert ssp245_esgf is None
+        assert sai_parent == ("G6-1.5K", "002")
+
+    def test_g6_end_sai_parent_matches_g6_lineage(self, subtests):
+        """The parent segment must carry the same lineage the END run continues.
+
+        G6-1.5K 002 and G6-1.5K-END 002 branch from the same historical and SSP245
+        members, so a mismatch here means the two segments come from different
+        realizations. The provenance sheet records both chains, and they agree on
+        the first two parents for every variable.
+        """
+        for variable in _STANDARD_VARS + _TMAX_MIN_VARS:
+            with subtests.test(variable=variable):
+                end = resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", "002", variable)
+                parent = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
+                assert end[:3] == parent[:3]
+
+    @pytest.mark.parametrize("member", ("001", "003"))
+    def test_g6_end_unregistered_members_raise(self, member):
+        """Only member 002 was run to termination."""
+        with pytest.raises(KeyError):
+            resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", member, "tas")
+
+    def test_g6_has_no_sai_parent(self, subtests):
+        """Plain G6-1.5K starts the SAI chain, so nothing precedes it."""
+        for member in ("001", "002", "003"):
+            with subtests.test(member=member):
+                *_, sai_parent = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", member, "tas")
+                assert sai_parent is None
+
+
+# ---------------------------------------------------------------------------
 # resolve_member_lineage: CESM2-WACCM SSP245
 # ---------------------------------------------------------------------------
 
@@ -181,10 +242,13 @@ class TestUKESMG6Lineage:
     @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
     @pytest.mark.parametrize("variable", _UKESM_VARS)
     def test_members_self_consistent(self, member, variable):
-        hist, ssp245, ssp245_esgf = resolve_member_lineage("UKESM", "G6-1.5K", member, variable)
+        hist, ssp245, ssp245_esgf, sai_parent = resolve_member_lineage(
+            "UKESM", "G6-1.5K", member, variable
+        )
         assert hist == member
         assert ssp245 == member
         assert ssp245_esgf is None
+        assert sai_parent is None
 
     @pytest.mark.parametrize("member", ("001", "002", "003"))
     def test_legacy_numeric_members_unregistered(self, member):
@@ -198,7 +262,7 @@ class TestUKESMG6Lineage:
 
 
 class TestMirocLineage:
-    """MIROC-ES2H lineage: 3-tuple with ssp245_esgf_member for G6-1.5K."""
+    """MIROC-ES2H lineage: ssp245_esgf_member set for both G6-1.5K and SSP245."""
 
     _MIROC_G6_LINEAGE = [
         ("r01", "r1i1p4f2"),
@@ -215,17 +279,17 @@ class TestMirocLineage:
 
     @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
     def test_g6_hist_member(self, member, expected_hist):
-        hist, ssp245, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
+        hist, *_ = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
         assert hist == expected_hist
 
     @pytest.mark.parametrize("member", [m for m, _ in _MIROC_G6_LINEAGE])
     def test_g6_ssp245_member_equals_geomip_member(self, member):
-        _, ssp245, _ = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
+        _, ssp245, *_ = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
         assert ssp245 == member
 
     @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
     def test_g6_esgf_bridge_equals_hist_member(self, member, expected_hist):
-        _, _, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
+        _, _, ssp245_esgf, _ = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
         assert ssp245_esgf == expected_hist
 
     @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
@@ -233,6 +297,6 @@ class TestMirocLineage:
         # SSP245 is not an SAI scenario so ssp245 (SAI bridge) is None.
         # ssp245_esgf is set because the GeoMIP SSP245 dataset starts in 2020;
         # ESGF SSP245 fills the 2015–2019 gap.
-        _, ssp245, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "SSP245", member, "tas")
+        _, ssp245, ssp245_esgf, _ = resolve_member_lineage("MIROC-ES2H", "SSP245", member, "tas")
         assert ssp245 is None
         assert ssp245_esgf == expected_hist

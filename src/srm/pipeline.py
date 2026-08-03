@@ -360,14 +360,18 @@ class BCSDPipeline:
         self._hist_member = config.ensemble_member
         self._ssp245_member = config.ensemble_member
         self._ssp245_esgf_member: str | None = None
+        self._sai_parent: tuple[str, str] | None = None
         if config.scenario is not None:
             from srm.lineage import resolve_member_lineage
 
             try:
-                self._hist_member, self._ssp245_member, self._ssp245_esgf_member = (
-                    resolve_member_lineage(
-                        config.gcm, config.scenario, config.ensemble_member, config.variable
-                    )
+                (
+                    self._hist_member,
+                    self._ssp245_member,
+                    self._ssp245_esgf_member,
+                    self._sai_parent,
+                ) = resolve_member_lineage(
+                    config.gcm, config.scenario, config.ensemble_member, config.variable
                 )
             except KeyError:
                 pass
@@ -379,6 +383,8 @@ class BCSDPipeline:
             ]
             if self._ssp245_member != config.ensemble_member:
                 parts.append(f"ssp245_bridge={self._ssp245_member!r}")
+            if self._sai_parent is not None:
+                parts.append(f"sai_parent={'/'.join(self._sai_parent)!r}")
             logger.info("Lineage resolved — %s", "  ".join(parts))
 
     def _nan_check_context(self, stage: str) -> dict[str, str | None]:
@@ -399,7 +405,7 @@ class BCSDPipeline:
     def _build_output_attrs(self) -> dict:
         """Build dataset-level attributes for pipeline output artifacts."""
         version = importlib.metadata.version("srm")
-        return {
+        attrs = {
             # CF-standard — flat
             "Conventions": "CF-1.8",
             "institution": "CarbonPlan",
@@ -425,6 +431,13 @@ class BCSDPipeline:
             "srm_downscaling:config_json": self.config.model_dump_json(),
             "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
+        # Only present on scenarios that continue an earlier SAI run, so readers can tell
+        # which run supplied the pre-scenario years of the bridge.
+        if self._sai_parent is not None:
+            parent_scenario, parent_member = self._sai_parent
+            attrs["srm_downscaling:sai_parent_scenario"] = parent_scenario
+            attrs["srm_downscaling:sai_parent_ensemble_member"] = parent_member
+        return attrs
 
     def _write_to_icechunk(
         self,
@@ -1066,7 +1079,75 @@ class BCSDPipeline:
         return loc.store_path
 
     def _load_ssp245_bridge(self) -> xr.DataArray:
-        """Load the SSP245 bridge timeseries for SAI detrending.
+        """Load the bridge timeseries spanning historical end to SAI scenario start.
+
+        The bridge is SSP245 for scenarios that branch straight off it. Scenarios that
+        continue an earlier SAI run (G6-1.5K-END, which resumes G6-1.5K 002 in 2085) need
+        the parent run's years appended on top, so SSP245 covers 2015 up to the parent's
+        start and the parent covers the rest. Both variable groups need that second
+        segment, for different reasons.
+
+        For the standard variables the SSP245 bridge (member 002) does run past 2085, so
+        an SSP245-only bridge would stitch cleanly and be silently wrong: 2035–2084 would
+        come from the no-SAI run rather than the SAI years the termination continues.
+        For tasmax/tasmin/dtr the bridge member is the truncated 007, which stops in 2069,
+        so an SSP245-only bridge fails outright when _assert_stitched_continuity hits the
+        2070–2084 hole.
+        """
+        bridge = self._load_ssp245_segment()
+        if self._sai_parent is None:
+            return bridge
+
+        parent_scenario, parent_member = self._sai_parent
+        parent = get_experiment(self.config.gcm, parent_scenario, self.config.variable)
+        parent = parent.sel(ensemble_member=parent_member)
+        parent = parent.drop_vars("spatial_ref", errors="ignore")
+
+        parent_start_year = int(parent.time.dt.year.min())
+        parent_years = (parent_start_year, int(parent.time.dt.year.max()))
+        ssp_head = bridge.sel(time=(bridge["time.year"] < parent_start_year))
+        if ssp_head.time.size == 0:
+            raise ValueError(
+                f"SSP245 bridge member {self._ssp245_member!r} has no data before "
+                f"{parent_start_year}, so the {self.config.train_period_end + 1}–"
+                f"{parent_start_year - 1} gap ahead of SAI parent "
+                f"{parent_scenario} {parent_member} cannot be filled."
+            )
+
+        logger.info(
+            "_load_ssp245_bridge: stitching SSP245 %s %d–%d + %s %s %d–%d",
+            self._ssp245_member,
+            int(ssp_head.time.dt.year.min()),
+            int(ssp_head.time.dt.year.max()),
+            parent_scenario,
+            parent_member,
+            *parent_years,
+        )
+
+        # Same scalar-coord dance as the ESGF stitch: the two segments carry different
+        # ensemble_member values (e.g. SSP245 '007' vs G6 '002'), which blocks concat.
+        combined = xr.concat(
+            [
+                ssp_head.drop_vars("ensemble_member", errors="ignore"),
+                parent.drop_vars("ensemble_member", errors="ignore"),
+            ],
+            dim="time",
+        )
+        combined = combined.assign_coords(ensemble_member=parent.coords["ensemble_member"])
+        combined.attrs.update(bridge.attrs)
+        combined.attrs.update(
+            {
+                "bridge_sai_parent_scenario": parent_scenario,
+                "bridge_sai_parent_member": parent_member,
+                "bridge_sai_parent_years": f"{parent_years[0]}-{parent_years[1]}",
+                "bridge_gcm": self.config.gcm,
+                "bridge_variable": self.config.variable,
+            }
+        )
+        return combined
+
+    def _load_ssp245_segment(self) -> xr.DataArray:
+        """Load the SSP245 portion of the bridge.
 
         For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
         G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
@@ -1098,7 +1179,7 @@ class BCSDPipeline:
 
         if esgf_gap.time.size == 0:
             logger.warning(
-                "_load_ssp245_bridge: ESGF dataset for %s has no data before year %d; "
+                "_load_ssp245_segment: ESGF dataset for %s has no data before year %d; "
                 "returning primary GeoMIP dataset only — 2015–%d gap will remain",
                 self._ssp245_esgf_member,
                 primary_start_year,
@@ -1109,7 +1190,7 @@ class BCSDPipeline:
         esgf_gap_years = (int(esgf_gap.time.dt.year.min()), int(esgf_gap.time.dt.year.max()))
         primary_years = (primary_start_year, int(primary.time.dt.year.max()))
         logger.info(
-            "_load_ssp245_bridge: stitching ESGF %s %d–%d + GeoMIP %s %d–%d",
+            "_load_ssp245_segment: stitching ESGF %s %d–%d + GeoMIP %s %d–%d",
             self._ssp245_esgf_member,
             *esgf_gap_years,
             self._ssp245_member,
@@ -1246,12 +1327,14 @@ class BCSDPipeline:
         Returns (scenario_detrended, scenario_trend). When detrending is disabled,
         returns (scenario, None) and scenario_trend will be None.
 
-        For SAI scenarios, stitches in SSP245 data to bridge the gap between the end of
-        historical (2014/2015) and the SAI simulation start (~2035). This bridge is
-        applied even when detrending is disabled, so that non-detrended variables
-        (dtr, pr, rsds, hurs) still span the full predict window rather than starting
-        at the SAI simulation year — otherwise ``tasmin = tasmax - dtr`` breaks against
-        the bridged (full-length) tasmax on the missing days (issue #363).
+        For SAI scenarios, stitches in bridge data to cover the gap between the end of
+        historical (2014/2015) and the SAI simulation start, which is ~2035 for G6-1.5K
+        and 2085 for the G6-1.5K-END termination run. The bridge is SSP245 alone for the
+        former and SSP245 followed by G6-1.5K for the latter; see ``_load_ssp245_bridge``.
+        This bridge is applied even when detrending is disabled, so that non-detrended
+        variables (dtr, pr, rsds, hurs) still span the full predict window rather than
+        starting at the SAI simulation year — otherwise ``tasmin = tasmax - dtr`` breaks
+        against the bridged (full-length) tasmax on the missing days (issue #363).
         """
         if not self.config.variable_config.detrend_data:
             if self.config.is_sai_scenario:

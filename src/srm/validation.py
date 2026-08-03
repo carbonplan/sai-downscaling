@@ -472,10 +472,15 @@ class DatasetValidator(pydantic.BaseModel):
 
         hist_members_needed: set[str] = set()
         ssp245_members_needed: set[str] = set()
-        for hist, ssp245, *_ in entries.values():
+        # Keyed by parent scenario so a future second termination run resolves independently.
+        sai_parents_needed: dict[str, set[str]] = {}
+        for hist, ssp245, _, sai_parent in entries.values():
             hist_members_needed.add(hist)
             if ssp245 is not None:
                 ssp245_members_needed.add(ssp245)
+            if sai_parent is not None:
+                parent_scenario, parent_member = sai_parent
+                sai_parents_needed.setdefault(parent_scenario, set()).add(parent_member)
 
         dt, err = self._open_datatree()
         if err is not None:
@@ -514,10 +519,33 @@ class DatasetValidator(pydantic.BaseModel):
                 issues.append(f"{len(missing_ssp245)} resolved SSP245 bridge member(s) missing")
                 detail["missing_ssp245"] = missing_ssp245
 
+        # A scenario that continues an earlier SAI run needs that run's members too: the
+        # bridge reads them for every year between the SSP245 segment and the scenario start.
+        for parent_scenario, parent_members in sorted(sai_parents_needed.items()):
+            parent_group = SCENARIO_TO_GROUP[parent_scenario]
+            if parent_group not in dt.children:
+                return self._result(
+                    CheckStatus.FAIL,
+                    f"'{parent_group}' group not present in datatree for {self.gcm}; "
+                    f"{self.scenario} continues {parent_scenario} and cannot be bridged without it",
+                )
+            parent_ds = dt[parent_group].to_dataset()
+            parent_available = set(_get_ensemble_members(parent_ds) or [])
+            detail[f"{parent_group}_needed"] = sorted(parent_members)
+            detail[f"{parent_group}_available"] = sorted(parent_available)
+            missing_parent = sorted(parent_members - parent_available)
+            if missing_parent:
+                issues.append(
+                    f"{len(missing_parent)} resolved {parent_scenario} SAI parent member(s) missing"
+                )
+                detail[f"missing_{parent_group}"] = missing_parent
+
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
 
         store_labels = "historical" + (" and SSP245" if ssp245_members_needed else "")
+        if sai_parents_needed:
+            store_labels += " and " + ", ".join(sorted(sai_parents_needed))
         return self._result(
             CheckStatus.PASS,
             f"All {len(entries)} lineage entries resolve to available members "

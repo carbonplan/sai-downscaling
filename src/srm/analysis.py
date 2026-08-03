@@ -64,7 +64,7 @@ class BCSDRun:
             from srm.lineage import resolve_member_lineage
 
             try:
-                self._hist_member, _ = resolve_member_lineage(
+                self._hist_member, *_ = resolve_member_lineage(
                     bcsd_config.gcm,
                     bcsd_config.scenario,
                     bcsd_config.ensemble_member,
