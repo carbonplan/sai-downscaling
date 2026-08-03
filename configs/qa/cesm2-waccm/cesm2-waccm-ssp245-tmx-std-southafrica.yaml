@@ -8,7 +8,7 @@
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs"]
+variables: ["tasmax", "tasmin", "dtr", "tas", "pr", "rsds", "hurs"]
 ensemble_members: ["006", "007", "008", "009", "010"]
 scenarios: ["SSP245"]
 
