@@ -3,10 +3,15 @@
 # Equivalent CLI command:
 #   uv run bcsd run --config-path configs/production/cesm2-waccm-g6.yaml
 
+# Member 002 is published alongside 003 because it is the realization the termination
+# run continues (see cesm2-waccm-g6-end.yaml). Without it, the only way to compare SAI
+# continuing against SAI stopping would cross realizations, which is the ensemble-level
+# version of the per-variable mismatch issue #448 hit.
+
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
-ensemble_members: ["003"]
+ensemble_members: ["002", "003"]
 scenarios: ["G6-1.5K"]
 
 train_period_start: 1978
