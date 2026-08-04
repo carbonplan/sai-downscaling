@@ -1,0 +1,36 @@
+# BCSD configuration: CESM2-WACCM / standard variables / SSP245 / truncated members 006-010 / South Africa (QA)
+# Members 006-010's data ends in 2069 (per srm.validation._MEMBER_TIME_BOUNDS: 007-010 on
+# 2069-12-31, 006 a day earlier), so predict_period_end is 2069. These were previously
+# mis-truncated at 2070 in a separate cesm2-waccm-ssp245-std-trunc-2070-southafrica.yaml
+# config now folded in here: the raw input's apparent extra day at 2070-01-01 was the last
+# 2069 daily mean carrying an end-of-interval stamp, which issue #521 corrected at the ETL.
+# Full-length members 001-005 live in cesm2-waccm-ssp245-std-southafrica.yaml.
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM"
+variables: ["tasmax", "tasmin", "dtr", "tas", "pr", "rsds", "hurs"]
+ensemble_members: ["006", "007", "008", "009", "010"]
+scenarios: ["SSP245"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+# 2068 not 2069: member 006 ends 2069-12-30 (a day short of 007-010's 2069-12-31), and
+# predict_period_end is year-granularity only, so 2069 pulls in a NaN-padded last day for 006, triggering the NaN check/assert failure.
+predict_period_end: 2068
+
+# === Spatial Subsetting ===
+subset_bounds: [-31, -26, 23, 30]
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
+output_dir: "s3://carbonplan-scratch/srm/output"
+environment: "qa"
+
+# === Bias Correction ===
+debias_approach: "nonparametric_hybrid_2sided"
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true
