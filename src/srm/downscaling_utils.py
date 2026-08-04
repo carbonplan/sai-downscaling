@@ -511,7 +511,7 @@ def coarse_domain_mask(
     -----
     Global runs come out all-True, so a NaN check masked by this is a strict zero-NaN
     assertion in production. Regional (subset) runs exclude the frame of fine cells
-    lying outside the outermost coarse cell centres, which interpolate to NaN by
+    lying outside the outermost coarse cell centers, which interpolate to NaN by
     design — see the Notes of :func:`interpolate_coarse_to_fine_grid`.
     """
     coarse = da_coarse_to_regrid
@@ -813,7 +813,7 @@ def downscale_from_coarse(
         downscaled = downscaled_corrected
         # This branch is the one NaN source downstream of the residual gates. Recoarsening
         # yields NaN for any coarse cell with no valid fine contributors, and the nearest
-        # neighbour interpolation then spreads it across interior cells the earlier checks
+        # neighbor interpolation then spreads it across interior cells the earlier checks
         # already certified clean. Step 5 needs no such check, since it only combines two
         # arrays this function has already asserted NaN-free.
         assert_no_nans(downscaled, name="downscaled", where=fine_domain_mask)

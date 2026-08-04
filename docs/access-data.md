@@ -13,7 +13,7 @@ kernelspec:
 # How to Access Downscaled Output Data
 
 The pipeline writes downscaled output into icechunk stores on S3. Each store holds all scenarios,
-variables, and ensemble members for a single GCM/obs-dataset/spatial-subset combination, organised
+variables, and ensemble members for a single GCM/obs-dataset/spatial-subset combination, organized
 as zarr groups. This guide shows how to construct the correct store path, open a session on the
 right branch, and load data.
 
@@ -33,7 +33,7 @@ s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production
 | `obs_dataset` | `ERA5`, `GDEX-GMF` | `ERA5` |
 | `subset_id` | `global` or `lat{min}to{max}_lon{min}to{max}` | `global` |
 
-Within each store, data is organised in zarr groups:
+Within each store, data is organized in zarr groups:
 
 ```text
 historical/{variable}/{hist_member}
@@ -183,7 +183,7 @@ accessed.
 
 | Attribute | Contents |
 | --- | --- |
-| `srm_downscaling:config_json` | Full `BCSDConfig` serialised as a JSON string |
+| `srm_downscaling:config_json` | Full `BCSDConfig` serialized as a JSON string |
 | `srm_downscaling:config_hash` | 12-character SHA-256 of computation-affecting fields only |
 | `srm_downscaling:version` | `srm` package version that produced the data |
 | `srm_downscaling:gcm` | GCM name |

@@ -23,9 +23,6 @@ scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
 output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
 
-# === Bias Correction ===
-debias_approach: "nonparametric_hybrid_2sided"
-
 # === Additional Options ===
 verbose: true
 save_intermediate: true

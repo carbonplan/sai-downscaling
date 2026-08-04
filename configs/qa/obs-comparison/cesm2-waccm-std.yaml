@@ -32,6 +32,5 @@ predict_period_end: 2099
 scratch_dir: "s3://carbonplan-srm/obs-comparison/cache"
 output_dir: "s3://carbonplan-srm/obs-comparison/output"
 environment: "qa"
-debias_approach: "nonparametric_hybrid_2sided"
 verbose: true
 save_intermediate: true

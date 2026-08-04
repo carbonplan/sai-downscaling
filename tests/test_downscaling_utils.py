@@ -770,7 +770,7 @@ class TestDeriveTasmin:
 def _regional_grids(n_time: int = 40) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
     """Coarse simulation, coarse obs, and fine obs on a regional (non-global) domain.
 
-    The fine grid deliberately extends past the outermost coarse cell centres, which is
+    The fine grid deliberately extends past the outermost coarse cell centers, which is
     what production subset runs do. Those out-of-domain fine cells interpolate to NaN,
     and the guards must tolerate exactly that frame and nothing more.
     """
@@ -879,7 +879,7 @@ class TestDownscaleFromCoarseNanGuards:
 class TestEnforceConservationNanGuard:
     """The conservation correction runs after the residual gates, so it needs its own.
 
-    Its nearest-neighbour spreading of a coarse correction can push NaN into interior
+    Its nearest-neighbor spreading of a coarse correction can push NaN into interior
     fine cells that the earlier checks already certified clean. The parameter is public
     and documented, so the guarantee has to hold when a caller turns it on.
     """

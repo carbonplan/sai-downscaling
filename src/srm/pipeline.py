@@ -422,7 +422,7 @@ class BCSDPipeline:
             "srm_downscaling:historical_ensemble_member": self._hist_member,
             "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
             "srm_downscaling:observation_dataset": self.config.obs_dataset,
-            "srm_downscaling:bias_correction_method": self.config.debias_approach,
+            "srm_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
             "srm_downscaling:downscaling_method": self.config.variable_config.downscaling_method,
             "srm_downscaling:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
@@ -797,11 +797,11 @@ class BCSDPipeline:
             model_hist, self.config.train_period_start, self.config.train_period_end
         )
 
+        debias_approach = self.config.variable_config.debias_approach
         mapping_type = (
             "nonparametric"
-            if self.config.debias_approach
-            in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
-            else self.config.debias_approach
+            if debias_approach in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
+            else debias_approach
         )
         debiaser = _make_debiaser(
             variable=self.config.variable,
@@ -1392,6 +1392,7 @@ class BCSDPipeline:
             model_hist, self.config.train_period_start, self.config.train_period_end
         )
 
+        debias_approach = self.config.variable_config.debias_approach
         obs_coarse = obs_coarse.as_numpy()
         model_hist = model_hist.as_numpy()
         scenario_detrended = scenario_detrended.load()
@@ -1429,12 +1430,12 @@ class BCSDPipeline:
             failsafe=True,
         )
 
-        if self.config.debias_approach in ["parametric", "nonparametric"]:
-            debiased_np = _make_debiaser(
-                mapping_type=self.config.debias_approach, **common_kwargs
-            ).apply(**apply_kwargs)
+        if debias_approach in ["parametric", "nonparametric"]:
+            debiased_np = _make_debiaser(mapping_type=debias_approach, **common_kwargs).apply(
+                **apply_kwargs
+            )
 
-        elif self.config.debias_approach == "nonparametric_hybrid":
+        elif debias_approach == "nonparametric_hybrid":
             parametric_np = _make_debiaser(mapping_type="parametric", **common_kwargs).apply(
                 **apply_kwargs
             )
@@ -1449,7 +1450,7 @@ class BCSDPipeline:
             )
             debiased_np = np.where(out_of_range.values, parametric_np, nonparametric_np)
 
-        elif self.config.debias_approach == "nonparametric_hybrid_2sided":
+        elif debias_approach == "nonparametric_hybrid_2sided":
             # Use one parametric debiaser for low out-of-range values, another for high, and nonparametric everywhere else
 
             if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:

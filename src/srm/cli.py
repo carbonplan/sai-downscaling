@@ -17,6 +17,7 @@ from pathlib import Path
 
 import typer
 import yaml
+from pydantic import ValidationError
 from rich import box
 from rich.console import Console
 from rich.logging import RichHandler
@@ -313,6 +314,111 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
         raise ValueError("Resolved ensemble members not found in stores:\n" + "\n".join(errors))
 
 
+def _validate_variable_overrides(overrides: dict, variables: list[str]) -> None:
+    """
+    Validate the shape of a ``variable_overrides`` mapping.
+
+    Parameters
+    ----------
+    overrides : dict
+        Mapping of variable name to a mapping of ``VariableConfig`` field to value.
+    variables : list[str]
+        Variables the run actually covers.
+
+    Raises
+    ------
+    ValueError
+        If a key names a variable outside the run, a value is not a mapping, or a
+        field is not a ``VariableConfig`` field.
+    """
+    valid_fields = set(VariableConfig.model_fields)
+    for var, fields in overrides.items():
+        if var not in variables:
+            raise ValueError(
+                f"variable_overrides key {var!r} is not in variables {sorted(variables)}. "
+                "Every override must target a variable included in the run."
+            )
+        if not isinstance(fields, dict):
+            raise ValueError(
+                f"variable_overrides[{var!r}] must be a mapping of field -> value, "
+                f"got {type(fields).__name__}"
+            )
+        unknown = sorted(set(fields) - valid_fields)
+        if unknown:
+            raise ValueError(
+                f"variable_overrides[{var!r}] has unknown field(s) {unknown}. "
+                f"Valid fields: {sorted(valid_fields)}"
+            )
+
+
+def _resolve_variable_config(
+    variable: str,
+    run_wide: dict | None = None,
+    overrides: dict[str, dict] | None = None,
+) -> VariableConfig:
+    """
+    Resolve a ``VariableConfig`` through the three precedence tiers.
+
+    Tiers, last writer wins: per-variable table defaults, then run-wide values, then
+    the per-variable override entry. ``None`` values are skipped so an unset CLI flag
+    never clobbers a default. Construction goes through ``VariableConfig(**merged)``
+    rather than ``model_copy(update=...)`` because ``model_copy`` does not validate,
+    which previously let bad values through to the pipeline.
+
+    Parameters
+    ----------
+    variable : str
+        Variable name, used to look up the table defaults.
+    run_wide : dict or None
+        Values applied to every variable in the run.
+    overrides : dict[str, dict] or None
+        Mapping of variable name to per-variable values.
+
+    Returns
+    -------
+    VariableConfig
+        Fully resolved and validated config for ``variable``.
+    """
+    merged = VariableConfig.for_variable(variable).model_dump()
+    for source in (run_wide or {}, (overrides or {}).get(variable, {})):
+        merged.update({k: v for k, v in source.items() if v is not None})
+    return VariableConfig(**merged)
+
+
+def _parse_variable_overrides(items: list[str]) -> dict[str, dict[str, str]]:
+    """
+    Parse repeated ``--variable-override`` values into a nested mapping.
+
+    Each item has the form ``{variable}:{field}={value}``, split on the first ``:``
+    and then the first ``=``. Repeating the flag accumulates, both across variables
+    and within one variable.
+
+    Parameters
+    ----------
+    items : list[str]
+        Raw flag values, e.g. ``["dtr:debias_approach=nonparametric"]``.
+
+    Returns
+    -------
+    dict[str, dict[str, str]]
+        Mapping of variable name to field-value pairs. Values stay strings and are
+        coerced by pydantic during ``VariableConfig`` construction.
+
+    Raises
+    ------
+    ValueError
+        If an item does not match ``variable:field=value``.
+    """
+    parsed: dict[str, dict[str, str]] = defaultdict(dict)
+    for item in items:
+        variable, sep, rest = item.partition(":")
+        field, sep2, value = rest.partition("=")
+        if not (sep and sep2 and variable.strip() and field.strip()):
+            raise ValueError(f"--variable-override must be 'variable:field=value', got {item!r}")
+        parsed[variable.strip()][field.strip()] = value.strip()
+    return dict(parsed)
+
+
 def _is_matrix_config(config_dict: dict) -> bool:
     """Return True if any expandable field contains a list."""
     return any(
@@ -334,20 +440,35 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
             val = _UNSET
         axes[field] = val if isinstance(val, list) else [val]
 
-    if "variable_config" in d and len(axes["variable"]) > 1:
-        raise ValueError(
-            "Cannot use 'variable_config' in a matrix config with multiple variables "
-            f"({axes['variable']}). Remove 'variable_config' to use per-variable defaults, "
-            "or split into separate config files."
-        )
+    overrides = d.pop("variable_overrides", None) or {}
+    if overrides:
+        _validate_variable_overrides(overrides, axes["variable"])
 
-    return [
-        BCSDConfig(
-            **{f: v for f, v in zip(_AXIS_ORDER, combo, strict=True) if v is not _UNSET},
-            **d,
-        )
-        for combo in itertools.product(*(axes[f] for f in _AXIS_ORDER))
-    ]
+    if "variable_config" in d:
+        if len(axes["variable"]) > 1:
+            raise ValueError(
+                "Cannot use 'variable_config' in a matrix config with multiple variables "
+                f"({axes['variable']}). Use 'variable_overrides' to set per-variable values, "
+                "or split into separate config files."
+            )
+        if overrides:
+            raise ValueError(
+                "Cannot combine 'variable_config' with 'variable_overrides'. An explicit "
+                "'variable_config' is passed through verbatim, so the overrides would be "
+                "silently discarded. Fold the override values into 'variable_config', or "
+                "drop 'variable_config' and use 'variable_overrides' alone."
+            )
+
+    configs = []
+    for combo in itertools.product(*(axes[f] for f in _AXIS_ORDER)):
+        axis_kwargs = {f: v for f, v in zip(_AXIS_ORDER, combo, strict=True) if v is not _UNSET}
+        kwargs = dict(d)
+        if "variable_config" not in kwargs:
+            kwargs["variable_config"] = _resolve_variable_config(
+                axis_kwargs["variable"], None, overrides
+            )
+        configs.append(BCSDConfig(**axis_kwargs, **kwargs))
+    return configs
 
 
 def load_configs(config_path: str) -> tuple[list[BCSDConfig], PipelineOptions]:
@@ -417,7 +538,7 @@ def configs_from_matrix(
     branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
-    debias_approach: str = "nonparametric_hybrid_2sided",
+    debias_approach: str | None = None,
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
@@ -426,6 +547,7 @@ def configs_from_matrix(
     downscaling_method: str | None = None,
     downscaling_clim_method: str | None = None,
     detrend_method: str | None = None,
+    variable_overrides: dict[str, dict] | None = None,
 ) -> tuple[list[BCSDConfig], PipelineOptions]:
     """
     Generate BCSDConfig objects for every cartesian-product combination of GCMs,
@@ -461,8 +583,10 @@ def configs_from_matrix(
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
-    debias_approach : str
-        Debias approach (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
+    debias_approach : str | None
+        Override VariableConfig.debias_approach for every variable (parametric,
+        nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided). None uses
+        each variable's own default.
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -477,6 +601,10 @@ def configs_from_matrix(
         Override VariableConfig.downscaling_clim_method (simple, fft)
     detrend_method : str | None
         Override VariableConfig.detrend_method (additive, multiplicative)
+    variable_overrides : dict[str, dict] | None
+        Per-variable overrides keyed by variable name, e.g.
+        ``{"dtr": {"debias_approach": "nonparametric"}}``. Takes precedence over the
+        run-wide parameters above.
 
     Returns
     -------
@@ -491,23 +619,22 @@ def configs_from_matrix(
         verbose=verbose,
         save_intermediate=save_intermediate,
     )
+    variable_overrides = variable_overrides or {}
+    if variable_overrides:
+        _validate_variable_overrides(variable_overrides, variables)
+
+    run_wide = {
+        "debias_approach": debias_approach,
+        "detrend_data": detrend_data,
+        "do_windowing": do_windowing,
+        "running_window_length": running_window_length,
+        "downscaling_method": downscaling_method,
+        "downscaling_clim_method": downscaling_clim_method,
+        "detrend_method": detrend_method,
+    }
+
     configs = []
     for gcm, variable, member, scenario in itertools.product(gcms, variables, members, scenarios):
-        vc = VariableConfig.for_variable(variable)
-        overrides = {
-            k: v
-            for k, v in {
-                "detrend_data": detrend_data,
-                "do_windowing": do_windowing,
-                "running_window_length": running_window_length,
-                "downscaling_method": downscaling_method,
-                "downscaling_clim_method": downscaling_clim_method,
-                "detrend_method": detrend_method,
-            }.items()
-            if v is not None
-        }
-        if overrides:
-            vc = vc.model_copy(update=overrides)
         configs.append(
             BCSDConfig(
                 gcm=gcm,
@@ -519,8 +646,7 @@ def configs_from_matrix(
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
                 subset_bounds=subset_bounds,
-                debias_approach=debias_approach,
-                variable_config=vc,
+                variable_config=_resolve_variable_config(variable, run_wide, variable_overrides),
             )
         )
     return configs, options
@@ -755,10 +881,15 @@ def run_matrix(
         "--save-intermediate",
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
-    debias_approach: str = typer.Option(
-        "nonparametric_hybrid_2sided",
+    debias_approach: str | None = typer.Option(
+        None,
         "--debias-approach",
-        help="Debias approach: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
+        help=(
+            "Debias approach for every variable: parametric, nonparametric, "
+            "nonparametric_hybrid, nonparametric_hybrid_2sided. "
+            "Omit to use each variable's default. Override one variable with "
+            "--variable-override."
+        ),
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     # VariableConfig overrides
@@ -782,6 +913,15 @@ def run_matrix(
     detrend_method: str | None = typer.Option(
         None, "--detrend-method", help="Override detrend_method (additive, multiplicative)"
     ),
+    variable_override: list[str] = typer.Option(
+        [],
+        "--variable-override",
+        help=(
+            "Per-variable setting as 'variable:field=value' (repeatable), e.g. "
+            "'dtr:debias_approach=nonparametric'. Takes precedence over the run-wide "
+            "flags above."
+        ),
+    ),
 ):
     """Run BCSD pipeline over cartesian product of GCMs x variables x members x scenarios.
 
@@ -798,6 +938,16 @@ def run_matrix(
           --predict-period-start 2015 --predict-period-end 2100
 
     Omit --scenario for historical-only runs.
+
+    Give one variable a different setting with --variable-override
+    (repeatable, 'variable:field=value'):
+
+        bcsd run-matrix \\
+          --gcm CESM2-WACCM \\
+          --variable tasmax --variable dtr \\
+          --member 007 --scenario ssp245 \\
+          --predict-period-start 2015 --predict-period-end 2100 \\
+          --variable-override dtr:debias_approach=nonparametric
     """
     # Normalize: no --scenario given -> historical-only (scenario=None)
     scenario_values: list[str | None] = scenario if scenario else [None]
@@ -825,30 +975,41 @@ def run_matrix(
             )
             raise typer.Exit(1)
 
-    configs, options = configs_from_matrix(
-        gcms=gcm,
-        variables=variable,
-        members=member,
-        scenarios=scenario_values,
-        train_period_start=train_period_start,
-        train_period_end=train_period_end,
-        predict_period_start=predict_period_start,
-        predict_period_end=predict_period_end,
-        scratch_dir=scratch_dir,
-        output_dir=output_dir,
-        environment=environment,
-        branch=branch,
-        subset_bounds=parsed_bounds,
-        save_intermediate=save_intermediate,
-        debias_approach=debias_approach,
-        verbose=verbose,
-        detrend_data=detrend_data,
-        do_windowing=do_windowing,
-        running_window_length=running_window_length,
-        downscaling_method=downscaling_method,
-        downscaling_clim_method=downscaling_clim_method,
-        detrend_method=detrend_method,
-    )
+    try:
+        parsed_overrides = _parse_variable_overrides(variable_override)
+    except ValueError as exc:
+        logger.error(str(exc))
+        raise typer.Exit(1)
+
+    try:
+        configs, options = configs_from_matrix(
+            gcms=gcm,
+            variables=variable,
+            members=member,
+            scenarios=scenario_values,
+            train_period_start=train_period_start,
+            train_period_end=train_period_end,
+            predict_period_start=predict_period_start,
+            predict_period_end=predict_period_end,
+            scratch_dir=scratch_dir,
+            output_dir=output_dir,
+            environment=environment,
+            branch=branch,
+            subset_bounds=parsed_bounds,
+            save_intermediate=save_intermediate,
+            debias_approach=debias_approach,
+            verbose=verbose,
+            detrend_data=detrend_data,
+            do_windowing=do_windowing,
+            running_window_length=running_window_length,
+            downscaling_method=downscaling_method,
+            downscaling_clim_method=downscaling_clim_method,
+            detrend_method=detrend_method,
+            variable_overrides=parsed_overrides,
+        )
+    except (ValueError, ValidationError) as exc:
+        logger.error(str(exc))
+        raise typer.Exit(1)
 
     _validate_lineage_members(configs)
     _validate_config_preconditions(configs)
@@ -1016,7 +1177,7 @@ def cache_clear(
     if not confirm:
         confirm = typer.confirm(f"Really delete {desc}?")
         if not confirm:
-            logger.warning("Cancelled")
+            logger.warning("Canceled")
             return
 
     deleted = cache.clear_cache(stage=stage, gcm=gcm, variable=variable)

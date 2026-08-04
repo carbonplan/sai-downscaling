@@ -43,7 +43,7 @@ BLOCKING_CHECKS = {
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
-SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
+SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K", "G6-1.5K-END")
 # On-disk variable group names; canonical (lowercase), so no translation needed.
 VARIABLE_OPTIONS = get_args(VariableName)
 
@@ -52,7 +52,7 @@ VARIABLE_OPTIONS = get_args(VariableName)
 # These end dates used to run a day or more past the scenario's nominal end, which looked like
 # CESM writing an extra time step. It was not: CAM stamps interval statistics at the END of the
 # averaging interval and prefixes each history stream with a zero-width initial-state record, so
-# the raw axis labelled every daily mean one day late (issue #521). The ETL now rebuilds the axis
+# the raw axis labeled every daily mean one day late (issue #521). The ETL now rebuilds the axis
 # from time_bnds via srm.utils.decode_time_from_bounds, which is where that convention is
 # documented in full, and TIME_RANGE in srm.input_data.cesm2_waccm clamps what remains.
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
@@ -62,6 +62,8 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
         "historical": ("1850-01-01", "2014-12-31"),
         "SSP245": ("2015-01-01", "2099-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
+        # Termination-shock continuation of G6-1.5K member 002
+        "G6-1.5K-END": ("2085-01-01", "2100-12-31"),
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
@@ -92,6 +94,9 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "001": ("2035-01-01", "2084-12-31"),
             "002": ("2035-01-01", "2084-12-31"),
             "003": ("2035-01-01", "2084-12-31"),
+        },
+        "G6-1.5K-END": {
+            "002": ("2085-01-01", "2100-12-31"),
         },
         "historical": {
             "001": ("1978-01-01", "2014-12-31"),

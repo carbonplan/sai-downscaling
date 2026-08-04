@@ -27,7 +27,7 @@ import xarray as xr
 from conftest import make_icechunk_group as _make_icechunk_group
 from ibicus.debias import QuantileMapping
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.downscaling_utils import select_training_window
 from srm.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
 from srm.input_data.gdex_gmf import (
@@ -1164,7 +1164,7 @@ class TestWeibullZeroBounded:
             predict_period_start=2015,
             predict_period_end=2100,
         )
-        assert cfg.debias_approach == "nonparametric_hybrid_2sided"
+        assert cfg.variable_config.debias_approach == "nonparametric_hybrid_2sided"
         pipeline = BCSDPipeline(cfg, pipeline_options)
 
         time = pd.date_range("2014-01-01", periods=6)
@@ -2230,7 +2230,9 @@ class TestBiasCorrectionEstablishesItsOwnWindow:
             train_period_end=2008,
             predict_period_start=2015,
             predict_period_end=2020,
-            debias_approach="nonparametric",
+            variable_config=VariableConfig.for_variable("tas").model_copy(
+                update={"debias_approach": "nonparametric"}
+            ),
         )
         pipeline = BCSDPipeline(config, pipeline_options)
         # Deliberately hand over the full record, exactly as the stitch consumer needs it.
@@ -2254,7 +2256,9 @@ class TestBiasCorrectionEstablishesItsOwnWindow:
             ensemble_member="r1i1p1f1",
             train_period_start=1978,
             train_period_end=2008,
-            debias_approach="nonparametric",
+            variable_config=VariableConfig.for_variable("tas").model_copy(
+                update={"debias_approach": "nonparametric"}
+            ),
         )
         pipeline = BCSDPipeline(config, pipeline_options)
         full_record = _spatial_daily_da("1978-01-01", "2014-12-31")

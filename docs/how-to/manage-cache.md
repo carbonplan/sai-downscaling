@@ -44,7 +44,7 @@ variables it equals `member`, but for SAI scenarios they can differ.
 
 Three additional groups appear in the scratch store only when `save_intermediate: true` is set in
 your config. They capture the pipeline state between computation steps and are useful for
-debugging detrending behaviour without re-running the full stage.
+debugging detrending behavior without re-running the full stage.
 
 | Group pattern | Written by | Contents |
 |---------------|------------|----------|

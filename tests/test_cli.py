@@ -9,11 +9,14 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cli import (
     _expand_matrix_config,
     _is_matrix_config,
+    _parse_variable_overrides,
+    _resolve_variable_config,
     _validate_config_preconditions,
+    _validate_variable_overrides,
     app,
     configs_from_matrix,
     load_configs,
@@ -366,3 +369,286 @@ class TestShippedObsComparisonConfig:
         configs, _ = load_configs(str(self._PATH))
 
         _validate_config_preconditions(configs)
+
+
+class TestResolveVariableConfig:
+    """Three-tier precedence: table default < run-wide < per-variable override."""
+
+    def test_table_default_when_nothing_supplied(self):
+        vc = _resolve_variable_config("dtr", None, None)
+        assert vc.debias_approach == "nonparametric_hybrid_2sided"
+        assert vc.downscaling_method == "multiplicative"
+
+    def test_run_wide_beats_table_default(self):
+        vc = _resolve_variable_config("dtr", {"debias_approach": "parametric"}, None)
+        assert vc.debias_approach == "parametric"
+
+    def test_override_beats_run_wide(self):
+        vc = _resolve_variable_config(
+            "dtr",
+            {"debias_approach": "parametric"},
+            {"dtr": {"debias_approach": "nonparametric"}},
+        )
+        assert vc.debias_approach == "nonparametric"
+
+    def test_override_for_another_variable_is_ignored(self):
+        vc = _resolve_variable_config("tas", None, {"dtr": {"debias_approach": "nonparametric"}})
+        assert vc.debias_approach == "nonparametric_hybrid_2sided"
+
+    def test_none_values_in_run_wide_do_not_override(self):
+        vc = _resolve_variable_config("tas", {"debias_approach": None}, None)
+        assert vc.debias_approach == "nonparametric_hybrid_2sided"
+
+    def test_string_values_are_coerced_and_validated(self):
+        vc = _resolve_variable_config("pr", None, {"pr": {"do_windowing": "false"}})
+        assert vc.do_windowing is False
+
+    def test_invalid_value_raises(self):
+        with pytest.raises(ValidationError):
+            _resolve_variable_config("tas", None, {"tas": {"downscaling_method": "bogus"}})
+
+
+class TestValidateVariableOverrides:
+    def test_unknown_variable_key_raises(self):
+        with pytest.raises(ValueError, match="not in variables"):
+            _validate_variable_overrides({"dtr": {"debias_approach": "nonparametric"}}, ["tas"])
+
+    def test_unknown_field_raises(self):
+        with pytest.raises(ValueError, match="unknown field"):
+            _validate_variable_overrides({"tas": {"nonsense": 1}}, ["tas"])
+
+    def test_non_mapping_value_raises(self):
+        with pytest.raises(ValueError, match="must be a mapping"):
+            _validate_variable_overrides({"tas": "nonparametric"}, ["tas"])
+
+    def test_valid_overrides_pass(self):
+        _validate_variable_overrides({"tas": {"debias_approach": "parametric"}}, ["tas", "dtr"])
+
+
+class TestExpandMatrixConfigOverrides:
+    def test_per_variable_debias_approach(self):
+        configs = _expand_matrix_config(
+            {
+                "gcm": "CESM2-WACCM",
+                "variables": ["tasmax", "dtr"],
+                "ensemble_member": "007",
+                "scenario": "ssp245",
+                "predict_period_start": 2015,
+                "predict_period_end": 2100,
+                "variable_overrides": {"dtr": {"debias_approach": "nonparametric"}},
+            }
+        )
+        by_var = {c.variable: c.variable_config.debias_approach for c in configs}
+        assert by_var == {
+            "tasmax": "nonparametric_hybrid_2sided",
+            "dtr": "nonparametric",
+        }
+
+    def test_top_level_debias_approach_raises(self):
+        """The moved key must not be silently ignored in a matrix config either."""
+        with pytest.raises(ValidationError, match="variable_overrides"):
+            _expand_matrix_config(
+                {
+                    "gcm": "CESM2-WACCM",
+                    "variables": ["tasmax", "dtr"],
+                    "ensemble_member": "007",
+                    "debias_approach": "nonparametric",
+                }
+            )
+
+    def test_variable_config_with_multiple_variables_still_raises(self):
+        with pytest.raises(ValueError, match="variable_overrides"):
+            _expand_matrix_config(
+                {
+                    "gcm": "CESM2-WACCM",
+                    "variables": ["tas", "pr"],
+                    "ensemble_member": "007",
+                    "variable_config": {"detrend_data": False},
+                }
+            )
+
+    def test_single_variable_config_still_allowed(self):
+        configs = _expand_matrix_config(
+            {
+                "gcm": "CESM2-WACCM",
+                "variables": ["tas"],
+                "ensemble_members": ["007", "008"],
+                "variable_config": VariableConfig.for_variable("tas").model_dump(),
+            }
+        )
+        assert len(configs) == 2
+
+    def test_variable_config_combined_with_overrides_raises(self):
+        """An explicit variable_config is used verbatim, so overrides would be dropped."""
+        with pytest.raises(ValueError, match="Cannot combine"):
+            _expand_matrix_config(
+                {
+                    "gcm": "CESM2-WACCM",
+                    "variables": ["tas"],
+                    "ensemble_member": "007",
+                    "variable_config": VariableConfig.for_variable("tas").model_dump(),
+                    "variable_overrides": {"tas": {"debias_approach": "parametric"}},
+                }
+            )
+
+    def test_variable_overrides_in_non_matrix_config_raises(self):
+        """A scalar-only config bypasses matrix expansion, where overrides are resolved.
+
+        Without an explicit rejection, extra="ignore" would drop the key and the run
+        would look configured while silently using the defaults.
+        """
+        with pytest.raises(ValidationError, match="variable_overrides"):
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                variable="tas",
+                ensemble_member="007",
+                variable_overrides={"tas": {"debias_approach": "parametric"}},
+            )
+
+
+class TestParseVariableOverrides:
+    def test_single_override(self):
+        assert _parse_variable_overrides(["dtr:debias_approach=nonparametric"]) == {
+            "dtr": {"debias_approach": "nonparametric"}
+        }
+
+    def test_repeated_flags_accumulate_across_variables(self):
+        parsed = _parse_variable_overrides(
+            ["dtr:debias_approach=nonparametric", "pr:do_windowing=false"]
+        )
+        assert parsed == {
+            "dtr": {"debias_approach": "nonparametric"},
+            "pr": {"do_windowing": "false"},
+        }
+
+    def test_repeated_flags_accumulate_within_one_variable(self):
+        parsed = _parse_variable_overrides(["pr:do_windowing=false", "pr:running_window_length=15"])
+        assert parsed == {"pr": {"do_windowing": "false", "running_window_length": "15"}}
+
+    def test_whitespace_is_stripped(self):
+        assert _parse_variable_overrides([" dtr : debias_approach = nonparametric "]) == {
+            "dtr": {"debias_approach": "nonparametric"}
+        }
+
+    def test_missing_colon_raises(self):
+        with pytest.raises(ValueError, match="variable:field=value"):
+            _parse_variable_overrides(["debias_approach=nonparametric"])
+
+    def test_missing_equals_raises(self):
+        with pytest.raises(ValueError, match="variable:field=value"):
+            _parse_variable_overrides(["dtr:debias_approach"])
+
+    def test_empty_variable_raises(self):
+        with pytest.raises(ValueError, match="variable:field=value"):
+            _parse_variable_overrides([":debias_approach=nonparametric"])
+
+
+class TestConfigsFromMatrixOverrides:
+    def test_per_variable_debias_approach(self):
+        configs, _ = configs_from_matrix(
+            gcms=["CESM2-WACCM"],
+            variables=["tasmax", "dtr"],
+            members=["007"],
+            scenarios=["ssp245"],
+            predict_period_start=2015,
+            predict_period_end=2100,
+            variable_overrides={"dtr": {"debias_approach": "nonparametric"}},
+        )
+        by_var = {c.variable: c.variable_config.debias_approach for c in configs}
+        assert by_var == {"tasmax": "nonparametric_hybrid_2sided", "dtr": "nonparametric"}
+
+    def test_run_wide_flag_still_applies_to_all(self):
+        configs, _ = configs_from_matrix(
+            gcms=["CESM2-WACCM"],
+            variables=["tasmax", "dtr"],
+            members=["007"],
+            scenarios=[None],
+            debias_approach="parametric",
+        )
+        assert {c.variable_config.debias_approach for c in configs} == {"parametric"}
+
+    def test_override_beats_run_wide_flag(self):
+        configs, _ = configs_from_matrix(
+            gcms=["CESM2-WACCM"],
+            variables=["tasmax", "dtr"],
+            members=["007"],
+            scenarios=[None],
+            debias_approach="parametric",
+            variable_overrides={"dtr": {"debias_approach": "nonparametric"}},
+        )
+        by_var = {c.variable: c.variable_config.debias_approach for c in configs}
+        assert by_var == {"tasmax": "parametric", "dtr": "nonparametric"}
+
+    def test_invalid_override_value_raises(self):
+        with pytest.raises(ValidationError):
+            configs_from_matrix(
+                gcms=["CESM2-WACCM"],
+                variables=["tas"],
+                members=["007"],
+                scenarios=[None],
+                variable_overrides={"tas": {"downscaling_method": "bogus"}},
+            )
+
+    def test_existing_run_wide_override_is_now_validated(self):
+        """Regression: model_copy accepted bad values; validated construction must not."""
+        with pytest.raises(ValidationError):
+            configs_from_matrix(
+                gcms=["CESM2-WACCM"],
+                variables=["tas"],
+                members=["007"],
+                scenarios=[None],
+                downscaling_method="bogus",
+            )
+
+
+class TestRunMatrixOverrideFlag:
+    def test_dry_run_applies_per_variable_override(self):
+        # `_validate_lineage_members` runs before the --dry-run branch and opens each
+        # GCM's unified datatree over the network. Patch it out so this test stays hermetic.
+        with patch("srm.cli._validate_lineage_members"):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "run-matrix",
+                    "--gcm",
+                    "CESM2-WACCM",
+                    "--variable",
+                    "tasmax",
+                    "--variable",
+                    "dtr",
+                    "--member",
+                    "007",
+                    "--scenario",
+                    "ssp245",
+                    # 007 is a truncated CESM member: its data ends in 2069, which
+                    # `_validate_config_preconditions` enforces before the --dry-run branch.
+                    "--predict-period-start",
+                    "2015",
+                    "--predict-period-end",
+                    "2069",
+                    "--variable-override",
+                    "dtr:debias_approach=nonparametric",
+                    "--dry-run",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        assert "tasmax" in result.output and "dtr" in result.output
+
+    def test_malformed_override_exits_nonzero(self):
+        # Parsing happens before any dataset access, so no patch is needed here.
+        result = CliRunner().invoke(
+            app,
+            [
+                "run-matrix",
+                "--gcm",
+                "CESM2-WACCM",
+                "--variable",
+                "tas",
+                "--member",
+                "007",
+                "--variable-override",
+                "garbage",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code != 0
