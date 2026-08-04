@@ -11,9 +11,10 @@
 
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds"]
+
 ensemble_members: ["003"]
 scenarios: ["SSP245"]
-obs_datasets: ["ERA5", "GDEX-GMF"]
+obs_datasets: ["GDEX-GMF","ERA5"]
 
 # South Africa region: [lat_min, lat_max, lon_min, lon_max].
 # Comment out for a global run; both obs datasets follow automatically.

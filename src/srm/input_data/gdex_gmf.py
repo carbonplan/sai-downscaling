@@ -8,12 +8,15 @@ import time
 
 import dask
 import icechunk
+import numpy as np
 import typer
 import xarray as xr
 import zarr
+from icechunk.xarray import to_icechunk
 from obspec_utils.readers import EagerStoreReader
 from obstore.store import HTTPStore
 
+from srm.bcsd_config import VariableConfig
 from srm.config import VarSpec, VarStandards
 from srm.input_data.etl_utils import (
     _display_dry_run_result,
@@ -26,6 +29,7 @@ from srm.input_data.etl_utils import (
     update_variable_attrs,
     write_dataset_to_icechunk,
 )
+from srm.qaqc import periodic_rolling
 from srm.utils import lon_to_180
 
 zarr.config.set({"async.concurrency": 128})
@@ -72,6 +76,11 @@ OUTPUT_CHUNKS: dict[str, int] = {"time": 1, "lat": 720, "lon": 1440}
 OUTPUT_SHARDS: dict[str, int] = {"time": 30, "lat": 720, "lon": 1440}
 
 _DRY_RUN_STEPS = 365
+FILL_MAX = 1e-9
+FILL_MIN = 0.9 * FILL_MAX
+CENSORING_THRESHOLD = 0.1 / 86400  # 0.1 mm/day in kg m-2 s-1
+TRAIN_PERIOD = ("1960", "2008")  # matches the BCSD training window
+VARIABLE_CONFIG_WINDOW = VariableConfig.model_fields["running_window_length"].default
 
 
 # --- Source URL helpers ---
@@ -289,6 +298,7 @@ def process_gdex(
     write_mode = "w" if overwrite else determine_write_mode(repo)
     log.info("writing %s shape=%s mode=%s", cmip6_names, dict(ds.dims), write_mode)
     encoding = build_encoding_dict(ds, OUTPUT_CHUNKS, OUTPUT_SHARDS)
+
     write_dataset_to_icechunk(
         ds,
         session,
@@ -300,6 +310,100 @@ def process_gdex(
         group=None,
     )
     log.info("Done: %s", msg)
+
+
+# --- Chronic-zero precipitation patch: scan and fill (issue #517) ---
+
+
+def open_pr(uri: str, branch: str = "main") -> xr.DataArray:
+    repo, _ = _init_repo_from_uri(uri)
+    return xr.open_dataset(
+        repo.readonly_session(branch).store, engine="zarr", chunks=OUTPUT_SHARDS
+    )["pr"]
+
+
+def _any_within_window(mask: xr.DataArray, window: int = VARIABLE_CONFIG_WINDOW) -> xr.DataArray:
+    """Is the ``(dayofyear, ...)`` mask true anywhere in the centered window? Wraps the year."""
+    return periodic_rolling(mask.astype("int8"), dim="dayofyear", window=window, agg="max") > 0
+
+
+def always_dry_doy_windows(pr: xr.DataArray, window: int = VARIABLE_CONFIG_WINDOW) -> xr.DataArray:
+    """``(dayofyear, lat, lon)`` mask of windows with no rain on any day, in any year."""
+    doy_max = pr.groupby("time.dayofyear").max()
+    observed = doy_max.notnull().any("dayofyear")
+    return ~_any_within_window(doy_max > 0, window) & observed
+
+
+def patch_dry_pixels(
+    branch: str = "fix-dry-pixels",
+) -> None:
+    """Fill chronically dry precipitation windows onto a non-main icechunk branch.
+
+    Scans the training window for day-of-year windows that never see rain, then replaces the
+    exact zeros on those days with ``FILL_CONST``. The whole record is rewritten, not just the
+    training years, so the fill stays consistent across the store.
+    """
+    if branch == "main":
+        raise ValueError("refusing to patch main; use a dedicated branch, then merge")
+
+    pr = open_pr(OUTPUT_URI)
+
+    always_dry = always_dry_doy_windows(pr.sel(time=slice(*TRAIN_PERIOD))).compute()
+
+    observed = int(pr.isel(time=0).notnull().sum().compute())
+    flagged_doy_cells = int(always_dry.sum())
+    flagged_cells = int(always_dry.any("dayofyear").sum())
+    log.info(
+        "flagged %d doy-cells across %d cells (%.2f%% of %d observed)",
+        flagged_doy_cells,
+        flagged_cells,
+        100 * flagged_cells / observed,
+        observed,
+    )
+    if flagged_cells == 0:
+        raise ValueError("scan flagged nothing! No changes made")
+
+    fill_doys = _any_within_window(always_dry, VARIABLE_CONFIG_WINDOW).reindex(
+        dayofyear=np.arange(1, 367), fill_value=False
+    )
+
+    doy = pr["time"].dt.dayofyear
+    fill_days = (
+        fill_doys.chunk({"dayofyear": -1})
+        .sel(dayofyear=doy)
+        .drop_vars("dayofyear")
+        .chunk({"time": OUTPUT_SHARDS["time"]})
+    )
+
+    FILL_CONST = 1e-6
+    patched = xr.where(fill_days & (pr == 0), FILL_CONST, pr).astype(pr.dtype).rename("pr")
+
+    # Jittered alternative, drawn from a narrow band so the filled window has non-zero variance.
+    # def _draw(block, block_id=None):
+    #     rng = np.random.default_rng((0, *block_id))
+    #     return rng.uniform(FILL_MIN, FILL_MAX, size=block.shape).astype(block.dtype)
+
+    # fill = pr.copy(data=pr.data.map_blocks(_draw, dtype=pr.dtype))
+    # patched = xr.where(fill_days & (pr == 0), fill, pr).astype(pr.dtype).rename("pr")
+
+    patched.attrs = pr.attrs
+
+    log.info("Done: %s", patched)
+    print(patched)
+    repo, _ = _init_repo_from_uri(OUTPUT_URI)
+    if branch not in repo.list_branches():
+        repo.create_branch(branch, repo.lookup_branch("main"))
+        log.info("created branch %s from the main tip", branch)
+    session = repo.writable_session(branch)
+
+    to_icechunk(patched.to_dataset(name="pr"), session, region="auto", mode="r+")
+
+    snapshot = session.commit("fixed empty rolling windows without rain")
+    console.print(f"committed {snapshot} to branch {branch}")
+    console.print(f"main tip unchanged: {repo.lookup_branch('main')}")
+
+    # Promote, once the branch has been reviewed.
+    # repo.reset_branch("main", repo.lookup_branch(branch))
 
 
 # --- CLI ---
@@ -367,6 +471,18 @@ def process(
         commit_message=commit_message,
         overwrite=overwrite,
     )
+
+
+@app.command()
+def fix_dry_pixels(
+    branch: str = typer.Option("fix-dry-pixels", "--branch", help="Target branch; never main."),
+) -> None:
+    """Fill chronically dry precipitation windows (issue #517).
+
+    Cells that are exactly zero across a whole running window in every training year break the
+    parametric tail fits in the BCSD debiaser. Writes to a dedicated branch; main is untouched.
+    """
+    patch_dry_pixels(branch=branch)
 
 
 if __name__ == "__main__":

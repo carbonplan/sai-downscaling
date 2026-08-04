@@ -30,6 +30,10 @@ from ibicus.debias import QuantileMapping
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.downscaling_utils import select_training_window
 from srm.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
+from srm.input_data.gdex_gmf import (
+    _any_within_window,
+    always_dry_doy_windows,
+)
 from srm.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
@@ -1218,6 +1222,39 @@ class TestWeibullZeroBounded:
         assert floc_seen, "ibicus never called the distribution's fit"
         assert all(floc == 0 for floc in floc_seen)
         assert np.isfinite(debiased).all()
+
+
+def _pr_raining_on(rain_doys: list[int]) -> xr.DataArray:
+    """Four years of zero precipitation, with rain on ``rain_doys`` of the first year."""
+    time = pd.date_range("2000-01-01", "2003-12-31", freq="D")
+    values = np.zeros((len(time), 1, 1))
+    for doy in rain_doys:
+        values[(time.dayofyear == doy) & (time.year == 2000)] = 5e-5
+    return xr.DataArray(
+        values,
+        dims=("time", "lat", "lon"),
+        coords={"time": time, "lat": [0.0], "lon": [0.0]},
+    )
+
+
+def test_always_dry_doy_windows():
+    all_dry = always_dry_doy_windows(_pr_raining_on([100]))
+    # One rain day spares its whole centered window; days outside it stay flagged.
+    assert not all_dry.sel(dayofyear=slice(85, 115)).any().item()
+    assert all_dry.sel(dayofyear=84).item()
+    assert all_dry.sel(dayofyear=116).item()
+
+
+def test_any_within_window():
+    flagged = xr.DataArray(
+        np.zeros((366, 1, 1), dtype=bool),
+        dims=("dayofyear", "lat", "lon"),
+        coords={"dayofyear": np.arange(1, 367), "lat": [0.0], "lon": [0.0]},
+    )
+    flagged.loc[{"dayofyear": 100}] = True
+    days = _any_within_window(flagged)
+    assert days.sel(dayofyear=slice(85, 115)).all().item()
+    assert not days.sel(dayofyear=84).item()
 
 
 # ---------------------------------------------------------------------------
