@@ -42,6 +42,9 @@ SCENARIO_TO_GROUP: dict[str, str] = {
     "ssp245": "ssp245",  # lowercase alias used by MIROC ETL
     "G6-1.5K": "g6_1p5k",
     "g6_1p5k": "g6_1p5k",  # pass-through when callers already hold the group name
+    # Termination-shock continuation of G6-1.5K (2085-2100).
+    "G6-1.5K-END": "g6_1p5k_end",
+    "g6_1p5k_end": "g6_1p5k_end",  # group-name pass-through
     "esgf-SSP245": "esgf_ssp245",
     "esgf-ssp245": "esgf_ssp245",  # lowercase alias used by MIROC ETL
     "esgf_ssp245": "esgf_ssp245",  # group-name pass-through
