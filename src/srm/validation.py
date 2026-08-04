@@ -40,7 +40,7 @@ BLOCKING_CHECKS = {
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
-SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
+SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K", "G6-1.5K-END")
 # On-disk variable group names; canonical (lowercase), so no translation needed.
 VARIABLE_OPTIONS = get_args(VariableName)
 
@@ -59,6 +59,8 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
         "historical": ("1850-01-01", "2014-12-31"),
         "SSP245": ("2015-01-01", "2099-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
+        # Termination-shock continuation of G6-1.5K member 002
+        "G6-1.5K-END": ("2085-01-01", "2100-12-31"),
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
@@ -89,6 +91,9 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "001": ("2035-01-01", "2084-12-31"),
             "002": ("2035-01-01", "2084-12-31"),
             "003": ("2035-01-01", "2084-12-31"),
+        },
+        "G6-1.5K-END": {
+            "002": ("2085-01-01", "2100-12-31"),
         },
         "historical": {
             "001": ("1978-01-01", "2014-12-31"),

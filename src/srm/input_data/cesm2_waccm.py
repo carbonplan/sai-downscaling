@@ -54,6 +54,8 @@ NETCDF_PREFIX: dict[str, str] = {
     "historical": "input/tensor/CESM2/CESM2-WACCM-Historical/netcdf",
     "SSP245": "input/tensor/CESM2/CESM2-WACCM-SSP245/netcdf",
     "G6-1.5K": "input/tensor/CESM2/CESM2-WACCM-G6-1.5K/netcdf",
+    # The only CESM scenario sourced from input/raw/ rather than input/tensor/.
+    "G6-1.5K-END": "input/raw/CESM2-WACCM/netcdf/g6-1p5k-end",
 }
 
 ENSEMBLE_MEMBERS: dict[str, list[str]] = {
@@ -61,18 +63,22 @@ ENSEMBLE_MEMBERS: dict[str, list[str]] = {
     "historical": ["001"],
     "SSP245": ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"],
     "G6-1.5K": ["001", "002", "003"],
+    "G6-1.5K-END": ["002"],  # single run, case G6-1p5K-termination_002
 }
 
 TIME_RANGE: dict[str, str] = {
     "historical": "1850-2014",
     "SSP245": "2015-2099",
     "G6-1.5K": "2035-2084",
+    # Decoded from time_bnds: the two source files stamp 2085-01-02..2095-01-01 and
+    # 2095-01-02..2101-01-01, which decode to a contiguous 2085-01-01..2100-12-31.
+    "G6-1.5K-END": "2085-2100",
 }
 
 OUTPUT_CHUNKS: dict[str, int] = {"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288}
 OUTPUT_SHARDS: dict[str, int] = {"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288}
 
-ALL_SCENARIOS = ["pangeo-historical", "historical", "SSP245", "G6-1.5K"]
+ALL_SCENARIOS = ["pangeo-historical", "historical", "SSP245", "G6-1.5K", "G6-1.5K-END"]
 
 # Issue #424 (TREFHTMX == TREFHTMN == TREFHT on each run's first day) was a symptom of the
 # zero-width initial-state record described in issue #521: an instantaneous field has no
@@ -92,9 +98,11 @@ VAR_SPECS: dict[str, VarSpec] = {
 
 _DRY_RUN_STEPS = 365
 
-# CESM case names embed the member as a 3-digit segment, e.g.
-# b.e21.BWSSP245cmip6.f09_g17.CMIP6-SSP2-4.5-WACCM.001.cam.h1....nc
-MEMBER_PATTERN = re.compile(r"\.(\d{3})\.cam\.")
+# CESM case names embed the member as a 3-digit segment before ".cam.", separated by a
+# dot in the CMIP6-style cases and by an underscore in the termination run:
+#   b.e21.BWSSP245cmip6.f09_g17.CMIP6-SSP2-4.5-WACCM.001.cam.h1....nc
+#   G6-1p5K-termination_002.cam.h1....nc
+MEMBER_PATTERN = re.compile(r"[._](\d{3})\.cam\.")
 
 CESM_WACCM_VARIABLE_MAPPING: dict[str, str] = {
     "FSDS": "rsds",
