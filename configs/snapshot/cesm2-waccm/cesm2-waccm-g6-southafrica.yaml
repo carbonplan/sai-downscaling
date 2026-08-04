@@ -14,8 +14,6 @@ train_period_end: 2014
 predict_period_start: 2035
 predict_period_end: 2084
 
-debias_approach: "nonparametric_hybrid_2sided"
-
 # Run over a ~3 deg halo beyond the region of interest ([-35, -22, 16, 33]) so BCSD's
 # regrid + spatial disaggregation edge effects fall outside it. The comparison notebook
 # trims back to the region of interest (roi_bounds) before diffing.

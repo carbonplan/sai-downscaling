@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import xarray as xr
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.pipeline import BCSDPipeline
 
 
@@ -20,7 +20,9 @@ def _make_config(**overrides) -> BCSDConfig:
         predict_period_start=2015,
         predict_period_end=2100,
         subset_bounds=(-35.0, -22.0, 16.0, 33.0),
-        debias_approach="nonparametric_hybrid",
+        variable_config=VariableConfig.for_variable("tas").model_copy(
+            update={"debias_approach": "nonparametric_hybrid"}
+        ),
     )
     defaults.update(overrides)
     return BCSDConfig(**defaults)
