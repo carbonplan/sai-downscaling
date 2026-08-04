@@ -569,13 +569,24 @@ class TestCheckConfigTimeDomain:
         assert check_config_time_domain(self._config(member, 2070)).status == CheckStatus.FAIL
         assert check_config_time_domain(self._config(member, 2069)).status == CheckStatus.PASS
 
-    def test_sai_early_start_exempt(self):
-        # G6/SAI runs intentionally start before the scenario data (bridged with SSP245),
-        # so an early predict_period_start must not fail.
+    def test_sai_early_start_fails(self):
+        # The pipeline can run a G6 config starting in 2015 by bridging with SSP245, but
+        # those bridge years are not G6 data. Issue #448 is what that produced: pre-2035
+        # g6_1p5k output bridged from per-variable SSP245 realizations, giving tas > tasmax.
         from srm.validation import check_config_time_domain
 
         r = check_config_time_domain(
             self._config("001", 2084, predict_start=2015, scenario="G6-1.5K")
+        )
+        assert r.status == CheckStatus.FAIL
+        assert "2035" in r.message
+        assert "bridge" in r.message
+
+    def test_sai_start_at_data_start_passes(self):
+        from srm.validation import check_config_time_domain
+
+        r = check_config_time_domain(
+            self._config("001", 2084, predict_start=2035, scenario="G6-1.5K")
         )
         assert r.status == CheckStatus.PASS
 
@@ -583,10 +594,30 @@ class TestCheckConfigTimeDomain:
         from srm.validation import check_config_time_domain
 
         r = check_config_time_domain(
-            self._config("001", 2086, predict_start=2015, scenario="G6-1.5K")
+            self._config("001", 2086, predict_start=2035, scenario="G6-1.5K")
         )
         assert r.status == CheckStatus.FAIL
         assert "2084" in r.message
+
+    def test_termination_run_start_at_2085_passes(self):
+        from srm.validation import check_config_time_domain
+
+        r = check_config_time_domain(
+            self._config("002", 2100, predict_start=2085, scenario="G6-1.5K-END")
+        )
+        assert r.status == CheckStatus.PASS
+
+    @pytest.mark.parametrize("predict_start", [2015, 2035, 2084])
+    def test_termination_run_early_start_fails(self, predict_start):
+        # 2035 is the parent G6-1.5K start and 2015 the SSP245 start; both are bridge
+        # years for this scenario, not termination-shock data.
+        from srm.validation import check_config_time_domain
+
+        r = check_config_time_domain(
+            self._config("002", 2100, predict_start=predict_start, scenario="G6-1.5K-END")
+        )
+        assert r.status == CheckStatus.FAIL
+        assert "2085" in r.message
 
     def test_historical_only_skips(self):
         from srm.bcsd_config import BCSDConfig

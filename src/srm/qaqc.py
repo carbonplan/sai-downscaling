@@ -1173,11 +1173,11 @@ def _baseline_member(
     registers no such parent for the combination.
     """
     label = GROUP_TO_SCENARIO[after_group]
-    historical_member, ssp245_member, _ = resolve_member_lineage(gcm, label, after_member, variable)
+    lineage = resolve_member_lineage(gcm, label, after_member, variable)
     if before_group == "historical":
-        return historical_member
+        return lineage.historical
     if before_group == "ssp245":
-        return ssp245_member
+        return lineage.ssp245_bridge
     raise ValueError(f"no lineage rule for a {before_group!r} baseline")
 
 
