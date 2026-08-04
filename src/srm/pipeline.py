@@ -14,6 +14,7 @@ import logging
 import time
 import warnings
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import dask.system
 import icechunk
@@ -54,6 +55,9 @@ from srm.encoding import (
 )
 from srm.qa_checks import assert_no_nans
 from srm.utils import get_variable
+
+if TYPE_CHECKING:
+    from srm.lineage import ScenarioMember
 
 logger = logging.getLogger(__name__)
 
@@ -360,21 +364,21 @@ class BCSDPipeline:
         self._hist_member = config.ensemble_member
         self._ssp245_member = config.ensemble_member
         self._ssp245_esgf_member: str | None = None
-        self._sai_parent: tuple[str, str] | None = None
+        self._sai_parent: ScenarioMember | None = None
         if config.scenario is not None:
             from srm.lineage import resolve_member_lineage
 
             try:
-                (
-                    self._hist_member,
-                    self._ssp245_member,
-                    self._ssp245_esgf_member,
-                    self._sai_parent,
-                ) = resolve_member_lineage(
+                lineage = resolve_member_lineage(
                     config.gcm, config.scenario, config.ensemble_member, config.variable
                 )
             except KeyError:
                 pass
+            else:
+                self._hist_member = lineage.historical
+                self._ssp245_member = lineage.ssp245_bridge
+                self._ssp245_esgf_member = lineage.ssp245_esgf_bridge
+                self._sai_parent = lineage.sai_parent
 
         if self._hist_member != config.ensemble_member:
             parts = [
@@ -384,7 +388,7 @@ class BCSDPipeline:
             if self._ssp245_member != config.ensemble_member:
                 parts.append(f"ssp245_bridge={self._ssp245_member!r}")
             if self._sai_parent is not None:
-                parts.append(f"sai_parent={'/'.join(self._sai_parent)!r}")
+                parts.append(f"sai_parent={str(self._sai_parent)!r}")
             logger.info("Lineage resolved — %s", "  ".join(parts))
 
     def _nan_check_context(self, stage: str) -> dict[str, str | None]:
@@ -434,9 +438,8 @@ class BCSDPipeline:
         # Only present on scenarios that continue an earlier SAI run, so readers can tell
         # which run supplied the pre-scenario years of the bridge.
         if self._sai_parent is not None:
-            parent_scenario, parent_member = self._sai_parent
-            attrs["srm_downscaling:sai_parent_scenario"] = parent_scenario
-            attrs["srm_downscaling:sai_parent_ensemble_member"] = parent_member
+            attrs["srm_downscaling:sai_parent_scenario"] = self._sai_parent.scenario
+            attrs["srm_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
         return attrs
 
     def _write_to_icechunk(
@@ -1098,7 +1101,7 @@ class BCSDPipeline:
         if self._sai_parent is None:
             return bridge
 
-        parent_scenario, parent_member = self._sai_parent
+        parent_scenario, parent_member = self._sai_parent.scenario, self._sai_parent.member
         parent = get_experiment(self.config.gcm, parent_scenario, self.config.variable)
         parent = parent.sel(ensemble_member=parent_member)
         parent = parent.drop_vars("spatial_ref", errors="ignore")

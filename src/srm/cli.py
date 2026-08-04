@@ -138,11 +138,12 @@ def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
             continue
         seen.add(key)
         try:
-            hist, ssp245, *_ = resolve_member_lineage(
+            lineage = resolve_member_lineage(
                 cfg.gcm, cfg.scenario, cfg.ensemble_member, cfg.variable
             )
         except KeyError:
             continue
+        hist, ssp245 = lineage.historical, lineage.ssp245_bridge
         if hist == cfg.ensemble_member and ssp245 == cfg.ensemble_member:
             continue
         ssp = ssp245 if ssp245 != cfg.ensemble_member else "—"
@@ -160,12 +161,12 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
     is registered for the GCM/scenario pair.
     """
 
-    def _sort_token(field: str | tuple[str, str] | None) -> str:
+    from srm.lineage import ScenarioMember, get_lineage_entries
+
+    def _sort_token(field: str | ScenarioMember | None) -> str:
         if field is None:
             return ""
-        return "/".join(field) if isinstance(field, tuple) else field
-
-    from srm.lineage import get_lineage_entries
+        return str(field)
 
     for scenario in scenarios:
         if scenario == "historical":
@@ -174,9 +175,9 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         if not entries:
             continue
 
-        has_ssp245 = any(ssp is not None for _, ssp, *_ in entries.values())
-        has_ssp245_esgf = any(esgf is not None for _, _, esgf, _ in entries.values())
-        has_sai_parent = any(parent is not None for *_, parent in entries.values())
+        has_ssp245 = any(e.ssp245_bridge is not None for e in entries.values())
+        has_ssp245_esgf = any(e.ssp245_esgf_bridge is not None for e in entries.values())
+        has_sai_parent = any(e.sai_parent is not None for e in entries.values())
 
         tbl = Table(
             title=f"Lineage — {scenario}",
@@ -195,17 +196,24 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         if has_sai_parent:
             tbl.add_column("→ SAI parent", style="blue", justify="right")
 
-        seen: dict[tuple[str, str, str | None, str | None, tuple[str, str] | None], list[str]] = {}
-        for (member, var), (hist, ssp245, ssp245_esgf, sai_parent) in sorted(entries.items()):
-            key = (member, hist, ssp245, ssp245_esgf, sai_parent)
+        seen: dict[tuple[str, str, str | None, str | None, ScenarioMember | None], list[str]] = {}
+        for (member, var), entry in sorted(entries.items()):
+            key = (
+                member,
+                entry.historical,
+                entry.ssp245_bridge,
+                entry.ssp245_esgf_bridge,
+                entry.sai_parent,
+            )
             if key not in seen:
                 seen[key] = []
             if var not in seen[key]:
                 seen[key].append(var)
 
         # Sort on rendered tokens rather than the raw key: the key mixes str, None, and
-        # tuple, and Python compares element-wise only once the earlier fields tie, so a
-        # raw sort raises TypeError the moment two rows differ only in a None-vs-set field.
+        # ScenarioMember, and Python compares element-wise only once the earlier fields
+        # tie, so a raw sort raises TypeError the moment two rows differ only in a
+        # None-vs-set field or only in their SAI parent.
         for (member, hist, ssp245, ssp245_esgf, sai_parent), variables in sorted(
             seen.items(), key=lambda item: tuple(_sort_token(field) for field in item[0])
         ):
@@ -215,7 +223,7 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
             if has_ssp245_esgf:
                 row.append(ssp245_esgf or "—")
             if has_sai_parent:
-                row.append("/".join(sai_parent) if sai_parent else "—")
+                row.append(str(sai_parent) if sai_parent else "—")
             tbl.add_row(*row)
 
         console.print(tbl)
@@ -270,11 +278,12 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
         if config.scenario is None:
             continue
         try:
-            hist, ssp245, *_ = resolve_member_lineage(
+            lineage = resolve_member_lineage(
                 config.gcm, config.scenario, config.ensemble_member, config.variable
             )
         except KeyError:
             continue
+        hist, ssp245 = lineage.historical, lineage.ssp245_bridge
 
         hist_group = f"historical/{config.variable}"
         known = _members(config.gcm, hist_group)

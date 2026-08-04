@@ -8,6 +8,7 @@ import numpy as np
 import xarray as xr
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
+from srm.lineage import ScenarioMember
 from srm.pipeline import BCSDPipeline
 
 
@@ -265,7 +266,7 @@ def test_bridge_appends_sai_parent_for_termination_run(tmp_path):
     segment has to take over from 2035.
     """
     pipeline = BCSDPipeline(_g6_end_config(), _make_options(tmp_path))
-    assert pipeline._sai_parent == ("G6-1.5K", "002")
+    assert pipeline._sai_parent == ScenarioMember(scenario="G6-1.5K", member="002")
 
     ssp245_da = _make_annual_ds(2015, 2099, "002")["tas"]
     g6_da = _make_annual_ds(2035, 2084, "002")["tas"]

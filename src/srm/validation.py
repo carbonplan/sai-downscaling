@@ -472,7 +472,7 @@ class DatasetValidator(pydantic.BaseModel):
         D1/D2: All lineage-resolved parent members must exist in their stores.
 
         For each (member, variable) pair registered in the lineage table, resolves the
-        historical_member and (for G6-1.5K) the ssp245_member, then checks those exist
+        historical and (for G6-1.5K) the ssp245_bridge member, then checks those exist
         in the respective groups of the unified GCM datatree.
 
         Skipped when no lineage is registered for this (gcm, scenario).
@@ -490,13 +490,14 @@ class DatasetValidator(pydantic.BaseModel):
         ssp245_members_needed: set[str] = set()
         # Keyed by parent scenario so a future second termination run resolves independently.
         sai_parents_needed: dict[str, set[str]] = {}
-        for hist, ssp245, _, sai_parent in entries.values():
-            hist_members_needed.add(hist)
-            if ssp245 is not None:
-                ssp245_members_needed.add(ssp245)
-            if sai_parent is not None:
-                parent_scenario, parent_member = sai_parent
-                sai_parents_needed.setdefault(parent_scenario, set()).add(parent_member)
+        for entry in entries.values():
+            hist_members_needed.add(entry.historical)
+            if entry.ssp245_bridge is not None:
+                ssp245_members_needed.add(entry.ssp245_bridge)
+            if entry.sai_parent is not None:
+                sai_parents_needed.setdefault(entry.sai_parent.scenario, set()).add(
+                    entry.sai_parent.member
+                )
 
         dt, err = self._open_datatree()
         if err is not None:

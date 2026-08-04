@@ -10,25 +10,64 @@ relationships.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
 
-# Lineage lookup: (gcm, scenario, ensemble_member, variable) ->
-#   (historical_member, ssp245_member, ssp245_esgf_member, sai_parent)
-# ssp245_member is None for non-SAI scenarios.
-# ssp245_esgf_member is set when an ESGF SSP245 dataset is needed to fill a gap before the primary
-# SSP245 bridge starts (MIROC G6-1.5K only: GeoMIP SSP245 starts 2020, leaving 2015–2019 gap).
-# sai_parent is (scenario, member) and is set when a scenario continues an earlier SAI run rather
-# than branching off SSP245 (CESM G6-1.5K-END only: it resumes G6-1.5K 002 in 2085, so the bridge
-# needs the parent's 2035–2084 years on top of the SSP245 years).
+# Lineage lookup: (gcm, scenario, ensemble_member, variable) -> LineageEntry.
 # Source: docs/srm-provenance.csv parent_experiment_ensemble_ids column,
 # confirmed by emails from Walker Lee (G6→SSP245) and Simone Tilmes (historical "001").
 # That column carries a third entry for G6-1.5K-END, which is what sai_parent records.
 
-# (historical_member, ssp245_member, ssp245_esgf_member, sai_parent)
-LineageEntry = tuple[str, str | None, str | None, tuple[str, str] | None]
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioMember:
+    """A ``(scenario, member)`` pair naming one run in the lineage table.
+
+    Keyword-only because both fields are plain strings, so a positional swap would
+    type-check cleanly and silently resolve the wrong run. ``__str__`` renders the
+    ``scenario/member`` token that the CLI table, the pipeline log line, and the
+    lineage notebook all display.
+    """
+
+    scenario: str
+    member: str
+
+    def __str__(self) -> str:
+        return f"{self.scenario}/{self.member}"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LineageEntry:
+    """Resolved parent members for one lineage key.
+
+    Keyword-only and frozen on purpose. This was a positional 4-tuple that grew from two
+    fields to four, and ``ssp245_bridge`` and ``ssp245_esgf_bridge`` are both ``str | None``
+    and adjacent, so a positional mix-up type-checked cleanly and produced wrong output
+    rather than an error.
+
+    Attributes
+    ----------
+    historical : str
+        Historical ensemble member this run branches from.
+    ssp245_bridge : str or None
+        SSP245 member bridging the pre-SAI years. ``None`` for non-SAI scenarios.
+    ssp245_esgf_bridge : str or None
+        ESGF SSP245 member filling a gap before the primary bridge starts. Set only for
+        MIROC, whose GeoMIP SSP245 starts in 2020 and leaves a 2015-2019 gap.
+    sai_parent : ScenarioMember or None
+        Earlier SAI run this scenario continues rather than branching off SSP245. Set only
+        for CESM G6-1.5K-END, which resumes G6-1.5K 002 in 2085, so its bridge needs the
+        parent's 2035-2084 years on top of the SSP245 years.
+    """
+
+    historical: str
+    ssp245_bridge: str | None = None
+    ssp245_esgf_bridge: str | None = None
+    sai_parent: ScenarioMember | None = None
+
 
 # The one SAI run that another scenario continues.
-_G6_002 = ("G6-1.5K", "002")
+_G6_002 = ScenarioMember(scenario="G6-1.5K", member="002")
 
 
 def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
@@ -42,10 +81,15 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
         hist: str,
         ssp245: str | None = None,
         ssp245_esgf: str | None = None,
-        sai_parent: tuple[str, str] | None = None,
+        sai_parent: ScenarioMember | None = None,
     ) -> None:
         for var in variables:
-            table[(gcm, scenario, member, var)] = (hist, ssp245, ssp245_esgf, sai_parent)
+            table[(gcm, scenario, member, var)] = LineageEntry(
+                historical=hist,
+                ssp245_bridge=ssp245,
+                ssp245_esgf_bridge=ssp245_esgf,
+                sai_parent=sai_parent,
+            )
 
     _std = (
         "tas",
@@ -77,7 +121,7 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     add("CESM2-WACCM", "G6-1.5K-END", "002", _std, "r2i1p1f1", "002", sai_parent=_G6_002)
     add("CESM2-WACCM", "G6-1.5K-END", "002", _tmx, "001", "007", sai_parent=_G6_002)
 
-    # CESM2-WACCM SSP245 (no SAI bridge, ssp245_member is always None)
+    # CESM2-WACCM SSP245 (no SAI bridge, ssp245_bridge is always None)
     # Members 001-005: standard variables only (tasmax/tasmin have the CMIP6 bug: not usable).
     # Members 006-010: tasmax/tasmin available via corrected run ("001"); all end in 2069
     # (007-010 on 2069-12-31, 006 a day earlier - see _MEMBER_TIME_BOUNDS in srm.validation).
@@ -143,14 +187,13 @@ def resolve_member_lineage(
     ensemble_member: str,
     variable: str,
 ) -> LineageEntry:
-    """Return (historical_member, ssp245_member, ssp245_esgf_member, sai_parent).
+    """Return the :class:`LineageEntry` for one lineage key.
 
-    ssp245_member is None for non-SAI scenarios.
-    ssp245_esgf_member is set when an ESGF SSP245 dataset is needed to fill
-    a gap before the primary SSP245 bridge starts (MIROC G6-1.5K only).
-    sai_parent is ``(scenario, member)`` when this scenario continues an earlier
-    SAI run whose years the bridge must also cover (CESM G6-1.5K-END only).
-    Raises KeyError if the combination has no registered lineage.
+    ``ssp245_bridge`` is None for non-SAI scenarios. ``ssp245_esgf_bridge`` is set when an
+    ESGF SSP245 dataset is needed to fill a gap before the primary SSP245 bridge starts
+    (MIROC G6-1.5K only). ``sai_parent`` is a :class:`ScenarioMember` when this scenario
+    continues an earlier SAI run whose years the bridge must also cover (CESM G6-1.5K-END
+    only). Raises KeyError if the combination has no registered lineage.
     """
     key = (gcm, scenario, ensemble_member, variable)
     if key not in _LINEAGE:
@@ -163,7 +206,7 @@ def resolve_member_lineage(
 
 
 def get_lineage_entries(gcm: str, scenario: str) -> dict[tuple[str, str], LineageEntry]:
-    """Return {(member, variable): (historical, ssp245, ssp245_esgf, sai_parent)}.
+    """Return ``{(member, variable): LineageEntry}`` for one GCM and scenario.
 
     Returns an empty dict if no lineage is registered for the given gcm/scenario.
     """
@@ -251,13 +294,13 @@ def diff_against_provenance(
 
     parent_mismatch: list[str] = []
     for key in sorted(set(code) & set(sheet)):
-        hist, ssp245, _, sai_parent = code[key]
+        entry = code[key]
         parents = sheet[key]
-        expected = {"historical": hist}
-        if ssp245 is not None:
-            expected["ssp245"] = ssp245
-        if sai_parent is not None:
-            expected["g6_1p5k"] = sai_parent[1]
+        expected = {"historical": entry.historical}
+        if entry.ssp245_bridge is not None:
+            expected["ssp245"] = entry.ssp245_bridge
+        if entry.sai_parent is not None:
+            expected["g6_1p5k"] = entry.sai_parent.member
         for role, want in expected.items():
             got = parents.get(role)
             if got != want:
