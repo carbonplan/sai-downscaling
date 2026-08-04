@@ -76,9 +76,8 @@ OUTPUT_CHUNKS: dict[str, int] = {"time": 1, "lat": 720, "lon": 1440}
 OUTPUT_SHARDS: dict[str, int] = {"time": 30, "lat": 720, "lon": 1440}
 
 _DRY_RUN_STEPS = 365
-FILL_MAX = 1e-9
-FILL_MIN = 0.9 * FILL_MAX
-CENSORING_THRESHOLD = 0.1 / 86400  # 0.1 mm/day in kg m-2 s-1
+# FILL_MAX = 1e-9
+# FILL_MIN = 0.9 * FILL_MAX
 TRAIN_PERIOD = ("1960", "2008")  # matches the BCSD training window
 VARIABLE_CONFIG_WINDOW = VariableConfig.model_fields["running_window_length"].default
 
@@ -389,7 +388,6 @@ def patch_dry_pixels(
     patched.attrs = pr.attrs
 
     log.info("Done: %s", patched)
-    print(patched)
     repo, _ = _init_repo_from_uri(OUTPUT_URI)
     if branch not in repo.list_branches():
         repo.create_branch(branch, repo.lookup_branch("main"))
