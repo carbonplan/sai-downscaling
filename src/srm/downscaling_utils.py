@@ -708,7 +708,7 @@ def downscale_from_coarse(
     if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
     elif method == "multiplicative":
-        tiny_threshold_dict = {"rsds": 1.0, "pr": 1.0e-6, "hurs": 1.0e-2}
+        tiny_threshold_dict = {"rsds": 1.0, "pr": 1.0e-6, "hurs": 1.0e-2, "dtr": 0.0}
         replacement_residual = 1.0
         # Guard the denominator: where coarse climatology is zero (dry cells/days),
         # the NCL reference forces the ratio to 0 rather than producing inf/NaN.
