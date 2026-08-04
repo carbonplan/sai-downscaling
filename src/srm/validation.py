@@ -49,7 +49,7 @@ VARIABLE_OPTIONS = get_args(VariableName)
 # These end dates used to run a day or more past the scenario's nominal end, which looked like
 # CESM writing an extra time step. It was not: CAM stamps interval statistics at the END of the
 # averaging interval and prefixes each history stream with a zero-width initial-state record, so
-# the raw axis labelled every daily mean one day late (issue #521). The ETL now rebuilds the axis
+# the raw axis labeled every daily mean one day late (issue #521). The ETL now rebuilds the axis
 # from time_bnds via srm.utils.decode_time_from_bounds, which is where that convention is
 # documented in full, and TIME_RANGE in srm.input_data.cesm2_waccm clamps what remains.
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {

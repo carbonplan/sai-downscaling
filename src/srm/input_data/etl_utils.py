@@ -460,7 +460,7 @@ def _display_dry_run_result(ds: xr.Dataset, variable: str, store: str | None = N
     Parameters
     ----------
     ds : xr.Dataset
-        The (possibly lazy) dataset to compute and summarise.
+        The (possibly lazy) dataset to compute and summarize.
     variable : str
         Label used in the panel title.
     store : str or None, optional

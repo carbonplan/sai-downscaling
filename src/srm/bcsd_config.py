@@ -10,8 +10,9 @@ from the same flat YAML file.
 from __future__ import annotations
 
 import hashlib
+import os
 from importlib.metadata import version as _pkg_version
-from typing import Literal
+from typing import ClassVar, Literal
 
 import pydantic_settings
 from packaging.version import Version as _Version
@@ -37,10 +38,16 @@ class VariableConfig(BaseModel):
     downscaling_method: DownscalingMethod
     downscaling_clim_method: DownscalingClimMethod
     detrend_method: DetrendMethod = "additive"
+    debias_approach: DebiasApproach = "nonparametric_hybrid_2sided"
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
-        """Load variable-specific config from BCSD_CONFIG"""
+        """Load variable-specific config from BCSD_CONFIG.
+
+        Rows list only the fields that vary by variable. Anything uniform across all
+        variables, such as ``debias_approach`` and ``running_window_length``, is left
+        to the field default above so there is one place to change it.
+        """
         BCSD_CONFIG = {
             "pr": {
                 "detrend_data": False,
@@ -100,48 +107,6 @@ class VariableConfig(BaseModel):
 
         return cls(**BCSD_CONFIG[variable])
 
-    def to_path_id(self) -> str:
-        """
-        Short human-readable path segment encoding all VariableConfig fields.
-
-        Used in cache paths to prevent collisions when VariableConfig is overridden.
-
-        Examples
-        --------
-        Default ``tas``:  ``dt1-win1-dsadditive-dscfft-dtmadditive``
-        ``tas`` with ``do_windowing=False``:  ``dt1-win0-dsadditive-dscfft-dtmadditive``
-        """
-        return (
-            f"dt{int(self.detrend_data)}"
-            f"-win{int(self.do_windowing)}"
-            f"-ds{self.downscaling_method}"
-            f"-dsc{self.downscaling_clim_method}"
-            f"-dtm{self.detrend_method}"
-        )
-
-    def to_hash(self, debias_approach: DebiasApproach) -> str:
-        """
-        8-character SHA-256 hash of VariableConfig fields + debias_approach.
-
-        Uses the same stable-string pattern as ``BCSDConfig.config_hash`` so the
-        hash is deterministic across Python versions and process restarts.
-        Scoped to only the parameters that affect bias-correction behaviour,
-        so runs sharing the same VariableConfig share the same cache sub-directory.
-
-        Parameters
-        ----------
-        debias_approach : DebiasApproach
-            Debias approach for bias correction. See ``DebiasApproach`` for valid values.
-
-        Returns
-        -------
-        str
-            8-character hex string, e.g. ``a3f8b2c1``.
-        """
-        params = {**self.model_dump(), "debias_approach": debias_approach}
-        raw = str(sorted(params.items()))
-        return hashlib.sha256(raw.encode()).hexdigest()[:8]
-
 
 class BCSDConfig(pydantic_settings.BaseSettings):
     """
@@ -196,11 +161,6 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         None, description="Spatial bounds as (lat_min, lat_max, lon_min, lon_max). None for global."
     )
 
-    debias_approach: DebiasApproach = Field(
-        "nonparametric_hybrid_2sided",
-        description="Debias approach for bias correction. See DebiasApproach for valid values.",
-    )
-
     obs_dataset: str = Field(
         "ERA5",
         description="Catalog key for observation dataset (e.g. 'ERA5', 'GDEX-GMF-icechunk').",
@@ -218,15 +178,47 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         description="Variable-specific BCSD parameters. Auto-populated from `variable`.",
     )
 
+    # Keys that look like they belong here but do not: ones that moved off BCSDConfig,
+    # and ones that are only meaningful during matrix expansion. extra="ignore" would
+    # drop them silently, so each is rejected with a pointer to its replacement.
+    _REJECTED_KEYS: ClassVar[dict[str, str]] = {
+        "mapping_type": (
+            "'mapping_type' was renamed to 'debias_approach' and then moved onto "
+            "VariableConfig. Set 'variable_config.debias_approach' for a single-variable "
+            "config, or 'variable_overrides' in a matrix config."
+        ),
+        "debias_approach": (
+            "'debias_approach' moved from BCSDConfig onto VariableConfig. Set "
+            "'variable_config.debias_approach' for a single-variable config, or "
+            "'variable_overrides' in a matrix config (or --debias-approach / "
+            "--variable-override on the CLI, or BCSD_VARIABLE_CONFIG as JSON in the "
+            "environment)."
+        ),
+        "variable_overrides": (
+            "'variable_overrides' is resolved during matrix expansion and is not a "
+            "BCSDConfig field. It only takes effect in a matrix config, i.e. one with "
+            "at least one list-valued key such as 'variables: [\"tas\"]'. For a "
+            "single-variable config set 'variable_config' directly instead."
+        ),
+    }
+
     @model_validator(mode="before")
     @classmethod
-    def _reject_renamed_mapping_type(cls, data):
-        """Fail loudly if the pre-rename ``mapping_type`` key is still used."""
-        if isinstance(data, dict) and "mapping_type" in data:
-            raise ValueError(
-                "'mapping_type' was renamed to 'debias_approach'. "
-                "Update your config/CLI/env to use 'debias_approach'."
-            )
+    def _reject_unsupported_keys(cls, data):
+        """Fail loudly if a key that BCSDConfig does not honor is still used.
+
+        Checks the supplied data and the ``BCSD_*`` environment. Both need covering:
+        pydantic-settings filters env vars against the model's fields before any
+        validator runs, so a rejected key set as ``BCSD_DEBIAS_APPROACH`` never reaches
+        ``data`` and would otherwise vanish without a trace. The environment lookup
+        is case-folded to match pydantic-settings' default ``case_sensitive=False``.
+        """
+        supplied = set(data) if isinstance(data, dict) else set()
+        prefix = cls.model_config.get("env_prefix", "")
+        env_keys = {name.casefold() for name in os.environ}
+        for key, message in cls._REJECTED_KEYS.items():
+            if key in supplied or f"{prefix}{key}".casefold() in env_keys:
+                raise ValueError(message)
         return data
 
     @model_validator(mode="before")
@@ -325,7 +317,6 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             "predict_period": (self.predict_period_start, self.predict_period_end),
             "subset_bounds": self.subset_bounds,
             "variable_config": self.variable_config.model_dump() if self.variable_config else None,
-            "debias_approach": self.debias_approach,
         }
 
         # Create stable string representation and hash
@@ -344,6 +335,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         Useful for grabbing paths to intermediate artifacts for a sibling variable (e.g. dtr or
         tasmax when processing tasmin) without redefining the entire config. Variable-specific
         parameters are auto-populated based on the new variable.
+
+        The sibling inherits this config's ``debias_approach`` while taking its own
+        per-variable defaults for every other field.
         """
         return BCSDConfig(
             gcm=self.gcm,
@@ -355,7 +349,12 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             predict_period_start=self.predict_period_start,
             predict_period_end=self.predict_period_end,
             subset_bounds=self.subset_bounds,
-            debias_approach=self.debias_approach,
+            # The sibling gets its own per-variable defaults but inherits this run's
+            # debias_approach, matching the pre-move behavior. model_copy is safe here
+            # because the source value is an already-validated Literal.
+            variable_config=VariableConfig.for_variable(variable).model_copy(
+                update={"debias_approach": self.variable_config.debias_approach}
+            ),
         )
 
 

@@ -5,8 +5,13 @@ from __future__ import annotations
 import pytest
 from conftest import make_icechunk_group
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
-from srm.cache import ArtifactCache, CacheCheckError, StoreLocation
+from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.cache import (
+    ArtifactCache,
+    CacheCheckError,
+    CacheConfigMismatchError,
+    StoreLocation,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -429,41 +434,6 @@ class TestDebiasedCoarseLocs:
 
 
 # ---------------------------------------------------------------------------
-# _get_varconfig_id – hashing
-# ---------------------------------------------------------------------------
-
-
-class TestVarconfigId:
-    def test_hash_length_is_8(self):
-        vc = VariableConfig.for_variable("tas")
-        assert len(ArtifactCache._get_varconfig_id(vc, "parametric")) == 8
-
-    def test_hash_is_hex_string(self):
-        vc = VariableConfig.for_variable("tas")
-        h = ArtifactCache._get_varconfig_id(vc, "parametric")
-        assert all(c in "0123456789abcdef" for c in h)
-
-    def test_hash_is_stable(self):
-        vc = VariableConfig.for_variable("tas")
-        h1 = ArtifactCache._get_varconfig_id(vc, "parametric")
-        h2 = ArtifactCache._get_varconfig_id(vc, "parametric")
-        assert h1 == h2
-
-    def test_different_varconfig_produces_different_hash(self):
-        vc1 = VariableConfig.for_variable("tas")
-        vc2 = vc1.model_copy(update={"do_windowing": False})
-        assert ArtifactCache._get_varconfig_id(
-            vc1, "parametric"
-        ) != ArtifactCache._get_varconfig_id(vc2, "parametric")
-
-    def test_different_debias_approach_produces_different_hash(self):
-        vc = VariableConfig.for_variable("tas")
-        assert ArtifactCache._get_varconfig_id(vc, "parametric") != ArtifactCache._get_varconfig_id(
-            vc, "nonparametric"
-        )
-
-
-# ---------------------------------------------------------------------------
 # exists() – local filesystem
 # ---------------------------------------------------------------------------
 
@@ -704,3 +674,109 @@ class TestGetOutputPath:
                 path = bound_cache.get_output_path(stage, bound_cache.config)
                 assert isinstance(path, str)
                 assert path.endswith(".icechunk")
+
+
+# ---------------------------------------------------------------------------
+# exists() – VariableConfig verification on a cache hit
+# ---------------------------------------------------------------------------
+
+
+def _write_artifact_with_attrs(loc: StoreLocation, branch: str, attrs: dict | None) -> None:
+    """Commit a group at ``loc.group`` carrying ``attrs``, as the pipeline does.
+
+    ``make_icechunk_group`` writes at the store root, but the provenance the
+    verification reads lives on the group itself, so this writes there instead.
+    """
+    import icechunk
+    import numpy as np
+    import xarray as xr
+    from icechunk.xarray import to_icechunk
+
+    from srm.config import _ensure_root_group, _icechunk_storage_for_path
+
+    storage = _icechunk_storage_for_path(loc.store_path)
+    repo = icechunk.Repository.open_or_create(storage)
+    root_snapshot_id = _ensure_root_group(repo)
+    if branch not in repo.list_branches():
+        repo.create_branch(branch, root_snapshot_id)
+    session = repo.writable_session(branch)
+    ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
+    if attrs is not None:
+        ds.attrs = attrs
+    to_icechunk(ds, session, mode="w", group=loc.group)
+    session.commit(loc.group)
+
+
+def _provenance(config) -> dict:
+    """The subset of pipeline provenance attrs that verification reads."""
+    return {"srm_downscaling:config_json": config.model_dump_json()}
+
+
+class TestVariableConfigVerification:
+    """A cache hit computed under a different VariableConfig must not be reused."""
+
+    def test_matching_variable_config_is_a_hit(self, bound_cache):
+        loc = bound_cache.detrended_scenario_loc()
+        _write_artifact_with_attrs(loc, bound_cache.branch, _provenance(bound_cache.config))
+        assert bound_cache.exists(loc) is True
+
+    def test_differing_variable_config_raises(self, bound_cache):
+        loc = bound_cache.detrended_scenario_loc()
+        written_by = bound_cache.config.model_copy(
+            update={
+                "variable_config": bound_cache.config.variable_config.model_copy(
+                    update={"debias_approach": "parametric"}
+                )
+            }
+        )
+        _write_artifact_with_attrs(loc, bound_cache.branch, _provenance(written_by))
+        with pytest.raises(CacheConfigMismatchError, match="debias_approach"):
+            bound_cache.exists(loc)
+
+    def test_mismatch_message_names_both_values(self, bound_cache):
+        loc = bound_cache.detrended_scenario_loc()
+        written_by = bound_cache.config.model_copy(
+            update={
+                "variable_config": bound_cache.config.variable_config.model_copy(
+                    update={"do_windowing": False}
+                )
+            }
+        )
+        _write_artifact_with_attrs(loc, bound_cache.branch, _provenance(written_by))
+        with pytest.raises(CacheConfigMismatchError) as excinfo:
+            bound_cache.exists(loc)
+        assert "cached=False" in str(excinfo.value)
+        assert "current=True" in str(excinfo.value)
+
+    def test_artifact_without_provenance_is_allowed(self, bound_cache):
+        """Artifacts predating config provenance are unverifiable, not mismatched."""
+        loc = bound_cache.detrended_scenario_loc()
+        _write_artifact_with_attrs(loc, bound_cache.branch, None)
+        assert bound_cache.exists(loc) is True
+
+    def test_obs_artifact_is_never_verified(self, bound_cache):
+        """Regridding does not read VariableConfig, so obs stays reusable across runs."""
+        loc = bound_cache.obs_loc
+        assert loc.config_variable is None
+        written_by = bound_cache.config.model_copy(
+            update={
+                "variable_config": bound_cache.config.variable_config.model_copy(
+                    update={"debias_approach": "parametric"}
+                )
+            }
+        )
+        _write_artifact_with_attrs(loc, bound_cache.branch, _provenance(written_by))
+        assert bound_cache.exists(loc) is True
+
+    def test_sibling_variable_lookup_is_never_verified(self, bound_cache):
+        """A sibling's intended config is not knowable from this process."""
+        loc = bound_cache.historical_loc("r1i1p1f1", variable="dtr")
+        assert loc.config_variable is None
+
+    def test_own_variable_lookup_is_tagged_for_verification(self, bound_cache):
+        loc = bound_cache.historical_loc("r1i1p1f1")
+        assert loc.config_variable == bound_cache.config.variable
+
+    def test_cache_miss_skips_verification(self, bound_cache, tmp_path):
+        loc = StoreLocation(str(tmp_path / "missing.icechunk"), "obs/tas", config_variable="tas")
+        assert bound_cache.exists(loc) is False
