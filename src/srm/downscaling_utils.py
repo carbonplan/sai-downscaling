@@ -419,6 +419,15 @@ def interpolate_fine_to_coarse_grid(
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
 
+# Both span tests below infer their tolerance from the median spacing of the coordinate
+# handed to them. Below a handful of cells on an axis that spacing stops being a
+# meaningful resolution estimate: two points at -45 and 45 infer a 90 degree step, and a
+# one-step tolerance then admits that mid-latitude box as pole-to-pole. Real GCM axes
+# carry 144 points or more and QA subsets a few dozen, so this floor only ever rejects
+# degenerate input.
+_MIN_SPAN_TEST_POINTS = 4
+
+
 def _lon_spans_globe(lon_vals: np.ndarray) -> bool:
     """Whether an ascending longitude coordinate wraps the whole planet.
 
@@ -426,9 +435,11 @@ def _lon_spans_globe(lon_vals: np.ndarray) -> bool:
     and the wrap-around back to the first (~one grid step, dlon), so its span
     (last - first) is roughly 360 - dlon. A regional grid spans much less. The
     1.5 * dlon just leaves room for floating-point / uneven-spacing wobble; it is not
-    tied to any particular resolution.
+    tied to any particular resolution. Axes with fewer than
+    ``_MIN_SPAN_TEST_POINTS`` cells are rejected outright, since dlon is not
+    trustworthy there.
     """
-    if lon_vals.size <= 1:
+    if lon_vals.size < _MIN_SPAN_TEST_POINTS:
         return False
     dlon = np.median(np.diff(lon_vals))
     return bool((lon_vals[-1] - lon_vals[0]) >= 360.0 - 1.5 * dlon)
@@ -439,9 +450,11 @@ def _lat_spans_poles(lat_vals: np.ndarray) -> bool:
 
     Cell-center grids stop half a step short of +/-90: UKESM ends at +/-89.375 on a 1.25 deg
     grid, MIROC-ES2H likewise. "Reaches the pole" therefore means within one grid step, not
-    exactly 90. CESM2-WACCM, which does land on +/-90, also satisfies this.
+    exactly 90. CESM2-WACCM, which does land on +/-90, also satisfies this. Axes with fewer
+    than ``_MIN_SPAN_TEST_POINTS`` cells are rejected outright, since dlat is not
+    trustworthy there.
     """
-    if lat_vals.size <= 1:
+    if lat_vals.size < _MIN_SPAN_TEST_POINTS:
         return False
     dlat = float(np.abs(np.median(np.diff(np.sort(lat_vals)))))
     return bool(lat_vals.min() <= -90.0 + dlat and lat_vals.max() >= 90.0 - dlat)

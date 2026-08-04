@@ -905,6 +905,52 @@ class TestIsGlobalGrid:
         assert not is_global_grid(coarse.sel(lon=slice(-70.0, 70.0)))
 
 
+class TestDegenerateGridsAreNotGlobal:
+    """A sparse axis must not be mistaken for a global one.
+
+    Both span tests infer their tolerance from the median spacing of the array handed to
+    them, so two points at -45 and 45 infer a 90 degree step and a one-step tolerance
+    would admit that mid-latitude box as pole-to-pole. Misclassifying a subset as global
+    drops its legitimate out-of-domain frame mask and aborts a run that should succeed,
+    the mirror image of the bug these gates exist to catch.
+    """
+
+    @staticmethod
+    def _box(lat: list[float], lon: list[float]) -> xr.DataArray:
+        return xr.DataArray(
+            np.zeros((len(lat), len(lon))),
+            dims=["lat", "lon"],
+            coords={"lat": np.array(lat), "lon": np.array(lon)},
+        )
+
+    def test_two_point_box_is_not_global(self):
+        assert not is_global_grid(self._box([-45.0, 45.0], [-90.0, 90.0]))
+
+    def test_three_point_box_is_not_global(self):
+        assert not is_global_grid(self._box([-45.0, 0.0, 45.0], [-120.0, 0.0, 120.0]))
+
+    def test_sparse_lat_with_a_real_global_lon_is_not_global(self):
+        lon = list(np.arange(-157.5, 180.0, 45.0))
+
+        assert not is_global_grid(self._box([-45.0, 45.0], lon))
+
+    def test_coarse_but_well_sampled_global_grid_is_still_global(self):
+        """The floor rejects sparse axes, not merely coarse ones."""
+        coarse, _ = _global_grids()
+
+        assert coarse.sizes["lat"] == 5  # just above the floor
+        assert is_global_grid(coarse)
+
+    def test_periodic_padding_is_unaffected_by_the_floor(self):
+        """_lon_spans_globe also gates the wrap pad, which must keep working."""
+        coarse = _make_global_coarse_da()
+        fine = _make_fine_grid()
+
+        result = interpolate_coarse_to_fine_grid(coarse, fine)
+
+        assert not result.isnull().any()
+
+
 class TestDownscaleFromCoarseNanGuards:
     def test_regional_edge_nans_do_not_abort_the_run(self):
         """configs/qa/ subsets legitimately produce a NaN frame — that must still run."""
