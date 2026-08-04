@@ -20,9 +20,6 @@ output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/outp
 environment: "production"
 # version intentionally unset — derived from the installed package version at runtime
 
-# === Bias Correction ===
-debias_approach: "nonparametric_hybrid_2sided"
-
 # === Additional Options ===
 verbose: true
 save_intermediate: true
