@@ -41,7 +41,9 @@ The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a pe
 
 007–010 each have a single stray non-NaN day on 2070-01-01 in the raw GCM input, with the rest of 2070 NaN; that one day does not extend their valid extent past 2069.
 
-MIROC-ES2H SSP245 and G6-1.5K members all end 2084, and UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios are the sole start-side asymmetry: `predict_period_start` may precede the scenario's data start (the pipeline bridges the gap with SSP245), so only the end bound is enforced for them. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
+MIROC-ES2H SSP245 and G6-1.5K members all end 2084, and UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios can technically start before their own data, because the pipeline bridges the gap: for `G6-1.5K` that bridge is SSP245, and for the `G6-1.5K-END` termination run, whose store begins in 2085, it is SSP245 through 2034 followed by the parent `G6-1.5K` member 002 for 2035–2084. Those bridge years are another scenario's data, so publishing them under this scenario's label is what issue #448 hit, where pre-2035 `g6_1p5k` output drew `tas` and `tasmax` from different SSP245 realizations and produced `tas > tasmax`.
+
+`config_time_domain` therefore enforces the start bound for every scenario, SAI included, and set `predict_period_start` to the scenario's own data start: 2035 for `G6-1.5K` and 2085 for `G6-1.5K-END`. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
 
 ## BCSDConfig Fields (run identity)
 
