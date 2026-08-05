@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+import xarray_regrid  # noqa: F401  # side-effect import: registers the .regrid accessor
+from xarray_regrid.utils import format_for_regrid
 
 from srm import downscaling_utils
 from srm.downscaling_utils import (
@@ -20,7 +22,7 @@ from srm.downscaling_utils import (
     subset_space,
     swap_temperature_extremes,
 )
-from srm.qa_checks import NaNCheckError
+from srm.qa_checks import DomainCoverageError, NaNCheckError
 
 
 @pytest.fixture
@@ -526,9 +528,11 @@ def test_interpolate_coarse_to_fine_grid_interior_matches_plain_interp():
     coarse = _make_global_coarse_da()
     fine = _make_fine_grid()
     result = interpolate_coarse_to_fine_grid(coarse, fine)
-    plain = coarse.interp(lon=fine["lon"], lat=fine["lat"], method="slinear")
+    plain = coarse.interp(lon=fine["lon"], lat=fine["lat"], method="linear")
     interior = ~plain.isnull()
-    np.testing.assert_array_equal(result.values[interior.values], plain.values[interior.values])
+    np.testing.assert_allclose(
+        result.values[interior.values], plain.values[interior.values], atol=1e-12
+    )
 
 
 def test_interpolate_coarse_to_fine_grid_preserves_dtype():
@@ -550,7 +554,7 @@ def test_interpolate_coarse_to_fine_grid_dask_backed_no_nan():
 
 def test_interpolate_coarse_to_fine_grid_unsorted_lon_handled():
     # Coarse lon handed in descending / shuffled order must be sorted internally
-    # so the periodic-padding math and slinear interp stay correct.
+    # so the seam padding and the interpolation stay correct.
     coarse = _make_global_coarse_da()
     fine = _make_fine_grid()
     expected = interpolate_coarse_to_fine_grid(coarse, fine)
@@ -574,9 +578,226 @@ def test_interpolate_coarse_to_fine_grid_regional_edge_stays_nan():
         coords={"lat": [-30.0, -28.0, -26.0], "lon": [16.0, 20.0, 25.0, 32.75, 33.0]},
     )
     result = interpolate_coarse_to_fine_grid(coarse, fine)
-    plain = coarse.interp(lon=fine["lon"], lat=fine["lat"], method="slinear")
+    plain = coarse.interp(lon=fine["lon"], lat=fine["lat"], method="linear")
     assert plain.isnull().any()  # sanity: this setup does have out-of-hull cells
-    np.testing.assert_array_equal(result.values, plain.values)
+    np.testing.assert_allclose(result.values, plain.values, atol=1e-12)
+    # The regional relaxation must stay exercised: a subset domain is not fully covered.
+    assert not bool(coarse_domain_mask(coarse, fine).all())
+
+
+# --- issue #554: real GCM grids must regrid to full global coverage --------------------
+#
+# Coordinates below are the real ones, read from the input stores. They are hardcoded so
+# the tests stay offline. CESM2-WACCM is the grid that hid this bug for a long time: it is
+# the only one whose lat includes +/-90 and whose lon includes exactly -180.
+
+_GCM_GRIDS: dict[str, tuple[np.ndarray, np.ndarray]] = {
+    "CESM2-WACCM": (np.linspace(-90.0, 90.0, 192), np.arange(-180.0, 180.0, 1.25)),
+    # Gaussian T85 latitudes: unevenly spaced and stopping ~1.07 deg short of the poles.
+    "MIROC-ES2H": (
+        np.degrees(np.arcsin(np.polynomial.legendre.leggauss(128)[0])),
+        np.arange(-180.0, 180.0, 1.40625),
+    ),
+    # N96: lat stops at +/-89.375, and lon centers straddle -180 rather than landing on it.
+    "UKESM": (
+        np.arange(-89.375, 89.376, 1.25),
+        np.arange(-179.0625, 179.07, 1.875),
+    ),
+}
+
+
+def _make_era5_fine_grid() -> xr.DataArray:
+    """ERA5's real 0.25-degree grid: lat includes both poles, lon runs -180..179.75."""
+    lat = np.arange(-90.0, 90.001, 0.25)
+    lon = np.arange(-180.0, 179.751, 0.25)
+    return xr.DataArray(
+        np.zeros((lat.size, lon.size)),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+    )
+
+
+def _make_gcm_coarse(gcm: str) -> xr.DataArray:
+    lat, lon = _GCM_GRIDS[gcm]
+    data = np.cos(np.deg2rad(lat))[:, None] * np.sin(np.deg2rad(lon))[None, :] + 2.0
+    return xr.DataArray(data, dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
+
+
+@pytest.mark.parametrize("gcm", sorted(_GCM_GRIDS))
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_real_gcm_grid_covers_full_globe(gcm: str, dtype: str):
+    # The direct guard against issue #554. Fails on the pre-fix implementation for UKESM
+    # (polar caps + a strip down the -180 seam) and MIROC-ES2H (polar caps). Both dtypes,
+    # because the stores hold float32 and the padding decisions come from the coordinates.
+    lat, lon = (a.astype(dtype) for a in _GCM_GRIDS[gcm])
+    data = np.cos(np.deg2rad(lat.astype("float64")))[:, None] * np.ones(lon.size)[None, :] + 2.0
+    coarse = xr.DataArray(
+        data.astype(dtype), dims=["lat", "lon"], coords={"lat": lat, "lon": lon}, name="rsds"
+    )
+    fine = _make_era5_fine_grid()
+
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+
+    assert int(result.isnull().sum()) == 0
+    assert bool(coarse_domain_mask(coarse, fine).all())
+    assert result.dtype == np.dtype(dtype)
+
+
+def test_interpolate_ukesm_west_seam_is_finite_and_periodic():
+    # UKESM lon starts at -179.0625, so fine cells at -180..-179.25 sit west of every
+    # coarse center. The old right-only wrap left them NaN: a 4-column meridional strip
+    # spanning all latitudes, which is the substantive data loss in issue #554.
+    coarse = _make_gcm_coarse("UKESM")
+    fine = _make_era5_fine_grid()
+
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+    seam = result.sel(lon=slice(-180.0, -179.25))
+    assert seam.sizes["lon"] == 4
+    assert not bool(seam.isnull().any())
+
+    # Padding is periodic, not an edge copy: -180 must agree with +180 approached from
+    # the east, since they are the same meridian.
+    np.testing.assert_allclose(
+        result.sel(lon=-180.0, lat=0.0).item(),
+        # coarse values at the two centers flanking the seam, weighted by distance
+        np.interp(
+            180.0,
+            [179.0625, 180.9375],
+            [
+                coarse.sel(lat=0.0, lon=179.0625, method="nearest").item(),
+                coarse.sel(lat=0.0, lon=-179.0625, method="nearest").item(),
+            ],
+        ),
+        rtol=1e-6,
+    )
+
+
+@pytest.mark.parametrize("gcm", ["MIROC-ES2H", "UKESM"])
+def test_interpolate_pole_row_is_zonally_constant(gcm: str):
+    # Poles are filled with the zonal mean of the outermost coarse row (ESMF Pole="all"),
+    # so the pole is single-valued rather than carrying each meridian's own value inward.
+    # An edge-copy fill would leave the classic pinwheel artifact on a polar projection.
+    coarse = _make_gcm_coarse(gcm)
+    fine = _make_era5_fine_grid()
+
+    result = interpolate_coarse_to_fine_grid(coarse, fine)
+    for pole in (-90.0, 90.0):
+        row = result.sel(lat=pole).values
+        assert np.allclose(row, row[0]), f"{gcm} lat={pole} is not zonally constant"
+
+
+@pytest.mark.parametrize("field", ["smooth", "precip_like"])
+def test_linear_and_slinear_agree_and_stay_nonnegative(field: str):
+    """Pins the untested belief, held from #111 to #554, that ``linear`` introduces
+    negative artifacts for positive-definite variables where ``slinear`` does not. Both are
+    exactly bilinear on a rectilinear grid, so they agree to floating-point noise, and
+    neither can turn non-negative input negative.
+    """
+    lat, lon = _GCM_GRIDS["UKESM"]
+    if field == "smooth":
+        data = np.cos(np.deg2rad(lat))[:, None] * np.sin(np.deg2rad(lon))[None, :] + 2.0
+    else:
+        # The disputed case: spiky, heavy-tailed, 40% exact zeros.
+        rng = np.random.default_rng(0)
+        data = rng.gamma(0.3, 2.0, size=(lat.size, lon.size))
+        data[rng.random(data.shape) < 0.4] = 0.0
+    coarse = xr.DataArray(data, dims=["lat", "lon"], coords={"lat": lat, "lon": lon}, name="pr")
+    fine = _make_era5_fine_grid()
+
+    # Pad once, then interpolate the same array both ways, so the comparison isolates the
+    # interpolation method and not the padding.
+    padded = format_for_regrid(coarse, xr.Dataset(coords={"lat": fine["lat"], "lon": fine["lon"]}))
+    linear = padded.interp(lat=fine["lat"], lon=fine["lon"], method="linear")
+    slinear = padded.interp(lat=fine["lat"], lon=fine["lon"], method="slinear")
+
+    np.testing.assert_allclose(linear.values, slinear.values, atol=1e-12)
+    assert int((linear < 0).sum()) == int((slinear < 0).sum()) == 0
+    # And what the pipeline actually ships matches both.
+    np.testing.assert_allclose(
+        interpolate_coarse_to_fine_grid(coarse, fine).values, slinear.values, atol=1e-12
+    )
+
+
+def test_interpolate_coarse_to_fine_grid_handles_dayofyear_leading_dim():
+    # The climatology path carries `dayofyear`, not `time`. xarray-regrid's accessor
+    # defaults to time_dim="time", so this pins that a differently named leading
+    # dimension still passes through untouched.
+    lat, lon = _GCM_GRIDS["UKESM"]
+    coarse = xr.DataArray(
+        np.random.default_rng(0).random((5, lat.size, lon.size)),
+        dims=["dayofyear", "lat", "lon"],
+        coords={"dayofyear": np.arange(1, 6), "lat": lat, "lon": lon},
+    )
+
+    result = interpolate_coarse_to_fine_grid(coarse, _make_era5_fine_grid())
+
+    assert result.dims == ("dayofyear", "lat", "lon")
+    assert result.sizes["dayofyear"] == 5
+    assert int(result.isnull().sum()) == 0
+
+
+@pytest.mark.parametrize("gcm", sorted(_GCM_GRIDS))
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_upstream_pads_poles_and_both_seams_with_zero_margin(gcm: str, dtype: str):
+    """Canary on the upstream dependency global coverage rests on, and its tightest edge.
+
+    ``xarray-regrid`` wraps longitude when ``span >= 360 - dx``, and every GCM here is
+    regular with ``span == (N-1)*dx == 360 - dx``, so it holds at exact equality — margin
+    zero, in both dtypes. Tighten that to ``>`` upstream and every GCM silently stops being
+    padded, reintroducing issue #554.
+    """
+    lat, lon = (a.astype(dtype) for a in _GCM_GRIDS[gcm])
+    dx = float(np.diff(lon).max())
+    assert float(lon.max() - lon.min()) == 360.0 - dx, "grid is no longer one step short"
+
+    coarse = xr.DataArray(
+        np.zeros((lat.size, lon.size), dtype=dtype),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+        name="rsds",
+    )
+    fine = _make_era5_fine_grid()
+    padded = format_for_regrid(coarse, xr.Dataset(coords={"lat": fine.lat, "lon": fine.lon}))
+
+    assert padded["lat"].values[0] == -90.0, "south pole no longer padded"
+    assert padded["lat"].values[-1] == 90.0, "north pole no longer padded"
+    assert padded["lon"].values[0] < lon[0], "west seam no longer padded"
+    assert padded["lon"].values[-1] > lon[-1], "east seam no longer padded"
+
+
+@pytest.mark.parametrize("gcm", sorted(_GCM_GRIDS))
+def test_bypassing_regrid_linear_is_equivalent(gcm: str):
+    # `interpolate_coarse_to_fine_grid` takes the padding from `format_for_regrid` directly
+    # rather than through `.regrid.linear`, so it can swap the kernel. Only safe because the
+    # accessor *is* padding + interp, exactly; if a version bump inserts anything else, this
+    # fails and the swap has to be re-justified.
+    coarse = _make_gcm_coarse(gcm)
+    fine = _make_era5_fine_grid()
+    target = xr.Dataset(coords={"lat": fine["lat"], "lon": fine["lon"]})
+    accessor = coarse.regrid.linear(target)
+
+    # `interp_regrid` builds its coord dict from a set, so match whatever order it picks;
+    # float64 addition is not associative and the order perturbs the result at ~1e-13.
+    order = list(set(target.coords).intersection(set(coarse.coords)))
+    hand = format_for_regrid(coarse, target).interp(
+        coords={k: target[k] for k in order}, method="linear"
+    )
+    np.testing.assert_array_equal(accessor.values, hand.transpose(*accessor.dims).values)
+
+    # And the shipped function, in production dtype, agrees with the accessor: exactly on
+    # coverage, which is what issue #554 is about, and to within the float32 rounding the
+    # kernel swap is allowed to move (adjacent float32s differ by 1 viewed as int32).
+    coarse32 = coarse.astype("float32")
+    ours = interpolate_coarse_to_fine_grid(coarse32, fine)
+    reference = coarse32.regrid.linear(target).astype("float32").transpose(*ours.dims)
+    np.testing.assert_array_equal(np.isnan(ours.values), np.isnan(reference.values))
+
+    differing = ours.values != reference.values
+    if differing.any():
+        ulp = np.abs(
+            ours.values[differing].view(np.int32) - reference.values[differing].view(np.int32)
+        )
+        assert ulp.max() <= 1, f"{gcm}: outputs differ by up to {ulp.max()} ULP, expected <= 1"
 
 
 @pytest.mark.parametrize(
@@ -846,6 +1067,65 @@ class TestCoarseDomainMask:
         assert not bool(mask.isel(lat=0).any())  # fine lat -35 is below coarse lat -30
         assert not bool(mask.isel(lon=0).any())  # fine lon 15 is west of coarse lon 20
         assert bool(mask.isel(lat=3, lon=3))  # interior stays valid
+
+
+def _ukesm_like_global_run(
+    n_time: int = 8,
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+    """UKESM's geometry at a coarser resolution, to keep the test fast: coarse lat stops
+    short of both poles and lon straddles -180, while the fine grid reaches +/-90 and starts
+    at -180. Those are the two ways the coarse domain fails to cover the fine one."""
+    time = pd.date_range("2015-01-01", periods=n_time, freq="D")
+    coarse_lat = np.arange(-89.375, 89.376, 11.25)
+    coarse_lon = np.arange(-179.0625, 179.07, 15.0)
+    fine_lat = np.arange(-90.0, 90.001, 5.0)
+    fine_lon = np.arange(-180.0, 179.751, 5.0)
+
+    def _field(lat, lon, scale):
+        base = np.cos(np.deg2rad(lat))[None, :, None] * np.sin(np.deg2rad(lon))[None, None, :]
+        ramp = np.arange(len(time))[:, None, None] * 0.01
+        return xr.DataArray(
+            (base + ramp + scale).astype("float32"),
+            dims=["time", "lat", "lon"],
+            coords={"time": time, "lat": lat, "lon": lon},
+            name="tas",  # regrid.conservative requires a named array
+        )
+
+    return (
+        _field(coarse_lat, coarse_lon, 20.0),  # debiased coarse simulation
+        _field(coarse_lat, coarse_lon, 19.0),  # obs on the coarse grid
+        _field(fine_lat, fine_lon, 19.0),  # obs on the fine grid
+    )
+
+
+class TestDownscaleFromCoarseGlobalCoverage:
+    """Issue #554, exercised through the real entry point rather than the regridder alone."""
+
+    def test_global_run_on_ukesm_like_grid_produces_no_nans(self):
+        coarse_sim, obs_coarse, obs_fine = _ukesm_like_global_run()
+
+        result = downscale_from_coarse(da=coarse_sim, obs_coarse=obs_coarse, obs_fine=obs_fine)
+
+        assert int(result.isnull().sum()) == 0
+        # Specifically the two regions that used to come back empty.
+        assert not bool(result.sel(lat=[-90.0, 90.0]).isnull().any())
+        assert not bool(result.sel(lon=-180.0).isnull().any())
+
+    def test_coverage_gate_fires_before_the_nan_gate(self, monkeypatch):
+        """Simulates a regridder that silently loses its polar padding while the mask agrees
+        with it — the shape of issue #554, where assert_no_nans was handed a mask that
+        excused every missing cell."""
+        coarse_sim, obs_coarse, obs_fine = _ukesm_like_global_run()
+
+        def _gapped_mask(da_coarse, da_fine_grid):
+            mask = coarse_domain_mask(da_coarse, da_fine_grid)
+            mask[dict(lat=[0, -1])] = False  # "poles are out of domain, nothing to see"
+            return mask
+
+        monkeypatch.setattr(downscaling_utils, "coarse_domain_mask", _gapped_mask)
+
+        with pytest.raises(DomainCoverageError, match="issue #554"):
+            downscale_from_coarse(da=coarse_sim, obs_coarse=obs_coarse, obs_fine=obs_fine)
 
 
 class TestDownscaleFromCoarseNanGuards:

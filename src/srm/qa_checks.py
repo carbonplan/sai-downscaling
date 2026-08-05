@@ -55,6 +55,14 @@ class NaNCheckError(RuntimeError):
     """
 
 
+class DomainCoverageError(RuntimeError):
+    """Raised when a global coarse grid regrids to less than full fine-grid coverage.
+
+    Distinct from :class:`NaNCheckError` because it points at the regridding domain rather
+    than at the data (issue #554).
+    """
+
+
 def _format_label(label: Any) -> str:
     """Render a coordinate label compactly — dates as YYYY-MM-DD, everything else as-is."""
     if isinstance(label, np.datetime64):
@@ -242,6 +250,76 @@ def assert_no_nans(
         lines.append("  context: " + " ".join(f"{k}={v}" for k, v in described.items()))
 
     raise NaNCheckError("\n".join(lines))
+
+
+def assert_global_grid_fully_covered(
+    da_coarse: xr.DataArray,
+    fine_mask: xr.DataArray,
+    *,
+    name: str,
+    context: dict[str, Any] | None = None,
+) -> None:
+    """Abort if a globe-spanning coarse grid did not regrid to full fine coverage.
+
+    :func:`assert_no_nans` is only as strong as the mask handed to it, and in issue #554 the
+    mask came from the same regridder whose domain had gaps, so it excused exactly the cells
+    that came out NaN. This check is independent of the regridding path: it decides globality
+    from the source grid's own longitude coordinate, and if global, demands an all-True mask.
+    Regional subsets span a small longitude range and are skipped.
+
+    Parameters
+    ----------
+    da_coarse : xr.DataArray
+        Coarse source that was regridded. Only its ``lon`` coordinate is inspected.
+    fine_mask : xr.DataArray
+        Boolean fine-grid coverage mask, as returned by
+        :func:`srm.downscaling_utils.coarse_domain_mask`.
+    name : str
+        Name of the regridded array, quoted in the error message.
+    context : dict[str, Any] | None, optional
+        Run-identity fields appended to the error message, as in :func:`assert_no_nans`.
+
+    Raises
+    ------
+    DomainCoverageError
+        If the source grid spans the globe but the fine mask is not entirely True.
+    """
+    lon_vals = np.sort(np.asarray(da_coarse["lon"].values, dtype=float))
+    dlon = np.max(np.diff(lon_vals))
+    # Span of a global grid is a full turn minus the wrap-around gap (~one grid step).
+    # The factor of 2 is slack for uneven spacing, not a resolution-specific constant.
+    if (lon_vals[-1] - lon_vals[0]) < 360.0 - 2.0 * dlon:
+        return
+
+    mask = np.asarray(fine_mask.values, dtype=bool)
+    n_missing = int((~mask).sum())
+    if n_missing == 0:
+        return
+
+    percent = 100.0 * n_missing / mask.size
+    lines = [
+        f"{name!r} was regridded from a globe-spanning coarse grid "
+        f"(lon {lon_vals[0]:g}..{lon_vals[-1]:g}) but {n_missing} fine cells "
+        f"({percent:.3f}% of {mask.size}) fall outside the regridding domain. "
+        "A global source grid must produce full fine-grid coverage — see issue #554."
+    ]
+    uncovered_lat = fine_mask["lat"].values[~mask.all(axis=1)]
+    uncovered_lon = fine_mask["lon"].values[~mask.all(axis=0)]
+    if uncovered_lat.size:
+        lines.append(
+            f"  uncovered lat: {uncovered_lat.min():g}..{uncovered_lat.max():g} "
+            f"({uncovered_lat.size} rows)"
+        )
+    if uncovered_lon.size:
+        lines.append(
+            f"  uncovered lon: {uncovered_lon.min():g}..{uncovered_lon.max():g} "
+            f"({uncovered_lon.size} columns)"
+        )
+    described = {k: v for k, v in (context or {}).items() if v is not None}
+    if described:
+        lines.append("  context: " + " ".join(f"{k}={v}" for k, v in described.items()))
+
+    raise DomainCoverageError("\n".join(lines))
 
 
 @dataclasses.dataclass

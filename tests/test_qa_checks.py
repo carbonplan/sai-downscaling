@@ -1,4 +1,5 @@
-"""Tests for the hard NaN assertions used during pipeline execution (issue #517)."""
+"""Hard gates run during pipeline execution: NaN assertions (issue #517) and the
+global-grid coverage assertion (issue #554)."""
 
 from __future__ import annotations
 
@@ -11,7 +12,12 @@ import xarray as xr
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.pipeline import BCSDPipeline
-from srm.qa_checks import NaNCheckError, assert_no_nans
+from srm.qa_checks import (
+    DomainCoverageError,
+    NaNCheckError,
+    assert_global_grid_fully_covered,
+    assert_no_nans,
+)
 
 
 def _daily_da(values: np.ndarray, start: str = "2015-01-01") -> xr.DataArray:
@@ -353,3 +359,77 @@ class TestDebiaserOutputCheck:
 
         assert result.dims == ("time", "lat", "lon")
         assert not bool(result.isnull().any())
+
+
+# --- issue #554: global-grid coverage gate ---------------------------------------------
+
+
+def _coarse_lonlat(lon: np.ndarray) -> xr.DataArray:
+    """Minimal coarse array; only its lon coordinate is inspected by the gate."""
+    lat = np.arange(-89.375, 89.376, 1.25)
+    return xr.DataArray(
+        np.zeros((lat.size, lon.size)),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+    )
+
+
+def _fine_mask(uncovered: tuple[slice, slice] | None = None) -> xr.DataArray:
+    lat = np.arange(-90.0, 90.001, 2.5)
+    lon = np.arange(-180.0, 179.751, 2.5)
+    mask = xr.DataArray(
+        np.ones((lat.size, lon.size), dtype=bool),
+        dims=["lat", "lon"],
+        coords={"lat": lat, "lon": lon},
+    )
+    if uncovered is not None:
+        mask[uncovered] = False
+    return mask
+
+
+class TestGlobalGridCoverage:
+    """The gate that does not trust the mask it is handed. It re-derives globality from the
+    source grid's own longitude coordinate, so it still fires when mask and regridder drift
+    together — the failure mode of issue #554."""
+
+    def test_error_names_the_uncovered_rows_and_columns(self):
+        coarse = _coarse_lonlat(np.arange(-179.0625, 179.07, 1.875))
+        mask = _fine_mask(uncovered=(slice(None), slice(0, 3)))
+
+        with pytest.raises(DomainCoverageError) as excinfo:
+            assert_global_grid_fully_covered(
+                coarse, mask, name="residuals_fine", context={"gcm": "UKESM"}
+            )
+
+        message = str(excinfo.value)
+        assert "uncovered lon: -180..-175" in message
+        assert "gcm=UKESM" in message
+
+    def test_fully_covered_global_grid_passes(self):
+        coarse = _coarse_lonlat(np.arange(-179.0625, 179.07, 1.875))
+        assert_global_grid_fully_covered(coarse, _fine_mask(), name="residuals_fine")
+
+    def test_regional_grid_with_gaps_is_skipped(self):
+        # A subset domain is meant to leave fine cells uncovered; the gate must not fire.
+        coarse = _coarse_lonlat(np.arange(16.25, 32.6, 1.25))
+        mask = _fine_mask(uncovered=(slice(None), slice(0, 40)))
+
+        assert_global_grid_fully_covered(coarse, mask, name="residuals_fine")
+
+    @pytest.mark.parametrize(
+        "lon",
+        [
+            np.arange(-180.0, 180.0, 1.25),  # CESM2-WACCM: lands on -180
+            np.arange(-180.0, 180.0, 1.40625),  # MIROC-ES2H
+            np.arange(-179.0625, 179.07, 1.875),  # UKESM: straddles -180
+        ],
+        ids=["cesm2-waccm", "miroc-es2h", "ukesm"],
+    )
+    def test_all_production_grids_are_recognised_as_global(self, lon):
+        # Whatever the lon origin, every real GCM grid must be subject to the gate; a grid
+        # that slips through unrecognised is one this check cannot protect. Missing polar
+        # caps are the pre-fix situation, which used to pass silently.
+        mask = _fine_mask(uncovered=(slice(0, 1), slice(None)))
+
+        with pytest.raises(DomainCoverageError, match="issue #554"):
+            assert_global_grid_fully_covered(_coarse_lonlat(lon), mask, name="x")
