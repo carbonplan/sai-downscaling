@@ -15,6 +15,7 @@ from srm.downscaling_utils import (
     fft_smooth_3harmonics,
     get_historical_experiment,
     interpolate_coarse_to_fine_grid,
+    is_global_grid,
     rechunk,
     retrend,
     subset_space,
@@ -770,7 +771,7 @@ class TestDeriveTasmin:
 def _regional_grids(n_time: int = 40) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
     """Coarse simulation, coarse obs, and fine obs on a regional (non-global) domain.
 
-    The fine grid deliberately extends past the outermost coarse cell centres, which is
+    The fine grid deliberately extends past the outermost coarse cell centers, which is
     what production subset runs do. Those out-of-domain fine cells interpolate to NaN,
     and the guards must tolerate exactly that frame and nothing more.
     """
@@ -795,6 +796,34 @@ def _regional_grids(n_time: int = 40) -> tuple[xr.DataArray, xr.DataArray, xr.Da
         _da(coarse_lat, coarse_lon, 299.0),
         _da(fine_lat, fine_lon, 298.0),
     )
+
+
+def _pole_gap_global_grids() -> tuple[xr.DataArray, xr.DataArray]:
+    """Global coarse grid whose cell centers stop half a step short of the boundary.
+
+    This is the UKESM and MIROC-ES2H geometry at test scale. UKESM stores lat centers at
+    +/-89.375 on a 1.25 deg grid and lon centers from -179.0625 on a 1.875 deg grid, so the
+    outermost ERA5 fine rows and columns fall outside the interpolation domain and come back
+    NaN. CESM2-WACCM does not, which is why the hole went unnoticed (issues #553, #554).
+    """
+    coarse_lat = np.arange(-75.0, 90.0, 30.0)  # [-75, -45, -15, 15, 45, 75]
+    coarse_lon = np.arange(-157.5, 180.0, 45.0)  # [-157.5, ..., 157.5]
+    data = (
+        np.cos(np.deg2rad(coarse_lat))[:, np.newaxis]
+        + 0.1 * np.sin(np.deg2rad(coarse_lon))[np.newaxis, :]
+    )
+    coarse = xr.DataArray(data, dims=["lat", "lon"], coords={"lat": coarse_lat, "lon": coarse_lon})
+    # Fine cell bounds line up with the coarse ones so conservative regridding has full
+    # coverage. Fine centers at -85/85 and -175/-165 still sit outside the outermost coarse
+    # centers, which is what drives them NaN.
+    fine_lat = np.arange(-85.0, 90.0, 10.0)
+    fine_lon = np.arange(-175.0, 180.0, 10.0)
+    fine = xr.DataArray(
+        np.zeros((fine_lat.size, fine_lon.size)),
+        dims=["lat", "lon"],
+        coords={"lat": fine_lat, "lon": fine_lon},
+    )
+    return coarse, fine
 
 
 def _global_grids() -> tuple[xr.DataArray, xr.DataArray]:
@@ -848,6 +877,80 @@ class TestCoarseDomainMask:
         assert bool(mask.isel(lat=3, lon=3))  # interior stays valid
 
 
+class TestIsGlobalGrid:
+    def test_pole_inclusive_grid_is_global(self):
+        coarse, _ = _global_grids()
+
+        assert is_global_grid(coarse)
+
+    def test_cell_center_grid_short_of_the_poles_is_global(self):
+        """UKESM lat stops at +/-89.375. That is a global grid, not a subset."""
+        coarse, _ = _pole_gap_global_grids()
+
+        assert is_global_grid(coarse)
+
+    def test_regional_subset_is_not_global(self):
+        coarse_sim, _, _ = _regional_grids()
+
+        assert not is_global_grid(coarse_sim.isel(time=0, drop=True))
+
+    def test_global_lon_with_truncated_lat_is_not_global(self):
+        coarse, _ = _pole_gap_global_grids()
+
+        assert not is_global_grid(coarse.sel(lat=slice(-50.0, 50.0)))
+
+    def test_lat_only_grid_with_regional_lon_is_not_global(self):
+        coarse, _ = _pole_gap_global_grids()
+
+        assert not is_global_grid(coarse.sel(lon=slice(-70.0, 70.0)))
+
+
+class TestDegenerateGridsAreNotGlobal:
+    """A sparse axis must not be mistaken for a global one.
+
+    Both span tests infer their tolerance from the median spacing of the array handed to
+    them, so two points at -45 and 45 infer a 90 degree step and a one-step tolerance
+    would admit that mid-latitude box as pole-to-pole. Misclassifying a subset as global
+    drops its legitimate out-of-domain frame mask and aborts a run that should succeed,
+    the mirror image of the bug these gates exist to catch.
+    """
+
+    @staticmethod
+    def _box(lat: list[float], lon: list[float]) -> xr.DataArray:
+        return xr.DataArray(
+            np.zeros((len(lat), len(lon))),
+            dims=["lat", "lon"],
+            coords={"lat": np.array(lat), "lon": np.array(lon)},
+        )
+
+    def test_two_point_box_is_not_global(self):
+        assert not is_global_grid(self._box([-45.0, 45.0], [-90.0, 90.0]))
+
+    def test_three_point_box_is_not_global(self):
+        assert not is_global_grid(self._box([-45.0, 0.0, 45.0], [-120.0, 0.0, 120.0]))
+
+    def test_sparse_lat_with_a_real_global_lon_is_not_global(self):
+        lon = list(np.arange(-157.5, 180.0, 45.0))
+
+        assert not is_global_grid(self._box([-45.0, 45.0], lon))
+
+    def test_coarse_but_well_sampled_global_grid_is_still_global(self):
+        """The floor rejects sparse axes, not merely coarse ones."""
+        coarse, _ = _global_grids()
+
+        assert coarse.sizes["lat"] == 5  # just above the floor
+        assert is_global_grid(coarse)
+
+    def test_periodic_padding_is_unaffected_by_the_floor(self):
+        """_lon_spans_globe also gates the wrap pad, which must keep working."""
+        coarse = _make_global_coarse_da()
+        fine = _make_fine_grid()
+
+        result = interpolate_coarse_to_fine_grid(coarse, fine)
+
+        assert not result.isnull().any()
+
+
 class TestDownscaleFromCoarseNanGuards:
     def test_regional_edge_nans_do_not_abort_the_run(self):
         """configs/qa/ subsets legitimately produce a NaN frame — that must still run."""
@@ -876,13 +979,67 @@ class TestDownscaleFromCoarseNanGuards:
             downscale_from_coarse(da=coarse_sim, obs_coarse=obs_coarse, obs_fine=obs_fine)
 
 
+class TestGlobalRunsGateStrictly:
+    """A global grid owes a NaN-free fine field, so its gate must not be masked.
+
+    Before this, the mask was rebuilt from the coarse interpolation domain, making it exactly
+    ``~isnan()`` of the interpolation's own output. It could never fail, which is how #554's
+    NaNs reached a committed deliverable (issue #553).
+    """
+
+    @staticmethod
+    def _timeseries(space: xr.DataArray, offset: float, n_time: int = 40) -> xr.DataArray:
+        time = pd.date_range("2015-01-01", periods=n_time, freq="D")
+        values = offset + np.tile(space.values, (n_time, 1, 1))
+        values += (np.arange(n_time, dtype="float64") % 7)[:, np.newaxis, np.newaxis]
+        return xr.DataArray(
+            values,
+            dims=["time", "lat", "lon"],
+            coords={"time": time, "lat": space["lat"], "lon": space["lon"]},
+            name="tas",
+        )
+
+    def test_pole_and_dateline_gap_on_a_global_grid_aborts(self):
+        coarse, fine = _pole_gap_global_grids()
+        coarse_sim = self._timeseries(coarse, 300.0)
+        obs_coarse = self._timeseries(coarse, 299.0)
+        obs_fine = self._timeseries(xr.zeros_like(fine), 298.0)
+
+        with pytest.raises(NaNCheckError, match="residuals_fine"):
+            downscale_from_coarse(da=coarse_sim, obs_coarse=obs_coarse, obs_fine=obs_fine)
+
+    def test_regional_frame_still_does_not_abort(self):
+        """The masked path must survive for configs/qa/ subsets."""
+        coarse_sim, obs_coarse, obs_fine = _regional_grids()
+
+        result = downscale_from_coarse(da=coarse_sim, obs_coarse=obs_coarse, obs_fine=obs_fine)
+
+        assert bool(np.isnan(result.isel(time=0, lat=0)).all())
+        assert not bool(np.isnan(result.isel(time=0, lat=3, lon=3)))
+
+
 class TestEnforceConservationNanGuard:
     """The conservation correction runs after the residual gates, so it needs its own.
 
-    Its nearest-neighbour spreading of a coarse correction can push NaN into interior
+    Its nearest-neighbor spreading of a coarse correction can push NaN into interior
     fine cells that the earlier checks already certified clean. The parameter is public
     and documented, so the guarantee has to hold when a caller turns it on.
     """
+
+    def test_downscaled_gate_runs_without_conservation(self):
+        """pipeline.py never sets enforce_conservation, so the gate must not live inside it."""
+        coarse_sim, obs_coarse, obs_fine = _regional_grids()
+        checked: list[str] = []
+        real = downscaling_utils.assert_no_nans
+
+        def _spy(data, *, name, **kwargs):
+            checked.append(name)
+            return real(data, name=name, **kwargs)
+
+        with patch.object(downscaling_utils, "assert_no_nans", side_effect=_spy):
+            downscale_from_coarse(da=coarse_sim, obs_coarse=obs_coarse, obs_fine=obs_fine)
+
+        assert "downscaled" in checked
 
     def test_clean_conservation_run_is_not_aborted(self):
         coarse_sim, obs_coarse, obs_fine = _regional_grids()

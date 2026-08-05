@@ -1,0 +1,39 @@
+# BCSD configuration: CESM2-WACCM / all variables / G6-1.5K-END / member 002 / South Africa (QA)
+# Termination-shock continuation of G6-1.5K member 002: SAI stops after 2084 and the run
+# continues to 2100. Only member 002 was run to termination, so this is a single-member config.
+#
+# predict_period_start is 2085 because the g6_1p5k_end store holds only 2085-2100. The
+# 2015-2084 years still get loaded, as the bridge the detrend stitch needs (SSP245 for
+# 2015-2034, then G6-1.5K 002 for 2035-2084), but they are trimmed from the output the same
+# way #448 trimmed the G6-1.5K bridge years. check_config_time_domain enforces this: an
+# earlier start is a blocking validation failure, not a silently mislabelled output.
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM"
+variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+ensemble_members: ["002"]
+scenarios: ["G6-1.5K-END"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2085
+predict_period_end: 2100
+
+# === Spatial Subsetting ===
+subset_bounds: [-31, -26, 23, 30]
+
+# === Storage ===
+# Shares the scratch prefix with the other CESM QA configs so the obs and fit_historical
+# artifacts this run has in common with G6-1.5K (historical r2i1p1f1 for the standard
+# variables, 001 for tasmax/tasmin) are reused from cache rather than recomputed.
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
+output_dir: "s3://carbonplan-scratch/srm/output"
+environment: "qa"
+
+# === Bias Correction ===
+debias_approach: "nonparametric_hybrid_2sided"
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true

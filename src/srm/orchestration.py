@@ -546,10 +546,9 @@ class BCSDOrchestrator:
         try:
             from srm.lineage import resolve_member_lineage
 
-            hist_member, *_ = resolve_member_lineage(
+            return resolve_member_lineage(
                 config.gcm, config.scenario, config.ensemble_member, config.variable
-            )
-            return hist_member
+            ).historical
         except KeyError:
             return config.ensemble_member
 

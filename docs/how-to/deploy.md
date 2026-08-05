@@ -9,7 +9,7 @@ The BCSD pipeline is deployed via GitHub Actions using pre-defined config files 
 
 ## Config structure
 
-Configs are organised by environment under `configs/`, with one subdirectory per GCM holding one or more YAML files:
+Configs are organized by environment under `configs/`, with one subdirectory per GCM holding one or more YAML files:
 
 ```
 configs/

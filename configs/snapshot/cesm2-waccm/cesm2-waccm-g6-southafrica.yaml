@@ -1,8 +1,12 @@
-# Snapshot proxy: CESM2-WACCM / G6-1.5K / member 003 / all variables / South Africa.
+# Snapshot proxy: CESM2-WACCM / G6-1.5K / members 002 and 003 / all variables / South Africa.
 # Mirrors configs/production/cesm2-waccm/cesm2-waccm-g6.yaml with SA bounds + qa env.
+#
+# 002 tracks the production config, which publishes it as the continued-SAI counterpart to
+# the termination run. Its leaves have no baseline counterpart until a production run
+# writes them, so the comparison reports them one-sided in the meantime; 003 is unaffected.
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
-ensemble_members: ["003"]
+ensemble_members: ["002", "003"]
 scenarios: ["G6-1.5K"]
 
 train_period_start: 1978
@@ -10,14 +14,12 @@ train_period_end: 2014
 predict_period_start: 2035
 predict_period_end: 2084
 
-debias_approach: "nonparametric_hybrid_2sided"
-
 # Run over a ~3 deg halo beyond the region of interest ([-35, -22, 16, 33]) so BCSD's
 # regrid + spatial disaggregation edge effects fall outside it. The comparison notebook
 # trims back to the region of interest (roi_bounds) before diffing.
 subset_bounds: [-38, -19, 13, 36]
 
-scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
 output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
 verbose: true
