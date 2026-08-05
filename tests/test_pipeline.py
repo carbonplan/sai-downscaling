@@ -2284,9 +2284,16 @@ class TestScenarioLoaderReachesTheScenarioStart:
     """
 
     @staticmethod
-    def _load(pipeline, hist_end: str = "2015-01-16"):
+    def _load(pipeline, hist_end: str = "2015-01-16", model_hist_override=None):
         member = pipeline.config.ensemble_member
         obs = _spatial_daily_da("1978-01-01", "2014-12-31").to_dataset(name="tas")
+        # model_hist_override lets a caller inject a record whose values matter (an all-NaN
+        # tail, for instance) rather than the uniform series hist_end alone can build.
+        hist = (
+            _spatial_daily_da("1978-01-01", hist_end)
+            if model_hist_override is None
+            else model_hist_override
+        )
         with (
             patch.object(
                 BCSDPipeline,
@@ -2298,7 +2305,7 @@ class TestScenarioLoaderReachesTheScenarioStart:
             ),
             patch(
                 "srm.pipeline.get_historical_experiment",
-                return_value=_spatial_daily_da("1978-01-01", hist_end),
+                return_value=hist,
             ),
             patch(
                 "srm.pipeline.get_experiment",
@@ -2364,3 +2371,50 @@ class TestScenarioLoaderReachesTheScenarioStart:
         assert list(years) == list(range(1978, 2061))
         # The all-NaN days after 2015-01-01 on the historical axis are excluded.
         assert stitched.sel(time=slice("2015", "2015"))["time"].size == 365
+
+    def test_sai_stitch_excludes_the_all_nan_historical_tail(self, pipeline_options):
+        """SAI complement of the test above, and the standing guard on #517/#518.
+
+        The CESM historical axis runs to 2015-01-16 and those trailing days are all-NaN on
+        some members. ``_load_scenario_data`` used to trim them; it no longer does, so the
+        guard now rests entirely on ``stitch_historical_scenario`` filtering historical to
+        ``time.year <= train_period_end``. A SAI config is the case that needs covering: its
+        scenario starts in 2035, so the SSP245 bridge rather than the scenario supplies 2015,
+        and a leaked tail would land in the bridge years where nothing else would catch it.
+        """
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="001",
+            scenario="G6-1.5K",
+            train_period_start=1978,
+            train_period_end=2014,
+            predict_period_start=2035,
+            predict_period_end=2060,
+        )
+        pipeline = BCSDPipeline(config, pipeline_options)
+        nan_tailed_hist = _spatial_daily_da("1978-01-01", "2015-01-16")
+        nan_tailed_hist = nan_tailed_hist.where(
+            nan_tailed_hist["time"] < np.datetime64("2015-01-01")
+        )
+
+        _, _, model_hist, model_scenario, ssp_timeseries = self._load(
+            pipeline, model_hist_override=nan_tailed_hist
+        )
+
+        # The loader deliberately passes the tail through; narrowing is the consumer's job.
+        assert model_hist["time"].max() >= np.datetime64("2015-01-01")
+        assert ssp_timeseries is not None
+
+        stitched = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=model_scenario,
+            train_period_end=2014,
+            predict_period_start=2035,
+            ssp_timeseries=ssp_timeseries,
+        )
+
+        # A leaked tail shows up two ways: as NaN, and as 2015 running long by 16 days.
+        assert not bool(stitched.isnull().any())
+        assert stitched.sel(time=slice("2015", "2015"))["time"].size == 365
+        assert list(np.unique(stitched["time.year"].values)) == list(range(1978, 2061))
