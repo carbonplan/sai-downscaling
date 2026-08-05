@@ -14,6 +14,7 @@ import logging
 import time
 import warnings
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import dask.system
 import icechunk
@@ -30,6 +31,7 @@ from srm.config import _ensure_root_group, _icechunk_storage_for_path
 from srm.datasets import catalog as _catalog
 from srm.downscaling_utils import (
     calculate_baseline_climatology,
+    derive_tasmin,
     detrend,
     downscale_from_coarse,
     get_experiment,
@@ -39,11 +41,42 @@ from srm.downscaling_utils import (
     rechunk,
     retrend,
     subset_space,
+    swap_temperature_extremes,
 )
-from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME, make_coarse_encoding, make_encoding
+from srm.encoding import (
+    SHARD_LAT,
+    SHARD_LAT_COARSE,
+    SHARD_LON,
+    SHARD_LON_COARSE,
+    SHARD_TIME,
+    SHARD_TIME_COARSE,
+    make_coarse_encoding,
+    make_encoding,
+)
+from srm.qa_checks import assert_no_nans
 from srm.utils import get_variable
 
+if TYPE_CHECKING:
+    from srm.lineage import ScenarioMember
+
 logger = logging.getLogger(__name__)
+
+
+class _WeibullMinZeroBounded(type(scipy.stats.weibull_min)):
+    """Subclass of weibull_min_gen that constrains loc=0 during fitting.
+
+    Prevents degenerate negative loc values from the 3-parameter Weibull MLE,
+    which can produce physically impossible negative debiased values (e.g. DTR -300 K).
+    This class must be defined at module level so multiprocessing can pickle it.
+    All variables using this class are zero-bounded (rsds, DTR, hurs, pr)
+    """
+
+    def fit(self, data, *args, **kwargs):
+        kwargs.setdefault("floc", 0)
+        return super().fit(data, *args, **kwargs)
+
+
+_weibull_min_zero_bounded = _WeibullMinZeroBounded(a=0.0, name="weibull_min_floc0")
 
 
 def _make_debiaser(variable: str, distribution=None, **kwargs):
@@ -331,17 +364,21 @@ class BCSDPipeline:
         self._hist_member = config.ensemble_member
         self._ssp245_member = config.ensemble_member
         self._ssp245_esgf_member: str | None = None
+        self._sai_parent: ScenarioMember | None = None
         if config.scenario is not None:
             from srm.lineage import resolve_member_lineage
 
             try:
-                self._hist_member, self._ssp245_member, self._ssp245_esgf_member = (
-                    resolve_member_lineage(
-                        config.gcm, config.scenario, config.ensemble_member, config.variable
-                    )
+                lineage = resolve_member_lineage(
+                    config.gcm, config.scenario, config.ensemble_member, config.variable
                 )
             except KeyError:
                 pass
+            else:
+                self._hist_member = lineage.historical
+                self._ssp245_member = lineage.ssp245_bridge
+                self._ssp245_esgf_member = lineage.ssp245_esgf_bridge
+                self._sai_parent = lineage.sai_parent
 
         if self._hist_member != config.ensemble_member:
             parts = [
@@ -350,12 +387,29 @@ class BCSDPipeline:
             ]
             if self._ssp245_member != config.ensemble_member:
                 parts.append(f"ssp245_bridge={self._ssp245_member!r}")
+            if self._sai_parent is not None:
+                parts.append(f"sai_parent={str(self._sai_parent)!r}")
             logger.info("Lineage resolved — %s", "  ".join(parts))
+
+    def _nan_check_context(self, stage: str) -> dict[str, str | None]:
+        """Run-identity fields attached to a :class:`NaNCheckError` message.
+
+        Batch runs fan out over hundreds of Coiled tasks writing to the same store.
+        Without these fields the traceback names the offending array but not which
+        task produced it.
+        """
+        return {
+            "gcm": self.config.gcm,
+            "variable": self.config.variable,
+            "ensemble_member": self.config.ensemble_member,
+            "scenario": self.config.scenario,
+            "stage": stage,
+        }
 
     def _build_output_attrs(self) -> dict:
         """Build dataset-level attributes for pipeline output artifacts."""
         version = importlib.metadata.version("srm")
-        return {
+        attrs = {
             # CF-standard — flat
             "Conventions": "CF-1.8",
             "institution": "CarbonPlan",
@@ -372,8 +426,8 @@ class BCSDPipeline:
             "srm_downscaling:historical_ensemble_member": self._hist_member,
             "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
             "srm_downscaling:observation_dataset": self.config.obs_dataset,
-            "srm_downscaling:bias_correction_method": self.config.mapping_type,
-            "srm_downscaling:downscaling_method": self.config.downscaling_method,
+            "srm_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
+            "srm_downscaling:downscaling_method": self.config.variable_config.downscaling_method,
             "srm_downscaling:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
             ),
@@ -381,6 +435,12 @@ class BCSDPipeline:
             "srm_downscaling:config_json": self.config.model_dump_json(),
             "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
+        # Only present on scenarios that continue an earlier SAI run, so readers can tell
+        # which run supplied the pre-scenario years of the bridge.
+        if self._sai_parent is not None:
+            attrs["srm_downscaling:sai_parent_scenario"] = self._sai_parent.scenario
+            attrs["srm_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
+        return attrs
 
     def _write_to_icechunk(
         self,
@@ -473,15 +533,146 @@ class BCSDPipeline:
             template, coast[["geom"]], all_touched=True, engine="rusterize", xdim="lon", ydim="lat"
         ).drop_vars("spatial_ref", errors="ignore")
 
-    def _open_from_icechunk(self, loc: StoreLocation) -> xr.Dataset:
-        """Open a zarr group from an icechunk store."""
+    def _open_from_icechunk(self, loc: StoreLocation, chunks="auto") -> xr.Dataset:
+        """Open a zarr group from an icechunk store.
+
+        Parameters
+        ----------
+        loc : StoreLocation
+            Store path and group to open.
+        chunks : str or dict, optional
+            Dask chunking for the opened dataset. Defaults to ``"auto"``. Pass an
+            explicit shard-aligned dict (e.g. ``{"time": SHARD_TIME, ...}``) when the
+            caller needs per-shard streaming reads rather than auto-sized chunks — the
+            store-to-store reconcile relies on this to avoid materialising the full
+            global fine array (reconcile OOM).
+        """
         branch = self.cache._branch_for()
         storage = _icechunk_storage_for_path(loc.store_path)
         repo = icechunk.Repository.open(storage)
         session = repo.readonly_session(branch=branch)
         return xr.open_dataset(
-            session.store, engine="zarr", consolidated=False, chunks="auto", group=loc.group
+            session.store, engine="zarr", consolidated=False, chunks=chunks, group=loc.group
         )
+
+    def reconcile_temperature_extremes(
+        self,
+        tasmin_loc: StoreLocation,
+        tasmax_loc: StoreLocation,
+        *,
+        tasmin_fine: xr.DataArray | None = None,
+        force: bool = False,
+    ) -> None:
+        """Dedicated reconcile step: enforce ``tasmax >= tasmin`` on the fine outputs.
+
+        Independent spatial disaggregation of tasmax and tasmin can leave a few fine
+        cells with ``tasmax < tasmin`` (issue #331). Following the NEX-GDDP-CMIP6 v2
+        final sweep, this step reads the sibling fine tasmax, swaps the offending
+        cells against tasmin, and writes *both* corrected fields back to their own
+        stores. It runs after both fine outputs are produced (the #363 wave-gating
+        guarantees tasmax is final before tasmin), and can also be re-run standalone
+        against the persisted outputs.
+
+        The reconciliation is idempotent and structurally monotone (see
+        :func:`swap_temperature_extremes`); ``qaqc.validate_temp_consistency`` is the
+        output-QA gate that catches any residual inversion (e.g. from a tasmax-only
+        rerun that has not yet been re-reconciled).
+
+        Parameters
+        ----------
+        tasmin_loc : StoreLocation
+            Location of this stage's fine tasmin output (written here, corrected).
+        tasmax_loc : StoreLocation
+            Location of the sibling fine tasmax output (rewritten here, corrected).
+        tasmin_fine : xr.DataArray, optional
+            The freshly downscaled tasmin. If omitted, tasmin is read back from
+            ``tasmin_loc`` (standalone reconcile of already-persisted outputs).
+        force : bool, optional
+            Threaded to the *tasmin* write only (see below).
+        """
+        if not self.cache.exists(tasmax_loc):
+            raise ValueError(
+                f"tasmin reconciliation needs the fine tasmax output "
+                f"{tasmax_loc.store_path}/{tasmax_loc.group}, which is missing. "
+                f"tasmax must complete before tasmin."
+            )
+        # Read both fields shard-aligned so the swap+write slices per-shard from clean
+        # sharded zarr (no interp graph) instead of pulling the whole global fine array.
+        # With the pipeline persisting the raw tasmin before this step, tasmin_fine is
+        # None here in production and both inputs are plain sharded reads (reconcile OOM).
+        shard = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+        if tasmin_fine is None:
+            if not self.cache.exists(tasmin_loc):
+                raise ValueError(
+                    f"standalone reconcile needs the fine tasmin output "
+                    f"{tasmin_loc.store_path}/{tasmin_loc.group}, which is missing."
+                )
+            tasmin_fine = self._open_from_icechunk(tasmin_loc, chunks=shard)[self.config.variable]
+
+        tasmax_ds = self._open_from_icechunk(tasmax_loc, chunks=shard)
+        # swap_temperature_extremes enforces exact grid alignment and is structurally
+        # monotone, so tasmax >= tasmin holds by construction; the second full-array
+        # pass is left to output-QA rather than gated here (issue #331).
+        tasmax_corrected, tasmin_corrected = swap_temperature_extremes(
+            tasmax_ds["tasmax"], tasmin_fine
+        )
+        tasmax_corrected = tasmax_corrected.chunk(shard)
+        tasmin_corrected = tasmin_corrected.chunk(shard)
+
+        # Data-quality diagnostic (issue #331): how many fine cells were inverted
+        # (tasmax < tasmin) before the swap, plus the worst inversion. Unlike the residual
+        # count in qaqc.validate_tasmax_ge_tasmin (which runs on the final output via
+        # `bcsd validate-output` and, being post-reconcile, is ~0), the *swap* count is only
+        # available here, pre-swap. It costs one extra streaming read pass over both fields,
+        # so restrict it to QA runs (always spatial subsets — cheap); production skips it and
+        # relies on the qaqc consistency gate. NaN cells (e.g. ocean) compare False, excluded.
+        if self.options.environment == "qa":
+            pre_tasmax = tasmax_ds["tasmax"]
+            inverted = pre_tasmax < tasmin_fine
+            with dask.config.set(scheduler="synchronous"):
+                swap_stats = xr.Dataset(
+                    {
+                        "n_swapped": inverted.sum(),
+                        "n_valid": (pre_tasmax.notnull() & tasmin_fine.notnull()).sum(),
+                        "max_inversion": xr.where(inverted, tasmin_fine - pre_tasmax, 0.0).max(),
+                    }
+                ).compute()
+            n_swapped = int(swap_stats["n_swapped"])
+            n_valid = int(swap_stats["n_valid"])
+            pct = 100.0 * n_swapped / n_valid if n_valid else 0.0
+            logger.info(
+                "Reconcile tasmax<tasmin: swapped %d / %d valid cells (%.4f%%); max inversion %.3f",
+                n_swapped,
+                n_valid,
+                pct,
+                float(swap_stats["max_inversion"]),
+            )
+
+        # Bound peak memory: the swap+writes are memory-bound. A synchronous scheduler
+        # keeps only a few shards resident at once (measured flat vs. array size) rather
+        # than the threaded scheduler's whole-array co-residency that OOMs at global
+        # scale (reconcile OOM; see project_fit_historical_single_threaded).
+        with dask.config.set(scheduler="synchronous"):
+            # tasmax first, force=False: tasmin_corrected still lazily reads this
+            # pre-rewrite tasmax snapshot, so a force GC now would collect those chunks
+            # before the tasmin write below materialises them (data-loss hazard).
+            self._write_to_icechunk(
+                tasmax_corrected,
+                tasmax_loc,
+                encoding=make_encoding("tasmax"),
+                dataset_attrs=dict(tasmax_ds.attrs),
+                force=False,
+            )
+            # tasmin last, force-threaded: it is materialised before its own commit, so
+            # the trailing GC safely sweeps the now-superseded tasmax snapshot too.
+            tasmin_corrected.name = self.config.variable
+            self._write_to_icechunk(
+                tasmin_corrected,
+                tasmin_loc,
+                encoding=make_encoding(self.config.variable),
+                dataset_attrs=self._build_output_attrs(),
+                force=force,
+            )
 
     def prepare_observations(self, force: bool = False) -> str:
         """
@@ -604,23 +795,30 @@ class BCSDPipeline:
         Uses nonparametric mapping for the nonparametric_hybrid case because modeled
         historical is always within its own range, making the parametric tail unnecessary.
         """
+        debias_approach = self.config.variable_config.debias_approach
         mapping_type = (
             "nonparametric"
-            if self.config.mapping_type in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
-            else self.config.mapping_type
+            if debias_approach in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
+            else debias_approach
         )
         debiaser = _make_debiaser(
             variable=self.config.variable,
             mapping_type=mapping_type,
             detrending="no_detrending",
-            running_window_mode=self.config.do_windowing,
-            running_window_length=self.config.running_window_length,
+            running_window_mode=self.config.variable_config.do_windowing,
+            running_window_length=self.config.variable_config.running_window_length,
             running_window_step_length=1,
             running_window_mode_over_years_of_cm_future=False,
         )
 
-        obs_np = obs_coarse.as_numpy().values
-        cm_hist_np = model_hist.as_numpy().values
+        obs_coarse = obs_coarse.as_numpy()
+        model_hist = model_hist.as_numpy()
+        nan_context = self._nan_check_context("fit_historical")
+        assert_no_nans(obs_coarse, name="obs", context=nan_context)
+        assert_no_nans(model_hist, name="cm_hist", context=nan_context)
+
+        obs_np = obs_coarse.values
+        cm_hist_np = model_hist.values
 
         debiased_np = debiaser.apply(
             obs=obs_np,
@@ -632,8 +830,13 @@ class BCSDPipeline:
             parallel=True,
             nr_processes=dask.system.CPU_COUNT,
             progressbar=False,
-            failsafe=True,  # ocean pixels have NaN obs; fill with NaN rather than crash
+            # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
+            # distribution fit that fails to converge. Inputs are asserted NaN-free
+            # above, so anything NaN in the result was produced here, and the output
+            # assertion below catches it (issue #517).
+            failsafe=True,
         )
+        assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)
 
         return xr.DataArray(
             data=debiased_np,
@@ -648,12 +851,16 @@ class BCSDPipeline:
         obs_fine: xr.DataArray,
     ) -> xr.DataArray:
         """Spatially disaggregate coarse debiased data to fine resolution."""
+
+        # We don't want negative values for any of the variables we are downscaling (tas, tasmin, tasmax, rsds, hurs, pr)
+
         downscaled = downscale_from_coarse(
             da=debiased,
             obs_coarse=obs_coarse.as_numpy(),
             obs_fine=obs_fine.as_numpy(),
-            method=self.config.downscaling_method,
-            clim_method=self.config.downscaling_clim_method,
+            method=self.config.variable_config.downscaling_method,
+            clim_method=self.config.variable_config.downscaling_clim_method,
+            allow_negative_values=False,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
@@ -663,13 +870,20 @@ class BCSDPipeline:
         because it loads debiased coarse tasmax and dtr to compute debiased coarse tasmin,
         which is then spatially disaggregated to fine resolution.
         """
-
         loc = self.cache.historical_loc(self._hist_member)
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
+        tasmax_fine_loc = self.cache.historical_loc(self._hist_member, variable="tasmax")
 
-        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
+        if not force and self.cache.exists(loc) and self.cache.exists(coarse_loc):
+            logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
+
+        # Validate inputs only when we are actually going to compute, so a cache hit
+        # is never blocked by a reaped upstream (issue #363). tasmin reads the
+        # debiased-coarse tasmax/dtr and the fine tasmax; fail fast if any is missing.
+        self.cache.validate_dependencies(
+            "fit_historical", self.config, hist_member=self._hist_member
+        )
 
         logger.info(
             "Computing historical downscaling for %s/%s/%s",
@@ -691,13 +905,23 @@ class BCSDPipeline:
         )
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
-        model_hist_debiased = debiased_tasmax - debiased_dtr
+        # Materialise the derived coarse tasmin eagerly (it is only ~3-6 GB). This mirrors what
+        # every other variable already does — _apply_bias_correction returns a numpy-backed
+        # array — so the spatial disaggregation below runs the slinear interp eagerly and its
+        # .chunk(SHARD) is cheap slicing of concrete data. Left lazy, the interp is deferred
+        # into an all-to-all rechunk at the write that holds the whole ~56-129 GB fine array
+        # resident and stalls at global scale. See notebooks/issues/tasmin-disaggregation-inefficiency.
+        model_hist_debiased = derive_tasmin(debiased_tasmax, debiased_dtr).compute()
         logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         model_hist_debiased.name = self.config.variable
+        # Chunk the now-concrete coarse field to the coarse shard grid so every dask chunk maps
+        # to exactly one shard for the write.
         self._write_to_icechunk(
-            model_hist_debiased,
+            model_hist_debiased.chunk(
+                {"time": SHARD_TIME_COARSE, "lat": SHARD_LAT_COARSE, "lon": SHARD_LON_COARSE}
+            ),
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
             dataset_attrs=self._build_output_attrs(),
@@ -713,19 +937,31 @@ class BCSDPipeline:
         model_hist_downscaled = self._apply_spatial_downscaling(
             model_hist_debiased, obs_coarse, obs_fine
         )
+        model_hist_downscaled.name = self.config.variable
         logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
 
+        # Persist the raw (un-reconciled) tasmin FIRST, then reconcile store-to-store
+        # (tasmin_fine=None). This keeps the sibling fine tasmax and this fresh interp
+        # graph from being full-array-resident at the same time — the reconcile then
+        # re-reads both fields shard-aligned from clean sharded zarr (reconcile OOM).
         t0 = time.perf_counter()
-        model_hist_downscaled.name = self.config.variable
         self._write_to_icechunk(
-            da=model_hist_downscaled,
-            loc=loc,
+            model_hist_downscaled,
+            loc,
             encoding=make_encoding(self.config.variable),
             dataset_attrs=self._build_output_attrs(),
-            force=force,
+            force=False,
         )
         logger.info(
-            "✓ Cached historical: %s/%s (%.2fs)",
+            "✓ Saved raw tasmin: %s/%s (%.2fs)", loc.store_path, loc.group, time.perf_counter() - t0
+        )
+
+        # Dedicated reconcile step: swap any tasmax < tasmin left by independent
+        # disaggregation and write both corrected fields (issue #331).
+        t0 = time.perf_counter()
+        self.reconcile_temperature_extremes(loc, tasmax_fine_loc, tasmin_fine=None, force=force)
+        logger.info(
+            "✓ Reconciled + saved historical: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -763,24 +999,32 @@ class BCSDPipeline:
 
         Notes
         -----
-        The output (fully downscaled historical data) is written to the cache as a
-        data artifact for the historical period. It is also used as a completion gate:
-        ``transform_scenario`` checks that this artifact exists before it will run, but
-        does *not* load it as an input (scenario runs re-load the raw GCM historical data
-        for their own bias-correction training). Setting ``force=True`` reruns all three
-        computation steps and overwrites the cached artifact; ``force=False`` skips all
-        three and returns the existing path immediately.
+        The output (fully downscaled historical data) is written to the output store as
+        a deliverable for the historical period — the analog of the fine scenario output.
+        It is also used as a completion gate: ``transform_scenario`` checks that this
+        artifact exists before it will run, but does *not* load it as an input (scenario
+        runs re-load the raw GCM historical data for their own bias-correction training).
+        Setting ``force=True`` reruns all three computation steps and overwrites the
+        existing artifact; ``force=False`` skips all three and returns the existing path
+        immediately.
 
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
         """
+        # tasmin is derived (tasmax - dtr) and reconciled against tasmax; route it to
+        # the dedicated method from here so every entry point — including the
+        # distributed batch_runner, which calls this method directly — gets the
+        # correct path (issues #363/#331).
+        if self.config.variable == "tasmin":
+            return self.fit_historical_tasmin(force=force)
+
         self.cache.validate_dependencies("fit_historical", self.config)
 
         loc = self.cache.historical_loc(self._hist_member)
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
 
         if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using cached historical: %s/%s", loc.store_path, loc.group)
+            logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
             return loc.store_path
 
         logger.info(
@@ -829,7 +1073,7 @@ class BCSDPipeline:
             force=force,
         )
         logger.info(
-            "✓ Cached historical: %s/%s (%.2fs)",
+            "✓ Saved historical: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -838,7 +1082,75 @@ class BCSDPipeline:
         return loc.store_path
 
     def _load_ssp245_bridge(self) -> xr.DataArray:
-        """Load the SSP245 bridge timeseries for SAI detrending.
+        """Load the bridge timeseries spanning historical end to SAI scenario start.
+
+        The bridge is SSP245 for scenarios that branch straight off it. Scenarios that
+        continue an earlier SAI run (G6-1.5K-END, which resumes G6-1.5K 002 in 2085) need
+        the parent run's years appended on top, so SSP245 covers 2015 up to the parent's
+        start and the parent covers the rest. Both variable groups need that second
+        segment, for different reasons.
+
+        For the standard variables the SSP245 bridge (member 002) does run past 2085, so
+        an SSP245-only bridge would stitch cleanly and be silently wrong: 2035–2084 would
+        come from the no-SAI run rather than the SAI years the termination continues.
+        For tasmax/tasmin/dtr the bridge member is the truncated 007, which stops in 2069,
+        so an SSP245-only bridge fails outright when _assert_stitched_continuity hits the
+        2070–2084 hole.
+        """
+        bridge = self._load_ssp245_segment()
+        if self._sai_parent is None:
+            return bridge
+
+        parent_scenario, parent_member = self._sai_parent.scenario, self._sai_parent.member
+        parent = get_experiment(self.config.gcm, parent_scenario, self.config.variable)
+        parent = parent.sel(ensemble_member=parent_member)
+        parent = parent.drop_vars("spatial_ref", errors="ignore")
+
+        parent_start_year = int(parent.time.dt.year.min())
+        parent_years = (parent_start_year, int(parent.time.dt.year.max()))
+        ssp_head = bridge.sel(time=(bridge["time.year"] < parent_start_year))
+        if ssp_head.time.size == 0:
+            raise ValueError(
+                f"SSP245 bridge member {self._ssp245_member!r} has no data before "
+                f"{parent_start_year}, so the {self.config.train_period_end + 1}–"
+                f"{parent_start_year - 1} gap ahead of SAI parent "
+                f"{parent_scenario} {parent_member} cannot be filled."
+            )
+
+        logger.info(
+            "_load_ssp245_bridge: stitching SSP245 %s %d–%d + %s %s %d–%d",
+            self._ssp245_member,
+            int(ssp_head.time.dt.year.min()),
+            int(ssp_head.time.dt.year.max()),
+            parent_scenario,
+            parent_member,
+            *parent_years,
+        )
+
+        # Same scalar-coord dance as the ESGF stitch: the two segments carry different
+        # ensemble_member values (e.g. SSP245 '007' vs G6 '002'), which blocks concat.
+        combined = xr.concat(
+            [
+                ssp_head.drop_vars("ensemble_member", errors="ignore"),
+                parent.drop_vars("ensemble_member", errors="ignore"),
+            ],
+            dim="time",
+        )
+        combined = combined.assign_coords(ensemble_member=parent.coords["ensemble_member"])
+        combined.attrs.update(bridge.attrs)
+        combined.attrs.update(
+            {
+                "bridge_sai_parent_scenario": parent_scenario,
+                "bridge_sai_parent_member": parent_member,
+                "bridge_sai_parent_years": f"{parent_years[0]}-{parent_years[1]}",
+                "bridge_gcm": self.config.gcm,
+                "bridge_variable": self.config.variable,
+            }
+        )
+        return combined
+
+    def _load_ssp245_segment(self) -> xr.DataArray:
+        """Load the SSP245 portion of the bridge.
 
         For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
         G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
@@ -870,7 +1182,7 @@ class BCSDPipeline:
 
         if esgf_gap.time.size == 0:
             logger.warning(
-                "_load_ssp245_bridge: ESGF dataset for %s has no data before year %d; "
+                "_load_ssp245_segment: ESGF dataset for %s has no data before year %d; "
                 "returning primary GeoMIP dataset only — 2015–%d gap will remain",
                 self._ssp245_esgf_member,
                 primary_start_year,
@@ -881,7 +1193,7 @@ class BCSDPipeline:
         esgf_gap_years = (int(esgf_gap.time.dt.year.min()), int(esgf_gap.time.dt.year.max()))
         primary_years = (primary_start_year, int(primary.time.dt.year.max()))
         logger.info(
-            "_load_ssp245_bridge: stitching ESGF %s %d–%d + GeoMIP %s %d–%d",
+            "_load_ssp245_segment: stitching ESGF %s %d–%d + GeoMIP %s %d–%d",
             self._ssp245_esgf_member,
             *esgf_gap_years,
             self._ssp245_member,
@@ -996,11 +1308,11 @@ class BCSDPipeline:
         train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
         obs_coarse = obs_coarse.sel(time=train_slice)
         obs_fine = obs_fine.sel(time=train_slice)
-        model_hist = model_hist.sel(
-            time=slice(
-                f"{self.config.train_period_start}", f"{self.config.predict_period_start - 1}"
-            )
-        )
+        # Slice to the training period, matching _load_gcm_obs. Slicing through
+        # predict_period_start - 1 instead only coincides with train_period_end when the
+        # prediction period starts the year after training ends, and otherwise widens the
+        # quantile-mapping reference pool beyond the configured window (issue #518).
+        model_hist = model_hist.sel(time=train_slice)
         model_scenario = model_scenario.sel(
             time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
         )
@@ -1016,13 +1328,32 @@ class BCSDPipeline:
         """Optionally detrend the scenario timeseries.
 
         Returns (scenario_detrended, scenario_trend). When detrending is disabled,
-        returns (model_scenario, None) and scenario_trend will be None.
+        returns (scenario, None) and scenario_trend will be None.
 
-        For SAI scenarios, stitches in SSP245 data to bridge the gap between the end of
-        historical (2014/2015) and the SAI simulation start (~2035) before detrending,
-        ensuring a smooth baseline for trend removal.
+        For SAI scenarios, stitches in bridge data to cover the gap between the end of
+        historical (2014/2015) and the SAI simulation start, which is ~2035 for G6-1.5K
+        and 2085 for the G6-1.5K-END termination run. The bridge is SSP245 alone for the
+        former and SSP245 followed by G6-1.5K for the latter; see ``_load_ssp245_bridge``.
+        This bridge is applied even when detrending is disabled, so that non-detrended
+        variables (dtr, pr, rsds, hurs) still span the full predict window rather than
+        starting at the SAI simulation year — otherwise ``tasmin = tasmax - dtr`` breaks
+        against the bridged (full-length) tasmax on the missing days (issue #363).
         """
-        if not self.config.detrend_data:
+        if not self.config.variable_config.detrend_data:
+            if self.config.is_sai_scenario:
+                # No detrending, but a SAI scenario still needs the SSP245 bridge so
+                # the debiased-coarse output spans predict_period_start..end (#363).
+                predict_slice = slice(
+                    f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
+                )
+                bridged = stitch_historical_scenario(
+                    model_hist=model_hist,
+                    model_scenario=model_scenario,
+                    train_period_end=self.config.train_period_end,
+                    predict_period_start=self.config.predict_period_start,
+                    ssp_timeseries=ssp_timeseries,
+                )
+                return bridged.sel(time=predict_slice), None
             return model_scenario, None
 
         if self.options.rechunk_workflow:
@@ -1051,7 +1382,7 @@ class BCSDPipeline:
         scenario_detrended, scenario_trend = detrend(
             da=historical_scenario,
             da_baseline_clim=da_baseline_clim,
-            detrend_method=self.config.detrend_method,
+            detrend_method=self.config.variable_config.detrend_method,
         )
 
         predict_slice = slice(
@@ -1105,15 +1436,24 @@ class BCSDPipeline:
         blends them — parametric where the scenario falls outside the historical range,
         nonparametric everywhere else.
         """
-        obs_np = obs_coarse.as_numpy().values
-        cm_hist_np = model_hist.as_numpy().values
-        cm_future_np = scenario_detrended.load().values
+        debias_approach = self.config.variable_config.debias_approach
+        obs_coarse = obs_coarse.as_numpy()
+        model_hist = model_hist.as_numpy()
+        scenario_detrended = scenario_detrended.load()
+        nan_context = self._nan_check_context("transform_scenario")
+        assert_no_nans(obs_coarse, name="obs", context=nan_context)
+        assert_no_nans(model_hist, name="cm_hist", context=nan_context)
+        assert_no_nans(scenario_detrended, name="cm_future", context=nan_context)
+
+        obs_np = obs_coarse.values
+        cm_hist_np = model_hist.values
+        cm_future_np = scenario_detrended.values
 
         common_kwargs = dict(
             variable=self.config.variable,
             detrending="no_detrending",
-            running_window_mode=self.config.do_windowing,
-            running_window_length=self.config.running_window_length,
+            running_window_mode=self.config.variable_config.do_windowing,
+            running_window_length=self.config.variable_config.running_window_length,
             running_window_step_length=1,
             running_window_mode_over_years_of_cm_future=False,
         )
@@ -1127,15 +1467,19 @@ class BCSDPipeline:
             parallel=True,
             nr_processes=dask.system.CPU_COUNT,
             progressbar=False,
-            failsafe=True,  # ocean pixels have NaN obs; fill with NaN rather than crash
+            # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
+            # distribution fit that fails to converge. Inputs are asserted NaN-free
+            # above, so anything NaN in the result was produced here, and the output
+            # assertion below catches it (issue #517).
+            failsafe=True,
         )
 
-        if self.config.mapping_type in ["parametric", "nonparametric"]:
-            debiased_np = _make_debiaser(
-                mapping_type=self.config.mapping_type, **common_kwargs
-            ).apply(**apply_kwargs)
+        if debias_approach in ["parametric", "nonparametric"]:
+            debiased_np = _make_debiaser(mapping_type=debias_approach, **common_kwargs).apply(
+                **apply_kwargs
+            )
 
-        elif self.config.mapping_type == "nonparametric_hybrid":
+        elif debias_approach == "nonparametric_hybrid":
             parametric_np = _make_debiaser(mapping_type="parametric", **common_kwargs).apply(
                 **apply_kwargs
             )
@@ -1146,16 +1490,17 @@ class BCSDPipeline:
             out_of_range, _, _ = calculate_out_of_range_mask(
                 model_hist=model_hist,
                 scenario_detrended=scenario_detrended,
-                center_window=self.config.running_window_length,
+                center_window=self.config.variable_config.running_window_length,
             )
             debiased_np = np.where(out_of_range.values, parametric_np, nonparametric_np)
 
-        elif self.config.mapping_type == "nonparametric_hybrid_2sided":
+        elif debias_approach == "nonparametric_hybrid_2sided":
             # Use one parametric debiaser for low out-of-range values, another for high, and nonparametric everywhere else
 
             if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:
                 # Use different parametric distributions for low vs. high tails
-                low_dist = scipy.stats.weibull_min
+                # the distributions here mimic those in the nex-gddp implementation
+                low_dist = _weibull_min_zero_bounded
                 high_dist = scipy.stats.gumbel_r
 
                 parametric_low_np = _make_debiaser(
@@ -1179,7 +1524,7 @@ class BCSDPipeline:
             _, out_of_range_low, out_of_range_high = calculate_out_of_range_mask(
                 model_hist=model_hist,
                 scenario_detrended=scenario_detrended,
-                center_window=self.config.running_window_length,
+                center_window=self.config.variable_config.running_window_length,
             )
 
             debiased_np = np.where(out_of_range_low.values, parametric_low_np, nonparametric_np)
@@ -1187,8 +1532,10 @@ class BCSDPipeline:
 
         else:
             raise ValueError(
-                "mapping_type must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
+                "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
+
+        assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)
 
         if self.options.clip_values:
             var = self.config.variable
@@ -1217,16 +1564,19 @@ class BCSDPipeline:
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
 
+        loc = self.cache.scenario_loc
+        coarse_loc = self.cache.debiased_coarse_scenario_loc()
+        tasmax_fine_loc = self.cache.scenario_output_loc(variable="tasmax")
+
+        if not force and self.cache.exists(loc) and self.cache.exists(coarse_loc):
+            logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
+
+        # Validate inputs only when we are actually going to compute, so a cache hit
+        # is never blocked by a reaped upstream (issue #363).
         self.cache.validate_dependencies(
             "transform_scenario", self.config, hist_member=self._hist_member
         )
-
-        loc = self.cache.scenario_loc
-        coarse_loc = self.cache.debiased_coarse_scenario_loc()
-
-        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
-            return loc.store_path
 
         logger.info(
             "Computing scenario downscaling for %s/%s/%s/%s",
@@ -1247,13 +1597,23 @@ class BCSDPipeline:
         debiased_tasmax_loc = self.cache.debiased_coarse_scenario_loc(variable="tasmax")
         debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
         debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
-        scenario_debiased = debiased_tasmax - debiased_dtr
+        # Materialise the derived coarse tasmin eagerly (it is only ~3-6 GB). This mirrors what
+        # every other variable already does — _apply_bias_correction returns a numpy-backed
+        # array — so the spatial disaggregation below runs the slinear interp eagerly and its
+        # .chunk(SHARD) is cheap slicing of concrete data. Left lazy, the interp is deferred
+        # into an all-to-all rechunk at the write that holds the whole ~56-129 GB fine array
+        # resident and stalls at global scale. See notebooks/issues/tasmin-disaggregation-inefficiency.
+        scenario_debiased = derive_tasmin(debiased_tasmax, debiased_dtr).compute()
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         scenario_debiased.name = self.config.variable
+        # Chunk the now-concrete coarse field to the coarse shard grid so every dask chunk maps
+        # to exactly one shard for the write.
         self._write_to_icechunk(
-            scenario_debiased,
+            scenario_debiased.chunk(
+                {"time": SHARD_TIME_COARSE, "lat": SHARD_LAT_COARSE, "lon": SHARD_LON_COARSE}
+            ),
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
             dataset_attrs=self._build_output_attrs(),
@@ -1277,15 +1637,29 @@ class BCSDPipeline:
                 self._build_ocean_mask(scenario_downscaled)
             ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
         scenario_downscaled.name = self.config.variable
+
+        # Persist the raw (un-reconciled) tasmin FIRST — after any ocean masking so both
+        # fine fields share aligned NaN cells — then reconcile store-to-store
+        # (tasmin_fine=None). Sequencing the writes keeps the sibling fine tasmax and
+        # this fresh interp graph off the heap simultaneously; the reconcile re-reads
+        # both fields shard-aligned from clean sharded zarr (reconcile OOM).
         self._write_to_icechunk(
             scenario_downscaled,
             loc,
-            dataset_attrs=self._build_output_attrs(),
             encoding=make_encoding(self.config.variable),
-            force=force,
+            dataset_attrs=self._build_output_attrs(),
+            force=False,
         )
         logger.info(
-            "✓ Saved scenario output: %s/%s (%.2fs)",
+            "✓ Saved raw tasmin: %s/%s (%.2fs)", loc.store_path, loc.group, time.perf_counter() - t0
+        )
+
+        # Dedicated reconcile step: swap any tasmax < tasmin left by independent
+        # disaggregation and write both corrected fields (issue #331).
+        t0 = time.perf_counter()
+        self.reconcile_temperature_extremes(loc, tasmax_fine_loc, tasmin_fine=None, force=force)
+        logger.info(
+            "✓ Reconciled + saved scenario output: %s/%s (%.2fs)",
             loc.store_path,
             loc.group,
             time.perf_counter() - t0,
@@ -1327,6 +1701,13 @@ class BCSDPipeline:
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
         """
+        # tasmin is derived (tasmax - dtr) and reconciled against tasmax; route it to
+        # the dedicated method from here so every entry point — including the
+        # distributed batch_runner, which calls this method directly — gets the
+        # correct path (issues #363/#331).
+        if self.config.variable == "tasmin":
+            return self.transform_scenario_tasmin(force=force)
+
         if self.config.scenario is None:
             raise ValueError("scenario must be specified in config for transform_scenario")
 
@@ -1382,7 +1763,7 @@ class BCSDPipeline:
             scenario_debiased = retrend(
                 bias_corrected_detrended=scenario_debiased,
                 trend_on_daily_timestep=scenario_trend,
-                detrend_method=self.config.detrend_method,
+                detrend_method=self.config.variable_config.detrend_method,
             )
             logger.info("Re-trended scenario (%.2fs)", time.perf_counter() - t0)
 
@@ -1450,15 +1831,9 @@ class BCSDPipeline:
         """
         self.prepare_observations(force=force)
 
-        if self.config.variable == "tasmin":
-            self.fit_historical_tasmin(force=force)
-            # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the cached historical
-            # output as data input.
-            return self.transform_scenario_tasmin(force=force)
-        else:
-            self.fit_historical(force=force)
-            # `transform_scenario` depends on fit_historical only as a completion
-            # gate (artifact existence); it does not read the cached historical
-            # output as data input.
-            return self.transform_scenario(force=force)
+        # fit_historical / transform_scenario self-dispatch tasmin to their derived
+        # variants, so no variable-specific branching is needed here.
+        self.fit_historical(force=force)
+        # `transform_scenario` depends on fit_historical only as a completion gate
+        # (artifact existence); it does not read the historical output as data input.
+        return self.transform_scenario(force=force)

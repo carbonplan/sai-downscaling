@@ -9,14 +9,20 @@ pipeline execution.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import itertools
+from pathlib import Path
 
 import cf_xarray  # noqa: F401  # registers CF accessor
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from srm import catalog
+from srm.config import GROUP_TO_SCENARIO
+from srm.lineage import resolve_member_lineage
 
 # Spatial range bounds for unit-mismatch detection (e.g. Celsius instead of Kelvin).
 # Ranges are wide intentionally — based on ERA5 observed range +/- large margins.
@@ -344,12 +350,32 @@ class DatasetChecker:
             issues.append(f"tasmax < tasmin at {min_gt_max} grid point(s)")
         return ValidationResult(len(issues) == 0, issues)
 
+    def validate_tasmax_ge_tasmin(self, isel_kwargs: dict | None = None) -> ValidationResult:
+        """Blocking cross-variable gate: ``tasmax >= tasmin`` everywhere (issue #331).
+
+        Unlike :meth:`validate_temp_consistency` this needs only ``tasmax`` and
+        ``tasmin`` (not ``tas``), so it also covers the temperature-extremes-only
+        outputs. NaN-safe (NaN comparisons are False). A nonzero count means the
+        reconcile step did not land — the run must not ship.
+        """
+        required = {"tasmin", "tasmax"}
+        if not required.issubset(self.ds.data_vars):
+            return ValidationResult(True, [])
+        subset = (
+            self.ds[list(required)].isel(**isel_kwargs) if isel_kwargs else self.ds[list(required)]
+        )
+        n = int((subset["tasmax"] < subset["tasmin"]).sum().compute())
+        if n > 0:
+            return ValidationResult(False, [f"tasmax < tasmin at {n} grid point(s)"])
+        return ValidationResult(True, [])
+
     def validate_no_identical_vars(self) -> ValidationResult:
         if "time" not in self.ds.dims or self.ds.sizes["time"] == 0:
             return ValidationResult(True, [])
 
         n = self.ds.sizes["time"]
-        window = _sample_time_window(n)
+        # Start at day 0.  CESM2-WACCM, #424 give an invalid first day (tasmax == tasmin == tas).
+        window = slice(0, min(n, _N_TIME_SAMPLES))
         ds_sample = self.ds.isel(time=window)
 
         if "ensemble_member" in ds_sample.dims:
@@ -537,3 +563,841 @@ def check_ensemble_spread(ds: xr.Dataset, label: str, var: str = "tas", day_inde
         "means": means,
         "spread_ok": spread_ok,
     }
+
+
+def disagg_test_calculate_metrics(x, y, time_dim="time"):
+    # Align on time so positional pairing can't silently drift
+    x, y = xr.align(x, y, join="inner")
+
+    # Only count cells/times where BOTH are finite, so every metric uses the same n
+    good = x.notnull() & y.notnull()
+    x = x.where(good)
+    y = y.where(good)
+
+    resid = y - x  # deviation from 1:1 line
+
+    # n = good.sum(time_dim)
+    bias = resid.mean(time_dim)
+    mae = np.abs(resid).mean(time_dim)
+    rmse = np.sqrt((resid**2).mean(time_dim))
+    max_dev = np.abs(resid).max(time_dim)
+    std_resid = resid.std(time_dim)
+    # rmse_perp = rmse / np.sqrt(2)
+
+    # R² vs 1:1 (Nash–Sutcliffe): 1 = perfect, can go negative
+    # ss_tot uses x (the reference/observations), not y (the model) -- NSE measures
+    # how much of the *true* variability the model explains, not the model's own variance.
+    ss_res = (resid**2).sum(time_dim)
+    ss_tot = ((x - x.mean(time_dim)) ** 2).sum(time_dim)
+    r2_oneone = 1 - ss_res / ss_tot
+
+    # Kling-Gupta Efficiency (Gupta et al. 2009): decomposes skill into
+    # correlation (r), variability ratio (alpha), and bias ratio (beta), so
+    # errors from timing/pattern, spread, and mean bias can be told apart
+    # instead of collapsing into one NSE number. 1 = perfect.
+    kge_r = xr.corr(x, y, dim=time_dim)
+    kge_alpha = y.std(time_dim) / x.std(time_dim)
+    kge_beta = y.mean(time_dim) / x.mean(time_dim)
+    kge = 1 - np.sqrt((kge_r - 1) ** 2 + (kge_alpha - 1) ** 2 + (kge_beta - 1) ** 2)
+
+    metrics = xr.Dataset(
+        {
+            "bias": bias,
+            "mae": mae,
+            "rmse": rmse,
+            "max_dev": max_dev,
+            "std_resid": std_resid,
+            "r2_oneone": r2_oneone,
+            "kge": kge,
+            "kge_r": kge_r,
+            "kge_alpha": kge_alpha,
+            "kge_beta": kge_beta,
+        }
+    )
+
+    return metrics
+
+
+def disagg_test_plot_summary_stats(
+    metrics,
+    vmax_rmse=None,
+    vmax_bias=None,
+    vmax_std_resid=None,
+    vmax_mae=None,
+    vmax_max_dev=None,
+    savefig_path=None,
+):
+    nrows = 2
+    ncols = 3
+
+    plt.figure(figsize=(20, 12))
+
+    plt.subplot(nrows, ncols, 1)
+    if vmax_rmse is None:
+        metrics["rmse"].plot(vmin=0)
+    else:
+        metrics["rmse"].plot(vmin=0, vmax=vmax_rmse)
+    plt.title("RMSE")
+
+    plt.subplot(nrows, ncols, 2)
+    if vmax_bias is None:
+        metrics["bias"].plot()
+    else:
+        metrics["bias"].plot(vmax=vmax_bias, vmin=-vmax_bias, cmap=plt.cm.RdBu_r)
+    plt.title("Bias relative to coarse debiased \n (goal: bias=0)")
+
+    plt.subplot(nrows, ncols, 3)
+    if vmax_std_resid is None:
+        metrics["std_resid"].plot(vmin=0)
+    else:
+        metrics["std_resid"].plot(vmin=0, vmax=vmax_std_resid)
+    plt.title("Std residual")
+
+    plt.subplot(nrows, ncols, 4)
+    if vmax_mae is None:
+        metrics["mae"].plot(vmin=0)
+    else:
+        metrics["mae"].plot(vmin=0, vmax=vmax_mae)
+    plt.title("MAE")
+
+    plt.subplot(nrows, ncols, 5)
+    if vmax_max_dev is None:
+        metrics["max_dev"].plot(vmin=0)
+    else:
+        metrics["max_dev"].plot(vmin=0, vmax=vmax_max_dev)
+    plt.title("Maximum deviation")
+
+    plt.subplot(nrows, ncols, 6)
+    metrics["r2_oneone"].plot(vmin=0.9, vmax=1, cmap=plt.cm.viridis_r)
+    plt.title("R2 relative to 1:1 line")
+
+    plt.tight_layout()
+    if savefig_path is not None:
+        plt.savefig(savefig_path)
+
+
+def disagg_test_print_evaluation_for_metric(
+    metric, metrics_to_evaluate, metric_max_thresh=None, metric_min_thresh=None
+):
+    print("---------------" + metric + "---------------")
+    print("Max:")
+    print(np.nanmax(metrics_to_evaluate[metric]))
+    print("Min:")
+    print(np.nanmin(metrics_to_evaluate[metric]))
+    if metric_max_thresh is not None:
+        print("Fraction above threshold:")
+        print((metrics_to_evaluate[metric] > metric_max_thresh).mean(dim=["lat", "lon"]).values)
+    if metric_min_thresh is not None:
+        print("Fraction below threshold:")
+        print((metrics_to_evaluate[metric] < metric_min_thresh).mean(dim=["lat", "lon"]).values)
+
+
+def disagg_test_print_all_evaluation_metrics(
+    metrics,
+    variable,
+    scenario,
+    ensemble_member,
+    timescale,
+    disagg_eval_tresholds,
+    is_regional_subset=True,
+    log_path=None,
+):
+    thresholds = disagg_eval_tresholds[variable]
+    if is_regional_subset:
+        metrics_to_evaluate = metrics.isel(lat=slice(1, -1), lon=slice(1, -1))
+    else:
+        metrics_to_evaluate = metrics
+
+    rows = []
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        for metric, limits in thresholds.items():
+            disagg_test_print_evaluation_for_metric(
+                metric=metric,
+                metrics_to_evaluate=metrics_to_evaluate,
+                metric_max_thresh=limits["eval_max"],
+                metric_min_thresh=limits["eval_min"],
+            )
+            rows.append(
+                {
+                    "variable": variable,
+                    "scenario": scenario,
+                    "ensemble_member": ensemble_member,
+                    "timescale": timescale,
+                    "metric": metric,
+                    "max": float(np.nanmax(metrics_to_evaluate[metric])),
+                    "min": float(np.nanmin(metrics_to_evaluate[metric])),
+                    "fraction_above": float(
+                        (metrics_to_evaluate[metric] > limits["eval_max"])
+                        .mean(dim=["lat", "lon"])
+                        .values
+                    ),
+                    "fraction_below": float(
+                        (metrics_to_evaluate[metric] < limits["eval_min"])
+                        .mean(dim=["lat", "lon"])
+                        .values
+                    ),
+                }
+            )
+
+    print(buf.getvalue(), end="")
+    if log_path is not None:
+        csv_path = Path(log_path).with_suffix(".csv")
+        df = pd.DataFrame(rows)
+        df.to_csv(csv_path, mode="w", header=True, index=False)
+
+
+def periodic_rolling(da, dim, window, agg="mean", **kwargs):
+    pad = window // 2
+    padded = da.pad({dim: pad}, mode="wrap")
+    if agg == "max":
+        out = padded.rolling({dim: window}, center=True, **kwargs).max()
+    elif agg == "min":
+        out = padded.rolling({dim: window}, center=True, **kwargs).min()
+    elif agg == "mean":
+        out = padded.rolling({dim: window}, center=True, **kwargs).mean()
+    return out.isel({dim: slice(pad, -pad)})
+
+
+def obs_doy_bounds(
+    obs_fine_subset: xr.DataArray, window: int = 30
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Lazy per-day-of-year lower/upper envelope of the fine-grid observations.
+
+    The bounds are the ``window``-day centered periodic-rolling minimum and
+    maximum of the observed day-of-year extremes. This ingredient depends only on
+    the variable, not on the scenario or member, so callers can compute it once
+    per variable and reuse it across leaves in a single ``dask.compute``.
+
+    Parameters
+    ----------
+    obs_fine_subset : xarray.DataArray
+        Fine-grid observations with a ``time`` dimension.
+    window : int, default 30
+        Width, in days, of the centered periodic rolling window.
+
+    Returns
+    -------
+    obs_min_rolling, obs_max_rolling : xarray.DataArray
+        Lazy ``(dayofyear, lat, lon)`` arrays; no computation is triggered.
+    """
+    obs_fine_subset = obs_fine_subset.chunk({"time": 365, "lat": 180, "lon": 360})
+    obs_max = obs_fine_subset.groupby("time.dayofyear").max()
+    obs_min = obs_fine_subset.groupby("time.dayofyear").min()
+    obs_max_rolling = periodic_rolling(da=obs_max, dim="dayofyear", window=window, agg="max")
+    obs_min_rolling = periodic_rolling(da=obs_min, dim="dayofyear", window=window, agg="min")
+    return obs_min_rolling, obs_max_rolling
+
+
+def scenario_delta_doy(
+    raw_scenario_subset: xr.DataArray,
+    raw_historical_subset: xr.DataArray,
+    window: int = 30,
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Lazy coarse-grid day-of-year change signal relative to the historical mean.
+
+    The upper (lower) delta is the ``window``-day centered periodic-rolling
+    maximum (minimum) of the scenario's day-of-year extremes, minus the
+    historical day-of-year mean climatology. When the historical input carries an
+    ``ensemble_member`` dimension the mean is taken across members as well; a
+    single pre-selected member is used as-is.
+
+    Parameters
+    ----------
+    raw_scenario_subset : xarray.DataArray
+        Coarse-grid scenario data with a ``time`` dimension.
+    raw_historical_subset : xarray.DataArray
+        Coarse-grid historical data with a ``time`` dimension and, optionally, an
+        ``ensemble_member`` dimension.
+    window : int, default 30
+        Width, in days, of the centered periodic rolling window.
+
+    Returns
+    -------
+    delta_doy_min, delta_doy_max : xarray.DataArray
+        Lazy ``(dayofyear, lat, lon)`` coarse-grid arrays.
+    """
+    scenario_doy_max = raw_scenario_subset.groupby("time.dayofyear").max(dim="time")
+    scenario_doy_min = raw_scenario_subset.groupby("time.dayofyear").min(dim="time")
+    hist_doy_mean = raw_historical_subset.groupby("time.dayofyear").mean(dim="time")
+    if "ensemble_member" in hist_doy_mean.dims:
+        hist_doy_mean = hist_doy_mean.mean(dim="ensemble_member")
+
+    scenario_doy_max_rolling = periodic_rolling(
+        da=scenario_doy_max, dim="dayofyear", window=window, agg="max"
+    )
+    scenario_doy_min_rolling = periodic_rolling(
+        da=scenario_doy_min, dim="dayofyear", window=window, agg="min"
+    )
+    hist_doy_mean_rolling = periodic_rolling(
+        da=hist_doy_mean, dim="dayofyear", window=window, agg="mean"
+    )
+
+    delta_doy_max = scenario_doy_max_rolling - hist_doy_mean_rolling
+    delta_doy_min = scenario_doy_min_rolling - hist_doy_mean_rolling
+    return delta_doy_min, delta_doy_max
+
+
+def calculate_reasonable_bounds_doy(
+    raw_scenario_subset: xr.DataArray,
+    raw_historical_subset: xr.DataArray,
+    obs_fine_subset: xr.DataArray,
+    window: int = 30,
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Lazy per-day-of-year plausible lower/upper bounds on the fine grid.
+
+    Combines the fine-grid observed envelope (:func:`obs_doy_bounds`) with the
+    coarse-grid scenario change signal (:func:`scenario_delta_doy`) interpolated
+    to the observation grid: ``bound = obs_envelope + regridded_change``. The
+    result is lazy; call ``.compute()`` to materialize it.
+
+    The returned arrays satisfy ``high_bound >= low_bound`` wherever the
+    observations are defined, because both the observed envelope and the scenario
+    change contribute a non-negative max-minus-min span.
+
+    Parameters
+    ----------
+    raw_scenario_subset : xarray.DataArray
+        Coarse-grid scenario data with a ``time`` dimension.
+    raw_historical_subset : xarray.DataArray
+        Coarse-grid historical data (see :func:`scenario_delta_doy`).
+    obs_fine_subset : xarray.DataArray
+        Fine-grid observations with ``time``, ``lat``, and ``lon``.
+    window : int, default 30
+        Width, in days, of the centered periodic rolling window.
+
+    Returns
+    -------
+    low_bound, high_bound : xarray.DataArray
+        Lazy ``(dayofyear, lat, lon)`` fine-grid plausible bounds.
+    """
+    obs_min_rolling, obs_max_rolling = obs_doy_bounds(obs_fine_subset, window=window)
+    delta_doy_min, delta_doy_max = scenario_delta_doy(
+        raw_scenario_subset, raw_historical_subset, window=window
+    )
+
+    # Nearest-neighbor coarse -> fine regrid via reindex, not interp(method="nearest"). The two are
+    # numerically identical for nearest selection (differing only in edge fill: reindex fills the
+    # poles by nearest where interp leaves NaN). reindex is pure indexing and stays on a single dask
+    # backend, whereas interp routes through apply_ufunc and mixes classic dask arrays with the
+    # query-planning (dask_array) backend used on Coiled, raising "Mixing chunked array types".
+    regrid_kwargs = {
+        "lat": obs_fine_subset["lat"],
+        "lon": obs_fine_subset["lon"],
+        "method": "nearest",
+    }
+    delta_doy_max_finegrid = delta_doy_max.reindex(**regrid_kwargs)
+    delta_doy_min_finegrid = delta_doy_min.reindex(**regrid_kwargs)
+
+    high_bound = obs_max_rolling + delta_doy_max_finegrid
+    low_bound = obs_min_rolling + delta_doy_min_finegrid
+    return low_bound, high_bound
+
+
+# ---------------------------------------------------------------------------
+# Exceedance region finding
+# ---------------------------------------------------------------------------
+#
+# The plausible-value check produces, per leaf, a pair of 2-D maps of how far the
+# downscaled output strays outside its envelope. Those maps say a leaf is flagged
+# but not *where*: reading a global map by eye conflates an isolated coastline or
+# sea-ice fleck with a coherent patch worth investigating.
+#
+# find_exceedance_regions turns such a map into ranked connected components, so
+# that distinction becomes a column. The two private helpers below exist because
+# the maps are global: longitude is periodic, so a patch straddling the
+# antimeridian must not be reported as two regions, and its centroid must not
+# average to the opposite side of the planet.
+
+
+_REGION_COLUMNS = [
+    "region",
+    "n_cells",
+    "area_frac",
+    "worst_value",
+    "worst_lat",
+    "worst_lon",
+    "centroid_lat",
+    "centroid_lon",
+    "lat_min",
+    "lat_max",
+    "lon_min",
+    "lon_max",
+    "wraps_lon",
+]
+
+
+def _merge_labels_across_lon_seam(labels: np.ndarray) -> np.ndarray:
+    """Join labelled components that touch across the periodic longitude seam.
+
+    ``scipy.ndimage.label`` treats the array as a flat plane, so a patch
+    straddling the antimeridian is reported as two regions. Longitude is
+    periodic, so components flagged at both the first and last column of the
+    same (or a diagonally adjacent, matching 8-connectivity) row are one region.
+    Latitude is *not* periodic, so the poles get no equivalent treatment.
+    """
+    n_lat = labels.shape[0]
+    pairs: list[tuple[int, int]] = []
+    for offset in (-1, 0, 1):
+        left_rows = np.arange(max(0, -offset), min(n_lat, n_lat - offset))
+        if left_rows.size == 0:
+            continue
+        left = labels[left_rows, 0]
+        right = labels[left_rows + offset, -1]
+        touching = (left > 0) & (right > 0)
+        pairs.extend(zip(left[touching].tolist(), right[touching].tolist(), strict=True))
+
+    if not pairs:
+        return labels
+
+    parent = {}
+
+    def find(node: int) -> int:
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    for a, b in pairs:
+        root_a, root_b = find(a), find(b)
+        if root_a != root_b:
+            parent[max(root_a, root_b)] = min(root_a, root_b)
+
+    remap = np.arange(labels.max() + 1)
+    for label in range(1, labels.max() + 1):
+        if label in parent:
+            remap[label] = find(label)
+    return remap[labels]
+
+
+def _circular_mean_lon(lon_values: np.ndarray) -> float:
+    """Mean longitude that behaves correctly across the antimeridian.
+
+    An arithmetic mean of a region spanning the seam averages, say, -179 and 179
+    to 0 -- the wrong side of the planet. Averaging unit vectors instead keeps
+    the centroid inside the region.
+    """
+    radians = np.deg2rad(lon_values)
+    return float(np.rad2deg(np.arctan2(np.sin(radians).mean(), np.cos(radians).mean())))
+
+
+def find_exceedance_regions(
+    exceedance: xr.DataArray,
+    *,
+    direction: str,
+    min_cells: int = 1,
+    top_n: int = 10,
+    scale: float = 1.0,
+) -> pd.DataFrame:
+    """Rank the coherent regions where a leaf leaves its plausible envelope.
+
+    Turns a 2-D exceedance map into connected components, so the distinction
+    between an isolated fleck (usually a coastline or sea-ice edge effect) and a
+    coherent patch worth investigating becomes a column rather than something
+    eyeballed off a global map. 8-connectivity is used, so diagonally touching
+    cells join, and components spanning the longitude seam are merged.
+
+    Parameters
+    ----------
+    exceedance : xarray.DataArray
+        Signed 2-D ``(lat, lon)`` map: ``over`` (flagged above zero) or ``under``
+        (flagged below zero), as produced by the plausible-value check.
+    direction : {"high", "low"}
+        Which sign counts as flagged. ``"high"`` flags ``> 0``, ``"low"`` flags
+        ``< 0``.
+    min_cells : int, default 1
+        Drop components smaller than this, filtering isolated flecks.
+    top_n : int, default 10
+        Keep at most this many regions, ranked by exceedance magnitude.
+    scale : float, default 1.0
+        Multiplier applied to ``worst_value`` only, for reporting units (86400
+        for ``pr`` in mm day-1). Area metrics stay dimensionless.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per region, ranked by ``abs(worst_value)`` descending, with
+        columns ``region``, ``n_cells``, ``area_frac``, ``worst_value``,
+        ``worst_lat``, ``worst_lon``, ``centroid_lat``, ``centroid_lon``,
+        ``lat_min``, ``lat_max``, ``lon_min``, ``lon_max``, ``wraps_lon``.
+        Empty (but correctly columned) when nothing is flagged.
+
+    Notes
+    -----
+    ``area_frac`` is an unweighted cell-count fraction, using the same convention
+    as the check's own ``frac_area_too_high = (over > 0).mean(["lat", "lon"])``.
+    That overweights high latitudes relative to true surface area; a
+    cos(lat)-weighted figure would be more physical but would not share a
+    convention with the summary table.
+
+    Do not expect ``area_frac`` to sum to the check's flagged fraction. It only
+    does so with ``min_cells=1`` and a ``top_n`` large enough to keep every
+    component, and neither is the normal case: a flagged variable is typically
+    thousands of small components, so realistic settings return the few worst
+    ones and account for a small share of the flagged area. The sum over
+    returned regions is a lower bound on the check's fraction, not a
+    reconciliation of it.
+
+    ``lon_min``/``lon_max`` are meaningless for a region flagged as
+    ``wraps_lon``: such a region straddles the seam, so its bounding box is two
+    boxes, not one. ``centroid_lon`` stays usable in that case because it is a
+    circular mean, which is why callers should prefer it for centring a view.
+    """
+    from scipy import ndimage
+
+    if direction not in {"high", "low"}:
+        raise ValueError(f"direction must be 'high' or 'low', got {direction!r}")
+
+    values = np.asarray(exceedance.values, dtype="float64")
+    if values.ndim != 2:
+        raise ValueError(f"expected a 2-D (lat, lon) map, got dims {exceedance.dims}")
+
+    finite = np.isfinite(values)
+    mask = (values > 0) & finite if direction == "high" else (values < 0) & finite
+    if not mask.any():
+        return pd.DataFrame(columns=_REGION_COLUMNS)
+
+    labels, _ = ndimage.label(mask, structure=ndimage.generate_binary_structure(2, 2))
+    labels = _merge_labels_across_lon_seam(labels)
+
+    lat = np.asarray(exceedance["lat"].values, dtype="float64")
+    lon = np.asarray(exceedance["lon"].values, dtype="float64")
+    total_cells = values.size
+    last_column = values.shape[1] - 1
+
+    rows = []
+    for label in np.unique(labels[labels > 0]):
+        selected = labels == label
+        n_cells = int(selected.sum())
+        if n_cells < min_cells:
+            continue
+
+        rows_idx, cols_idx = np.nonzero(selected)
+        magnitudes = np.abs(values[rows_idx, cols_idx])
+        worst = int(np.argmax(magnitudes))
+        region_lats = lat[rows_idx]
+        region_lons = lon[cols_idx]
+        wraps = bool(selected[:, 0].any() and selected[:, last_column].any())
+
+        rows.append(
+            {
+                "n_cells": n_cells,
+                "area_frac": n_cells / total_cells,
+                "worst_value": float(values[rows_idx[worst], cols_idx[worst]]) * scale,
+                "worst_lat": float(region_lats[worst]),
+                "worst_lon": float(region_lons[worst]),
+                "centroid_lat": float(region_lats.mean()),
+                "centroid_lon": _circular_mean_lon(region_lons),
+                "lat_min": float(region_lats.min()),
+                "lat_max": float(region_lats.max()),
+                "lon_min": float(region_lons.min()),
+                "lon_max": float(region_lons.max()),
+                "wraps_lon": wraps,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=_REGION_COLUMNS)
+
+    regions = pd.DataFrame.from_records(rows)
+    regions = regions.reindex(regions.worst_value.abs().sort_values(ascending=False).index)
+    regions = regions.head(top_n).reset_index(drop=True)
+    regions.insert(0, "region", np.arange(1, len(regions) + 1))
+    return regions[_REGION_COLUMNS]
+
+
+# ---------------------------------------------------------------------------
+# Trend-distortion analysis
+#
+# "Distortion" is a difference of differences: how much a scenario-to-scenario delta changes once
+# debiasing and downscaling are applied, relative to the same delta computed on raw GCM output.
+# These are the pure pieces of that analysis; plotting and cache IO live in the notebook.
+# ---------------------------------------------------------------------------
+
+# The four pipeline stages a delta can be computed at. `coarsened_downscaled_debiased` is the
+# fine-grid downscaled output recoarsened onto the raw grid, which is what makes it comparable to
+# `raw` and `coarse_debiased` cell for cell.
+DISTORTION_STAGES = (
+    "raw",
+    "coarse_debiased",
+    "downscaled_debiased",
+    "coarsened_downscaled_debiased",
+)
+
+# {name: (tested_stage, reference_stage)}. The third pair isolates what downscaling adds on top of
+# debiasing; the first two measure debiasing alone and the two together.
+DISTORTION_STAGE_PAIRS: dict[str, tuple[str, str]] = {
+    "coarse_debiased_vs_raw": ("coarse_debiased", "raw"),
+    "downscaled_debiased_vs_raw": ("coarsened_downscaled_debiased", "raw"),
+    "downscaled_debiased_vs_coarse_debiased": (
+        "coarsened_downscaled_debiased",
+        "coarse_debiased",
+    ),
+}
+
+# {family: (after_scenario_group, before_scenario_group)}. `g6_ssp` isolates the effect of SAI by
+# differencing the intervention against its no-SAI counterfactual over the same window.
+DISTORTION_FAMILIES: dict[str, tuple[str, str]] = {
+    "ssp_hist": ("ssp245", "historical"),
+    "g6_hist": ("g6_1p5k", "historical"),
+    "g6_ssp": ("g6_1p5k", "ssp245"),
+}
+
+_COMPARISON_COLUMNS = [
+    "comparison_id",
+    "family",
+    "variable",
+    "after_scenario",
+    "after_member",
+    "before_scenario",
+    "before_member",
+]
+
+_SKIPPED_COMPARISON_COLUMNS = [
+    "family",
+    "variable",
+    "after_scenario",
+    "after_member",
+    "before_scenario",
+    "reason",
+]
+
+
+def _baseline_member(
+    gcm: str, after_group: str, after_member: str, variable: str, before_group: str
+) -> str | None:
+    """Member of ``before_group`` that a leaf of ``after_group`` should be differenced against.
+
+    Resolved through :mod:`srm.lineage`, never guessed. Returns ``None`` when the lineage table
+    registers no such parent for the combination.
+    """
+    label = GROUP_TO_SCENARIO[after_group]
+    lineage = resolve_member_lineage(gcm, label, after_member, variable)
+    if before_group == "historical":
+        return lineage.historical
+    if before_group == "ssp245":
+        return lineage.ssp245_bridge
+    raise ValueError(f"no lineage rule for a {before_group!r} baseline")
+
+
+def enumerate_scenario_comparisons(
+    leaves,
+    *,
+    gcm: str,
+    families: dict[str, tuple[str, str]] | None = None,
+    variables=None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Every scenario comparison the available leaves support, with its baseline member resolved.
+
+    The baseline member comes from :func:`srm.lineage.resolve_member_lineage`, which is what makes
+    this safe to run across variables. For the ``g6_ssp`` family the correct SSP245 bridge member
+    varies by variable on CESM2-WACCM: ``tas``/``pr``/``rsds``/``hurs`` bridge member ``003`` while
+    ``tasmax``/``tasmin``/``dtr`` bridge ``008`` (issue #448). A hand-written member therefore cannot
+    be reused across variables, and pairing on one would compare different realizations.
+
+    Parameters
+    ----------
+    leaves : iterable of tuple
+        ``(scenario_group, variable, member)`` triples present in the store, in group naming
+        (``historical``, ``ssp245``, ``g6_1p5k``).
+    gcm : str
+        GCM name as registered in :mod:`srm.lineage`.
+    families : dict, optional
+        ``{family: (after_group, before_group)}``. Defaults to :data:`DISTORTION_FAMILIES`.
+    variables : container, optional
+        Restrict to these variables. ``None`` keeps every variable found in ``leaves``.
+
+    Returns
+    -------
+    comparisons : pandas.DataFrame
+        Columns ``comparison_id``, ``family``, ``variable``, ``after_scenario``, ``after_member``,
+        ``before_scenario``, ``before_member``.
+    skipped : pandas.DataFrame
+        Comparisons that could not be built, with a ``reason`` column. Skipping rather than
+        fabricating a baseline is what keeps a lineage gap or a missing leaf visible.
+    """
+    available = {tuple(key) for key in leaves}
+    families = DISTORTION_FAMILIES if families is None else families
+
+    rows, skips = [], []
+    for family, (after_group, before_group) in families.items():
+        for scenario, variable, member in sorted(available):
+            if scenario != after_group:
+                continue
+            if variables is not None and variable not in variables:
+                continue
+            skip = dict(
+                family=family,
+                variable=variable,
+                after_scenario=scenario,
+                after_member=member,
+                before_scenario=before_group,
+            )
+            try:
+                before_member = _baseline_member(gcm, scenario, member, variable, before_group)
+            except KeyError as exc:
+                skips.append({**skip, "reason": f"no registered lineage: {exc.args[0][:80]}"})
+                continue
+            if before_member is None:
+                skips.append({**skip, "reason": f"lineage registers no {before_group} parent"})
+                continue
+            if (before_group, variable, before_member) not in available:
+                missing = "/".join((before_group, variable, before_member))
+                skips.append({**skip, "reason": f"baseline leaf {missing} absent from the store"})
+                continue
+            rows.append(
+                {
+                    "comparison_id": f"{family}_{variable}_{member}-vs-{before_member}",
+                    "family": family,
+                    "variable": variable,
+                    "after_scenario": scenario,
+                    "after_member": member,
+                    "before_scenario": before_group,
+                    "before_member": before_member,
+                }
+            )
+
+    return (
+        pd.DataFrame(rows, columns=_COMPARISON_COLUMNS),
+        pd.DataFrame(skips, columns=_SKIPPED_COMPARISON_COLUMNS),
+    )
+
+
+def compute_deltas(
+    after: dict[str, xr.DataArray],
+    before: dict[str, xr.DataArray],
+    stages=DISTORTION_STAGES,
+) -> tuple[dict[str, xr.DataArray], dict[str, xr.DataArray]]:
+    """``after - before`` per pipeline stage, in absolute terms and as a percent of ``before``.
+
+    Both arguments map a stage name to that stage's period-mean grid. Nothing is computed here, so
+    the caller decides when to materialize.
+
+    Cells where ``before`` is exactly zero give an undefined percent change and come back as NaN
+    rather than infinity. That matters because an infinity would propagate into the percent extremes
+    and, since a distortion flag requires both tolerances, silently flag the cell.
+    """
+    deltas = {stage: after[stage] - before[stage] for stage in stages}
+    deltas_pct = {
+        stage: deltas[stage] * 100 / before[stage].where(before[stage] != 0) for stage in stages
+    }
+    return deltas, deltas_pct
+
+
+def distortion_fields(
+    deltas_absolute: dict[str, xr.DataArray],
+    deltas_pct: dict[str, xr.DataArray],
+    stage_pair: str,
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Absolute and percent distortion for one entry of :data:`DISTORTION_STAGE_PAIRS`."""
+    tested, reference = DISTORTION_STAGE_PAIRS[stage_pair]
+    return (
+        deltas_absolute[tested] - deltas_absolute[reference],
+        deltas_pct[tested] - deltas_pct[reference],
+    )
+
+
+def calculate_distortion_flags(
+    distortion_absolute: xr.DataArray,
+    distortion_pct: xr.DataArray,
+    *,
+    tolerance_absolute: float,
+    tolerance_pct: float,
+) -> xr.DataArray:
+    """Flag cells where a distortion exceeds *both* tolerances.
+
+    Requiring both is what keeps the flag off tiny absolute swings in already-dry cells (large
+    percent, small absolute) and off modest percent swings in very wet ones (large absolute, small
+    percent).
+
+    ``tolerance_pct=0`` disables the percent condition rather than applying it as ``abs(pct) > 0``.
+    The two differ: the literal reading is true almost everywhere, so it looks like a no-op, but it
+    would drop any cell whose percent change is NaN. That is the intended setting for temperature in
+    kelvin, where a 1 K change on a 300 K mean reads as 0.3 %.
+    """
+    is_distorted = abs(distortion_absolute) > tolerance_absolute
+    if tolerance_pct == 0:
+        return is_distorted
+    return is_distorted & (abs(distortion_pct) > tolerance_pct)
+
+
+def sign_flip_mask(
+    delta_tested: xr.DataArray, delta_reference: xr.DataArray, *, threshold: float
+) -> xr.DataArray:
+    """Flag cells where two stages disagree on the *sign* of a delta by more than ``threshold``.
+
+    Stricter and more literal than a tolerance on the size of the distortion: this is the case where
+    "does the intervention increase or decrease this variable here" gets a different answer depending
+    on which pipeline stage you read it from. Both stages must clear ``threshold`` in magnitude, so a
+    pair straddling zero by a hair does not count.
+    """
+    return ((delta_reference > threshold) & (delta_tested < -threshold)) | (
+        (delta_reference < -threshold) & (delta_tested > threshold)
+    )
+
+
+def area_weights(lat: xr.DataArray) -> xr.DataArray:
+    """``cos(latitude)`` weights for area-weighted means on a rectilinear grid.
+
+    A plain spatial mean gives a polar cell the same weight as an equatorial one. On the 192 x 288
+    coarse grid a cell at 89 degrees covers roughly a sixtieth of the area of one at the equator, so
+    an unweighted flagged fraction overstates whatever happens near the poles. Values are clipped at
+    zero so floating-point noise at the poles cannot contribute a negative weight.
+    """
+    weights = xr.DataArray(
+        np.cos(np.deg2rad(np.asarray(lat, dtype="float64"))), dims=lat.dims, coords=lat.coords
+    )
+    return weights.clip(min=0.0).rename("area_weights")
+
+
+def weighted_fraction(
+    mask: xr.DataArray,
+    weights: xr.DataArray,
+    *,
+    valid: xr.DataArray | None = None,
+    dims=("lat", "lon"),
+) -> float:
+    """Area-weighted fraction of ``mask``, over the cells where ``valid`` is true.
+
+    The denominator is the valid area, not the whole grid. Conservative recoarsening can leave NaN
+    cells at the grid edge, and counting those as "not distorted" would deflate every reported
+    fraction by the size of that band rather than excluding it from the question.
+
+    Returns NaN when no valid cell has weight, which is the honest answer for an empty domain.
+    """
+    if valid is None:
+        valid = mask.notnull()
+    flagged = xr.where(mask.fillna(False).astype(bool), 1.0, 0.0)
+    weights = weights.broadcast_like(flagged).where(valid, 0.0)
+    total = float(weights.sum(dims))
+    if total == 0:
+        return float("nan")
+    return float((flagged * weights).sum(dims)) / total
+
+
+def distortion_summary(
+    distortion_absolute: xr.DataArray,
+    distortion_pct: xr.DataArray,
+    flag: xr.DataArray,
+    *,
+    weights: xr.DataArray,
+    sign_flip: xr.DataArray | None = None,
+) -> dict:
+    """Scalar summary of one stage pair's distortion, for one row of the summary CSV.
+
+    The distortion fields are expected to already be in reporting units, because the tolerances that
+    produced ``flag`` are. Converting here instead would put the flag and the magnitude it reports on
+    two different scales.
+    """
+    valid = distortion_absolute.notnull()
+    summary = {
+        "frac_area_distorted": weighted_fraction(flag, weights, valid=valid),
+        "distortion_abs_max": float(distortion_absolute.max()),
+        "distortion_abs_min": float(distortion_absolute.min()),
+        "distortion_pct_max": float(distortion_pct.max()),
+        "distortion_pct_min": float(distortion_pct.min()),
+    }
+    if sign_flip is not None:
+        summary["frac_area_sign_flip"] = weighted_fraction(sign_flip, weights, valid=valid)
+    return summary

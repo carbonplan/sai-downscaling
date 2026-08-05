@@ -9,23 +9,26 @@ The BCSD pipeline is deployed via GitHub Actions using pre-defined config files 
 
 ## Config structure
 
-Configs are organised by environment under `configs/`:
+Configs are organized by environment under `configs/`, with one subdirectory per GCM holding one or more YAML files:
 
 ```
 configs/
-  qa/
-    cesm2-waccm.yaml   # CESM2-WACCM — South Africa subset, fast end-to-end check
-    miroc-es2h.yaml    # MIROC-ES2H — South Africa subset, fast end-to-end check
-    ukesm.yaml         # UKESM — South Africa subset, fast end-to-end check
-  production/
-    cesm2-waccm.yaml   # CESM2-WACCM — global run
-    miroc-es2h.yaml    # MIROC-ES2H — global run
-    ukesm.yaml         # UKESM — global run
+  qa/                    # regional (South Africa subset) end-to-end checks
+    cesm2-waccm/         # e.g. cesm2-waccm-ssp245-std-southafrica.yaml, ...-g6-southafrica.yaml
+    miroc-es2h/
+    ukesm/
+    obs-comparison/      # ERA5 vs GDEX observation-dataset comparison configs
+  production/            # global runs
+    cesm2-waccm/         # e.g. cesm2-waccm-ssp245-std.yaml, cesm2-waccm-g6.yaml, ...
+    miroc-es2h/
+    ukesm/
+  snapshot/              # configs used by the snapshot regression tests
+    cesm2-waccm/
 ```
 
-Each file is a [BCSD config](../reference/configuration.md) and supports the matrix format — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination. For example, `ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]` in a single file produces three runs without any extra files.
+Pointing `--config-path` at a directory (e.g. `configs/qa/`) loads every YAML beneath it. Each file is a [BCSD config](../reference/configuration.md) and supports the matrix format — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination. For example, `ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]` in a single file produces three runs without any extra files.
 
-The key difference between environments is `environment: "qa"` vs `environment: "production"` and the presence of `subset_bounds` in QA configs. The `version` field is intentionally left unset in all deploy configs — it defaults to the installed package version at runtime, so the cache namespace automatically tracks the released version.
+The key difference between environments is `environment: "qa"` vs `environment: "production"` and the presence of `subset_bounds` in QA configs. The `branch` field is intentionally left unset in all deploy configs — it defaults to the installed package version at runtime, so the cache namespace automatically tracks the released version.
 
 ## QA runs
 
@@ -35,7 +38,7 @@ QA runs execute all configs in `configs/qa/` against a small South Africa spatia
 
 1. Go to **Actions → deploy → Run workflow**
 2. Optionally enable **Force recompute** to bypass the S3 cache
-3. Optionally provide a **version** override to pin a specific cache namespace
+3. Optionally provide a **branch** override to pin a specific cache namespace (passed to the pipeline's `--branch` flag)
 4. Click **Run workflow**
 
 The job runs two steps in order:
@@ -52,7 +55,7 @@ Production runs execute all configs in `configs/production/` globally. They trig
 2. Create and publish a GitHub release with a SemVer tag (e.g., `v1.2.3`)
 3. The `production` workflow job fires automatically
 
-The job checks out the release tag, installs the package at that tag (so `version` in all configs resolves to the release's package version), then runs:
+The job checks out the release tag, installs the package at that tag (so the `branch` in all configs resolves to the release's package version), then runs:
 1. `bcsd validate --config-path configs/production/`
 2. `bcsd run --config-path configs/production/`
 
@@ -61,7 +64,7 @@ The job checks out the release tag, installs the package at that tag (so `versio
 To add a new GCM, variable, member, or scenario to future production runs:
 
 1. Edit an existing file under `configs/production/` to add a value to a list (e.g. append to `ensemble_members`), or create a new YAML file for a new GCM.
-2. Set `environment: "production"` and omit `version`.
+2. Set `environment: "production"` and omit `branch`.
 3. Omit `subset_bounds` for a global run.
 4. Open a PR — the config will be picked up automatically on the next release.
 

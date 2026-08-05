@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from srm.lineage import resolve_member_lineage
+from srm.lineage import ScenarioMember, resolve_member_lineage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -13,6 +13,38 @@ from srm.lineage import resolve_member_lineage
 _STANDARD_VARS = ("tas", "pr", "rsds", "hurs")
 _TMAX_MIN_VARS = ("tasmax", "tasmin", "dtr")
 _UKESM_VARS = ("tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr")
+
+
+class TestLineageEntryShape:
+    """The entry is a frozen, keyword-only dataclass, not a tuple."""
+
+    def test_fields_are_reachable_by_name(self):
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", "002", "tas")
+        assert entry.historical == "r2i1p1f1"
+        assert entry.ssp245_bridge == "002"
+        assert entry.ssp245_esgf_bridge is None
+        assert entry.sai_parent.member == "002"
+
+    def test_positional_access_is_gone(self):
+        """Indexing and unpacking must fail loudly; that is the point of the change."""
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", "tas")
+        with pytest.raises(TypeError):
+            entry[0]
+        with pytest.raises(TypeError):
+            _hist, _ssp245 = entry
+
+    def test_entry_is_frozen(self):
+        import dataclasses
+
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", "tas")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            entry.historical = "nope"
+
+    def test_construction_is_keyword_only(self):
+        from srm.lineage import LineageEntry
+
+        with pytest.raises(TypeError):
+            LineageEntry("r1i1p1f1", "001")
 
 
 # ---------------------------------------------------------------------------
@@ -25,45 +57,127 @@ class TestG6Lineage:
 
     @pytest.mark.parametrize("variable", _STANDARD_VARS)
     def test_g6_member_001_standard_vars(self, variable):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", variable)
-        assert hist == "r1i1p1f1"
-        assert ssp245 == "001"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", variable)
+        assert entry.historical == "r1i1p1f1"
+        assert entry.ssp245_bridge == "001"
 
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_g6_member_001_tmax_tmin(self, variable):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", variable)
-        assert hist == "001"
-        assert ssp245 == "009"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", variable)
+        assert entry.historical == "001"
+        assert entry.ssp245_bridge == "009"
 
     @pytest.mark.parametrize("variable", _STANDARD_VARS)
     def test_g6_member_002_standard_vars(self, variable):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
-        assert hist == "r2i1p1f1"
-        assert ssp245 == "002"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
+        assert entry.historical == "r2i1p1f1"
+        assert entry.ssp245_bridge == "002"
 
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_g6_member_002_tmax_tmin(self, variable):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
-        assert hist == "001"
-        assert ssp245 == "007"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
+        assert entry.historical == "001"
+        assert entry.ssp245_bridge == "007"
 
     @pytest.mark.parametrize("variable", _STANDARD_VARS)
     def test_g6_member_003_standard_vars(self, variable):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", variable)
-        assert hist == "r3i1p1f1"
-        assert ssp245 == "003"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", variable)
+        assert entry.historical == "r3i1p1f1"
+        assert entry.ssp245_bridge == "003"
 
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_g6_member_003_tmax_tmin(self, variable):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", variable)
-        assert hist == "001"
-        assert ssp245 == "008"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", variable)
+        assert entry.historical == "001"
+        assert entry.ssp245_bridge == "008"
 
     def test_g6_ssp245_member_is_not_none(self, subtests):
         for member in ("001", "002", "003"):
             with subtests.test(member=member):
-                _, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", member, "tas")
-                assert ssp245 is not None
+                entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", member, "tas")
+                assert entry.ssp245_bridge is not None
+
+
+# ---------------------------------------------------------------------------
+# resolve_member_lineage: CESM2-WACCM G6-1.5K-END
+# ---------------------------------------------------------------------------
+
+
+class TestG6EndLineage:
+    """G6-1.5K-END is the termination-shock continuation of G6-1.5K 002 from 2085.
+
+    Its store holds only 2085-2100, so the detrend stitch needs both an SSP245
+    segment (2015-2034) and the parent SAI segment (2035-2084) to reach it. The
+    lineage table is what supplies all three parents to the bridge.
+    """
+
+    @pytest.mark.parametrize("variable", _STANDARD_VARS)
+    def test_g6_end_standard_vars(self, variable):
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", "002", variable)
+        assert entry.historical == "r2i1p1f1"
+        assert entry.ssp245_bridge == "002"
+        assert entry.ssp245_esgf_bridge is None
+        assert entry.sai_parent == ScenarioMember(scenario="G6-1.5K", member="002")
+
+    @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
+    def test_g6_end_tmax_tmin(self, variable):
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", "002", variable)
+        assert entry.historical == "001"
+        assert entry.ssp245_bridge == "007"
+        assert entry.ssp245_esgf_bridge is None
+        assert entry.sai_parent == ScenarioMember(scenario="G6-1.5K", member="002")
+
+    def test_g6_end_sai_parent_matches_g6_lineage(self, subtests):
+        """The parent segment must carry the same lineage the END run continues.
+
+        G6-1.5K 002 and G6-1.5K-END 002 branch from the same historical and SSP245
+        members, so a mismatch here means the two segments come from different
+        realizations. The provenance sheet records both chains, and they agree on
+        the first two parents for every variable.
+        """
+        for variable in _STANDARD_VARS + _TMAX_MIN_VARS:
+            with subtests.test(variable=variable):
+                end = resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", "002", variable)
+                parent = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", variable)
+                assert (end.historical, end.ssp245_bridge, end.ssp245_esgf_bridge) == (
+                    parent.historical,
+                    parent.ssp245_bridge,
+                    parent.ssp245_esgf_bridge,
+                )
+
+    @pytest.mark.parametrize("member", ("001", "003"))
+    def test_g6_end_unregistered_members_raise(self, member):
+        """Only member 002 was run to termination."""
+        with pytest.raises(KeyError):
+            resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", member, "tas")
+
+    def test_g6_has_no_sai_parent(self, subtests):
+        """Plain G6-1.5K starts the SAI chain, so nothing precedes it."""
+        for member in ("001", "002", "003"):
+            with subtests.test(member=member):
+                entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", member, "tas")
+                assert entry.sai_parent is None
+
+    def test_sai_parent_exposes_named_fields(self):
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", "002", "tas")
+        assert entry.sai_parent == ScenarioMember(scenario="G6-1.5K", member="002")
+        assert entry.sai_parent.scenario == "G6-1.5K"
+        assert entry.sai_parent.member == "002"
+
+    def test_sai_parent_renders_as_a_scenario_slash_member_token(self):
+        """__str__ is what the CLI table, the pipeline log, and the notebook all print."""
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", "002", "tas")
+        assert str(entry.sai_parent) == "G6-1.5K/002"
+
+    def test_sai_parent_is_no_longer_tuple_shaped(self):
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K-END", "002", "tas")
+        assert entry.sai_parent != ("G6-1.5K", "002")
+        with pytest.raises(TypeError):
+            _scenario, _member = entry.sai_parent
+
+    def test_scenario_member_construction_is_keyword_only(self):
+        with pytest.raises(TypeError):
+            ScenarioMember("G6-1.5K", "002")
 
 
 # ---------------------------------------------------------------------------
@@ -91,23 +205,23 @@ class TestSSP245Lineage:
     )
     @pytest.mark.parametrize("variable", _STANDARD_VARS)
     def test_ssp245_standard_vars(self, member, expected_hist, variable):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
-        assert hist == expected_hist
-        assert ssp245 is None
+        entry = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
+        assert entry.historical == expected_hist
+        assert entry.ssp245_bridge is None
 
     @pytest.mark.parametrize("member", ("006", "007", "008", "009", "010"))
     @pytest.mark.parametrize("variable", _TMAX_MIN_VARS)
     def test_ssp245_tmax_tmin_members(self, member, variable):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
-        assert hist == "001"
-        assert ssp245 is None
+        entry = resolve_member_lineage("CESM2-WACCM", "SSP245", member, variable)
+        assert entry.historical == "001"
+        assert entry.ssp245_bridge is None
 
     def test_ssp245_ssp245_member_always_none(self, subtests):
         members = ("001", "002", "003", "004", "005", "006", "007", "008", "009", "010")
         for member in members:
             with subtests.test(member=member):
-                _, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "SSP245", member, "tas")
-                assert ssp245 is None
+                entry = resolve_member_lineage("CESM2-WACCM", "SSP245", member, "tas")
+                assert entry.ssp245_bridge is None
 
 
 # ---------------------------------------------------------------------------
@@ -160,9 +274,9 @@ class TestUKESMSSP245Lineage:
     @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
     @pytest.mark.parametrize("variable", _UKESM_VARS)
     def test_members_hist_equals_self(self, member, variable):
-        hist, ssp245, *_ = resolve_member_lineage("UKESM", "SSP245", member, variable)
-        assert hist == member
-        assert ssp245 is None
+        entry = resolve_member_lineage("UKESM", "SSP245", member, variable)
+        assert entry.historical == member
+        assert entry.ssp245_bridge is None
 
     @pytest.mark.parametrize("member", ("001", "002", "003"))
     def test_legacy_numeric_members_unregistered(self, member):
@@ -181,10 +295,11 @@ class TestUKESMG6Lineage:
     @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
     @pytest.mark.parametrize("variable", _UKESM_VARS)
     def test_members_self_consistent(self, member, variable):
-        hist, ssp245, ssp245_esgf = resolve_member_lineage("UKESM", "G6-1.5K", member, variable)
-        assert hist == member
-        assert ssp245 == member
-        assert ssp245_esgf is None
+        entry = resolve_member_lineage("UKESM", "G6-1.5K", member, variable)
+        assert entry.historical == member
+        assert entry.ssp245_bridge == member
+        assert entry.ssp245_esgf_bridge is None
+        assert entry.sai_parent is None
 
     @pytest.mark.parametrize("member", ("001", "002", "003"))
     def test_legacy_numeric_members_unregistered(self, member):
@@ -198,7 +313,7 @@ class TestUKESMG6Lineage:
 
 
 class TestMirocLineage:
-    """MIROC-ES2H lineage: 3-tuple with ssp245_esgf_member for G6-1.5K."""
+    """MIROC-ES2H lineage: ssp245_esgf_member set for both G6-1.5K and SSP245."""
 
     _MIROC_G6_LINEAGE = [
         ("r01", "r1i1p4f2"),
@@ -215,24 +330,96 @@ class TestMirocLineage:
 
     @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
     def test_g6_hist_member(self, member, expected_hist):
-        hist, ssp245, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
-        assert hist == expected_hist
+        entry = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
+        assert entry.historical == expected_hist
 
     @pytest.mark.parametrize("member", [m for m, _ in _MIROC_G6_LINEAGE])
     def test_g6_ssp245_member_equals_geomip_member(self, member):
-        _, ssp245, _ = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
-        assert ssp245 == member
+        entry = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
+        assert entry.ssp245_bridge == member
 
     @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
     def test_g6_esgf_bridge_equals_hist_member(self, member, expected_hist):
-        _, _, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
-        assert ssp245_esgf == expected_hist
+        entry = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
+        assert entry.ssp245_esgf_bridge == expected_hist
 
     @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
     def test_ssp245_no_sai_bridge_but_has_esgf_bridge(self, member, expected_hist):
         # SSP245 is not an SAI scenario so ssp245 (SAI bridge) is None.
         # ssp245_esgf is set because the GeoMIP SSP245 dataset starts in 2020;
         # ESGF SSP245 fills the 2015–2019 gap.
-        _, ssp245, ssp245_esgf = resolve_member_lineage("MIROC-ES2H", "SSP245", member, "tas")
-        assert ssp245 is None
-        assert ssp245_esgf == expected_hist
+        entry = resolve_member_lineage("MIROC-ES2H", "SSP245", member, "tas")
+        assert entry.ssp245_bridge is None
+        assert entry.ssp245_esgf_bridge == expected_hist
+
+
+# ---------------------------------------------------------------------------
+# diff_against_provenance: reconciliation with docs/srm-provenance.csv
+# ---------------------------------------------------------------------------
+
+
+class TestProvenanceReconciliation:
+    """The lineage table and the provenance sheet are maintained separately.
+
+    Nothing else notices when they drift, so these tests pin the parts that must
+    agree and leave the known, tracked disagreements out of the assertions.
+    """
+
+    @staticmethod
+    def _diff():
+        from pathlib import Path
+
+        from srm.lineage import diff_against_provenance
+
+        csv_path = Path(__file__).resolve().parent.parent / "docs" / "srm-provenance.csv"
+        return diff_against_provenance(csv_path)
+
+    def test_returns_all_sections(self):
+        diff = self._diff()
+        assert set(diff) == {
+            "only_in_code",
+            "only_in_sheet",
+            "parent_mismatch",
+            "uncertain",
+            "malformed",
+        }
+
+    def test_every_sheet_parent_cell_is_parseable(self):
+        # A malformed cell would otherwise be skipped silently, hiding real drift.
+        # The '???' uncertainty prefix must be handled rather than treated as a parse error.
+        diff = self._diff()
+        assert diff["uncertain"], "the '???' prefix is no longer being detected"
+
+    @pytest.mark.parametrize("variable", _STANDARD_VARS + ("tasmax", "tasmin"))
+    def test_termination_run_agrees_with_sheet(self, variable):
+        # dtr is excluded: it is derived, so it has no provenance row by design.
+        key = ("CESM2-WACCM", "G6-1.5K-END", "002", variable)
+        diff = self._diff()
+        assert key not in diff["only_in_code"], f"{variable} missing from the provenance sheet"
+        assert key not in diff["only_in_sheet"]
+
+    def test_no_malformed_parent_cells(self):
+        """Every parent cell must parse.
+
+        A cell the parser cannot read drops that row out of every comparison above, so an
+        unparseable cell would quietly shrink the reconciliation rather than fail it.
+        """
+        diff = self._diff()
+        assert diff["malformed"] == [], diff["malformed"]
+
+    def test_no_parent_disagreement_for_cesm_sai_runs(self):
+        """The CESM G6 and termination entries must match the sheet exactly.
+
+        Other disagreements exist and are tracked separately; this narrows the
+        assertion to the runs this lineage work is responsible for.
+        """
+        diff = self._diff()
+        offending = [
+            line for line in diff["parent_mismatch"] if line.startswith("CESM2-WACCM/G6-1.5K")
+        ]
+        assert offending == [], offending
+
+    def test_derived_dtr_is_the_expected_kind_of_code_only_key(self):
+        diff = self._diff()
+        dtr_keys = [k for k in diff["only_in_code"] if k[3] == "dtr"]
+        assert dtr_keys, "dtr should be registered in code without a sheet row"

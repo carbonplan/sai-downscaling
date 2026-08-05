@@ -18,7 +18,7 @@ and one for ERA5. Use the appropriate workflow for the dataset you want to regen
 1. Go to **Actions → process input data → Run workflow**
 2. Select a **GCM** from the dropdown
 3. Enter one or more **scenarios** as a comma-separated string (see valid values below)
-4. Optionally provide an **S3 cleanup path** to wipe the existing store before reprocessing
+4. Optionally pass **extra flags** to the processing command (e.g. `--subset`)
 5. Click **Run workflow**
 
 ### Inputs
@@ -33,7 +33,7 @@ and one for ERA5. Use the appropriate workflow for the dataset you want to regen
 
 | GCM | Valid scenarios |
 |-----|----------------|
-| `CESM2-WACCM` | `historical`, `ssp245`, `G6-1.5K` |
+| `CESM2-WACCM` | `historical`, `ssp245`, `G6-1.5K`, `G6-1.5K-END` |
 | `MIROC-ES2H` | `historical`, `esgf-ssp245`, `ssp245`, `G6-1.5K` |
 | `UKESM` | `historical`, `SSP245`, `G6-1.5K` |
 | `NASA-NEX` | `historical`, `SSP245` |

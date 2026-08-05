@@ -6,15 +6,18 @@ inspecting the pipeline. Supports both single-config and matrix-expansion execut
 with automatic caching and optional Coiled integration.
 """
 
+import contextlib
 import itertools
 import json
 import logging
 import os
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 
 import typer
 import yaml
+from pydantic import ValidationError
 from rich import box
 from rich.console import Console
 from rich.logging import RichHandler
@@ -42,6 +45,42 @@ _STATUS_SYMBOL = {
 }
 
 app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
+
+
+@contextlib.contextmanager
+def _validation_cluster(
+    use_coiled: bool,
+    *,
+    n_workers: int,
+    worker_vm_type: str,
+    adaptive_max: int | None,
+) -> Iterator[None]:
+    """Yield with a Coiled Dask client active, or as a no-op when ``use_coiled`` is False.
+
+    Validation checks are lazy dask reductions; the active client makes every ``.compute()``
+    run on cluster workers while the driver keeps rendering tables and the exit gate — only
+    scalar results return to the driver, so full arrays never touch it. When ``use_coiled``
+    is False the reductions run in-process on the default scheduler.
+
+    Reuses :func:`srm.config.setup_cluster` (the canonical SRM Coiled setup, as in
+    ``input_data/era5.py``) so region, tags, and spot policy live in one place. ``n_workers``
+    with ``adaptive_max`` becomes an ``[min, max]`` range so Coiled scales adaptively, and the
+    scheduler VM type is pinned to the worker type so their processor architectures match
+    (Coiled rejects mixing x86_64 and aarch64 Graviton VMs).
+    """
+    if not use_coiled:
+        yield
+        return
+
+    from srm.config import ClusterConfig, setup_cluster
+
+    config = ClusterConfig(
+        worker_vm_types=[worker_vm_type],
+        scheduler_vm_types=worker_vm_type,
+        n_workers=[n_workers, adaptive_max] if adaptive_max is not None else n_workers,
+    )
+    with setup_cluster(config):
+        yield
 
 
 def _build_check_matrix_table(
@@ -99,11 +138,12 @@ def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
             continue
         seen.add(key)
         try:
-            hist, ssp245, *_ = resolve_member_lineage(
+            lineage = resolve_member_lineage(
                 cfg.gcm, cfg.scenario, cfg.ensemble_member, cfg.variable
             )
         except KeyError:
             continue
+        hist, ssp245 = lineage.historical, lineage.ssp245_bridge
         if hist == cfg.ensemble_member and ssp245 == cfg.ensemble_member:
             continue
         ssp = ssp245 if ssp245 != cfg.ensemble_member else "—"
@@ -116,11 +156,17 @@ def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
 def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
     """Print a per-scenario lineage table for the validate command.
 
-    Deduplicated by (member, hist, ssp245_bridge, ssp245_esgf_bridge); variables
-    sharing the same parents are listed together. Skipped when no lineage is
-    registered for the GCM/scenario pair.
+    Deduplicated by (member, hist, ssp245_bridge, ssp245_esgf_bridge, sai_parent);
+    variables sharing the same parents are listed together. Skipped when no lineage
+    is registered for the GCM/scenario pair.
     """
-    from srm.lineage import get_lineage_entries
+
+    from srm.lineage import ScenarioMember, get_lineage_entries
+
+    def _sort_token(field: str | ScenarioMember | None) -> str:
+        if field is None:
+            return ""
+        return str(field)
 
     for scenario in scenarios:
         if scenario == "historical":
@@ -129,8 +175,9 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         if not entries:
             continue
 
-        has_ssp245 = any(ssp is not None for _, ssp, *_ in entries.values())
-        has_ssp245_esgf = any(esgf is not None for _, _, esgf in entries.values())
+        has_ssp245 = any(e.ssp245_bridge is not None for e in entries.values())
+        has_ssp245_esgf = any(e.ssp245_esgf_bridge is not None for e in entries.values())
+        has_sai_parent = any(e.sai_parent is not None for e in entries.values())
 
         tbl = Table(
             title=f"Lineage — {scenario}",
@@ -146,24 +193,54 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
             tbl.add_column("→ SSP245 bridge", style="yellow", justify="right")
         if has_ssp245_esgf:
             tbl.add_column("→ SSP245 ESGF bridge", style="magenta", justify="right")
+        if has_sai_parent:
+            tbl.add_column("→ SAI parent", style="blue", justify="right")
 
-        seen: dict[tuple[str, str, str | None, str | None], list[str]] = {}
-        for (member, var), (hist, ssp245, ssp245_esgf) in sorted(entries.items()):
-            key = (member, hist, ssp245, ssp245_esgf)
+        seen: dict[tuple[str, str, str | None, str | None, ScenarioMember | None], list[str]] = {}
+        for (member, var), entry in sorted(entries.items()):
+            key = (
+                member,
+                entry.historical,
+                entry.ssp245_bridge,
+                entry.ssp245_esgf_bridge,
+                entry.sai_parent,
+            )
             if key not in seen:
                 seen[key] = []
             if var not in seen[key]:
                 seen[key].append(var)
 
-        for (member, hist, ssp245, ssp245_esgf), variables in sorted(seen.items()):
+        # Sort on rendered tokens rather than the raw key: the key mixes str, None, and
+        # ScenarioMember, and Python compares element-wise only once the earlier fields
+        # tie, so a raw sort raises TypeError the moment two rows differ only in a
+        # None-vs-set field or only in their SAI parent.
+        for (member, hist, ssp245, ssp245_esgf, sai_parent), variables in sorted(
+            seen.items(), key=lambda item: tuple(_sort_token(field) for field in item[0])
+        ):
             row = [member, "/".join(sorted(variables)), hist]
             if has_ssp245:
                 row.append(ssp245 or "—")
             if has_ssp245_esgf:
                 row.append(ssp245_esgf or "—")
+            if has_sai_parent:
+                row.append(str(sai_parent) if sai_parent else "—")
             tbl.add_row(*row)
 
         console.print(tbl)
+
+
+def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
+    """Reject configs whose predict_period falls outside a member's valid data extent."""
+    from srm.validation import CheckStatus, check_config_time_domain
+
+    failures = [r for c in configs if (r := check_config_time_domain(c)).status == CheckStatus.FAIL]
+    if failures:
+        raise ValueError(
+            "predict_period out of bounds for the following configs:\n"
+            + "\n".join(
+                f"  {r.gcm}/{r.scenario}/{r.ensemble_member}: {r.message}" for r in failures
+            )
+        )
 
 
 def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
@@ -201,11 +278,12 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
         if config.scenario is None:
             continue
         try:
-            hist, ssp245, *_ = resolve_member_lineage(
+            lineage = resolve_member_lineage(
                 config.gcm, config.scenario, config.ensemble_member, config.variable
             )
         except KeyError:
             continue
+        hist, ssp245 = lineage.historical, lineage.ssp245_bridge
 
         hist_group = f"historical/{config.variable}"
         known = _members(config.gcm, hist_group)
@@ -231,6 +309,111 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
         raise ValueError("Resolved ensemble members not found in stores:\n" + "\n".join(errors))
 
 
+def _validate_variable_overrides(overrides: dict, variables: list[str]) -> None:
+    """
+    Validate the shape of a ``variable_overrides`` mapping.
+
+    Parameters
+    ----------
+    overrides : dict
+        Mapping of variable name to a mapping of ``VariableConfig`` field to value.
+    variables : list[str]
+        Variables the run actually covers.
+
+    Raises
+    ------
+    ValueError
+        If a key names a variable outside the run, a value is not a mapping, or a
+        field is not a ``VariableConfig`` field.
+    """
+    valid_fields = set(VariableConfig.model_fields)
+    for var, fields in overrides.items():
+        if var not in variables:
+            raise ValueError(
+                f"variable_overrides key {var!r} is not in variables {sorted(variables)}. "
+                "Every override must target a variable included in the run."
+            )
+        if not isinstance(fields, dict):
+            raise ValueError(
+                f"variable_overrides[{var!r}] must be a mapping of field -> value, "
+                f"got {type(fields).__name__}"
+            )
+        unknown = sorted(set(fields) - valid_fields)
+        if unknown:
+            raise ValueError(
+                f"variable_overrides[{var!r}] has unknown field(s) {unknown}. "
+                f"Valid fields: {sorted(valid_fields)}"
+            )
+
+
+def _resolve_variable_config(
+    variable: str,
+    run_wide: dict | None = None,
+    overrides: dict[str, dict] | None = None,
+) -> VariableConfig:
+    """
+    Resolve a ``VariableConfig`` through the three precedence tiers.
+
+    Tiers, last writer wins: per-variable table defaults, then run-wide values, then
+    the per-variable override entry. ``None`` values are skipped so an unset CLI flag
+    never clobbers a default. Construction goes through ``VariableConfig(**merged)``
+    rather than ``model_copy(update=...)`` because ``model_copy`` does not validate,
+    which previously let bad values through to the pipeline.
+
+    Parameters
+    ----------
+    variable : str
+        Variable name, used to look up the table defaults.
+    run_wide : dict or None
+        Values applied to every variable in the run.
+    overrides : dict[str, dict] or None
+        Mapping of variable name to per-variable values.
+
+    Returns
+    -------
+    VariableConfig
+        Fully resolved and validated config for ``variable``.
+    """
+    merged = VariableConfig.for_variable(variable).model_dump()
+    for source in (run_wide or {}, (overrides or {}).get(variable, {})):
+        merged.update({k: v for k, v in source.items() if v is not None})
+    return VariableConfig(**merged)
+
+
+def _parse_variable_overrides(items: list[str]) -> dict[str, dict[str, str]]:
+    """
+    Parse repeated ``--variable-override`` values into a nested mapping.
+
+    Each item has the form ``{variable}:{field}={value}``, split on the first ``:``
+    and then the first ``=``. Repeating the flag accumulates, both across variables
+    and within one variable.
+
+    Parameters
+    ----------
+    items : list[str]
+        Raw flag values, e.g. ``["dtr:debias_approach=nonparametric"]``.
+
+    Returns
+    -------
+    dict[str, dict[str, str]]
+        Mapping of variable name to field-value pairs. Values stay strings and are
+        coerced by pydantic during ``VariableConfig`` construction.
+
+    Raises
+    ------
+    ValueError
+        If an item does not match ``variable:field=value``.
+    """
+    parsed: dict[str, dict[str, str]] = defaultdict(dict)
+    for item in items:
+        variable, sep, rest = item.partition(":")
+        field, sep2, value = rest.partition("=")
+        if not (sep and sep2 and variable.strip() and field.strip()):
+            raise ValueError(f"--variable-override must be 'variable:field=value', got {item!r}")
+        parsed[variable.strip()][field.strip()] = value.strip()
+    return dict(parsed)
+
+
 def _is_matrix_config(config_dict: dict) -> bool:
     """Return True if any expandable field contains a list."""
     return any(
@@ -252,19 +435,42 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
             val = None
         axes[field] = val if isinstance(val, list) else [val]
 
-    if "variable_config" in d and len(axes["variable"]) > 1:
-        raise ValueError(
-            "Cannot use 'variable_config' in a matrix config with multiple variables "
-            f"({axes['variable']}). Remove 'variable_config' to use per-variable defaults, "
-            "or split into separate config files."
-        )
+    overrides = d.pop("variable_overrides", None) or {}
+    if overrides:
+        _validate_variable_overrides(overrides, axes["variable"])
 
-    return [
-        BCSDConfig(gcm=gcm, variable=variable, ensemble_member=member, scenario=scenario, **d)
-        for gcm, variable, member, scenario in itertools.product(
-            axes["gcm"], axes["variable"], axes["ensemble_member"], axes["scenario"]
+    if "variable_config" in d:
+        if len(axes["variable"]) > 1:
+            raise ValueError(
+                "Cannot use 'variable_config' in a matrix config with multiple variables "
+                f"({axes['variable']}). Use 'variable_overrides' to set per-variable values, "
+                "or split into separate config files."
+            )
+        if overrides:
+            raise ValueError(
+                "Cannot combine 'variable_config' with 'variable_overrides'. An explicit "
+                "'variable_config' is passed through verbatim, so the overrides would be "
+                "silently discarded. Fold the override values into 'variable_config', or "
+                "drop 'variable_config' and use 'variable_overrides' alone."
+            )
+
+    configs = []
+    for gcm, variable, member, scenario in itertools.product(
+        axes["gcm"], axes["variable"], axes["ensemble_member"], axes["scenario"]
+    ):
+        kwargs = dict(d)
+        if "variable_config" not in kwargs:
+            kwargs["variable_config"] = _resolve_variable_config(variable, None, overrides)
+        configs.append(
+            BCSDConfig(
+                gcm=gcm,
+                variable=variable,
+                ensemble_member=member,
+                scenario=scenario,
+                **kwargs,
+            )
         )
-    ]
+    return configs
 
 
 def load_configs(config_path: str) -> tuple[list[BCSDConfig], PipelineOptions]:
@@ -334,7 +540,7 @@ def configs_from_matrix(
     branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
-    mapping_type: str = "nonparametric_hybrid_2sided",
+    debias_approach: str | None = None,
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
@@ -343,6 +549,7 @@ def configs_from_matrix(
     downscaling_method: str | None = None,
     downscaling_clim_method: str | None = None,
     detrend_method: str | None = None,
+    variable_overrides: dict[str, dict] | None = None,
 ) -> tuple[list[BCSDConfig], PipelineOptions]:
     """
     Generate BCSDConfig objects for every cartesian-product combination of GCMs,
@@ -372,14 +579,16 @@ def configs_from_matrix(
         Directory for final downscaled outputs
     environment : str
         Environment name (qa, production)
-    version : str
-        Version identifier
+    branch : str
+        icechunk output branch (default: "main")
     subset_bounds : tuple[float, float, float, float] | None
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
-    mapping_type : str
-        Quantile mapping method (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
+    debias_approach : str | None
+        Override VariableConfig.debias_approach for every variable (parametric,
+        nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided). None uses
+        each variable's own default.
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -394,6 +603,10 @@ def configs_from_matrix(
         Override VariableConfig.downscaling_clim_method (simple, fft)
     detrend_method : str | None
         Override VariableConfig.detrend_method (additive, multiplicative)
+    variable_overrides : dict[str, dict] | None
+        Per-variable overrides keyed by variable name, e.g.
+        ``{"dtr": {"debias_approach": "nonparametric"}}``. Takes precedence over the
+        run-wide parameters above.
 
     Returns
     -------
@@ -408,23 +621,22 @@ def configs_from_matrix(
         verbose=verbose,
         save_intermediate=save_intermediate,
     )
+    variable_overrides = variable_overrides or {}
+    if variable_overrides:
+        _validate_variable_overrides(variable_overrides, variables)
+
+    run_wide = {
+        "debias_approach": debias_approach,
+        "detrend_data": detrend_data,
+        "do_windowing": do_windowing,
+        "running_window_length": running_window_length,
+        "downscaling_method": downscaling_method,
+        "downscaling_clim_method": downscaling_clim_method,
+        "detrend_method": detrend_method,
+    }
+
     configs = []
     for gcm, variable, member, scenario in itertools.product(gcms, variables, members, scenarios):
-        vc = VariableConfig.for_variable(variable)
-        overrides = {
-            k: v
-            for k, v in {
-                "detrend_data": detrend_data,
-                "do_windowing": do_windowing,
-                "running_window_length": running_window_length,
-                "downscaling_method": downscaling_method,
-                "downscaling_clim_method": downscaling_clim_method,
-                "detrend_method": detrend_method,
-            }.items()
-            if v is not None
-        }
-        if overrides:
-            vc = vc.model_copy(update=overrides)
         configs.append(
             BCSDConfig(
                 gcm=gcm,
@@ -436,8 +648,7 @@ def configs_from_matrix(
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
                 subset_bounds=subset_bounds,
-                mapping_type=mapping_type,
-                variable_config=vc,
+                variable_config=_resolve_variable_config(variable, run_wide, variable_overrides),
             )
         )
     return configs, options
@@ -473,6 +684,7 @@ def run(
     logger.info("Loaded %d configuration(s)", len(configs))
     _print_lineage_summary(configs)
     _validate_lineage_members(configs)
+    _validate_predict_periods(configs)
 
     orchestrator = BCSDOrchestrator(options)
 
@@ -671,10 +883,15 @@ def run_matrix(
         "--save-intermediate",
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
-    mapping_type: str = typer.Option(
-        "nonparametric_hybrid_2sided",
-        "--mapping-type",
-        help="Quantile mapping method: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
+    debias_approach: str | None = typer.Option(
+        None,
+        "--debias-approach",
+        help=(
+            "Debias approach for every variable: parametric, nonparametric, "
+            "nonparametric_hybrid, nonparametric_hybrid_2sided. "
+            "Omit to use each variable's default. Override one variable with "
+            "--variable-override."
+        ),
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     # VariableConfig overrides
@@ -698,6 +915,15 @@ def run_matrix(
     detrend_method: str | None = typer.Option(
         None, "--detrend-method", help="Override detrend_method (additive, multiplicative)"
     ),
+    variable_override: list[str] = typer.Option(
+        [],
+        "--variable-override",
+        help=(
+            "Per-variable setting as 'variable:field=value' (repeatable), e.g. "
+            "'dtr:debias_approach=nonparametric'. Takes precedence over the run-wide "
+            "flags above."
+        ),
+    ),
 ):
     """Run BCSD pipeline over cartesian product of GCMs x variables x members x scenarios.
 
@@ -714,6 +940,16 @@ def run_matrix(
           --predict-period-start 2015 --predict-period-end 2100
 
     Omit --scenario for historical-only runs.
+
+    Give one variable a different setting with --variable-override
+    (repeatable, 'variable:field=value'):
+
+        bcsd run-matrix \\
+          --gcm CESM2-WACCM \\
+          --variable tasmax --variable dtr \\
+          --member 007 --scenario ssp245 \\
+          --predict-period-start 2015 --predict-period-end 2100 \\
+          --variable-override dtr:debias_approach=nonparametric
     """
     # Normalize: no --scenario given -> historical-only (scenario=None)
     scenario_values: list[str | None] = scenario if scenario else [None]
@@ -741,32 +977,44 @@ def run_matrix(
             )
             raise typer.Exit(1)
 
-    configs, options = configs_from_matrix(
-        gcms=gcm,
-        variables=variable,
-        members=member,
-        scenarios=scenario_values,
-        train_period_start=train_period_start,
-        train_period_end=train_period_end,
-        predict_period_start=predict_period_start,
-        predict_period_end=predict_period_end,
-        scratch_dir=scratch_dir,
-        output_dir=output_dir,
-        environment=environment,
-        branch=branch,
-        subset_bounds=parsed_bounds,
-        save_intermediate=save_intermediate,
-        mapping_type=mapping_type,
-        verbose=verbose,
-        detrend_data=detrend_data,
-        do_windowing=do_windowing,
-        running_window_length=running_window_length,
-        downscaling_method=downscaling_method,
-        downscaling_clim_method=downscaling_clim_method,
-        detrend_method=detrend_method,
-    )
+    try:
+        parsed_overrides = _parse_variable_overrides(variable_override)
+    except ValueError as exc:
+        logger.error(str(exc))
+        raise typer.Exit(1)
+
+    try:
+        configs, options = configs_from_matrix(
+            gcms=gcm,
+            variables=variable,
+            members=member,
+            scenarios=scenario_values,
+            train_period_start=train_period_start,
+            train_period_end=train_period_end,
+            predict_period_start=predict_period_start,
+            predict_period_end=predict_period_end,
+            scratch_dir=scratch_dir,
+            output_dir=output_dir,
+            environment=environment,
+            branch=branch,
+            subset_bounds=parsed_bounds,
+            save_intermediate=save_intermediate,
+            debias_approach=debias_approach,
+            verbose=verbose,
+            detrend_data=detrend_data,
+            do_windowing=do_windowing,
+            running_window_length=running_window_length,
+            downscaling_method=downscaling_method,
+            downscaling_clim_method=downscaling_clim_method,
+            detrend_method=detrend_method,
+            variable_overrides=parsed_overrides,
+        )
+    except (ValueError, ValidationError) as exc:
+        logger.error(str(exc))
+        raise typer.Exit(1)
 
     _validate_lineage_members(configs)
+    _validate_predict_periods(configs)
 
     n = len(configs)
     logger.info(
@@ -931,7 +1179,7 @@ def cache_clear(
     if not confirm:
         confirm = typer.confirm(f"Really delete {desc}?")
         if not confirm:
-            logger.warning("Cancelled")
+            logger.warning("Canceled")
             return
 
     deleted = cache.clear_cache(stage=stage, gcm=gcm, variable=variable)
@@ -987,6 +1235,20 @@ def validate(
     scenario: list[str] | None = typer.Option(
         None, "--scenario", help="Scenario(s) to validate (repeatable). Defaults to all."
     ),
+    use_coiled: bool = typer.Option(
+        True,
+        "--coiled/--no-coiled",
+        help="Run validation reductions on a Coiled Dask cluster instead of locally.",
+    ),
+    n_workers: int = typer.Option(
+        4, "--n-workers", help="Coiled worker count (adaptive minimum when --adaptive-max is set)."
+    ),
+    worker_vm_type: str = typer.Option(
+        "r8g.2xlarge", "--worker-vm-type", help="Coiled worker VM type."
+    ),
+    adaptive_max: int | None = typer.Option(
+        None, "--adaptive-max", help="Enable adaptive scaling up to this many workers."
+    ),
 ) -> None:
     """Validate input datasets against the validation matrix.
 
@@ -994,6 +1256,9 @@ def validate(
 
     When --config-path is given, GCMs and scenarios are derived from those configs.
     Otherwise, --gcm and --scenario filter the check matrix (defaulting to all known values).
+
+    By default the datasets' lazy dask reductions (spatial-range and negative-precip checks)
+    run on a short-lived Coiled Dask cluster; pass --no-coiled to run everything in-process.
     """
     import pydantic
 
@@ -1016,16 +1281,20 @@ def validate(
 
     pairs = [(g, s) for g in (gcm or GCM_OPTIONS) for s in (scenario or SCENARIO_OPTIONS)]
 
+    # Reductions run on Coiled (see _validation_cluster) so the driver only handles scalars.
     all_results = []
-    for g, s in pairs:
-        try:
-            all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
-        except pydantic.ValidationError as exc:
-            logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
+    with _validation_cluster(
+        use_coiled, n_workers=n_workers, worker_vm_type=worker_vm_type, adaptive_max=adaptive_max
+    ):
+        for g, s in pairs:
+            try:
+                all_results.extend(DatasetValidator(gcm=g, scenario=s).run_checks())
+            except pydantic.ValidationError as exc:
+                logger.error("Invalid input (gcm=%r, scenario=%r): %s", g, s, exc)
 
-    # Per-member config time-domain checks (only when configs are supplied). Kept out of
-    # the gcm/scenario matrix below since they have member granularity; merged into
-    # all_results after rendering so blocking-failure aggregation picks them up.
+    # Per-member config time-domain checks (only when configs are supplied). Driver-only
+    # metadata lookups, so kept outside the cluster block; merged into all_results after
+    # rendering so blocking-failure aggregation picks them up.
     config_results = [check_config_time_domain(c) for c in configs] if config_path else []
 
     def _scenario_order(s: str) -> tuple[int, str]:
@@ -1157,6 +1426,20 @@ def validate_output(
     variable: list[str] | None = typer.Option(
         None, "--variable", help="Variable(s) to validate (repeatable). Defaults to all."
     ),
+    use_coiled: bool = typer.Option(
+        True,
+        "--coiled/--no-coiled",
+        help="Run validation reductions on a Coiled Dask cluster instead of locally.",
+    ),
+    n_workers: int = typer.Option(
+        4, "--n-workers", help="Coiled worker count (adaptive minimum when --adaptive-max is set)."
+    ),
+    worker_vm_type: str = typer.Option(
+        "r8g.2xlarge", "--worker-vm-type", help="Coiled worker VM type."
+    ),
+    adaptive_max: int | None = typer.Option(
+        None, "--adaptive-max", help="Enable adaptive scaling up to this many workers."
+    ),
 ) -> None:
     """Validate output datatree store(s), one leaf (scenario/variable/member) at a time.
 
@@ -1171,9 +1454,11 @@ def validate_output(
     When $GITHUB_STEP_SUMMARY is set, a markdown report is appended there in addition
     to the console tables.
 
-    Runs locally or with coiled batch.
-    local: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
-    coiled batch: uv run coiled batch run --region us-west-2 "bcsd validate-output <store_uri> [<store_uri> ...]"
+    By default the store's lazy dask reductions run on a short-lived Coiled Dask cluster
+    (the driver, tables, exit-code gate, and step summary stay local); only scalar results
+    return to the driver. Pass ``--no-coiled`` to run everything in-process instead.
+    local: `uv run bcsd validate-output <store_uri> [<store_uri> ...] --no-coiled`
+    coiled: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
 
     """
     from srm.config import SCENARIO_TO_GROUP
@@ -1215,85 +1500,90 @@ def validate_output(
 
     summary_lines: list[str] = []
     any_blocking = False
-    for store_uri in store_uris:
-        results = validate_output_store(
-            store_uri,
-            branch=branch,
-            tag=tag,
-            scenarios=scenarios,
-            variables=variables,
-        )
-        if not results:
-            # An explicit filter matching nothing is an error, not an empty success.
-            log = logger.error if filtered else logger.warning
-            log("No populated leaves found in %s", store_uri)
-            if filtered:
+    # Reductions run on Coiled (see _validation_cluster) so the driver only handles scalars;
+    # the cluster tears down when this block exits, before the summary write / exit gate below.
+    with _validation_cluster(
+        use_coiled, n_workers=n_workers, worker_vm_type=worker_vm_type, adaptive_max=adaptive_max
+    ):
+        for store_uri in store_uris:
+            results = validate_output_store(
+                store_uri,
+                branch=branch,
+                tag=tag,
+                scenarios=scenarios,
+                variables=variables,
+            )
+            if not results:
+                # An explicit filter matching nothing is an error, not an empty success.
+                log = logger.error if filtered else logger.warning
+                log("No populated leaves found in %s", store_uri)
+                if filtered:
+                    any_blocking = True
+                continue
+
+            console.rule(f"[bold]{store_uri}[/bold]")
+            md_lines = [f"## {store_uri}\n", "| leaf | status | checks |", "| --- | --- | --- |"]
+
+            # Group results by leaf (scenario path).
+            leaf_results: dict[str, list[CheckResult]] = defaultdict(list)
+            for r in results:
+                leaf_results[r.scenario].append(r)
+
+            tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
+            tbl.add_column("leaf", no_wrap=True)
+            tbl.add_column("status", justify="center")
+            tbl.add_column("checks", justify="right", style="dim")
+            for leaf, leaf_rs in sorted(leaf_results.items()):
+                n_total = len(leaf_rs)
+                n_pass = sum(1 for r in leaf_rs if r.status != CheckStatus.FAIL)
+                any_fail = any(r.status == CheckStatus.FAIL for r in leaf_rs)
+                status_sym = "[red]✗[/red]" if any_fail else "[green]✓[/green]"
+                checks_str = f"{n_pass}/{n_total}"
+                tbl.add_row(leaf, status_sym, checks_str)
+                md_lines.append(f"| {leaf} | {'❌' if any_fail else '✅'} | {checks_str} |")
+            console.print(tbl)
+
+            failures_by_leaf: dict[str, list[CheckResult]] = {
+                leaf: [r for r in leaf_rs if r.status == CheckStatus.FAIL]
+                for leaf, leaf_rs in leaf_results.items()
+                if any(r.status == CheckStatus.FAIL for r in leaf_rs)
+            }
+            blocking_failures = [
+                r
+                for leaf_rs in failures_by_leaf.values()
+                for r in leaf_rs
+                if r.check_id in BLOCKING_CHECKS
+            ]
+            if blocking_failures:
                 any_blocking = True
-            continue
 
-        console.rule(f"[bold]{store_uri}[/bold]")
-        md_lines = [f"## {store_uri}\n", "| leaf | status | checks |", "| --- | --- | --- |"]
+            if failures_by_leaf:
+                n_fail_leaves = len(failures_by_leaf)
+                n_fail_checks = sum(len(v) for v in failures_by_leaf.values())
+                console.print(
+                    f"\n[bold]Failures[/bold] ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, {n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
+                )
+                md_lines.append(
+                    f"\n**Failures** ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, "
+                    f"{n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
+                )
+                for leaf, fail_rs in sorted(failures_by_leaf.items()):
+                    console.print(f"  [bold]{leaf}[/bold]")
+                    md_lines.append(f"- **{leaf}**")
+                    for r in fail_rs:
+                        blocking_marker = (
+                            " [dim](blocking)[/dim]" if r.check_id in BLOCKING_CHECKS else ""
+                        )
+                        console.print(
+                            f"    [red]✗[/red] [dim]{r.check_id}[/dim]{blocking_marker}    {r.message}"
+                        )
+                        md_blocking_marker = " (blocking)" if r.check_id in BLOCKING_CHECKS else ""
+                        md_lines.append(f"  - `{r.check_id}`{md_blocking_marker}: {r.message}")
+                        if r.detail:
+                            console.print_json(json.dumps(r.detail))
+                    console.print()
 
-        # Group results by leaf (scenario path).
-        leaf_results: dict[str, list[CheckResult]] = defaultdict(list)
-        for r in results:
-            leaf_results[r.scenario].append(r)
-
-        tbl = Table(show_header=True, header_style="bold", box=box.SIMPLE_HEAD, padding=(0, 1))
-        tbl.add_column("leaf", no_wrap=True)
-        tbl.add_column("status", justify="center")
-        tbl.add_column("checks", justify="right", style="dim")
-        for leaf, leaf_rs in sorted(leaf_results.items()):
-            n_total = len(leaf_rs)
-            n_pass = sum(1 for r in leaf_rs if r.status != CheckStatus.FAIL)
-            any_fail = any(r.status == CheckStatus.FAIL for r in leaf_rs)
-            status_sym = "[red]✗[/red]" if any_fail else "[green]✓[/green]"
-            checks_str = f"{n_pass}/{n_total}"
-            tbl.add_row(leaf, status_sym, checks_str)
-            md_lines.append(f"| {leaf} | {'❌' if any_fail else '✅'} | {checks_str} |")
-        console.print(tbl)
-
-        failures_by_leaf: dict[str, list[CheckResult]] = {
-            leaf: [r for r in leaf_rs if r.status == CheckStatus.FAIL]
-            for leaf, leaf_rs in leaf_results.items()
-            if any(r.status == CheckStatus.FAIL for r in leaf_rs)
-        }
-        blocking_failures = [
-            r
-            for leaf_rs in failures_by_leaf.values()
-            for r in leaf_rs
-            if r.check_id in BLOCKING_CHECKS
-        ]
-        if blocking_failures:
-            any_blocking = True
-
-        if failures_by_leaf:
-            n_fail_leaves = len(failures_by_leaf)
-            n_fail_checks = sum(len(v) for v in failures_by_leaf.values())
-            console.print(
-                f"\n[bold]Failures[/bold] ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, {n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
-            )
-            md_lines.append(
-                f"\n**Failures** ({n_fail_leaves} leaf{'s' if n_fail_leaves != 1 else ''}, "
-                f"{n_fail_checks} check{'s' if n_fail_checks != 1 else ''}):\n"
-            )
-            for leaf, fail_rs in sorted(failures_by_leaf.items()):
-                console.print(f"  [bold]{leaf}[/bold]")
-                md_lines.append(f"- **{leaf}**")
-                for r in fail_rs:
-                    blocking_marker = (
-                        " [dim](blocking)[/dim]" if r.check_id in BLOCKING_CHECKS else ""
-                    )
-                    console.print(
-                        f"    [red]✗[/red] [dim]{r.check_id}[/dim]{blocking_marker}    {r.message}"
-                    )
-                    md_blocking_marker = " (blocking)" if r.check_id in BLOCKING_CHECKS else ""
-                    md_lines.append(f"  - `{r.check_id}`{md_blocking_marker}: {r.message}")
-                    if r.detail:
-                        console.print_json(json.dumps(r.detail))
-                console.print()
-
-        summary_lines.append("\n".join(md_lines))
+            summary_lines.append("\n".join(md_lines))
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path and summary_lines:

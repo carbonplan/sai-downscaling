@@ -18,15 +18,32 @@ Any of the four dimension fields can be a list. `load_configs` expands them into
 ```yaml
 gcm: "CESM2-WACCM"                              # singular — still works
 variables: ["tas", "pr"]                         # list — expands
-ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
-scenarios: ["SSP245", "G6-1.5K"]
+ensemble_members: ["001", "002", "003"]
+scenarios: ["SSP245"]
 predict_period_start: 2015
-predict_period_end: 2100
+predict_period_end: 2099                         # must fit every member's data extent (see below)
 ```
 
 Both singular (`variable`) and plural (`variables`) key names are accepted. All other fields are shared across every combination.
 
 **Restriction:** `variable_config` may not be set when `variables` contains more than one entry — it would silently apply to every variable, including those with incompatible settings (e.g. additive `tas` settings applied to `pr`). Remove it and rely on per-variable defaults (see [Variable-Specific Auto-Configuration](#variable-specific-auto-configuration)), or split into separate files.
+
+## Prediction period and per-member data extents
+
+`predict_period_start` and `predict_period_end` must fall within the valid data extent of every ensemble member the config expands to. Those extents are not uniform: some members are truncated years before the nominal scenario end and the unified store NaN-pads them to that end, so a predict period that overshoots would silently downscale padding. `bcsd run` and `bcsd run-matrix` guard against this with `check_config_time_domain` before submitting any work, raising a blocking error that lists every config whose predict period falls outside its member's bounds.
+
+The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/srm/validation.py`; the CESM2-WACCM SSP245 spread is representative:
+
+| Members | Valid end year |
+|---|---|
+| 001–005 | 2099 |
+| 006–010 | 2069 |
+
+007–010 each have a single stray non-NaN day on 2070-01-01 in the raw GCM input, with the rest of 2070 NaN; that one day does not extend their valid extent past 2069.
+
+MIROC-ES2H SSP245 and G6-1.5K members all end 2084, and UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios can technically start before their own data, because the pipeline bridges the gap: for `G6-1.5K` that bridge is SSP245, and for the `G6-1.5K-END` termination run, whose store begins in 2085, it is SSP245 through 2034 followed by the parent `G6-1.5K` member 002 for 2035–2084. Those bridge years are another scenario's data, so publishing them under this scenario's label is what issue #448 hit, where pre-2035 `g6_1p5k` output drew `tas` and `tasmax` from different SSP245 realizations and produced `tas > tasmax`.
+
+`config_time_domain` therefore enforces the start bound for every scenario, SAI included, and set `predict_period_start` to the scenario's own data start: 2035 for `G6-1.5K` and 2085 for `G6-1.5K-END`. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
 
 ## BCSDConfig Fields (run identity)
 
@@ -35,9 +52,12 @@ These fields identify a BCSD run and affect computation results. Changing any of
 ```yaml
 # Model identifiers (singular or list)
 gcm: "CESM2-WACCM"                    # GCM model name
-variable: "tas"                        # Variable: tas, tasmax, pr, rsds
+variable: "tas"                        # Variable: tas, tasmax, tasmin, pr, rsds, dtr, hurs
 ensemble_member: "r1i1p1f1"            # Ensemble member label (e.g. "r1i1p1f1", "01")
 scenario: "SSP245"                     # Scenario: SSP245, G6-1.5K, etc. (null for historical-only)
+
+# Observation dataset (catalog key)
+obs_dataset: "ERA5"                    # Observation dataset key (default: "ERA5")
 
 # Time periods
 train_period_start: 1978               # Training period start year (default: 1978)
@@ -48,18 +68,73 @@ predict_period_end: 2100               # Prediction period end year (required if
 # Spatial subsetting (null for global)
 subset_bounds: [-35, -22, 16, 33]     # [lat_min, lat_max, lon_min, lon_max]
 
-# Bias-correction method
-mapping_type: "parametric"             # QM method: parametric, nonparametric, nonparametric_hybrid (default: "parametric")
-
 # Variable-specific settings (auto-loaded from per-variable defaults if not specified)
 variable_config:
   detrend_data: true                   # Whether to detrend (auto-set based on variable)
-  do_windowing: true                   # Use 31-day running window for QM
-  downscaling_method: "additive"       # "additive" for temp, "multiplicative" for precip
+  detrend_method: "additive"           # "additive" or "multiplicative" trend model
+  do_windowing: true                   # Use a running window for quantile mapping
+  running_window_length: 31            # Running-window length in days (default: 31)
+  downscaling_method: "additive"       # "additive" for temperature-like vars, "multiplicative" for pr/rsds
   downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
+  debias_approach: "nonparametric_hybrid_2sided"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided
+
+# Per-variable overrides, keyed by variable name (matrix configs only)
+variable_overrides:
+  dtr:
+    debias_approach: "nonparametric"
 ```
 
 **Required:** `gcm`, `variable`, `ensemble_member`. All others have defaults or are conditionally required (e.g. `predict_period_*` when `scenario` is set).
+
+:::{note}
+`debias_approach` is our own field and is a superset of ibicus's `mapping_type` argument. ibicus only accepts `parametric` or `nonparametric`; the `nonparametric_hybrid` and `nonparametric_hybrid_2sided` values are hybrid strategies the pipeline composes on top of ibicus.
+:::
+
+## Per-variable overrides
+
+`debias_approach` and every other `VariableConfig` field resolve per variable through three tiers, last writer wins:
+
+| Tier | Source | Scope |
+| --- | --- | --- |
+| 1 | `VariableConfig.for_variable()` table | Built-in default for that variable |
+| 2 | `--debias-approach` and the other `VariableConfig` CLI flags | Every variable in the run (CLI only) |
+| 3 | `variable_overrides` (YAML) or `--variable-override` (CLI) | One named variable |
+
+There is no run-wide tier in YAML, deliberately. A top-level `debias_approach` would be silently discarded by `extra = "ignore"`, so it is rejected outright. Set `variable_config` directly in a single-variable config, or name each variable under `variable_overrides` in a matrix config.
+
+`variable_overrides` is keyed by variable name, so it is order-independent. A key naming a variable outside the run is an error, not a silent no-op. It is only valid in matrix configs; a single-variable config should use `variable_config` directly.
+
+```bash
+bcsd run-matrix --gcm CESM2-WACCM \
+  --variable tasmax --variable dtr \
+  --member 007 --scenario ssp245 \
+  --predict-period-start 2015 --predict-period-end 2069 \
+  --variable-override dtr:debias_approach=nonparametric
+```
+
+:::{note}
+`dtr` overrides propagate into `tasmin`, which the pipeline reconstructs as `tasmax - dtr`. The `tasmin` output's `srm_downscaling:bias_correction_method` attribute reports only `tasmin`'s own approach.
+:::
+
+## Overrides and the artifact cache
+
+Store paths key on `(gcm, obs_dataset, subset)` and group paths on `(stage, variable, ensemble_member)`. Neither encodes `VariableConfig`, so two runs that differ only in a `variable_overrides` entry resolve to exactly the same location on the same branch.
+
+The pipeline detects this rather than preventing it. On a cache hit, it compares the artifact's `srm_downscaling:config_json` provenance attribute against the current run's `variable_config` and raises `CacheConfigMismatchError` when they differ, naming both values. Without the check, the second run would report a hit, skip the stage, and feed artifacts built under different bias-correction settings to every downstream stage.
+
+To run two configurations side by side, give each its own branch:
+
+```bash
+BCSD_BRANCH=v0.13.0-dtr-nonparam bcsd run-matrix ... --variable-override dtr:debias_approach=nonparametric
+```
+
+| Case | Behavior |
+| --- | --- |
+| Stored `variable_config` matches | Normal cache hit |
+| Stored `variable_config` differs | `CacheConfigMismatchError`, naming each differing field |
+| No `config_json` attribute (artifact predates config provenance) | Hit allowed, logged at debug; unverifiable is not the same as mismatched |
+| Regridded observations (`obs/...`) | Never verified, since regridding reads no `VariableConfig` field |
+| Sibling-variable lookup, e.g. `tasmin` reading `dtr` | Never verified, since the sibling's intended config is not knowable from this run |
 
 ## PipelineOptions Fields (operational)
 
@@ -68,7 +143,7 @@ These fields control storage paths and runtime behavior. They do not affect comp
 ```yaml
 # Storage paths
 scratch_dir: "s3://bucket/path"        # Base directory for intermediate artifacts (default: s3://carbonplan-scratch/srm/cache/)
-output_dir: "s3://bucket/path"         # Directory for final scenario outputs (default: s3://carbonplan-scratch/srm/outputs/)
+output_dir: "s3://bucket/path"         # Directory for final downscaled outputs — historical + scenario (default: s3://carbonplan-scratch/srm/outputs/)
 
 # Environment and versioning
 environment: "qa"                      # Environment: qa, production (default: "qa")
@@ -79,6 +154,13 @@ verbose: true                          # Enable verbose logging (default: true)
 rechunk_workflow: true                 # Enable strategic rechunking between stages (default: true)
 apply_ocean_mask: false                # Mask ocean pixels to NaN in final output (default: false)
 save_intermediate: false               # Save intermediate artifacts for debugging (default: false)
+
+# Post-bias-correction clipping
+clip_values: true                      # Apply per-variable clipping after bias correction (default: true)
+clip_bounds:                           # Per-variable [min, max] bounds applied when clip_values=true
+  pr: {min: 0.0}                        #   defaults: pr >= 0
+  rsds: {min: 0.0}                      #            rsds >= 0
+  hurs: {min: 0.0, max: 105.0}          #            0 <= hurs <= 105
 ```
 
 All `PipelineOptions` fields are optional — defaults are suitable for most runs. Override `scratch_dir` and `output_dir` to point at your own storage.
@@ -135,16 +217,19 @@ This is useful for:
 
 ## Variable-Specific Auto-Configuration
 
-The pipeline automatically sets variable-specific parameters based on `BCSD_CONFIG` defaults:
+The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/srm/bcsd_config.py`). All variables use a `running_window_length` of `31` days.
 
-| Variable | detrend_data | do_windowing | downscaling_method | downscaling_clim_method |
-| --- | --- | --- | --- | --- |
-| `tas` | `true` | `true` | `additive` | `fft` |
-| `tasmax` | `true` | `true` | `additive` | `fft` |
-| `pr` | `false` | `true` | `multiplicative` | `simple` |
-| `rsds` | `true` | `true` | `multiplicative` | `simple` |
+| Variable | detrend_data | detrend_method | do_windowing | downscaling_method | downscaling_clim_method |
+| --- | --- | --- | --- | --- | --- |
+| `tas` | `true` | `additive` | `true` | `additive` | `fft` |
+| `tasmax` | `true` | `additive` | `true` | `additive` | `fft` |
+| `tasmin` | `true` | `additive` | `true` | `additive` | `fft` |
+| `pr` | `false` | `multiplicative` | `true` | `multiplicative` | `fft` |
+| `rsds` | `false` | `multiplicative` | `true` | `multiplicative` | `fft` |
+| `dtr` | `false` | `multiplicative` | `true` | `multiplicative` | `fft` |
+| `hurs` | `false` | `additive` | `true` | `multiplicative` | `fft` |
 
-You can override these in the config file if needed.
+You can override these per run through the nested `variable_config` block in the config file, or with the `bcsd run-matrix` override flags (`--downscaling-method`, `--detrend-data/--no-detrend-data`, etc.).
 
 ## Validation Examples
 

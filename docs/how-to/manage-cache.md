@@ -7,21 +7,21 @@ zarr groups on a named branch (by default the installed package version).
 ## Cache Store Locations
 
 ```
-# Scratch store — obs regridded + historical + optional intermediates
+# Scratch store — obs regridded + optional intermediates
 s3://carbonplan-scratch/srm/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3   ← defaults to installed package version
 
-# Output store — fine-res scenario results + debiased coarse data
-s3://carbonplan-scratch/srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+# Output store — fine-res historical + scenario results + debiased coarse data
+s3://carbonplan-scratch/srm/outputs/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
 
 # Examples for CESM2-WACCM, ERA5, global run:
 s3://carbonplan-scratch/srm/cache/qa/CESM2-WACCM-ERA5-global.icechunk
-s3://carbonplan-scratch/srm/output/qa/CESM2-WACCM-ERA5-global.icechunk
+s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-global.icechunk
 
 # Regional subset (South Africa):
 s3://carbonplan-scratch/srm/cache/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
-s3://carbonplan-scratch/srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
 ```
 
 Within each store the zarr groups are:
@@ -29,7 +29,7 @@ Within each store the zarr groups are:
 | Store | Group pattern | Stage | Always written |
 |-------|---------------|-------|----------------|
 | scratch | `obs/{variable}` | Stage 1 | yes |
-| scratch | `historical/{variable}/{member}` | Stage 2 | yes |
+| output | `historical/{variable}/{hist_member}` | Stage 2 | yes |
 | output | `{scenario_group}/{variable}/{member}` | Stage 3 | yes |
 | output | `debiased_coarse/historical/{variable}/{hist_member}` | Stage 2 | yes |
 | output | `debiased_coarse/{scenario_group}/{variable}/{member}` | Stage 3 | yes |
@@ -37,14 +37,14 @@ Within each store the zarr groups are:
 These five are the primary artifacts — written unconditionally on every run. The `debiased_coarse`
 groups expose the GCM data after bias correction but before spatial disaggregation, at the native
 coarse GCM resolution (~1–2°). `hist_member` is the resolved historical parent member (see
-[ensemble member lineage](../explanation/bcsd-methods.md#9-ensemble-member-lineage)); for most
+[ensemble member lineage](ensemble-member-lineage.ipynb)); for most
 variables it equals `member`, but for SAI scenarios they can differ.
 
 ## Intermediate Artifacts
 
 Three additional groups appear in the scratch store only when `save_intermediate: true` is set in
 your config. They capture the pipeline state between computation steps and are useful for
-debugging detrending behaviour without re-running the full stage.
+debugging detrending behavior without re-running the full stage.
 
 | Group pattern | Written by | Contents |
 |---------------|------------|----------|
@@ -68,8 +68,11 @@ debugging detrending behaviour without re-running the full stage.
 :class: note
 
 `fit_historical_tasmin` and `transform_scenario_tasmin` derive `tasmin` as `tasmax − dtr`
-(diurnal temperature range). They read the following groups as **hard dependencies** from the
-output store (written unconditionally by the `dtr` and `tasmax` stages):
+(diurnal temperature range). `fit_historical` and `transform_scenario` dispatch to these variants
+automatically whenever `variable == "tasmin"`, so no special flag or config is required; after
+spatial disaggregation, `tasmin` is reconciled against the fine `tasmax` so that `tasmax >= tasmin`
+everywhere (issue #331). They read the following groups as **hard dependencies** from the output
+store (written unconditionally by the `dtr` and `tasmax` stages):
 
 | Stage | Reads from output store |
 |-------|-------------------------|
@@ -115,7 +118,7 @@ To force recomputation (ignoring the cache):
 # Force all stages
 uv run bcsd run --config-path configs/example.yaml --force
 
-# Force only the scenario stage (keeps obs and historical in cache)
+# Force only the scenario stage (reuses existing obs and historical artifacts)
 uv run bcsd run --config-path configs/example.yaml --stage transform_scenario --force
 ```
 
@@ -205,6 +208,4 @@ for store_path, group_list in intermediates.items():
 
 - [Pipeline architecture](../explanation/pipeline-architecture.md) — how the cache system is
   designed and why
-- [Compare outputs across code versions](compare-outputs-across-versions.md) — using `--branch` to
-  track multiple datasets
 - [CLI reference](../reference/cli.md) — full option listings for status, cache-list, cache-clear

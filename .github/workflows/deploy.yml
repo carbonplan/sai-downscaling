@@ -15,9 +15,9 @@ on:
                 required: false
                 type: boolean
                 default: false
-            version:
-                description: "Override version (e.g. v2). Leave blank to use installed package
-                    version."
+            branch:
+                description: "Override the icechunk output branch (e.g. v2). Leave blank to use the
+                    installed package version."
                 required: false
                 default: ""
                 type: string
@@ -44,7 +44,7 @@ jobs:
         env:
             QA_CONFIG_PATH: ${{ inputs.model == '' && 'configs/qa/' || endsWith(inputs.model, '.yaml') && format('configs/qa/{0}', inputs.model) || format('configs/qa/{0}/', inputs.model) }}
             FORCE: ${{ inputs.force }}
-            VERSION: ${{ inputs.version }}
+            BRANCH: ${{ inputs.branch }}
         steps:
             - uses: actions/checkout@v7
               with:
@@ -64,8 +64,8 @@ jobs:
                   if [[ "$FORCE" == "true" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --force"
                   fi
-                  if [[ -n "$VERSION" ]]; then
-                    EXTRA_ARGS="$EXTRA_ARGS --branch $VERSION"
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
                   uv run bcsd run --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
 
@@ -74,14 +74,14 @@ jobs:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
               run: |
                   EXTRA_ARGS=""
-                  if [[ -n "$VERSION" ]]; then
-                    EXTRA_ARGS="--branch $VERSION"
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="--branch $BRANCH"
                   fi
                   uv run bcsd validate-output --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
 
     production:
         name: Production run
-        timeout-minutes: 480
+        timeout-minutes: 360
         runs-on: ubuntu-latest
         if: github.event_name == 'release'
         environment:

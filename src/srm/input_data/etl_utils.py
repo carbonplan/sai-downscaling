@@ -238,6 +238,7 @@ def write_dataset_to_icechunk(
     write_mode: str = "a",
     repo: icechunk.Repository | None = None,
     group: str | None = None,
+    branch: str = "main",
 ):
     """
     Write dataset to icechunk with optional rechunking.
@@ -272,16 +273,23 @@ def write_dataset_to_icechunk(
         session.commit(commit_message, rebase_with=icechunk.BasicConflictSolver())
 
     if repo is not None and commit_message and is_overwrite:
-        console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
-        history = list(repo.ancestry(branch="main"))
-        if len(history) > 2:
-            # keep one rollback point: expire everything older than the second-to-last commit
-            keep_from = history[1].written_at
-            n_expired = len(repo.expire_snapshots(older_than=keep_from))
-            gc_result = repo.garbage_collect(keep_from)
-            logger.info("GC: expired %d snapshots, collected %s", n_expired, gc_result)
+        console.print(Text.from_ansi(str(repo.ancestry_graph(branch=branch))))
+        # Expiry and garbage collection are repository-wide, not per-branch, so only prune when
+        # writing main. Pruning during a regeneration would be computed from the wrong timeline
+        # and could drop snapshots that the other branch, or a rollback of main to its
+        # pre-regeneration tip, still depends on.
+        if branch == "main":
+            history = list(repo.ancestry(branch=branch))
+            if len(history) > 2:
+                # keep one rollback point: expire everything older than the second-to-last commit
+                keep_from = history[1].written_at
+                n_expired = len(repo.expire_snapshots(older_than=keep_from))
+                gc_result = repo.garbage_collect(keep_from)
+                logger.info("GC: expired %d snapshots, collected %s", n_expired, gc_result)
+        else:
+            logger.info("branch=%s: skipping snapshot expiry, only main is pruned", branch)
     if repo is not None:
-        console.print(Text.from_ansi(str(repo.ancestry_graph(branch="main"))))
+        console.print(Text.from_ansi(str(repo.ancestry_graph(branch=branch))))
 
 
 def open_netcdf_from_s3(store, path: str, drop_variables: list[str] | None = None) -> xr.Dataset:
@@ -290,9 +298,11 @@ def open_netcdf_from_s3(store, path: str, drop_variables: list[str] | None = Non
     return xr.open_dataset(reader, engine="h5netcdf", chunks="auto", drop_variables=drop_variables)
 
 
-def variable_in_store(repo: icechunk.Repository, variable: str, group: str | None = None) -> bool:
+def variable_in_store(
+    repo: icechunk.Repository, variable: str, group: str | None = None, branch: str = "main"
+) -> bool:
     try:
-        session = repo.readonly_session("main")
+        session = repo.readonly_session(branch)
         existing = xr.open_dataset(session.store, engine="zarr", group=group, decode_times=False)
         return variable in existing.data_vars
     except Exception:
@@ -328,6 +338,7 @@ def write_variable_to_icechunk(
     var_in_store: bool,
     group: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     """Write one variable to icechunk with shared overwrite semantics.
 
@@ -335,14 +346,17 @@ def write_variable_to_icechunk(
     otherwise append/write with fresh chunk/shard encoding.
     group, if given, targets a zarr sub-group within the repo (e.g. ``"ssp245"``).
     commit_message, if given, overrides the default ``"{scenario}: {variable}"`` message.
+    branch selects the icechunk branch to write to; a branch cut from the root snapshot is how a
+    store gets regenerated when its time axis changed, since ``r+`` needs matching shapes and
+    ``determine_write_mode`` will not choose ``"w"`` for a group that already exists.
     """
-    session = repo.writable_session("main")
+    session = repo.writable_session(branch)
     if overwrite and var_in_store:
         write_mode = "r+"
     elif overwrite:
         write_mode = "a"
     else:
-        write_mode = determine_write_mode(repo, group=group)
+        write_mode = determine_write_mode(repo, branch=branch, group=group)
     encoding = build_encoding_dict(ds, chunks, shards)
     logger.info(
         "variable=%s group=%s writing to icechunk write_mode=%s", variable, group, write_mode
@@ -357,6 +371,7 @@ def write_variable_to_icechunk(
         write_mode=write_mode,
         repo=repo,
         group=group,
+        branch=branch,
     )
 
 
@@ -445,7 +460,7 @@ def _display_dry_run_result(ds: xr.Dataset, variable: str, store: str | None = N
     Parameters
     ----------
     ds : xr.Dataset
-        The (possibly lazy) dataset to compute and summarise.
+        The (possibly lazy) dataset to compute and summarize.
     variable : str
         Label used in the panel title.
     store : str or None, optional

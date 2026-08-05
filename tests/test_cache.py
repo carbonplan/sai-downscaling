@@ -5,8 +5,13 @@ from __future__ import annotations
 import pytest
 from conftest import make_icechunk_group
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
-from srm.cache import ArtifactCache, StoreLocation
+from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.cache import (
+    ArtifactCache,
+    CacheCheckError,
+    CacheConfigMismatchError,
+    StoreLocation,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -272,13 +277,27 @@ class TestHistoricalLoc:
                 loc = bound_cache.historical_loc(member)
                 assert loc.group == f"historical/tas/{member}"
 
-    def test_uses_scratch_store(self, bound_cache):
+    def test_uses_output_store_when_set(self, bound_cache_with_output):
+        loc = bound_cache_with_output.historical_loc("r1i1p1f1")
+        assert bound_cache_with_output.output_dir in loc.store_path
+        assert bound_cache_with_output.scratch_dir not in loc.store_path
+
+    def test_uses_scratch_store_when_no_output_dir(self, bound_cache):
         loc = bound_cache.historical_loc("r1i1p1f1")
-        assert loc.store_path == bound_cache._scratch_store
+        assert bound_cache.scratch_dir in loc.store_path
 
     def test_store_path_encodes_gcm_obs_subset(self, bound_cache):
         loc = bound_cache.historical_loc("r1i1p1f1")
         assert "CESM2-WACCM-ERA5-global.icechunk" in loc.store_path
+
+    def test_variable_override_targets_sibling_group(self, bound_cache):
+        # tasmin's swap step reads the sibling fine tasmax output (issue #331).
+        loc = bound_cache.historical_loc("r1i1p1f1", variable="tasmax")
+        assert loc.group == "historical/tasmax/r1i1p1f1"
+
+    def test_no_variable_override_uses_config_variable(self, bound_cache):
+        loc = bound_cache.historical_loc("r1i1p1f1")
+        assert loc.group == "historical/tas/r1i1p1f1"
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +320,14 @@ class TestScenarioLoc:
     def test_uses_scratch_store_when_no_output_dir(self, bound_cache):
         loc = bound_cache.scenario_loc
         assert bound_cache.scratch_dir in loc.store_path
+
+    def test_output_loc_variable_override_targets_sibling_group(self, bound_cache):
+        # tasmin's swap step reads the sibling fine tasmax scenario output (issue #331).
+        loc = bound_cache.scenario_output_loc(variable="tasmax")
+        assert loc.group == "ssp245/tasmax/r1i1p1f1"
+
+    def test_output_loc_without_override_matches_scenario_loc(self, bound_cache):
+        assert bound_cache.scenario_output_loc().group == bound_cache.scenario_loc.group
 
 
 # ---------------------------------------------------------------------------
@@ -407,41 +434,6 @@ class TestDebiasedCoarseLocs:
 
 
 # ---------------------------------------------------------------------------
-# _get_varconfig_id – hashing
-# ---------------------------------------------------------------------------
-
-
-class TestVarconfigId:
-    def test_hash_length_is_8(self):
-        vc = VariableConfig.for_variable("tas")
-        assert len(ArtifactCache._get_varconfig_id(vc, "parametric")) == 8
-
-    def test_hash_is_hex_string(self):
-        vc = VariableConfig.for_variable("tas")
-        h = ArtifactCache._get_varconfig_id(vc, "parametric")
-        assert all(c in "0123456789abcdef" for c in h)
-
-    def test_hash_is_stable(self):
-        vc = VariableConfig.for_variable("tas")
-        h1 = ArtifactCache._get_varconfig_id(vc, "parametric")
-        h2 = ArtifactCache._get_varconfig_id(vc, "parametric")
-        assert h1 == h2
-
-    def test_different_varconfig_produces_different_hash(self):
-        vc1 = VariableConfig.for_variable("tas")
-        vc2 = vc1.model_copy(update={"do_windowing": False})
-        assert ArtifactCache._get_varconfig_id(
-            vc1, "parametric"
-        ) != ArtifactCache._get_varconfig_id(vc2, "parametric")
-
-    def test_different_mapping_type_produces_different_hash(self):
-        vc = VariableConfig.for_variable("tas")
-        assert ArtifactCache._get_varconfig_id(vc, "parametric") != ArtifactCache._get_varconfig_id(
-            vc, "nonparametric"
-        )
-
-
-# ---------------------------------------------------------------------------
 # exists() – local filesystem
 # ---------------------------------------------------------------------------
 
@@ -471,15 +463,55 @@ class TestExists:
         make_icechunk_group(wrong_loc, branch=bound_cache.branch)
         assert bound_cache.exists(loc) is False
 
-    def test_exists_returns_false_on_exception(self, bound_cache, tmp_path, monkeypatch):
-        import icechunk
+    def test_persistent_infra_error_raises_cache_check_error(
+        self, bound_cache, tmp_path, monkeypatch
+    ):
+        """A persistent infrastructure error must surface, not masquerade as a miss.
 
-        def raise_error(*a, **kw):
+        Silently returning False here is what caused the v0.8.0 production deploy
+        to discard 13 valid, already-committed scenario outputs.
+        """
+        import srm.cache as cache_module
+
+        monkeypatch.setattr("time.sleep", lambda *a, **kw: None)
+
+        def boom(*a, **kw):
             raise RuntimeError("connection refused")
 
-        monkeypatch.setattr(icechunk.Repository, "open", raise_error)
+        monkeypatch.setattr(cache_module.icechunk.Repository, "exists", boom)
         loc = StoreLocation(str(tmp_path / "any.icechunk"), "obs/tas")
-        assert bound_cache.exists(loc) is False
+        with pytest.raises(CacheCheckError):
+            bound_cache.exists(loc)
+
+    def test_transient_error_is_retried_then_succeeds(self, bound_cache, tmp_path, monkeypatch):
+        """A transient read error is retried; a real hit is still reported True."""
+        import srm.cache as cache_module
+
+        monkeypatch.setattr("time.sleep", lambda *a, **kw: None)
+        loc = StoreLocation(str(tmp_path / "valid.icechunk"), "obs/tas")
+        make_icechunk_group(loc, branch=bound_cache.branch)
+
+        real_exists = cache_module.icechunk.Repository.exists
+        calls = {"n": 0}
+
+        def flaky(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient network blip")
+            return real_exists(*a, **kw)
+
+        monkeypatch.setattr(cache_module.icechunk.Repository, "exists", flaky)
+        assert bound_cache.exists(loc) is True
+        assert calls["n"] == 2  # failed once, retried, then succeeded
+
+    def test_absent_branch_returns_false_not_error(self, bound_cache, tmp_path):
+        """A store that exists but lacks the queried branch is a genuine miss."""
+        loc = StoreLocation(str(tmp_path / "store.icechunk"), "obs/tas")
+        make_icechunk_group(loc, branch="main")
+        other_branch = ArtifactCache(
+            scratch_dir=bound_cache.scratch_dir, environment="qa", branch="v9.9.9"
+        )
+        assert other_branch.exists(loc) is False
 
     def test_exists_via_ancestry_after_write(self, bound_cache, tmp_path):
         loc = StoreLocation(str(tmp_path / "test.icechunk"), "obs/tas")
@@ -526,6 +558,62 @@ class TestCheckDependencies:
         deps = bound_cache.check_dependencies("fit_historical", base_config)
         exists, _loc = deps["obs_regridded"]
         assert exists is False
+
+    def _tasmin_cache(self, tmp_path, scenario="SSP245"):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmin",
+            ensemble_member="r1i1p1f1",
+            scenario=scenario,
+            predict_period_start=2015,
+            predict_period_end=2100,
+        )
+        cache = ArtifactCache(
+            scratch_dir=str(tmp_path / "cache"),
+            environment="qa",
+            output_dir=str(tmp_path / "outputs"),
+        )
+        cache.config = cfg
+        return cache, cfg
+
+    def test_transform_scenario_tasmin_requires_debiased_coarse_dtr_and_tasmax(self, tmp_path):
+        # tasmin is reconstructed as debiased_coarse tasmax - dtr, so those sibling
+        # stores are hard dependencies of the tasmin scenario stage (issue #363).
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("transform_scenario", cfg)
+        assert "debiased_coarse_dtr" in deps
+        assert "debiased_coarse_tasmax" in deps
+        assert deps["debiased_coarse_dtr"][1].group == "debiased_coarse/ssp245/dtr/r1i1p1f1"
+        assert deps["debiased_coarse_tasmax"][1].group == "debiased_coarse/ssp245/tasmax/r1i1p1f1"
+
+    def test_fit_historical_tasmin_requires_debiased_coarse_dtr_and_tasmax(self, tmp_path):
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("fit_historical", cfg)
+        assert "debiased_coarse_dtr" in deps
+        assert "debiased_coarse_tasmax" in deps
+        assert deps["debiased_coarse_dtr"][1].group == "debiased_coarse/historical/dtr/r1i1p1f1"
+        assert (
+            deps["debiased_coarse_tasmax"][1].group == "debiased_coarse/historical/tasmax/r1i1p1f1"
+        )
+
+    def test_non_tasmin_scenario_deps_unchanged(self, bound_cache, base_config):
+        # regression: non-derived variables keep the original obs+historical deps only.
+        deps = bound_cache.check_dependencies("transform_scenario", base_config)
+        assert set(deps.keys()) == {"obs_regridded", "historical"}
+
+    def test_transform_scenario_tasmin_requires_fine_tasmax(self, tmp_path):
+        # the tasmax<tasmin swap reads the fine tasmax output, so it is a hard
+        # dependency and must fail fast, not deep in the stage (issue #331).
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("transform_scenario", cfg)
+        assert "fine_tasmax" in deps
+        assert deps["fine_tasmax"][1].group == "ssp245/tasmax/r1i1p1f1"
+
+    def test_fit_historical_tasmin_requires_fine_tasmax(self, tmp_path):
+        cache, cfg = self._tasmin_cache(tmp_path)
+        deps = cache.check_dependencies("fit_historical", cfg)
+        assert "fine_tasmax" in deps
+        assert deps["fine_tasmax"][1].group == "historical/tasmax/r1i1p1f1"
 
 
 class TestValidateDependencies:
@@ -586,3 +674,109 @@ class TestGetOutputPath:
                 path = bound_cache.get_output_path(stage, bound_cache.config)
                 assert isinstance(path, str)
                 assert path.endswith(".icechunk")
+
+
+# ---------------------------------------------------------------------------
+# exists() – VariableConfig verification on a cache hit
+# ---------------------------------------------------------------------------
+
+
+def _write_artifact_with_attrs(loc: StoreLocation, branch: str, attrs: dict | None) -> None:
+    """Commit a group at ``loc.group`` carrying ``attrs``, as the pipeline does.
+
+    ``make_icechunk_group`` writes at the store root, but the provenance the
+    verification reads lives on the group itself, so this writes there instead.
+    """
+    import icechunk
+    import numpy as np
+    import xarray as xr
+    from icechunk.xarray import to_icechunk
+
+    from srm.config import _ensure_root_group, _icechunk_storage_for_path
+
+    storage = _icechunk_storage_for_path(loc.store_path)
+    repo = icechunk.Repository.open_or_create(storage)
+    root_snapshot_id = _ensure_root_group(repo)
+    if branch not in repo.list_branches():
+        repo.create_branch(branch, root_snapshot_id)
+    session = repo.writable_session(branch)
+    ds = xr.Dataset({"dummy": xr.DataArray(np.array([1.0]), dims=["x"])})
+    if attrs is not None:
+        ds.attrs = attrs
+    to_icechunk(ds, session, mode="w", group=loc.group)
+    session.commit(loc.group)
+
+
+def _provenance(config) -> dict:
+    """The subset of pipeline provenance attrs that verification reads."""
+    return {"srm_downscaling:config_json": config.model_dump_json()}
+
+
+class TestVariableConfigVerification:
+    """A cache hit computed under a different VariableConfig must not be reused."""
+
+    def test_matching_variable_config_is_a_hit(self, bound_cache):
+        loc = bound_cache.detrended_scenario_loc()
+        _write_artifact_with_attrs(loc, bound_cache.branch, _provenance(bound_cache.config))
+        assert bound_cache.exists(loc) is True
+
+    def test_differing_variable_config_raises(self, bound_cache):
+        loc = bound_cache.detrended_scenario_loc()
+        written_by = bound_cache.config.model_copy(
+            update={
+                "variable_config": bound_cache.config.variable_config.model_copy(
+                    update={"debias_approach": "parametric"}
+                )
+            }
+        )
+        _write_artifact_with_attrs(loc, bound_cache.branch, _provenance(written_by))
+        with pytest.raises(CacheConfigMismatchError, match="debias_approach"):
+            bound_cache.exists(loc)
+
+    def test_mismatch_message_names_both_values(self, bound_cache):
+        loc = bound_cache.detrended_scenario_loc()
+        written_by = bound_cache.config.model_copy(
+            update={
+                "variable_config": bound_cache.config.variable_config.model_copy(
+                    update={"do_windowing": False}
+                )
+            }
+        )
+        _write_artifact_with_attrs(loc, bound_cache.branch, _provenance(written_by))
+        with pytest.raises(CacheConfigMismatchError) as excinfo:
+            bound_cache.exists(loc)
+        assert "cached=False" in str(excinfo.value)
+        assert "current=True" in str(excinfo.value)
+
+    def test_artifact_without_provenance_is_allowed(self, bound_cache):
+        """Artifacts predating config provenance are unverifiable, not mismatched."""
+        loc = bound_cache.detrended_scenario_loc()
+        _write_artifact_with_attrs(loc, bound_cache.branch, None)
+        assert bound_cache.exists(loc) is True
+
+    def test_obs_artifact_is_never_verified(self, bound_cache):
+        """Regridding does not read VariableConfig, so obs stays reusable across runs."""
+        loc = bound_cache.obs_loc
+        assert loc.config_variable is None
+        written_by = bound_cache.config.model_copy(
+            update={
+                "variable_config": bound_cache.config.variable_config.model_copy(
+                    update={"debias_approach": "parametric"}
+                )
+            }
+        )
+        _write_artifact_with_attrs(loc, bound_cache.branch, _provenance(written_by))
+        assert bound_cache.exists(loc) is True
+
+    def test_sibling_variable_lookup_is_never_verified(self, bound_cache):
+        """A sibling's intended config is not knowable from this process."""
+        loc = bound_cache.historical_loc("r1i1p1f1", variable="dtr")
+        assert loc.config_variable is None
+
+    def test_own_variable_lookup_is_tagged_for_verification(self, bound_cache):
+        loc = bound_cache.historical_loc("r1i1p1f1")
+        assert loc.config_variable == bound_cache.config.variable
+
+    def test_cache_miss_skips_verification(self, bound_cache, tmp_path):
+        loc = StoreLocation(str(tmp_path / "missing.icechunk"), "obs/tas", config_variable="tas")
+        assert bound_cache.exists(loc) is False

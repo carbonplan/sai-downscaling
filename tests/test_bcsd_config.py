@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -163,20 +165,29 @@ class TestBCSDConfigConstruction:
         assert minimal_config.variable_config is not None
         assert isinstance(minimal_config.variable_config, VariableConfig)
 
-    def test_convenience_accessors_match_variable_config(self, subtests, minimal_config):
-        vc = minimal_config.variable_config
-        checks = {
-            "detrend_data": (minimal_config.detrend_data, vc.detrend_data),
-            "do_windowing": (minimal_config.do_windowing, vc.do_windowing),
-            "downscaling_method": (minimal_config.downscaling_method, vc.downscaling_method),
-            "downscaling_clim_method": (
-                minimal_config.downscaling_clim_method,
-                vc.downscaling_clim_method,
-            ),
-        }
-        for accessor, (actual, expected) in checks.items():
-            with subtests.test(accessor=accessor):
-                assert actual == expected
+    def test_variable_params_not_shadowed_on_bcsd_config(self, subtests, minimal_config):
+        """VariableConfig-derived params must live only on ``variable_config``.
+
+        Exposing them as computed fields on ``BCSDConfig`` (issue #423) silently
+        mapped variables to the wrong method/attrs when the accessor's hardcoded
+        fallback diverged from the variable's real config. They must be reached
+        through ``config.variable_config`` so there is a single source of truth.
+        """
+        shadowed = (
+            "detrend_data",
+            "detrend_method",
+            "do_windowing",
+            "running_window_length",
+            "downscaling_method",
+            "downscaling_clim_method",
+            "debias_approach",
+        )
+        for attr in shadowed:
+            with subtests.test(attr=attr):
+                assert not hasattr(minimal_config, attr), (
+                    f"BCSDConfig must not expose {attr!r}; use config.variable_config.{attr}"
+                )
+                assert hasattr(minimal_config.variable_config, attr)
 
     def test_default_train_period(self, minimal_config):
         assert minimal_config.train_period_start == 1978
@@ -186,6 +197,86 @@ class TestBCSDConfigConstruction:
         opts = PipelineOptions()
         assert opts.environment == "qa"
         assert opts.branch == _cache_version
+
+    def test_debias_approach_lives_on_variable_config(self, minimal_config):
+        assert minimal_config.variable_config.debias_approach == "nonparametric_hybrid_2sided"
+
+    def test_top_level_debias_approach_key_raises(self):
+        """A moved key must fail loudly. extra='ignore' would otherwise drop it silently."""
+        with pytest.raises(ValidationError, match="variable_overrides"):
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                debias_approach="nonparametric",
+            )
+
+    def test_variable_config_carries_debias_approach(self):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="dtr",
+            ensemble_member="r1i1p1f1",
+            variable_config=VariableConfig.for_variable("dtr").model_copy(
+                update={"debias_approach": "nonparametric"}
+            ),
+        )
+        assert cfg.variable_config.debias_approach == "nonparametric"
+
+    def test_make_config_for_variable_carries_debias_approach(self):
+        """Sibling-variable configs are used for artifact path lookup; keep the approach aligned."""
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmin",
+            ensemble_member="r1i1p1f1",
+            variable_config=VariableConfig.for_variable("tasmin").model_copy(
+                update={"debias_approach": "nonparametric"}
+            ),
+        )
+        sibling = cfg.make_config_for_variable("dtr")
+        assert sibling.variable == "dtr"
+        assert sibling.variable_config.debias_approach == "nonparametric"
+        assert sibling.variable_config.downscaling_method == "multiplicative"  # dtr's own default
+
+    def test_renamed_mapping_type_key_raises(self):
+        """The pre-rename ``mapping_type`` key must fail loudly, not be silently ignored."""
+        with pytest.raises(ValidationError, match="renamed to 'debias_approach'"):
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                mapping_type="parametric",
+            )
+
+    @pytest.mark.parametrize("env_var", ["BCSD_DEBIAS_APPROACH", "BCSD_MAPPING_TYPE"])
+    def test_moved_key_via_env_raises(self, monkeypatch, env_var):
+        """A moved key set through the environment must fail loudly too.
+
+        pydantic-settings filters env vars against the model's fields before any
+        validator runs, so without an explicit ``os.environ`` check these would be
+        dropped silently, which is exactly the misconfiguration the move removes.
+        """
+        monkeypatch.setenv(env_var, "nonparametric")
+        with pytest.raises(ValidationError, match="variable_overrides"):
+            BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+
+    def test_moved_key_env_check_is_case_insensitive(self, monkeypatch):
+        """pydantic-settings matches env vars case-insensitively; so must the check."""
+        monkeypatch.setenv("bcsd_debias_approach", "nonparametric")
+        with pytest.raises(ValidationError, match="variable_overrides"):
+            BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+
+    def test_variable_config_env_override_is_the_supported_path(self, monkeypatch):
+        """BCSD_VARIABLE_CONFIG replaces the removed BCSD_DEBIAS_APPROACH env override."""
+        monkeypatch.setenv(
+            "BCSD_VARIABLE_CONFIG",
+            json.dumps(
+                VariableConfig.for_variable("tas")
+                .model_copy(update={"debias_approach": "parametric"})
+                .model_dump()
+            ),
+        )
+        cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        assert cfg.variable_config.debias_approach == "parametric"
 
     def test_explicit_variable_config_not_overwritten(self):
         """Explicitly supplied variable_config must survive post-init."""
@@ -254,6 +345,49 @@ class TestBCSDConfigConstruction:
 
 
 # ---------------------------------------------------------------------------
+# debias_approach – per-variable defaults and CONFIG_JSON round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestVariableConfigDebiasDefaults:
+    """Every supported variable must carry an explicit debias_approach default."""
+
+    def test_all_variables_have_debias_approach(self, subtests):
+        for var in ("tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"):
+            with subtests.test(variable=var):
+                vc = VariableConfig.for_variable(var)
+                assert vc.debias_approach == "nonparametric_hybrid_2sided"
+
+
+class TestConfigJsonRoundTrip:
+    """A resolved config must survive the Coiled hand-off unchanged.
+
+    ``orchestration.py`` dumps the config to CONFIG_JSON and ``batch_runner.py``
+    rehydrates it. A per-variable debias_approach only reaches the VM if the nested
+    variable_config round-trips intact.
+    """
+
+    def test_resolved_debias_approach_survives_round_trip(self):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="dtr",
+            ensemble_member="r1i1p1f1",
+            scenario="ssp245",
+            predict_period_start=2015,
+            predict_period_end=2100,
+            variable_config=VariableConfig.for_variable("dtr").model_copy(
+                update={"debias_approach": "nonparametric"}
+            ),
+        )
+        computed = set(BCSDConfig.model_computed_fields.keys())
+        payload = json.loads(json.dumps(cfg.model_dump(exclude=computed)))
+        restored = BCSDConfig(**payload)
+        assert restored.variable_config.debias_approach == "nonparametric"
+        assert restored.variable_config == cfg.variable_config
+        assert restored.config_hash == cfg.config_hash
+
+
+# ---------------------------------------------------------------------------
 # BCSDConfig – computed fields
 # ---------------------------------------------------------------------------
 
@@ -319,10 +453,10 @@ class TestBCSDConfigComputedFields:
         assert cfg.is_sai_scenario
 
     def test_pr_does_not_detrend(self, sai_config):
-        assert sai_config.detrend_data is False
+        assert sai_config.variable_config.detrend_data is False
 
     def test_tas_does_detrend(self, scenario_config):
-        assert scenario_config.detrend_data is True
+        assert scenario_config.variable_config.detrend_data is True
 
 
 # ---------------------------------------------------------------------------

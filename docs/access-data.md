@@ -13,28 +13,30 @@ kernelspec:
 # How to Access Downscaled Output Data
 
 The pipeline writes downscaled output into icechunk stores on S3. Each store holds all scenarios,
-variables, and ensemble members for a single GCM/obs-dataset/spatial-subset combination, organised
+variables, and ensemble members for a single GCM/obs-dataset/spatial-subset combination, organized
 as zarr groups. This guide shows how to construct the correct store path, open a session on the
 right branch, and load data.
 
 ## Anatomy of an output store
 
-Output stores live under `s3://carbonplan-srm/output/` and follow this path pattern:
+Published production output lives in CarbonPlan's
+[Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling), which is
+world-readable and needs no AWS credentials. Store paths follow this pattern:
 
-```
-s3://carbonplan-srm/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+```text
+s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/{gcm}-{obs_dataset}-{subset_id}.icechunk
 ```
 
 | Component | Values | Example |
 | --- | --- | --- |
-| `environment` | `qa`, `production` | `production` |
 | `gcm` | `CESM2-WACCM`, `MIROC-ES2H`, `UKESM` | `CESM2-WACCM` |
 | `obs_dataset` | `ERA5`, `GDEX-GMF` | `ERA5` |
 | `subset_id` | `global` or `lat{min}to{max}_lon{min}to{max}` | `global` |
 
-Within each store, data is organised in zarr groups:
+Within each store, data is organized in zarr groups:
 
-```
+```text
+historical/{variable}/{hist_member}
 {scenario_group}/{variable}/{ensemble_member}
 debiased_coarse/historical/{variable}/{hist_member}
 debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
@@ -43,13 +45,17 @@ debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 | Component | Values | Example |
 | --- | --- | --- |
 | `scenario_group` | `ssp245`, `g6_1p5k`, `esgf_ssp245` | `ssp245` |
-| `variable` | `tas`, `tasmax`, `pr`, `rsds`, … | `tas` |
-| `ensemble_member` | e.g. `001`, `002`, `r1i1p1f1` | `001` |
-| `hist_member` | resolved historical parent member | `r1i1p1f1` |
+| `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `dtr`, `hurs` | `tas` |
+| `ensemble_member` | e.g. `003`, `008`, `r3i1p1f1` | `003` |
+| `hist_member` | resolved historical parent member | `r3i1p1f1` |
 
-A fully-populated global CESM2-WACCM store would contain groups like `ssp245/tas/001`,
-`g6_1p5k/pr/003`, `debiased_coarse/historical/tas/r1i1p1f1`, and
-`debiased_coarse/g6_1p5k/tas/001`.
+Which variables and members are actually present depends on the release, and members differ between
+variables within a single release. See [What the current release
+contains](#what-the-current-release-contains) below for the exact inventory before you construct a
+group path.
+
+The top-level `historical/` group holds the fully downscaled historical data at fine ERA5
+resolution — the historical-period analog of the scenario outputs.
 
 The `debiased_coarse` groups hold GCM data after quantile-mapping bias correction but **before**
 spatial disaggregation to ERA5 resolution — they remain at the native coarse GCM grid (~1–2°).
@@ -58,10 +64,36 @@ downscaling step.
 
 ## Choosing the right branch
 
-Each pipeline run writes to an icechunk branch whose name matches the GitHub release tag that
-triggered it (e.g. `v2026.6.25.0`). To read a specific run's output, use the corresponding
-release tag as the branch name. Production releases are listed at
+Each pipeline run writes to an icechunk branch whose name matches the release tag that triggered
+it. The branch defaults to the installed `srm` package version (e.g. `v0.12.0`), so release tags
+follow semantic versioning rather than a date stamp. To read a specific run's output, use the
+corresponding release tag as the branch name. Production releases are listed at
 [github.com/carbonplan/srm-downscaling/releases](https://github.com/carbonplan/srm-downscaling/releases).
+
+The **current production release is branch `v0.12.0`** of the global CESM2-WACCM store at
+`s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk`.
+The examples below read it anonymously, since a Source Cooperative repository needs no AWS
+credentials.
+
+The store also carries a `main` branch, but it is an empty anchor commit rather than a run. Reading
+it returns no data, so always name a release branch explicitly.
+
+## What the current release contains
+
+Branch `v0.12.0` of the global CESM2-WACCM store holds the groups below. Member labels are not
+uniform across variables within a release, so check this table rather than assuming one member
+covers every variable.
+
+| Scenario group | Variables | Members |
+| --- | --- | --- |
+| `historical` | `tas`, `pr`, `rsds`, `hurs` | `r3i1p1f1` |
+| `historical` | `tasmax`, `tasmin`, `dtr` | `001` |
+| `ssp245` | `tas`, `pr`, `rsds`, `hurs` | `003`, `008` |
+| `ssp245` | `tasmax`, `tasmin`, `dtr` | `008` |
+| `g6_1p5k` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin`, `dtr` | `003` |
+
+The `debiased_coarse/` subtree mirrors this inventory exactly, with one coarse-grid group for every
+fine-grid group listed above. This release contains no `esgf_ssp245` group.
 
 ## Opening a single variable/member/scenario
 
@@ -71,16 +103,17 @@ import icechunk
 import xarray as xr
 
 storage = icechunk.s3_storage(
-    bucket="carbonplan-scratch",
-    prefix="srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk",
-    from_env=True,
+    bucket="us-west-2.opendata.source.coop",
+    prefix="carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk",
+    anonymous=True,
+    region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v2026.6.25.0")  # replace with the actual release branch
+session = repo.readonly_session(branch="v0.12.0")  # current production release
 
 ds = xr.open_zarr(
     session.store,
-    group="g6_1p5k/tasmax/002",
+    group="g6_1p5k/tasmax/003",
     consolidated=False,
     zarr_format=3,
     chunks="auto",
@@ -99,12 +132,13 @@ import icechunk
 import xarray as xr
 
 storage = icechunk.s3_storage(
-    bucket="carbonplan-scratch",
-    prefix="srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk",
-    from_env=True,
+    bucket="us-west-2.opendata.source.coop",
+    prefix="carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk",
+    anonymous=True,
+    region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v2026.6.25.0")  # replace with the actual release branch
+session = repo.readonly_session(branch="v0.12.0")  # current production release
 
 dt = xr.open_datatree(
     session.store,
@@ -113,7 +147,7 @@ dt = xr.open_datatree(
     zarr_format=3,
 )
 # Access a specific subtree or dataset
-g6_tasmax = dt["g6_1p5k/tasmax/002"].to_dataset()
+g6_tasmax = dt["g6_1p5k/tasmax/003"].to_dataset()
 ```
 
 ## Discovering what is in a store
@@ -128,12 +162,13 @@ import icechunk
 import xarray as xr
 
 storage = icechunk.s3_storage(
-    bucket="carbonplan-scratch",
-    prefix="srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk",
-    from_env=True,
+    bucket="us-west-2.opendata.source.coop",
+    prefix="carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk",
+    anonymous=True,
+    region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v2026.6.25.0")
+session = repo.readonly_session(branch="v0.12.0")
 
 dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_format=3)
 print(dt)
@@ -148,7 +183,7 @@ accessed.
 
 | Attribute | Contents |
 | --- | --- |
-| `srm_downscaling:config_json` | Full `BCSDConfig` serialised as a JSON string |
+| `srm_downscaling:config_json` | Full `BCSDConfig` serialized as a JSON string |
 | `srm_downscaling:config_hash` | 12-character SHA-256 of computation-affecting fields only |
 | `srm_downscaling:version` | `srm` package version that produced the data |
 | `srm_downscaling:gcm` | GCM name |
@@ -173,7 +208,7 @@ import yaml
 from srm.bcsd_config import BCSDConfig
 
 # Reconstruct BCSDConfig from the YAML you intend to run
-with open("configs/production/cesm2-waccm/cesm2-waccm-ssp245.yaml") as f:
+with open("configs/production/cesm2-waccm/cesm2-waccm-ssp245-std.yaml") as f:
     yaml_config = BCSDConfig(**yaml.safe_load(f))
 
 # Reconstruct BCSDConfig from what was actually written
@@ -204,17 +239,18 @@ import icechunk
 import xarray as xr
 
 storage = icechunk.s3_storage(
-    bucket="carbonplan-scratch",
-    prefix="srm/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk",
-    from_env=True,
+    bucket="us-west-2.opendata.source.coop",
+    prefix="carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk",
+    anonymous=True,
+    region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v2026.6.30.0")
+session = repo.readonly_session(branch="v0.12.0")
 
 # Debiased coarse historical (coarse GCM grid, ~1°)
 ds_hist_coarse = xr.open_zarr(
     session.store,
-    group="debiased_coarse/historical/tas/r1i1p1f1",
+    group="debiased_coarse/historical/tas/r3i1p1f1",
     consolidated=False,
     zarr_format=3,
     chunks="auto",
@@ -223,7 +259,7 @@ ds_hist_coarse = xr.open_zarr(
 # Debiased coarse scenario (coarse GCM grid, bias-corrected + re-trended)
 ds_scen_coarse = xr.open_zarr(
     session.store,
-    group="debiased_coarse/g6_1p5k/tas/001",
+    group="debiased_coarse/g6_1p5k/tas/003",
     consolidated=False,
     zarr_format=3,
     chunks="auto",
@@ -233,6 +269,5 @@ ds_scen_coarse = xr.open_zarr(
 ## See Also
 
 - [Pipeline architecture](explanation/pipeline-architecture.md) — how output stores are structured and written
-- [Compare outputs across versions](how-to/compare-outputs-across-versions.md) — using branches to validate pipeline changes
 - [Run the pipeline](how-to/run-pipeline.md) — producing output data from scratch
 - [Input data catalog](input-data.md) — raw GCM, ERA5, and NASA-NEX input datasets

@@ -35,24 +35,32 @@ BLOCKING_CHECKS = {
     "spatial_range_tasmin",
     "spatial_range_pr",
     "spatial_range_rsds",
+    "tasmax_ge_tasmin",
 }
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
-SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
+SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K", "G6-1.5K-END")
 # On-disk variable group names; canonical (lowercase), so no translation needed.
 VARIABLE_OPTIONS = get_args(VariableName)
 
 # Expected inclusive daily time bounds per GCM and scenario (observed from actual data).
-# CESM2-WACCM uses a "first-of-next-month" time encoding, so its last time step appears
-# as the first day of the month following the final data month.
+#
+# These end dates used to run a day or more past the scenario's nominal end, which looked like
+# CESM writing an extra time step. It was not: CAM stamps interval statistics at the END of the
+# averaging interval and prefixes each history stream with a zero-width initial-state record, so
+# the raw axis labeled every daily mean one day late (issue #521). The ETL now rebuilds the axis
+# from time_bnds via srm.utils.decode_time_from_bounds, which is where that convention is
+# documented in full, and TIME_RANGE in srm.input_data.cesm2_waccm clamps what remains.
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
     "CESM2-WACCM": {
-        # historical merges ESGF '001' (1978–2015) + Pangeo r*i1p1f1 (1850–2015);
-        # the union time axis starts at 1850. End is first-of-next-month encoded.
-        "historical": ("1850-01-01", "2015-01-16"),
+        # historical merges ESGF '001' (1978–2014) + Pangeo r*i1p1f1 (1850–2014);
+        # the union time axis starts at 1850.
+        "historical": ("1850-01-01", "2014-12-31"),
         "SSP245": ("2015-01-01", "2099-12-31"),
-        "G6-1.5K": ("2035-01-01", "2085-01-01"),
+        "G6-1.5K": ("2035-01-01", "2084-12-31"),
+        # Termination-shock continuation of G6-1.5K member 002
+        "G6-1.5K-END": ("2085-01-01", "2100-12-31"),
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
@@ -69,19 +77,29 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
 
 # Per-member valid daily extent, keyed gcm -> scenario -> ensemble_member -> (start, end).
 # First/last non-NaN day per member. Members not listed fall back to _SCENARIO_TIME_BOUNDS.
-# Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069-2070) while 001-005 reach 2099.
+# Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069) while 001-005 reach 2099.
+# These CESM end dates are one day earlier than they read before issue #521: the axis is now
+# decoded from time_bnds, so each daily mean is stamped at the start of its interval rather
+# than the end. What looked like a stray non-NaN day at 2070-01-01 on 007-010 was the last
+# real daily mean wearing an end-of-interval stamp, and it now sits contiguously at
+# 2069-12-31; 006, which had no such trailing record, ends a day earlier at 2069-12-30.
+# check_config_time_domain compares years only, so these day-level shifts do not move any
+# config's valid predict period.
 _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
     "CESM2-WACCM": {
         "G6-1.5K": {
-            "001": ("2035-01-01", "2085-12-31"),
-            "002": ("2035-01-01", "2085-12-31"),
-            "003": ("2035-01-01", "2085-12-31"),
+            "001": ("2035-01-01", "2084-12-31"),
+            "002": ("2035-01-01", "2084-12-31"),
+            "003": ("2035-01-01", "2084-12-31"),
+        },
+        "G6-1.5K-END": {
+            "002": ("2085-01-01", "2100-12-31"),
         },
         "historical": {
-            "001": ("1978-01-01", "2015-12-31"),
-            "r1i1p1f1": ("1850-01-01", "2015-12-31"),
-            "r2i1p1f1": ("1850-01-01", "2015-12-31"),
-            "r3i1p1f1": ("1850-01-01", "2015-12-31"),
+            "001": ("1978-01-01", "2014-12-31"),
+            "r1i1p1f1": ("1850-01-01", "2014-12-31"),
+            "r2i1p1f1": ("1850-01-01", "2014-12-31"),
+            "r3i1p1f1": ("1850-01-01", "2014-12-31"),
         },
         "SSP245": {
             "001": ("2015-01-01", "2099-12-31"),
@@ -89,11 +107,11 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "003": ("2015-01-01", "2099-12-31"),
             "004": ("2015-01-01", "2099-12-31"),
             "005": ("2015-01-01", "2099-12-31"),
-            "006": ("2015-01-01", "2069-12-31"),
-            "007": ("2015-01-01", "2070-12-31"),
-            "008": ("2015-01-01", "2070-12-31"),
-            "009": ("2015-01-01", "2070-12-31"),
-            "010": ("2015-01-01", "2070-12-31"),
+            "006": ("2015-01-01", "2069-12-30"),
+            "007": ("2015-01-01", "2069-12-31"),
+            "008": ("2015-01-01", "2069-12-31"),
+            "009": ("2015-01-01", "2069-12-31"),
+            "010": ("2015-01-01", "2069-12-31"),
         },
     },
     "MIROC-ES2H": {
@@ -225,9 +243,17 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
 
     Guards against configs whose ``predict_period`` extends past (or starts before) the
     real time coverage of a specific ensemble member — e.g. CESM2-WACCM SSP245 member
-    007 ends 2070 but is NaN-padded to the scenario end in the unified store. Without
-    this guard the pipeline slices the padded range and the downscaler emits garbage for
-    years with no real input.
+    007 ends 2069-12-31 but is NaN-padded to the scenario end in the unified store.
+    Without this guard the pipeline slices the padded range and the downscaler emits
+    garbage for years with no real input: a partially-NaN month yields a monthly mean
+    built from a handful of days, which then poisons the 9-year centred rolling mean in
+    :func:`srm.downscaling_utils.detrend` for the surrounding years.
+
+    Both bounds are enforced for every scenario, SAI included. A SAI run whose
+    ``predict_period_start`` precedes its own data start still executes, because the
+    pipeline bridges the gap, but the bridged years are another scenario's data wearing
+    this scenario's label (see :meth:`BCSDPipeline._load_ssp245_bridge`), so they are
+    rejected here rather than silently published.
 
     Returns a blocking FAIL when the requested predict period falls outside the member's
     valid bounds, PASS when it fits, and SKIP when no bounds are known for the member or
@@ -268,13 +294,23 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
     }
 
     issues: list[str] = []
-    # SAI/G6 runs intentionally start before the scenario data (predict_period_start may
-    # be 2015 while G6 data begins 2035); the pipeline bridges that gap with SSP245. Only
-    # enforce the start bound for non-SAI scenarios.
-    if not config.is_sai_scenario and config.predict_period_start < valid_start_year:
+    # The start bound is enforced for SAI scenarios too, even though the pipeline *can* run
+    # with an earlier start by bridging the gap. Those bridge years are not scenario data:
+    # for G6-1.5K they are SSP245, and for G6-1.5K-END they are SSP245 followed by G6-1.5K.
+    # Emitting them under the scenario's own label is what issue #448 hit, where pre-2035
+    # g6_1p5k output was bridged from different SSP245 realizations per variable (tas from
+    # 003, tasmax/tasmin from 008) and produced tas > tasmax. The fix there was to start at
+    # the scenario's own data year, which is what this check now requires of every config.
+    if config.predict_period_start < valid_start_year:
         issues.append(
             f"predict_period_start {config.predict_period_start} is before data start "
             f"{valid_start_year}"
+            + (
+                f"; {config.scenario} data begins in {valid_start_year} and earlier years "
+                f"would be emitted as bridge data carrying the scenario's label"
+                if config.is_sai_scenario
+                else ""
+            )
         )
     if config.predict_period_end is not None and config.predict_period_end > valid_end_year:
         issues.append(
@@ -436,7 +472,7 @@ class DatasetValidator(pydantic.BaseModel):
         D1/D2: All lineage-resolved parent members must exist in their stores.
 
         For each (member, variable) pair registered in the lineage table, resolves the
-        historical_member and (for G6-1.5K) the ssp245_member, then checks those exist
+        historical and (for G6-1.5K) the ssp245_bridge member, then checks those exist
         in the respective groups of the unified GCM datatree.
 
         Skipped when no lineage is registered for this (gcm, scenario).
@@ -452,10 +488,16 @@ class DatasetValidator(pydantic.BaseModel):
 
         hist_members_needed: set[str] = set()
         ssp245_members_needed: set[str] = set()
-        for hist, ssp245, *_ in entries.values():
-            hist_members_needed.add(hist)
-            if ssp245 is not None:
-                ssp245_members_needed.add(ssp245)
+        # Keyed by parent scenario so a future second termination run resolves independently.
+        sai_parents_needed: dict[str, set[str]] = {}
+        for entry in entries.values():
+            hist_members_needed.add(entry.historical)
+            if entry.ssp245_bridge is not None:
+                ssp245_members_needed.add(entry.ssp245_bridge)
+            if entry.sai_parent is not None:
+                sai_parents_needed.setdefault(entry.sai_parent.scenario, set()).add(
+                    entry.sai_parent.member
+                )
 
         dt, err = self._open_datatree()
         if err is not None:
@@ -494,10 +536,33 @@ class DatasetValidator(pydantic.BaseModel):
                 issues.append(f"{len(missing_ssp245)} resolved SSP245 bridge member(s) missing")
                 detail["missing_ssp245"] = missing_ssp245
 
+        # A scenario that continues an earlier SAI run needs that run's members too: the
+        # bridge reads them for every year between the SSP245 segment and the scenario start.
+        for parent_scenario, parent_members in sorted(sai_parents_needed.items()):
+            parent_group = SCENARIO_TO_GROUP[parent_scenario]
+            if parent_group not in dt.children:
+                return self._result(
+                    CheckStatus.FAIL,
+                    f"'{parent_group}' group not present in datatree for {self.gcm}; "
+                    f"{self.scenario} continues {parent_scenario} and cannot be bridged without it",
+                )
+            parent_ds = dt[parent_group].to_dataset()
+            parent_available = set(_get_ensemble_members(parent_ds) or [])
+            detail[f"{parent_group}_needed"] = sorted(parent_members)
+            detail[f"{parent_group}_available"] = sorted(parent_available)
+            missing_parent = sorted(parent_members - parent_available)
+            if missing_parent:
+                issues.append(
+                    f"{len(missing_parent)} resolved {parent_scenario} SAI parent member(s) missing"
+                )
+                detail[f"missing_{parent_group}"] = missing_parent
+
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
 
         store_labels = "historical" + (" and SSP245" if ssp245_members_needed else "")
+        if sai_parents_needed:
+            store_labels += " and " + ", ".join(sorted(sai_parents_needed))
         return self._result(
             CheckStatus.PASS,
             f"All {len(entries)} lineage entries resolve to available members "
@@ -799,4 +864,31 @@ def validate_output_store(
                         message="" if vr else "; ".join(vr.issues),
                     )
                 )
+
+    # Cross-variable gate: tasmax >= tasmin per (scenario, member). The per-leaf loop
+    # above sees one variable at a time, so this monotonicity check (issue #331 — a
+    # silent reconcile-skip must never ship) runs as a separate pass that pairs the
+    # tasmax and tasmin leaves.
+    for scenario_node in scenario_nodes:
+        svars = scenario_node.children
+        if "tasmax" not in svars or "tasmin" not in svars:
+            continue
+        tmax_members = {leaf.name: leaf for leaf in svars["tasmax"].leaves}
+        tmin_members = {leaf.name: leaf for leaf in svars["tasmin"].leaves}
+        for member in sorted(set(tmax_members) & set(tmin_members)):
+            paired = xr.merge(
+                [tmax_members[member].to_dataset(), tmin_members[member].to_dataset()],
+                compat="override",
+                join="inner",
+            )
+            vr = DatasetChecker(paired).validate_tasmax_ge_tasmin()
+            results.append(
+                CheckResult(
+                    check_id="tasmax_ge_tasmin",
+                    gcm=label,
+                    scenario=f"{scenario_node.name}/tasmax_ge_tasmin/{member}",
+                    status=CheckStatus.PASS if vr else CheckStatus.FAIL,
+                    message="" if vr else "; ".join(vr.issues),
+                )
+            )
     return results

@@ -34,7 +34,7 @@ from srm.input_data.etl_utils import (
     write_dataset_to_icechunk,
     write_variable_to_icechunk,
 )
-from srm.utils import lon_to_180, to_proleptic_gregorian
+from srm.utils import decode_time_from_bounds, lon_to_180, to_proleptic_gregorian
 
 zarr.config.set({"async.concurrency": 128})
 dask.config.set(scheduler="threads")
@@ -54,6 +54,8 @@ NETCDF_PREFIX: dict[str, str] = {
     "historical": "input/tensor/CESM2/CESM2-WACCM-Historical/netcdf",
     "SSP245": "input/tensor/CESM2/CESM2-WACCM-SSP245/netcdf",
     "G6-1.5K": "input/tensor/CESM2/CESM2-WACCM-G6-1.5K/netcdf",
+    # The only CESM scenario sourced from input/raw/ rather than input/tensor/.
+    "G6-1.5K-END": "input/raw/CESM2-WACCM/netcdf/g6-1p5k-end",
 }
 
 ENSEMBLE_MEMBERS: dict[str, list[str]] = {
@@ -61,16 +63,34 @@ ENSEMBLE_MEMBERS: dict[str, list[str]] = {
     "historical": ["001"],
     "SSP245": ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"],
     "G6-1.5K": ["001", "002", "003"],
+    "G6-1.5K-END": ["002"],  # single run, case G6-1p5K-termination_002
 }
 
 TIME_RANGE: dict[str, str] = {
+    "historical": "1850-2014",
     "SSP245": "2015-2099",
+    "G6-1.5K": "2035-2084",
+    # Decoded from time_bnds: the two source files stamp 2085-01-02..2095-01-01 and
+    # 2095-01-02..2101-01-01, which decode to a contiguous 2085-01-01..2100-12-31.
+    "G6-1.5K-END": "2085-2100",
 }
 
 OUTPUT_CHUNKS: dict[str, int] = {"ensemble_member": 1, "time": 30, "lat": 192, "lon": 288}
 OUTPUT_SHARDS: dict[str, int] = {"ensemble_member": 1, "time": 480, "lat": 192, "lon": 288}
 
-ALL_SCENARIOS = ["pangeo-historical", "historical", "SSP245", "G6-1.5K"]
+ALL_SCENARIOS = ["pangeo-historical", "historical", "SSP245", "G6-1.5K", "G6-1.5K-END"]
+
+# Issue #424 (TREFHTMX == TREFHTMN == TREFHT on each run's first day) was a symptom of the
+# zero-width initial-state record described in issue #521: an instantaneous field has no
+# within-day spread, so its max, min and mean coincide. decode_time_from_bounds drops that
+# record outright, so the per-group backfill table this module used to carry is gone.
+
+# SSP245 members 001-005 have tasmax == tasmin across the whole series (upstream
+# CMIP6 bug, issue #156). Values exist in the store but must never be used, so
+# mask them to NaN.
+INVALID_TASMAX_TASMIN_MEMBERS: dict[str, list[str]] = {
+    "SSP245": ["001", "002", "003", "004", "005"],
+}
 
 VAR_SPECS: dict[str, VarSpec] = {
     f.default.name: f.default for f in dataclasses.fields(VarStandards)
@@ -78,9 +98,11 @@ VAR_SPECS: dict[str, VarSpec] = {
 
 _DRY_RUN_STEPS = 365
 
-# CESM case names embed the member as a 3-digit segment, e.g.
-# b.e21.BWSSP245cmip6.f09_g17.CMIP6-SSP2-4.5-WACCM.001.cam.h1....nc
-MEMBER_PATTERN = re.compile(r"\.(\d{3})\.cam\.")
+# CESM case names embed the member as a 3-digit segment before ".cam.", separated by a
+# dot in the CMIP6-style cases and by an underscore in the termination run:
+#   b.e21.BWSSP245cmip6.f09_g17.CMIP6-SSP2-4.5-WACCM.001.cam.h1....nc
+#   G6-1p5K-termination_002.cam.h1....nc
+MEMBER_PATTERN = re.compile(r"[._](\d{3})\.cam\.")
 
 CESM_WACCM_VARIABLE_MAPPING: dict[str, str] = {
     "FSDS": "rsds",
@@ -116,7 +138,9 @@ CESM_DROP_VARIABLES: list[str] = [
     "mdt",
     "date",
     "datesec",
-    "time_bnds",
+    # NOTE: time_bnds is deliberately NOT dropped here. It is the CF authority for the time
+    # axis (issue #521) and is consumed by decode_time_from_bounds in _preprocess_cesm;
+    # to_proleptic_gregorian drops it afterwards.
     "date_written",
     "time_written",
     "ndcur",
@@ -211,6 +235,12 @@ def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:
             zarr_store, engine="zarr", consolidated=True, chunks="auto"
         ).drop_encoding()
 
+        # The CMORized CMIP6 copies carry CAM's convention unchanged: end-of-interval stamps
+        # and a zero-width initial-state record (issue #521). Decode per member, before the
+        # expand_dims/combine below gives time_bnds an ensemble_member dimension and makes
+        # the bounds axis ambiguous.
+        ds = decode_time_from_bounds(ds)
+
         member_id = ds.attrs.get("variant_label", "unknown")
         # Store all raw attributes and the URL for this specific member
         full_manifest[member_id] = _capture_provenance(ds, zstore_url)
@@ -281,7 +311,20 @@ def _is_pangeo_scenario(scenario: str) -> bool:
     return scenario.startswith("pangeo-")
 
 
+def _trim_time_range(ds: xr.Dataset, scenario: str) -> xr.Dataset:
+    """Clamp to the scenario's canonical extent; CESM source files overrun it."""
+    start_year, end_year = TIME_RANGE[scenario.removeprefix("pangeo-")].split("-")
+    return ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
+
+
 def _preprocess_cesm(ds: xr.Dataset, scenario: str, var: str, subset: bool = False) -> xr.Dataset:
+    # First, before anything else touches the time axis. CAM stamps interval statistics at the
+    # END of their averaging window and prefixes each history stream with a zero-width
+    # initial-state record (issue #521), so the raw `time` values label every daily mean one
+    # day late. This also has to precede the coord prune below, which would discard time_bnds,
+    # and to_proleptic_gregorian, which drops bounds variables outright.
+    ds = decode_time_from_bounds(ds)
+
     keep_coords = set(ds.dims) | {"lat", "lon", "time"}
     ds = ds.drop_vars([c for c in ds.coords if c not in keep_coords], errors="ignore")
     ds = ds.drop_duplicates(dim="time", keep="first")
@@ -295,12 +338,23 @@ def _preprocess_cesm(ds: xr.Dataset, scenario: str, var: str, subset: bool = Fal
     if var in CMORIZATION_FUNCTIONS:
         ds = CMORIZATION_FUNCTIONS[var](ds, var)
 
-    if scenario in TIME_RANGE:
-        start_year, end_year = TIME_RANGE[scenario].split("-")
-        ds = ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
+    ds = _trim_time_range(ds, scenario)
 
     if subset:
         ds = ds.isel(time=slice(0, 365))
+    return ds
+
+
+def _mask_invalid_tasmax_tasmin(ds: xr.Dataset, scenario: str, variable: str) -> xr.Dataset:
+    """Issue #156: NaN out tasmax/tasmin for members with a corrupt full series."""
+    if variable not in ("tasmax", "tasmin"):
+        return ds
+    members = INVALID_TASMAX_TASMIN_MEMBERS.get(scenario)
+    if not members or "ensemble_member" not in ds.dims:
+        return ds
+    keep = ~ds.ensemble_member.isin(members)
+    ds[variable] = ds[variable].where(keep)
+    log.info("variable=%s masked invalid members %s to NaN (issue #156)", variable, members)
     return ds
 
 
@@ -357,6 +411,7 @@ def _process_single_variable(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     group = SCENARIO_TO_GROUP[scenario]
     ensemble_members = ENSEMBLE_MEMBERS[scenario]
@@ -366,7 +421,7 @@ def _process_single_variable(
     # avoids reading/concatenating the full time series just to truncate it later.
     subset = subset or dry_run
 
-    var_in_store = variable_in_store(repo, variable, group=group)
+    var_in_store = variable_in_store(repo, variable, group=group, branch=branch)
     if not dry_run and not overwrite and var_in_store:
         log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
         return
@@ -410,6 +465,7 @@ def _process_single_variable(
     # reindex to full member list; fills any missing members with NaN
     if ensemble_members and "ensemble_member" in ds.dims:
         ds = ds.reindex(ensemble_member=ensemble_members)
+    ds = _mask_invalid_tasmax_tasmin(ds, scenario, variable)
     ds.ensemble_member.attrs["member_specific_provenance"] = json.dumps(member_manifest)
     log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
 
@@ -430,6 +486,7 @@ def _process_single_variable(
         var_in_store=var_in_store,
         group=group,
         commit_message=commit_message,
+        branch=branch,
     )
     log.info("variable=%s done", variable)
 
@@ -443,6 +500,7 @@ def _run_process(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     log.info(
         "scenario=%s group=%s variables=%s overwrite=%s subset=%s dry_run=%s",
@@ -453,7 +511,7 @@ def _run_process(
         subset,
         dry_run,
     )
-    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False)
+    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False, branch=branch)
     for var in variables:
         _process_single_variable(
             scenario,
@@ -465,6 +523,7 @@ def _run_process(
             dry_run=dry_run,
             dry_run_output=dry_run_output,
             commit_message=commit_message,
+            branch=branch,
         )
     log.info("scenario=%s all variables complete", scenario)
 
@@ -476,6 +535,7 @@ def _run_pangeo_process(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     """Merge Pangeo historical members (r1/r2/r3i1p1f1) into the ``historical`` group.
 
@@ -491,6 +551,7 @@ def _run_pangeo_process(
     ds = ds[available]
     ds = to_proleptic_gregorian(ds)
     ds = trim_negative_precipitation(ds)
+    ds = _trim_time_range(ds, scenario)
     ds = lon_to_180(ds, lon_name="lon")
     ds = ds.sortby(["lat", "lon"])
     ds = _update_attrs(ds, VAR_SPECS, scenario)
@@ -499,10 +560,10 @@ def _run_pangeo_process(
         _run_dry_run(ds, "pangeo-historical", group, dry_run_output, commit_message)
         return
 
-    repo, session = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False)
+    repo, session = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False, branch=branch)
     try:
         existing = xr.open_dataset(
-            repo.readonly_session("main").store, engine="zarr", group=group, chunks="auto"
+            repo.readonly_session(branch).store, engine="zarr", group=group, chunks="auto"
         )
     except (FileNotFoundError, KeyError) as err:
         raise RuntimeError(
@@ -581,6 +642,16 @@ def process(
     commit_message: str | None = typer.Option(
         None, "--commit-message", help="Override the default icechunk commit message."
     ),
+    branch: str = typer.Option(
+        "main",
+        "--branch",
+        help=(
+            "icechunk branch to write to. Use a branch cut from the repository's root snapshot "
+            "to regenerate a store whose time axis changed: the groups must be absent for a "
+            "fresh write, and promotion is then repo.reset_branch('main', tip) rather than a "
+            "copy of the whole store."
+        ),
+    ),
 ) -> None:
     """Open NetCDF files from S3, concat, rechunk, and write to the unified per-GCM
     icechunk store under each scenario's zarr group. One variable at a time.
@@ -606,6 +677,7 @@ def process(
                 dry_run=dry_run,
                 dry_run_output=dry_run_output,
                 commit_message=commit_message,
+                branch=branch,
             )
         else:
             _run_process(
@@ -617,7 +689,63 @@ def process(
                 dry_run=dry_run,
                 dry_run_output=dry_run_output,
                 commit_message=commit_message,
+                branch=branch,
             )
+
+
+@app.command(name="mask-invalid-tasmax-tasmin")
+def mask_invalid_tasmax_tasmin(
+    store_prefix: str | None = typer.Option(None, "--store-prefix"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """One-off (issue #156): NaN SSP245 members 001-005 tasmax/tasmin in the
+    existing unified store.
+
+    """
+    scenario = "SSP245"
+    group = SCENARIO_TO_GROUP[scenario]  # "ssp245"
+    members = INVALID_TASMAX_TASMIN_MEMBERS[scenario]
+    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False)
+    existing = xr.open_dataset(
+        repo.readonly_session("main").store, engine="zarr", group=group, chunks="auto"
+    )
+
+    keep = ~existing.ensemble_member.isin(members)
+    kept_members = [m for m in existing.ensemble_member.values.tolist() if m not in members]
+    for var in ("tasmax", "tasmin"):
+        if var not in existing.data_vars:
+            log.warning("variable=%s not in group=%s, skipping", var, group)
+            continue
+        ds = existing[[var]]
+        ds[var] = ds[var].where(keep)
+
+        if dry_run:
+            # Run the actual mask with no write/commit.
+            sample = ds[var].isel(time=slice(0, 30))
+            masked_nan = bool(sample.sel(ensemble_member=members).isnull().all().compute())
+            kept_finite = bool(sample.sel(ensemble_member=kept_members).notnull().all().compute())
+            log.info(
+                "dry-run: %s -> members %s all-NaN=%s, kept members finite=%s (no write)",
+                var,
+                members,
+                masked_nan,
+                kept_finite,
+            )
+            continue
+
+        write_variable_to_icechunk(
+            ds,
+            repo,
+            variable=var,
+            scenario=scenario,
+            chunks=OUTPUT_CHUNKS,
+            shards=OUTPUT_SHARDS,
+            overwrite=True,
+            var_in_store=True,
+            group=group,
+            commit_message=f"issue #156: NaN {var} for ssp245 members {members}",
+        )
+        log.info("variable=%s masked invalid members %s to NaN in store", var, members)
 
 
 if __name__ == "__main__":

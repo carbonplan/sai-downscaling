@@ -15,6 +15,7 @@ Tests focus on:
 
 from __future__ import annotations
 
+import pickle
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -24,12 +25,16 @@ import pytest
 import scipy.stats
 import xarray as xr
 from conftest import make_icechunk_group as _make_icechunk_group
+from ibicus.debias import QuantileMapping
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
 from srm.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
     _make_debiaser,
+    _weibull_min_zero_bounded,
+    _WeibullMinZeroBounded,
     calculate_out_of_range_mask,
     stitch_historical_scenario,
 )
@@ -59,6 +64,8 @@ def _mock_fit_historical_compute():
         patch("srm.pipeline.xr.DataArray", return_value=MagicMock()),
         patch("srm.pipeline.rechunk"),
         patch("srm.pipeline.downscale_from_coarse"),
+        # MagicMock stand-ins are not arrays; these tests assert wiring, not data
+        patch("srm.pipeline.assert_no_nans"),
         patch("srm.pipeline.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
@@ -84,6 +91,8 @@ def _mock_transform_scenario_compute():
         patch("srm.pipeline.detrend"),
         patch("srm.pipeline.retrend"),
         patch("srm.pipeline.downscale_from_coarse"),
+        # MagicMock stand-ins are not arrays; these tests assert wiring, not data
+        patch("srm.pipeline.assert_no_nans"),
         patch("srm.pipeline.QuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
@@ -488,7 +497,7 @@ class TestTransformScenarioBehavior:
                 except Exception:
                     pass
         # detrend is called because tas has detrend_data=True
-        assert mock_detrend.call_count >= 1 or pipeline.config.detrend_data
+        assert mock_detrend.call_count >= 1 or pipeline.config.variable_config.detrend_data
 
     def test_ocean_mask_applied_when_enabled(self, pr_config, tmp_path):
         """Ocean mask is applied to scenario output when apply_ocean_mask=True."""
@@ -635,6 +644,149 @@ class TestRunFullPipeline:
             mo.assert_called_once_with(force=False)
             mh.assert_called_once_with(force=False)
             ms.assert_called_once_with(force=False)
+
+
+class TestTasminStageDispatch:
+    """tasmin must route to the derive+reconcile variants from ANY entry point.
+
+    The distributed batch_runner calls ``fit_historical`` / ``transform_scenario``
+    directly (not ``run_full_pipeline``), so the tasmin dispatch has to live in the
+    stage methods themselves or ``derive_tasmin`` + ``reconcile_temperature_extremes``
+    never run on the VMs (issues #363/#331).
+    """
+
+    @pytest.fixture
+    def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmin",
+            ensemble_member="001",
+            scenario="G6-1.5K",
+            predict_period_start=2015,
+            predict_period_end=2084,
+        )
+        return BCSDPipeline(cfg, pipeline_options)
+
+    def test_transform_scenario_dispatches_tasmin(self, tasmin_pipeline):
+        with patch.object(
+            tasmin_pipeline, "transform_scenario_tasmin", return_value="tasmin_scenario_path"
+        ) as m:
+            result = tasmin_pipeline.transform_scenario(force=True)
+        m.assert_called_once_with(force=True)
+        assert result == "tasmin_scenario_path"
+
+    def test_fit_historical_dispatches_tasmin(self, tasmin_pipeline):
+        with patch.object(
+            tasmin_pipeline, "fit_historical_tasmin", return_value="tasmin_hist_path"
+        ) as m:
+            result = tasmin_pipeline.fit_historical(force=True)
+        m.assert_called_once_with(force=True)
+        assert result == "tasmin_hist_path"
+
+    def test_transform_scenario_does_not_dispatch_for_tas(self, pipeline):
+        # a non-tasmin variable must run the plain path (here: fails on missing deps),
+        # never the tasmin variant.
+        with patch.object(pipeline, "transform_scenario_tasmin") as m:
+            with pytest.raises(ValueError):
+                pipeline.transform_scenario()
+        m.assert_not_called()
+
+    def test_fit_historical_does_not_dispatch_for_tas(self, pipeline):
+        with patch.object(pipeline, "fit_historical_tasmin") as m:
+            with pytest.raises(ValueError):
+                pipeline.fit_historical()
+        m.assert_not_called()
+
+    def test_run_full_pipeline_routes_tasmin_through_stage_methods(self, tasmin_pipeline):
+        # end-to-end: run_full_pipeline -> plain stage methods -> tasmin variants.
+        with (
+            patch.object(tasmin_pipeline, "prepare_observations", return_value="obs"),
+            patch.object(tasmin_pipeline, "fit_historical_tasmin", return_value="hist") as mh,
+            patch.object(tasmin_pipeline, "transform_scenario_tasmin", return_value="scen") as ms,
+        ):
+            result = tasmin_pipeline.run_full_pipeline()
+        mh.assert_called_once_with(force=False)
+        ms.assert_called_once_with(force=False)
+        assert result == "scen"
+
+
+class TestTasminEagerDisaggInput:
+    """The derived coarse tasmin must be materialised (eager) before disaggregation —
+    the same shape of input `_apply_bias_correction` produces for every other variable.
+    Left lazy, the interp is deferred into an all-to-all rechunk at the write that holds
+    the whole fine array resident and stalls at global scale (the tasmin hang).
+    """
+
+    @pytest.fixture
+    def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tasmin",
+            ensemble_member="001",
+            scenario="G6-1.5K",
+            predict_period_start=2015,
+            predict_period_end=2084,
+        )
+        return BCSDPipeline(cfg, pipeline_options)
+
+    @staticmethod
+    def _lazy_coarse_pair() -> xr.Dataset:
+        """Lazy (dask) debiased-coarse tasmax + dtr, as _open_from_icechunk returns them."""
+        import dask.array as darr
+
+        t = xr.date_range("1978-01-01", periods=40, freq="D", use_cftime=True)
+        coords = {"time": t, "lat": [0.0, 1.0], "lon": [0.0, 1.0]}
+
+        def _da(val, name):
+            return xr.DataArray(
+                darr.full((40, 2, 2), val, chunks=(40, 2, 2), dtype="float32"),
+                dims=("time", "lat", "lon"),
+                coords=coords,
+                name=name,
+            )
+
+        return xr.Dataset({"tasmax": _da(300.0, "tasmax"), "dtr": _da(10.0, "dtr")})
+
+    def _capture_disagg_input(self, pipe, method: str, load_attr: str, load_return):
+        ds = self._lazy_coarse_pair()
+        obs = ds["tasmax"]  # coarse array; only its grid/time are used by the mocked disagg
+        captured = {}
+
+        def _capture(debiased, obs_coarse, obs_fine):
+            captured["input"] = debiased
+            return debiased
+
+        with (
+            patch.object(pipe.cache, "exists", return_value=False),
+            patch.object(pipe.cache, "validate_dependencies"),
+            patch.object(pipe, load_attr, return_value=load_return(obs)),
+            patch.object(pipe, "_open_from_icechunk", return_value=ds),
+            patch.object(pipe, "_write_to_icechunk", return_value="snap"),
+            patch.object(pipe, "reconcile_temperature_extremes"),
+            patch.object(pipe, "_build_output_attrs", return_value={}),
+            patch.object(pipe, "_apply_spatial_downscaling", side_effect=_capture),
+        ):
+            getattr(pipe, method)(force=True)
+        return captured["input"]
+
+    def test_fit_historical_tasmin_input_is_eager(self, tasmin_pipeline):
+        got = self._capture_disagg_input(
+            tasmin_pipeline, "fit_historical_tasmin", "_load_gcm_obs", lambda obs: (obs, obs, obs)
+        )
+        assert got.chunks is None, (
+            "fit_historical_tasmin must materialise the derived input (.compute())"
+        )
+
+    def test_transform_scenario_tasmin_input_is_eager(self, tasmin_pipeline):
+        got = self._capture_disagg_input(
+            tasmin_pipeline,
+            "transform_scenario_tasmin",
+            "_load_scenario_data",
+            lambda obs: (obs, obs, obs, obs, None),
+        )
+        assert got.chunks is None, (
+            "transform_scenario_tasmin must materialise the derived input (.compute())"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -917,16 +1069,16 @@ class TestMakeDebiaser:
             assert mock_qm.call_args.kwargs["mapping_type"] == "nonparametric"
 
     def test_2sided_pr_low_tail_uses_parametric_with_weibull(self):
-        """PR low-tail debiaser must use mapping_type='parametric' and weibull_min distribution."""
+        """PR low-tail debiaser must use mapping_type='parametric' and the zero-bounded Weibull."""
         with patch("srm.pipeline.QuantileMapping") as mock_qm:
             _make_debiaser(
                 variable="pr",
-                distribution=scipy.stats.weibull_min,
+                distribution=_weibull_min_zero_bounded,
                 mapping_type="parametric",
             )
             call_kwargs = mock_qm.call_args.kwargs
             assert call_kwargs["mapping_type"] == "parametric"
-            assert call_kwargs["distribution"] is scipy.stats.weibull_min
+            assert call_kwargs["distribution"] is _weibull_min_zero_bounded
 
     def test_2sided_pr_high_tail_uses_parametric_with_gumbel(self):
         """PR high-tail debiaser must use mapping_type='parametric' and gumbel_r distribution."""
@@ -945,6 +1097,121 @@ class TestMakeDebiaser:
         with patch("srm.pipeline.QuantileMapping") as mock_qm:
             _make_debiaser(variable="tas", mapping_type="parametric")
             assert mock_qm.call_args.kwargs["distribution"] is scipy.stats.norm
+
+
+class TestWeibullZeroBounded:
+    """The zero-bounded Weibull must pin ``loc=0`` during fitting.
+
+    The 3-parameter Weibull MLE otherwise drifts ``loc`` off zero (and can go
+    negative), producing physically impossible negative debiased values such as
+    DTR = -300 K. These tests trace the ``floc=0`` constraint through the whole
+    chain: the fit override, pickling for multiprocessing, the pipeline wiring
+    that selects the distribution, and the real ibicus fit call that consumes it.
+    """
+
+    @staticmethod
+    def _skewed_positive_data() -> np.ndarray:
+        """Positive data whose unconstrained 3-param Weibull MLE wants ``loc != 0``."""
+        return scipy.stats.weibull_min.rvs(
+            1.5, loc=5, scale=2, size=2000, random_state=np.random.default_rng(0)
+        )
+
+    # --- Layer 1: the fit override itself ---
+
+    def test_fit_forces_loc_zero(self):
+        """The override pins ``loc`` to exactly 0 regardless of the data."""
+        _, loc, _ = _weibull_min_zero_bounded.fit(self._skewed_positive_data())
+        assert loc == 0
+
+    def test_unconstrained_weibull_would_drift_loc_off_zero(self):
+        """Sanity anchor: documents the degenerate fit the zero-bounding prevents."""
+        _, loc, _ = scipy.stats.weibull_min.fit(self._skewed_positive_data())
+        assert loc != 0
+
+    def test_explicit_floc_is_not_overridden(self):
+        """``setdefault`` semantics: a caller-supplied ``floc`` still wins."""
+        _, loc, _ = _weibull_min_zero_bounded.fit(self._skewed_positive_data(), floc=3.0)
+        assert loc == 3.0
+
+    def test_picklable_for_multiprocessing(self):
+        """ibicus applies debiasers across processes, so the instance must survive
+        pickling and keep the ``loc=0`` override after a round trip."""
+        # Safe: round-trips a module-local object we created, not untrusted input.
+        restored = pickle.loads(pickle.dumps(_weibull_min_zero_bounded))
+        _, loc, _ = restored.fit(self._skewed_positive_data())
+        assert loc == 0
+
+    # --- Layer 2: the pipeline wires the right distribution to each tail ---
+
+    def test_pipeline_wires_zero_bounded_weibull_to_low_tail(self, pipeline_options):
+        """The 2-sided hybrid branch must feed the zero-bounded Weibull to the low
+        tail and gumbel_r to the high tail for pr/rsds/hurs/dtr."""
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="rsds",
+            ensemble_member="r1i1p1f1",
+            scenario="SSP245",
+            predict_period_start=2015,
+            predict_period_end=2100,
+        )
+        assert cfg.variable_config.debias_approach == "nonparametric_hybrid_2sided"
+        pipeline = BCSDPipeline(cfg, pipeline_options)
+
+        time = pd.date_range("2015-01-01", periods=6)
+        coords = {"time": time, "lat": [10.0, 20.0], "lon": [0.0, 1.0, 2.0]}
+        dims = ["time", "lat", "lon"]
+        da = xr.DataArray(
+            np.abs(np.random.default_rng(1).normal(5, 2, (6, 2, 3))), coords=coords, dims=dims
+        )
+        mask = xr.DataArray(np.zeros((6, 2, 3), dtype=bool), coords=coords, dims=dims)
+
+        make_debiaser_spy = MagicMock()
+        make_debiaser_spy.return_value.apply.return_value = np.zeros((6, 2, 3))
+        with (
+            patch("srm.pipeline._make_debiaser", make_debiaser_spy),
+            patch("srm.pipeline.calculate_out_of_range_mask", return_value=(mask, mask, mask)),
+        ):
+            pipeline._apply_bias_correction_scenario(da, da, da)
+
+        distributions = [
+            call.kwargs.get("distribution") for call in make_debiaser_spy.call_args_list
+        ]
+        assert _weibull_min_zero_bounded in distributions  # low tail
+        assert scipy.stats.gumbel_r in distributions  # high tail
+
+    # --- Layer 3: floc=0 actually reaches scipy through a real ibicus fit ---
+
+    def test_floc_zero_reaches_scipy_through_ibicus(self):
+        """End-to-end: a real parametric ``QuantileMapping.apply()`` must route through
+        the override so scipy's underlying ``fit`` receives ``floc=0``."""
+        weibull_gen = _WeibullMinZeroBounded.__mro__[1]  # weibull_min_gen (parent of the override)
+        real_parent_fit = weibull_gen.fit
+        floc_seen: list = []
+
+        def spy_fit(self, data, *args, **kwargs):
+            floc_seen.append(kwargs.get("floc"))
+            return real_parent_fit(self, data, *args, **kwargs)
+
+        rng = np.random.default_rng(0)
+        obs = np.abs(rng.normal(5, 2, (500, 1, 1)))
+        cm_hist = np.abs(rng.normal(6, 2, (500, 1, 1)))
+        cm_future = np.abs(rng.normal(6, 2, (500, 1, 1)))
+
+        quantile_mapping = QuantileMapping(
+            distribution=_weibull_min_zero_bounded,
+            mapping_type="parametric",
+            variable="rsds",
+            detrending="no_detrending",
+            running_window_mode=False,
+        )
+        with patch.object(weibull_gen, "fit", spy_fit):
+            debiased = quantile_mapping.apply(
+                obs, cm_hist, cm_future, progressbar=False, parallel=False
+            )
+
+        assert floc_seen, "ibicus never called the distribution's fit"
+        assert all(floc == 0 for floc in floc_seen)
+        assert np.isfinite(debiased).all()
 
 
 # ---------------------------------------------------------------------------
@@ -1121,6 +1388,16 @@ class TestFitHistoricalTasminCoarseDeps:
         """fit_historical_tasmin reads dtr/tasmax from debiased_coarse_historical_loc."""
         p = tasmin_pipeline
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        # tasmin now validates that its debiased-coarse dtr/tasmax inputs exist (issue #363).
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_historical_loc(p._hist_member, variable=_var),
+                branch=p.cache.branch,
+            )
+        # the swap reads/rewrites the fine tasmax output (issue #331).
+        _make_icechunk_group(
+            p.cache.historical_loc(p._hist_member, variable="tasmax"), branch=p.cache.branch
+        )
         opened_groups: list = []
 
         def capture_open(loc):
@@ -1154,7 +1431,15 @@ class TestFitHistoricalTasminCoarseDeps:
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
         hist_loc = p.cache.historical_loc(p._hist_member)
         _make_icechunk_group(hist_loc, branch=p.cache.branch)
-        # No coarse loc — stage must rerun (not short-circuit)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_historical_loc(p._hist_member, variable=_var),
+                branch=p.cache.branch,
+            )
+        _make_icechunk_group(
+            p.cache.historical_loc(p._hist_member, variable="tasmax"), branch=p.cache.branch
+        )
+        # No tasmin coarse loc — stage must rerun (not short-circuit)
 
         with _mock_fit_historical_compute():
             with patch.object(
@@ -1174,6 +1459,13 @@ class TestTransformScenarioTasminCoarseDeps:
         p = tasmin_pipeline
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
         _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        # tasmin now validates that its debiased-coarse dtr/tasmax inputs exist (issue #363).
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_scenario_loc(variable=_var), branch=p.cache.branch
+            )
+        # the swap reads/rewrites the fine tasmax output (issue #331).
+        _make_icechunk_group(p.cache.scenario_output_loc(variable="tasmax"), branch=p.cache.branch)
         opened_groups: list = []
 
         def capture_open(loc):
@@ -1204,9 +1496,14 @@ class TestTransformScenarioTasminCoarseDeps:
         p = tasmin_pipeline
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
         _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_scenario_loc(variable=_var), branch=p.cache.branch
+            )
+        _make_icechunk_group(p.cache.scenario_output_loc(variable="tasmax"), branch=p.cache.branch)
         scenario_loc = p.cache.scenario_loc
         _make_icechunk_group(scenario_loc, branch=p.cache.branch)
-        # No coarse loc — stage must rerun (not short-circuit)
+        # No tasmin coarse loc — stage must rerun (not short-circuit)
 
         with _mock_transform_scenario_compute():
             with patch.object(
@@ -1218,3 +1515,742 @@ class TestTransformScenarioTasminCoarseDeps:
                     pass
 
         mock_write.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Coarse tasmin write must tile the shard grid (production regression)
+# ---------------------------------------------------------------------------
+
+
+def _misaligned_coarse_ds() -> xr.Dataset:
+    """Debiased-coarse tasmax/dtr whose dask lat chunks straddle the coarse shard grid.
+
+    ``_open_from_icechunk`` opens with ``chunks="auto"``, so re-opened coarse inputs are
+    dask-backed with chunk boundaries that need not tile ``SHARD_LAT_COARSE`` (24). Here
+    lat=48 is chunked in 16s (boundaries 0/16/32/48), which straddles the shard boundary
+    at 24 — the exact condition that made the real icechunk write raise ``safe_chunks``.
+    """
+    time = pd.date_range("2000-01-01", periods=40, freq="D")
+    lat = np.linspace(-88.0, 88.0, 48)
+    lon = np.linspace(0.0, 356.0, 96)
+    shape = (time.size, lat.size, lon.size)
+    coords = {"time": time, "lat": lat, "lon": lon}
+    tasmax = xr.DataArray(
+        np.full(shape, 300.0, dtype="float32"), dims=["time", "lat", "lon"], coords=coords
+    ).chunk({"time": -1, "lat": 16, "lon": -1})
+    dtr = xr.DataArray(
+        np.full(shape, 10.0, dtype="float32"), dims=["time", "lat", "lon"], coords=coords
+    ).chunk({"time": -1, "lat": 16, "lon": -1})
+    return xr.Dataset({"tasmax": tasmax, "dtr": dtr})
+
+
+def _read_coarse_tasmin(cache, coarse_loc) -> xr.DataArray:
+    """Open a written coarse store directly, bypassing the mocked ``_open_from_icechunk``."""
+    import icechunk
+
+    from srm.pipeline import _icechunk_storage_for_path
+
+    storage = _icechunk_storage_for_path(coarse_loc.store_path)
+    repo = icechunk.Repository.open(storage)
+    session = repo.readonly_session(branch=cache.branch)
+    ds = xr.open_dataset(session.store, engine="zarr", consolidated=False, group=coarse_loc.group)
+    return ds["tasmin"]
+
+
+def _tiny_fine_tasmin() -> xr.DataArray:
+    """A small real fine-res DataArray for the raw tasmin write in the tasmin stages.
+
+    The stages now persist the downscaled tasmin before reconciling, so tests that
+    drive the *real* ``_write_to_icechunk`` need a genuine array (not a MagicMock) as
+    the ``_apply_spatial_downscaling`` return.
+    """
+    return xr.DataArray(
+        np.full((1, 1, 2), 290.0, dtype="float32"),
+        dims=["time", "lat", "lon"],
+        coords={
+            "time": np.array([np.datetime64("2020-01-01")]),
+            "lat": np.array([0.0]),
+            "lon": np.array([10.0, 11.0]),
+        },
+        name="tasmin",
+    )
+
+
+class TestTasminCoarseWriteChunkAlignment:
+    """The derived coarse tasmin write must tile the coarse shard grid.
+
+    Regression for the production failure ``CESM2-WACCM_tasmin_003_G6-1.5K``: the tasmin
+    stages derive coarse tasmin from auto-chunked tasmax/dtr and wrote it with
+    ``make_coarse_encoding`` (shard 24x48) without rechunking, so xarray's ``safe_chunks``
+    check rejected the misaligned dask chunks. These tests drive the *real*
+    ``_write_to_icechunk`` (the sibling tasmin tests mock it), so they fail before the fix.
+    """
+
+    def test_fit_historical_tasmin_coarse_write_is_shard_aligned(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_historical_loc(p._hist_member, variable=_var),
+                branch=p.cache.branch,
+            )
+        _make_icechunk_group(
+            p.cache.historical_loc(p._hist_member, variable="tasmax"), branch=p.cache.branch
+        )
+        coarse_loc = p.cache.debiased_coarse_historical_loc(p._hist_member)
+
+        with (
+            patch.object(
+                BCSDPipeline,
+                "_load_gcm_obs",
+                return_value=(MagicMock(), MagicMock(), MagicMock()),
+            ),
+            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=_misaligned_coarse_ds()),
+            patch.object(
+                BCSDPipeline, "_apply_spatial_downscaling", return_value=_tiny_fine_tasmin()
+            ),
+            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
+        ):
+            result = p.fit_historical_tasmin()
+
+        assert result == p.cache.historical_loc(p._hist_member).store_path
+        # Round-trips without a safe_chunks error and holds tasmax(300) - dtr(10) == 290.
+        written = _read_coarse_tasmin(p.cache, coarse_loc)
+        assert float(written.isel(time=0, lat=0, lon=0)) == 290.0
+
+    def test_transform_scenario_tasmin_coarse_write_is_shard_aligned(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_scenario_loc(variable=_var), branch=p.cache.branch
+            )
+        _make_icechunk_group(p.cache.scenario_output_loc(variable="tasmax"), branch=p.cache.branch)
+        coarse_loc = p.cache.debiased_coarse_scenario_loc()
+
+        with (
+            patch.object(
+                BCSDPipeline,
+                "_load_scenario_data",
+                return_value=(MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()),
+            ),
+            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=_misaligned_coarse_ds()),
+            patch.object(
+                BCSDPipeline, "_apply_spatial_downscaling", return_value=_tiny_fine_tasmin()
+            ),
+            patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
+            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
+        ):
+            result = p.transform_scenario_tasmin()
+
+        assert result == p.cache.scenario_loc.store_path
+        written = _read_coarse_tasmin(p.cache, coarse_loc)
+        assert float(written.isel(time=0, lat=0, lon=0)) == 290.0
+
+
+def _time_straddling_coarse_ds() -> xr.Dataset:
+    """Debiased-coarse tasmax/dtr whose dask *time* chunks straddle the coarse shard grid.
+
+    Mirrors the production scenario ``CESM2-WACCM_tasmin_003_G6-1.5K``: ``_open_from_icechunk``
+    auto-chunks re-opened coarse inputs into sub-shard time pieces, and the scenario spans more
+    than one ``SHARD_TIME_COARSE`` (16000-day) shard. Those ~600-step time chunks do not tile
+    the shard boundary at 16000, which is exactly what tripped xarray's ``safe_chunks`` check on
+    the coarse write (error on axis 0). ``rechunk(full_space)`` only fixes lat/lon, so it never
+    caught this. Arrays stay lazy (dask, never computed) so the >16000-step time axis is free.
+    """
+    import dask.array as dask_array
+
+    n_time = SHARD_TIME_COARSE + 1  # one step into the second time shard
+    time = pd.date_range("2015-01-01", periods=n_time, freq="D")
+    lat = np.linspace(-88.0, 88.0, 24)
+    lon = np.linspace(0.0, 352.0, 48)
+    shape = (n_time, lat.size, lon.size)
+    coords = {"time": time, "lat": lat, "lon": lon}
+    tasmax = xr.DataArray(
+        dask_array.full(shape, 300.0, dtype="float32", chunks=(600, lat.size, lon.size)),
+        dims=["time", "lat", "lon"],
+        coords=coords,
+    )
+    dtr = xr.DataArray(
+        dask_array.full(shape, 10.0, dtype="float32", chunks=(600, lat.size, lon.size)),
+        dims=["time", "lat", "lon"],
+        coords=coords,
+    )
+    return xr.Dataset({"tasmax": tasmax, "dtr": dtr})
+
+
+def _assert_tiles_coarse_shards(da: xr.DataArray) -> None:
+    """Every dask chunk must map to exactly one coarse shard (the ``safe_chunks`` invariant)."""
+    for dim, shard in (
+        ("time", SHARD_TIME_COARSE),
+        ("lat", SHARD_LAT_COARSE),
+        ("lon", SHARD_LON_COARSE),
+    ):
+        chunks = da.chunksizes[dim]
+        # interior chunks equal the shard; only the trailing remainder may be smaller
+        assert all(c == shard for c in chunks[:-1]), (dim, chunks, shard)
+        assert chunks[-1] <= shard, (dim, chunks, shard)
+
+
+class TestTasminCoarseWriteTimeShardAlignment:
+    """The coarse tasmin write must tile the shard grid on the *time* axis too.
+
+    ``TestTasminCoarseWriteChunkAlignment`` only exercised a 40-step time axis (one sub-shard
+    chunk), so the shard-crossing time straddle that failed in production
+    (``encoding['chunks']=(16000, 24, 48)`` … "Dask chunks … on axis 0") slipped through. These
+    capture the array handed to ``_write_to_icechunk`` for a >16000-step scenario and assert it
+    is chunked to the full coarse shard grid — failing on the ``rechunk(full_space)`` code that
+    left ~600-step time chunks straddling ``SHARD_TIME_COARSE``.
+    """
+
+    @staticmethod
+    def _capture_coarse_write(coarse_loc):
+        captured: dict = {}
+
+        def side_effect(da, loc, *args, **kwargs):
+            if loc.group == coarse_loc.group:
+                captured["da"] = da
+            return "snap"
+
+        return captured, side_effect
+
+    def test_fit_historical_tasmin_time_axis_is_shard_aligned(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_historical_loc(p._hist_member, variable=_var),
+                branch=p.cache.branch,
+            )
+        _make_icechunk_group(
+            p.cache.historical_loc(p._hist_member, variable="tasmax"), branch=p.cache.branch
+        )
+        coarse_loc = p.cache.debiased_coarse_historical_loc(p._hist_member)
+        captured, side_effect = self._capture_coarse_write(coarse_loc)
+
+        with (
+            patch.object(
+                BCSDPipeline,
+                "_load_gcm_obs",
+                return_value=(MagicMock(), MagicMock(), MagicMock()),
+            ),
+            patch.object(
+                BCSDPipeline, "_open_from_icechunk", return_value=_time_straddling_coarse_ds()
+            ),
+            patch.object(BCSDPipeline, "_apply_spatial_downscaling", return_value=MagicMock()),
+            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
+            patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=side_effect),
+        ):
+            p.fit_historical_tasmin()
+
+        assert "da" in captured, "coarse tasmin write was never called"
+        _assert_tiles_coarse_shards(captured["da"])
+
+    def test_transform_scenario_tasmin_time_axis_is_shard_aligned(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_scenario_loc(variable=_var), branch=p.cache.branch
+            )
+        _make_icechunk_group(p.cache.scenario_output_loc(variable="tasmax"), branch=p.cache.branch)
+        coarse_loc = p.cache.debiased_coarse_scenario_loc()
+        captured, side_effect = self._capture_coarse_write(coarse_loc)
+
+        with (
+            patch.object(
+                BCSDPipeline,
+                "_load_scenario_data",
+                return_value=(MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()),
+            ),
+            patch.object(
+                BCSDPipeline, "_open_from_icechunk", return_value=_time_straddling_coarse_ds()
+            ),
+            patch.object(BCSDPipeline, "_apply_spatial_downscaling", return_value=MagicMock()),
+            patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
+            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
+            patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=side_effect),
+        ):
+            p.transform_scenario_tasmin()
+
+        assert "da" in captured, "coarse tasmin write was never called"
+        _assert_tiles_coarse_shards(captured["da"])
+
+
+# ---------------------------------------------------------------------------
+# Tasmax<tasmin swap in the tasmin stage (issue #331)
+# ---------------------------------------------------------------------------
+
+
+def _fine_pair_with_inversion():
+    time = np.array([np.datetime64("2020-01-01")])
+    lat = np.array([0.0])
+    lon = np.array([10.0, 11.0])
+    coords = {"time": time, "lat": lat, "lon": lon}
+    tasmax = xr.DataArray(
+        np.array([[[300.0, 290.0]]]), dims=["time", "lat", "lon"], coords=coords, name="tasmax"
+    )
+    tasmin = xr.DataArray(  # cell [0,0,1] inverted (295 > 290)
+        np.array([[[280.0, 295.0]]]), dims=["time", "lat", "lon"], coords=coords, name="tasmin"
+    )
+    return tasmax, tasmin
+
+
+class TestReconcileTemperatureExtremes:
+    def _run_reconcile(self, p, tasmax_fine, tasmin_fine, *, force=False):
+        tasmin_loc = p.cache.scenario_loc
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
+        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)  # sibling fine tasmax exists
+        writes: dict = {}
+        kwargs_seen: dict = {}
+
+        def capture_write(da, loc, **kwargs):
+            writes[loc.group] = da
+            kwargs_seen[loc.group] = kwargs
+            return "snap"
+
+        with patch.object(
+            BCSDPipeline, "_open_from_icechunk", return_value=tasmax_fine.to_dataset()
+        ):
+            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+                p.reconcile_temperature_extremes(
+                    tasmin_loc, tasmax_loc, tasmin_fine=tasmin_fine, force=force
+                )
+        return tasmin_loc, tasmax_loc, writes, kwargs_seen
+
+    def test_writes_both_corrected_fields(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+        tasmin_loc, tasmax_loc, writes, _ = self._run_reconcile(p, tasmax_fine, tasmin_fine)
+
+        assert tasmax_loc.group in writes and tasmin_loc.group in writes
+        written_max = writes[tasmax_loc.group]
+        written_min = writes[tasmin_loc.group]
+        assert written_max.values[0, 0, 1] == 295.0  # swapped up
+        assert written_min.values[0, 0, 1] == 290.0  # swapped down
+        assert bool((written_max >= written_min).all())  # monotone
+
+    def test_logs_swap_count_in_qa(self, tasmin_pipeline, caplog):
+        import logging
+
+        p = tasmin_pipeline  # pipeline_options defaults to environment="qa"
+        assert p.options.environment == "qa"
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()  # 1 inverted of 2 valid cells
+        with caplog.at_level(logging.INFO, logger="srm.pipeline"):
+            self._run_reconcile(p, tasmax_fine, tasmin_fine)
+        assert "swapped 1 / 2 valid cells" in caplog.text
+        assert "50.0000%" in caplog.text
+        assert "max inversion 5.000" in caplog.text
+
+    def test_no_swap_count_in_production(self, tasmin_config, tmp_path, caplog):
+        import logging
+
+        # production skips the extra swap-count pass; the consistency gate is qaqc's job.
+        opts = PipelineOptions(
+            scratch_dir=str(tmp_path / "cache"),
+            output_dir=str(tmp_path / "outputs"),
+            verbose=False,
+            rechunk_workflow=False,
+            environment="production",
+        )
+        p = BCSDPipeline(tasmin_config, opts)
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+        with caplog.at_level(logging.INFO, logger="srm.pipeline"):
+            self._run_reconcile(p, tasmax_fine, tasmin_fine)
+        assert "swapped" not in caplog.text
+
+    def test_tasmax_write_never_force_gcs_but_tasmin_does(self, tasmin_pipeline):
+        # tasmax rewrite must never force-GC (the tasmin write still lazily reads the
+        # pre-rewrite tasmax); the tasmin write, materialised last, threads force so
+        # its trailing GC sweeps the superseded tasmax.
+        p = tasmin_pipeline
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+        tasmin_loc, tasmax_loc, _writes, kwargs_seen = self._run_reconcile(
+            p, tasmax_fine, tasmin_fine, force=True
+        )
+        assert kwargs_seen[tasmax_loc.group].get("force") is False
+        assert kwargs_seen[tasmin_loc.group].get("force") is True
+
+    def test_both_writes_rechunked_to_shard_layout(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+        tasmin_loc, tasmax_loc, writes, _ = self._run_reconcile(p, tasmax_fine, tasmin_fine)
+        for loc in (tasmax_loc, tasmin_loc):
+            written = writes[loc.group]
+            assert written.chunks is not None  # dask-backed (was rechunked)
+            assert all(len(c) == 1 for c in written.chunks)  # small array → one chunk/dim
+
+    def test_raises_when_fine_tasmax_missing(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        _tasmax, tasmin_fine = _fine_pair_with_inversion()
+        with pytest.raises(ValueError, match="tasmax"):
+            p.reconcile_temperature_extremes(
+                p.cache.scenario_loc,  # tasmax loc below is not created
+                p.cache.scenario_output_loc(variable="tasmax"),
+                tasmin_fine=tasmin_fine,
+            )
+
+    def test_standalone_reads_tasmin_from_store(self, tasmin_pipeline):
+        # with tasmin_fine=None the step reconciles already-persisted outputs.
+        p = tasmin_pipeline
+        tasmin_loc = p.cache.scenario_loc
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
+        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)
+        _make_icechunk_group(tasmin_loc, branch=p.cache.branch)
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+
+        def fake_open(loc, chunks="auto"):
+            return (tasmin_fine if loc.group == tasmin_loc.group else tasmax_fine).to_dataset()
+
+        writes: dict = {}
+
+        def capture_write(da, loc, **kwargs):
+            writes[loc.group] = da
+            return "snap"
+
+        with patch.object(BCSDPipeline, "_open_from_icechunk", side_effect=fake_open):
+            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+                p.reconcile_temperature_extremes(tasmin_loc, tasmax_loc)  # tasmin_fine=None
+
+        assert writes[tasmax_loc.group].values[0, 0, 1] == 295.0
+        assert writes[tasmin_loc.group].values[0, 0, 1] == 290.0
+
+    def test_standalone_raises_when_tasmin_missing(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
+        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)  # tasmax present, tasmin absent
+        with pytest.raises(ValueError, match="tasmin"):
+            p.reconcile_temperature_extremes(p.cache.scenario_loc, tasmax_loc)
+
+    def test_reads_both_inputs_shard_aligned(self, tasmin_pipeline):
+        # Store-to-store reconcile must open BOTH fields with shard-aligned chunks so the
+        # swap+write slices per-shard instead of pulling the whole fine array (OOM fix).
+        from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME
+
+        p = tasmin_pipeline
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+        tasmin_loc = p.cache.scenario_loc
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
+        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)
+        _make_icechunk_group(tasmin_loc, branch=p.cache.branch)
+        chunks_seen: list = []
+
+        def fake_open(loc, chunks="auto"):
+            chunks_seen.append(chunks)
+            src = tasmin_fine if loc.group == tasmin_loc.group else tasmax_fine
+            return src.to_dataset()
+
+        with patch.object(BCSDPipeline, "_open_from_icechunk", side_effect=fake_open):
+            with patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snap"):
+                p.reconcile_temperature_extremes(tasmin_loc, tasmax_loc)  # tasmin_fine=None
+
+        shard = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+        assert chunks_seen  # inputs were opened
+        assert all(c == shard for c in chunks_seen)
+
+    def test_writes_run_under_synchronous_scheduler(self, tasmin_pipeline):
+        # The swap+writes are memory-bound; a synchronous dask scheduler keeps only a few
+        # shards resident instead of the full global fine array (reconcile OOM fix).
+        import dask
+
+        p = tasmin_pipeline
+        tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
+        schedulers_at_write: list = []
+
+        def capture_write(da, loc, **kwargs):
+            schedulers_at_write.append(dask.config.get("scheduler", None))
+            return "snap"
+
+        tasmin_loc = p.cache.scenario_loc
+        tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
+        _make_icechunk_group(tasmax_loc, branch=p.cache.branch)
+        with patch.object(
+            BCSDPipeline, "_open_from_icechunk", return_value=tasmax_fine.to_dataset()
+        ):
+            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+                p.reconcile_temperature_extremes(tasmin_loc, tasmax_loc, tasmin_fine=tasmin_fine)
+
+        assert schedulers_at_write == ["synchronous", "synchronous"]
+
+
+class TestTasminReconcileSequencing:
+    """tasmin OOM fix: persist the raw downscaled tasmin FIRST, then reconcile
+    store-to-store (``tasmin_fine=None``) so tasmax and the fresh interp graph never
+    co-reside in memory."""
+
+    def _capture(self, p, stage, loc, *, load_patch):
+        sentinel = MagicMock(name="raw_tasmin")
+        writes: list = []
+        reconcile: dict = {}
+
+        def capture_write(da, loc_, **kwargs):
+            writes.append((loc_.group, da))
+            return "snap"
+
+        def capture_reconcile(tasmin_loc, tasmax_loc, *, tasmin_fine="_unset", force=False):
+            reconcile["called"] = True
+            reconcile["tasmin_fine"] = tasmin_fine
+            reconcile["tasmin_loc_group"] = tasmin_loc.group
+
+        with (
+            load_patch,
+            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
+            patch("srm.pipeline.derive_tasmin", return_value=MagicMock()),
+            patch.object(BCSDPipeline, "_apply_spatial_downscaling", return_value=sentinel),
+            patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write),
+            patch.object(
+                BCSDPipeline, "reconcile_temperature_extremes", side_effect=capture_reconcile
+            ),
+        ):
+            stage()
+
+        return sentinel, writes, reconcile
+
+    def test_fit_historical_tasmin_persists_raw_then_store_to_store(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_historical_loc(p._hist_member, variable=_var),
+                branch=p.cache.branch,
+            )
+        _make_icechunk_group(
+            p.cache.historical_loc(p._hist_member, variable="tasmax"), branch=p.cache.branch
+        )
+        loc = p.cache.historical_loc(p._hist_member)
+        load_patch = patch.object(
+            BCSDPipeline,
+            "_load_gcm_obs",
+            return_value=(MagicMock(), MagicMock(), MagicMock()),
+        )
+        sentinel, writes, reconcile = self._capture(
+            p, p.fit_historical_tasmin, loc, load_patch=load_patch
+        )
+
+        # raw downscaled tasmin was written to the fine historical loc before reconcile
+        assert any(g == loc.group and da is sentinel for g, da in writes)
+        # reconcile ran store-to-store against that persisted output
+        assert reconcile.get("called")
+        assert reconcile.get("tasmin_fine") is None
+        assert reconcile.get("tasmin_loc_group") == loc.group
+
+    def test_transform_scenario_tasmin_persists_raw_then_store_to_store(self, tasmin_pipeline):
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        for _var in ("dtr", "tasmax"):
+            _make_icechunk_group(
+                p.cache.debiased_coarse_scenario_loc(variable=_var), branch=p.cache.branch
+            )
+        _make_icechunk_group(p.cache.scenario_output_loc(variable="tasmax"), branch=p.cache.branch)
+        loc = p.cache.scenario_loc
+        load_patch = patch.object(
+            BCSDPipeline,
+            "_load_scenario_data",
+            return_value=(MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()),
+        )
+        sentinel, writes, reconcile = self._capture(
+            p, p.transform_scenario_tasmin, loc, load_patch=load_patch
+        )
+
+        assert any(g == loc.group and da is sentinel for g, da in writes)
+        assert reconcile.get("called")
+        assert reconcile.get("tasmin_fine") is None
+        assert reconcile.get("tasmin_loc_group") == loc.group
+
+
+class TestTasminCacheShortCircuit:
+    def test_cached_tasmin_served_without_upstream_deps(self, tasmin_pipeline):
+        # A cached tasmin short-circuits without reconciling or requiring the
+        # (possibly reaped) obs/coarse upstreams (issue #363 finding #5).
+        p = tasmin_pipeline
+        _make_icechunk_group(p.cache.scenario_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.debiased_coarse_scenario_loc(), branch=p.cache.branch)
+
+        with patch.object(BCSDPipeline, "_write_to_icechunk") as mock_write:
+            result = p.transform_scenario_tasmin()
+
+        mock_write.assert_not_called()
+        assert result == p.cache.scenario_loc.store_path
+
+
+# ---------------------------------------------------------------------------
+# _detrend_scenario: SAI bridge is applied even when detrend_data=False (#363)
+# ---------------------------------------------------------------------------
+
+
+class TestDetrendScenarioBridge:
+    def test_detrend_off_sai_still_bridges(self, pipeline_options):
+        # dtr has detrend_data=False; for a SAI scenario it must still stitch the
+        # SSP245 bridge so the output spans the full predict window (issue #363).
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="dtr",
+            ensemble_member="003",
+            scenario="G6-1.5K",
+            predict_period_start=2015,
+            predict_period_end=2084,
+        )
+        pipe = BCSDPipeline(cfg, pipeline_options)
+        assert cfg.variable_config.detrend_data is False and cfg.is_sai_scenario is True
+
+        ssp = MagicMock(name="ssp_timeseries")
+        stitched = MagicMock(name="stitched")
+        stitched.sel.return_value = "bridged-predict-slice"
+        with patch("srm.pipeline.stitch_historical_scenario", return_value=stitched) as mock_stitch:
+            out, trend = pipe._detrend_scenario(MagicMock(), MagicMock(), ssp)
+
+        mock_stitch.assert_called_once()
+        assert mock_stitch.call_args.kwargs["ssp_timeseries"] is ssp
+        assert out == "bridged-predict-slice"
+        assert trend is None
+
+    def test_detrend_off_non_sai_returns_scenario_unchanged(self, pipeline_options):
+        # pr has detrend_data=False; for a non-SAI scenario there is no bridge —
+        # the scenario is returned unchanged (regression: no behavior change).
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="pr",
+            ensemble_member="003",
+            scenario="SSP245",
+            predict_period_start=2015,
+            predict_period_end=2099,
+        )
+        pipe = BCSDPipeline(cfg, pipeline_options)
+        assert cfg.variable_config.detrend_data is False and cfg.is_sai_scenario is False
+
+        model_scenario = MagicMock(name="model_scenario")
+        with patch("srm.pipeline.stitch_historical_scenario") as mock_stitch:
+            out, trend = pipe._detrend_scenario(MagicMock(), model_scenario, None)
+
+        mock_stitch.assert_not_called()
+        assert out is model_scenario
+        assert trend is None
+
+
+def _spatial_daily_da(start: str, end: str, value: float = 1.0) -> xr.DataArray:
+    """3D (time, lat, lon) daily series on a tiny grid."""
+    times = pd.date_range(start, end, freq="D")
+    return xr.DataArray(
+        np.full((len(times), 2, 2), value),
+        dims=["time", "lat", "lon"],
+        coords={"time": times, "lat": [0.0, 1.0], "lon": [10.0, 11.0]},
+        name="tas",
+    )
+
+
+class TestScenarioHistoricalSlice:
+    """``_load_scenario_data`` must slice model_hist to the training period (#518).
+
+    It previously sliced through ``predict_period_start - 1``, which only coincides with
+    ``train_period_end`` when the prediction period begins the year after training ends.
+    Every other case silently widened the bias-correction reference pool beyond the
+    configured training window.
+    """
+
+    @staticmethod
+    def _load(pipeline, hist_end: str = "2015-01-16"):
+        member = pipeline.config.ensemble_member
+        obs = _spatial_daily_da("1978-01-01", "2014-12-31").to_dataset(name="tas")
+        with (
+            patch.object(
+                BCSDPipeline,
+                "_open_from_icechunk",
+                return_value=obs,
+            ),
+            patch(
+                "srm.pipeline.get_obs", return_value=_spatial_daily_da("1978-01-01", "2014-12-31")
+            ),
+            patch(
+                "srm.pipeline.get_historical_experiment",
+                return_value=_spatial_daily_da("1978-01-01", hist_end),
+            ),
+            patch(
+                "srm.pipeline.get_experiment",
+                return_value=_spatial_daily_da("2015-01-01", "2060-12-31").expand_dims(
+                    ensemble_member=[member]
+                ),
+            ),
+            patch.object(
+                BCSDPipeline,
+                "_load_ssp245_bridge",
+                return_value=_spatial_daily_da("2015-01-01", "2060-12-31"),
+            ),
+            patch.object(
+                pipeline.cache,
+                "check_dependencies",
+                return_value={"obs_regridded": (True, MagicMock())},
+            ),
+        ):
+            return pipeline._load_scenario_data()
+
+    def test_sai_scenario_stops_at_train_period_end(self, pipeline_options):
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="001",
+            scenario="G6-1.5K",
+            train_period_end=2014,
+            predict_period_start=2035,
+            predict_period_end=2060,
+        )
+        _, _, model_hist, _, _ = self._load(BCSDPipeline(config, pipeline_options))
+
+        assert int(model_hist["time"].dt.year.max()) == 2014
+        # The fifteen all-NaN days after 2015-01-01 must not be reachable at all.
+        assert model_hist["time"].max() < np.datetime64("2015-01-01")
+
+    def test_training_window_shorter_than_scenario_start_is_respected(self, pipeline_options):
+        # configs/qa/obs-comparison/* pair train_period_end 2008 with a 2015 scenario start;
+        # the old slice leaked six extra years into the reference pool.
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
+            scenario="SSP245",
+            train_period_end=2008,
+            predict_period_start=2015,
+            predict_period_end=2060,
+        )
+        _, _, model_hist, _, _ = self._load(BCSDPipeline(config, pipeline_options))
+
+        assert int(model_hist["time"].dt.year.max()) == 2008
+
+    def test_matches_the_historical_stage_loader(self, pipeline_options):
+        """_load_gcm_obs already slices correctly; the two loaders must agree."""
+        config = BCSDConfig(
+            gcm="CESM2-WACCM",
+            variable="tas",
+            ensemble_member="001",
+            scenario="G6-1.5K",
+            train_period_end=2014,
+            predict_period_start=2035,
+            predict_period_end=2060,
+        )
+        pipeline = BCSDPipeline(config, pipeline_options)
+        _, _, scenario_hist, _, _ = self._load(pipeline)
+
+        obs = _spatial_daily_da("1978-01-01", "2014-12-31").to_dataset(name="tas")
+        with (
+            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=obs),
+            patch(
+                "srm.pipeline.get_obs",
+                return_value=_spatial_daily_da("1978-01-01", "2014-12-31"),
+            ),
+            patch(
+                "srm.pipeline.get_historical_experiment",
+                return_value=_spatial_daily_da("1978-01-01", "2015-01-16"),
+            ),
+            patch.object(
+                pipeline.cache,
+                "check_dependencies",
+                return_value={"obs_regridded": (True, MagicMock())},
+            ),
+        ):
+            _, _, historical_stage_hist = pipeline._load_gcm_obs()
+
+        np.testing.assert_array_equal(
+            scenario_hist["time"].values, historical_stage_hist["time"].values
+        )

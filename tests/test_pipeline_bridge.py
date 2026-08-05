@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import xarray as xr
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
+from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
+from srm.lineage import ScenarioMember
 from srm.pipeline import BCSDPipeline
 
 
@@ -20,7 +21,9 @@ def _make_config(**overrides) -> BCSDConfig:
         predict_period_start=2015,
         predict_period_end=2100,
         subset_bounds=(-35.0, -22.0, 16.0, 33.0),
-        mapping_type="nonparametric_hybrid",
+        variable_config=VariableConfig.for_variable("tas").model_copy(
+            update={"debias_approach": "nonparametric_hybrid"}
+        ),
     )
     defaults.update(overrides)
     return BCSDConfig(**defaults)
@@ -229,6 +232,161 @@ def test_bridge_empty_esgf_gap_returns_primary(tmp_path):
         result = pipeline._load_ssp245_bridge()
 
     assert int(result.time.dt.year.min()) == 2020
+
+
+# ---------------------------------------------------------------------------
+# SAI parent segment (G6-1.5K-END termination run)
+# ---------------------------------------------------------------------------
+
+
+def _g6_end_config() -> BCSDConfig:
+    return _make_config(
+        gcm="CESM2-WACCM",
+        ensemble_member="002",
+        scenario="G6-1.5K-END",
+        predict_period_start=2085,
+        predict_period_end=2100,
+    )
+
+
+def _experiment_by_scenario(ssp245: xr.DataArray, g6: xr.DataArray):
+    """Dispatch a patched get_experiment on scenario, positional or keyword."""
+
+    def _side_effect(*args, **kwargs):
+        scenario = kwargs.get("scenario", args[1] if len(args) > 1 else None)
+        return ssp245 if scenario == "SSP245" else g6
+
+    return _side_effect
+
+
+def test_bridge_appends_sai_parent_for_termination_run(tmp_path):
+    """G6-1.5K-END starts in 2085, so the bridge must cover 2015-2084.
+
+    SSP245 alone would supply those years from the no-SAI run; the parent G6-1.5K
+    segment has to take over from 2035.
+    """
+    pipeline = BCSDPipeline(_g6_end_config(), _make_options(tmp_path))
+    assert pipeline._sai_parent == ScenarioMember(scenario="G6-1.5K", member="002")
+
+    ssp245_da = _make_annual_ds(2015, 2099, "002")["tas"]
+    g6_da = _make_annual_ds(2035, 2084, "002")["tas"]
+
+    with patch(
+        "srm.pipeline.get_experiment", side_effect=_experiment_by_scenario(ssp245_da, g6_da)
+    ):
+        result = pipeline._load_ssp245_bridge()
+
+    years = sorted(int(y) for y in np.unique(result.time.dt.year.values))
+    assert years[0] == 2015, "bridge must start where historical ends"
+    assert years[-1] == 2084, "bridge must stop where the termination run begins"
+    assert len(years) == len(set(years)), "no duplicate years"
+    gaps = [(y1, y2) for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+    assert gaps == [], f"unexpected gaps: {gaps}"
+
+    assert result.attrs["bridge_sai_parent_scenario"] == "G6-1.5K"
+    assert result.attrs["bridge_sai_parent_member"] == "002"
+    assert result.attrs["bridge_sai_parent_years"] == "2035-2084"
+
+
+def test_bridge_sai_parent_takes_precedence_over_ssp245(tmp_path):
+    """Where the two overlap (2035-2084), the SAI parent wins.
+
+    SSP245 002 runs to 2099, so without the truncation the no-SAI run would cover
+    years the model actually spent under SAI. That failure is silent for the standard
+    variables, since the stitch stays continuous either way.
+    """
+    pipeline = BCSDPipeline(_g6_end_config(), _make_options(tmp_path))
+
+    ssp245_da = _make_annual_ds(2015, 2099, "002")["tas"] + 1.0
+    g6_da = _make_annual_ds(2035, 2084, "002")["tas"]  # zeros
+
+    with patch(
+        "srm.pipeline.get_experiment", side_effect=_experiment_by_scenario(ssp245_da, g6_da)
+    ):
+        result = pipeline._load_ssp245_bridge()
+
+    pre_2035 = result.sel(time=result["time.year"] < 2035)
+    post_2035 = result.sel(time=result["time.year"] >= 2035)
+    assert float(pre_2035.mean()) == 1.0, "2015-2034 must come from SSP245"
+    assert float(post_2035.mean()) == 0.0, "2035-2084 must come from the parent SAI run"
+
+
+def test_bridge_sai_parent_tmax_uses_truncated_ssp245_without_gap(tmp_path):
+    """tmx bridges through SSP245 007, which stops at 2069.
+
+    The parent G6 segment starts in 2035 and covers the rest, so the 2070-2084
+    hole that an SSP245-only bridge would leave never appears. Unlike the standard
+    variables, this case fails loudly rather than silently when it regresses.
+    """
+    config = _make_config(
+        gcm="CESM2-WACCM",
+        variable="tasmax",
+        ensemble_member="002",
+        scenario="G6-1.5K-END",
+        predict_period_start=2085,
+        predict_period_end=2100,
+    )
+    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+    assert pipeline._ssp245_member == "007"
+
+    ssp245_da = _make_annual_ds(2015, 2069, "007", var="tasmax")["tasmax"]
+    g6_da = _make_annual_ds(2035, 2084, "002", var="tasmax")["tasmax"]
+
+    with patch(
+        "srm.pipeline.get_experiment", side_effect=_experiment_by_scenario(ssp245_da, g6_da)
+    ):
+        result = pipeline._load_ssp245_bridge()
+
+    years = sorted(int(y) for y in np.unique(result.time.dt.year.values))
+    gaps = [(y1, y2) for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+    assert gaps == [], f"unexpected gaps: {gaps}"
+    assert years[-1] == 2084
+
+
+def test_bridge_unchanged_when_no_sai_parent(tmp_path):
+    """Plain G6-1.5K has no SAI parent, so the bridge stays SSP245-only."""
+    config = _make_config(gcm="CESM2-WACCM", ensemble_member="002", scenario="G6-1.5K")
+    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+    assert pipeline._sai_parent is None
+
+    ssp245_da = _make_annual_ds(2015, 2099, "002")["tas"]
+    g6_da = _make_annual_ds(2035, 2084, "002")["tas"]
+
+    with patch(
+        "srm.pipeline.get_experiment", side_effect=_experiment_by_scenario(ssp245_da, g6_da)
+    ) as mock_get:
+        result = pipeline._load_ssp245_bridge()
+
+    scenarios = [
+        c.kwargs.get("scenario", c.args[1] if len(c.args) > 1 else None)
+        for c in mock_get.call_args_list
+    ]
+    assert scenarios == ["SSP245"], "the G6 store must not be opened"
+    assert int(result.time.dt.year.max()) == 2099
+    assert "bridge_sai_parent_member" not in result.attrs
+
+
+def test_termination_stitch_is_continuous_through_2100():
+    """End to end shape: historical + bridge + termination run leaves no year gap."""
+    from srm.pipeline import stitch_historical_scenario
+
+    model_hist = _make_da_with_member(1950, 2014, "r2i1p1f1")
+    bridge = _make_da_with_member(2015, 2084, "002")
+    model_scenario = _make_da_with_member(2085, 2100, "002")
+
+    result = stitch_historical_scenario(
+        model_hist=model_hist,
+        model_scenario=model_scenario,
+        train_period_end=2014,
+        predict_period_start=2085,
+        ssp_timeseries=bridge,
+    )
+
+    years = sorted(int(y) for y in np.unique(result["time.year"].values))
+    assert years[0] == 1950
+    assert years[-1] == 2100
+    gaps = [(y1, y2) for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+    assert gaps == [], f"unexpected gaps: {gaps}"
 
 
 def _make_da_with_member(start_year: int, end_year: int, member: str) -> xr.DataArray:
