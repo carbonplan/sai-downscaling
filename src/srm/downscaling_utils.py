@@ -18,7 +18,7 @@ from xarray_regrid.utils import format_for_regrid
 from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
 from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
-from srm.qa_checks import assert_global_grid_fully_covered, assert_no_nans
+from srm.qa_checks import assert_no_nans
 from srm.utils import get_variable
 
 _dt_cache: dict[str, xr.DataTree] = {}
@@ -425,6 +425,70 @@ def _fine_target(da_fine_grid: xr.DataArray) -> xr.Dataset:
     return xr.Dataset(coords={"lat": da_fine_grid["lat"], "lon": da_fine_grid["lon"]})
 
 
+# Both span tests below infer their tolerance from the median spacing of the coordinate
+# handed to them. Below a handful of cells on an axis that spacing stops being a
+# meaningful resolution estimate: two points at -45 and 45 infer a 90 degree step, and a
+# one-step tolerance then admits that mid-latitude box as pole-to-pole. Real GCM axes
+# carry 144 points or more and QA subsets a few dozen, so this floor only ever rejects
+# degenerate input.
+_MIN_SPAN_TEST_POINTS = 4
+
+
+def _lon_spans_globe(lon_vals: np.ndarray) -> bool:
+    """Whether an ascending longitude coordinate wraps the whole planet.
+
+    A global grid covers the whole planet minus the gap between its last cell center
+    and the wrap-around back to the first (~one grid step, dlon), so its span
+    (last - first) is roughly 360 - dlon. A regional grid spans much less. The
+    1.5 * dlon just leaves room for floating-point / uneven-spacing wobble; it is not
+    tied to any particular resolution. Axes with fewer than
+    ``_MIN_SPAN_TEST_POINTS`` cells are rejected outright, since dlon is not
+    trustworthy there.
+    """
+    if lon_vals.size < _MIN_SPAN_TEST_POINTS:
+        return False
+    dlon = np.median(np.diff(lon_vals))
+    return bool((lon_vals[-1] - lon_vals[0]) >= 360.0 - 1.5 * dlon)
+
+
+def _lat_spans_poles(lat_vals: np.ndarray) -> bool:
+    """Whether a latitude coordinate reaches both poles.
+
+    Cell-center grids stop half a step short of +/-90: UKESM ends at +/-89.375 on a 1.25 deg
+    grid, MIROC-ES2H likewise. "Reaches the pole" therefore means within one grid step, not
+    exactly 90. CESM2-WACCM, which does land on +/-90, also satisfies this. Axes with fewer
+    than ``_MIN_SPAN_TEST_POINTS`` cells are rejected outright, since dlat is not
+    trustworthy there.
+    """
+    if lat_vals.size < _MIN_SPAN_TEST_POINTS:
+        return False
+    dlat = float(np.abs(np.median(np.diff(np.sort(lat_vals)))))
+    return bool(lat_vals.min() <= -90.0 + dlat and lat_vals.max() >= 90.0 - dlat)
+
+
+def is_global_grid(da: xr.DataArray) -> bool:
+    """Whether a grid covers the whole planet in both latitude and longitude.
+
+    Decided from the coordinate extent alone, deliberately independent of any interpolation.
+    A global run owes a NaN-free fine field, so its NaN gates run unmasked; a regional subset
+    has a legitimate out-of-domain frame and keeps :func:`coarse_domain_mask`. Deriving that
+    distinction from the interpolation domain instead would make the gate unfirable, which is
+    the defect this replaces (issues #553, #554).
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Array carrying ``lat`` and ``lon`` coordinates.
+
+    Returns
+    -------
+    bool
+        True when the longitude coordinate wraps the planet and the latitude coordinate
+        reaches within one grid step of both poles.
+    """
+    return _lon_spans_globe(np.sort(da["lon"].values)) and _lat_spans_poles(da["lat"].values)
+
+
 def coarse_domain_mask(
     da_coarse_to_regrid: xr.DataArray, da_fine_grid: xr.DataArray
 ) -> xr.DataArray:
@@ -445,12 +509,13 @@ def coarse_domain_mask(
 
     Notes
     -----
+    For regional subsets, whose frame of fine cells outside the outermost coarse centers
+    interpolates to NaN by design. Since issue #554 any global grid comes out all-True, so
+    this carries no information there; global runs are gated unmasked via
+    :func:`is_global_grid` instead, and must not be masked with this.
+
     Derived by pushing a template of ones through :func:`interpolate_coarse_to_fine_grid`,
-    so it is exactly ``notnull()`` of the call the real data takes and cannot drift from it
-    — and is therefore not an independent check on the regridder;
-    :func:`srm.qa_checks.assert_global_grid_fully_covered` is (issue #554). Global grids
-    come out all-True; regional runs exclude the frame of fine cells outside the outermost
-    coarse centers, which interpolate to NaN by design.
+    so it is exactly ``notnull()`` of the call the real data takes and cannot drift from it.
     """
     template = xr.ones_like(
         da_coarse_to_regrid.isel(
@@ -669,11 +734,13 @@ def downscale_from_coarse(
     residuals_fine = interpolate_coarse_to_fine_grid(
         da_coarse_to_regrid=residuals, da_fine_grid=obs_fine
     )
-    # Two gates, in this order: coverage asks whether the regridder reached the whole fine
-    # grid, and is independent of the mask, so it still fires when mask and regridder drift
-    # together (issue #554). The NaN gate then asks whether the covered cells hold numbers.
-    fine_domain_mask = coarse_domain_mask(residuals, obs_fine)
-    assert_global_grid_fully_covered(residuals, fine_domain_mask, name="residuals_fine")
+    # A global coarse grid owes a NaN-free fine field, so the check runs unmasked: any NaN
+    # there is a real defect (issues #553, #554), not geometry. Only regional subsets have a
+    # legitimate out-of-domain frame, and only they get the mask; interior NaNs still abort
+    # those runs.
+    fine_domain_mask = (
+        None if is_global_grid(residuals) else coarse_domain_mask(residuals, obs_fine)
+    )
     assert_no_nans(residuals_fine, name="residuals_fine", where=fine_domain_mask)
 
     # Step 5: Return high-res climatology
@@ -704,12 +771,8 @@ def downscale_from_coarse(
             ratio_fine = ratio_coarse.regrid.nearest(target)
             downscaled_corrected = downscaled * ratio_fine
         downscaled = downscaled_corrected
-        # This branch is the one NaN source downstream of the residual gates. Recoarsening
-        # yields NaN for any coarse cell with no valid fine contributors, and the nearest
-        # neighbor interpolation then spreads it across interior cells the earlier checks
-        # already certified clean. Step 5 needs no such check, since it only combines two
-        # arrays this function has already asserted NaN-free.
-        assert_no_nans(downscaled, name="downscaled", where=fine_domain_mask)
+
+    assert_no_nans(downscaled, name="downscaled", where=fine_domain_mask)
 
     return downscaled
 
