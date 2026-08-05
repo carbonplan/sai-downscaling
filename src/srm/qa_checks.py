@@ -150,8 +150,10 @@ def _scan_for_nans(
         # Reducing per step costs about three times what testing the slab does, and a
         # clean slab has nothing to report either way. Production arrays are clean end
         # to end, so skipping the reduction takes a 130 GB fine-grid scan from roughly
-        # 11 s to 5 s with the lat/lon mask residuals_fine uses. n_checked is already
-        # accumulated above, so skipped slabs still count toward the reported percentage.
+        # 11 s to 5 s, measured with the lat/lon mask regional runs pass for residuals_fine.
+        # Global runs now scan that array unmasked (srm.downscaling_utils.is_global_grid),
+        # which does not change the shape of the tradeoff. n_checked is already accumulated
+        # above, so skipped slabs still count toward the reported percentage.
         if not bad.any():
             continue
         per_step = bad.reshape(stop - start, -1).sum(axis=1)

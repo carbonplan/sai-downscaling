@@ -16,12 +16,9 @@ predict_period_end: 2084
 subset_bounds: [-31, -26, 23, 30]
 
 # === Storage ===
-scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
 output_dir: "s3://carbonplan-scratch/srm/output"
 environment: "qa"
-
-# === Bias Correction ===
-debias_approach: "nonparametric_hybrid_2sided"
 
 # === Additional Options ===
 verbose: true

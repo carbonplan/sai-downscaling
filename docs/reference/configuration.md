@@ -41,7 +41,9 @@ The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a pe
 
 007–010 each have a single stray non-NaN day on 2070-01-01 in the raw GCM input, with the rest of 2070 NaN; that one day does not extend their valid extent past 2069.
 
-MIROC-ES2H SSP245 and G6-1.5K members all end 2084, and UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios are the sole start-side asymmetry: `predict_period_start` may precede the scenario's data start (the pipeline bridges the gap with SSP245), so only the end bound is enforced for them. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
+MIROC-ES2H SSP245 and G6-1.5K members all end 2084, and UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios can technically start before their own data, because the pipeline bridges the gap: for `G6-1.5K` that bridge is SSP245, and for the `G6-1.5K-END` termination run, whose store begins in 2085, it is SSP245 through 2034 followed by the parent `G6-1.5K` member 002 for 2035–2084. Those bridge years are another scenario's data, so publishing them under this scenario's label is what issue #448 hit, where pre-2035 `g6_1p5k` output drew `tas` and `tasmax` from different SSP245 realizations and produced `tas > tasmax`.
+
+`config_time_domain` therefore enforces the start bound for every scenario, SAI included, and set `predict_period_start` to the scenario's own data start: 2035 for `G6-1.5K` and 2085 for `G6-1.5K-END`. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
 
 ## BCSDConfig Fields (run identity)
 
@@ -66,9 +68,6 @@ predict_period_end: 2100               # Prediction period end year (required if
 # Spatial subsetting (null for global)
 subset_bounds: [-35, -22, 16, 33]     # [lat_min, lat_max, lon_min, lon_max]
 
-# Bias-correction method
-debias_approach: "nonparametric_hybrid_2sided"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided (default: "nonparametric_hybrid_2sided")
-
 # Variable-specific settings (auto-loaded from per-variable defaults if not specified)
 variable_config:
   detrend_data: true                   # Whether to detrend (auto-set based on variable)
@@ -77,11 +76,65 @@ variable_config:
   running_window_length: 31            # Running-window length in days (default: 31)
   downscaling_method: "additive"       # "additive" for temperature-like vars, "multiplicative" for pr/rsds
   downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
+  debias_approach: "nonparametric_hybrid_2sided"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided
+
+# Per-variable overrides, keyed by variable name (matrix configs only)
+variable_overrides:
+  dtr:
+    debias_approach: "nonparametric"
 ```
 
 **Required:** `gcm`, `variable`, `ensemble_member`. All others have defaults or are conditionally required (e.g. `predict_period_*` when `scenario` is set).
 
-> **Note:** `debias_approach` is our own field and is a superset of ibicus's `mapping_type` argument. ibicus only accepts `parametric` or `nonparametric`; the `nonparametric_hybrid` and `nonparametric_hybrid_2sided` values are hybrid strategies the pipeline composes on top of ibicus. The former name `mapping_type` was renamed to `debias_approach` — a config still using `mapping_type` now raises an error.
+:::{note}
+`debias_approach` is our own field and is a superset of ibicus's `mapping_type` argument. ibicus only accepts `parametric` or `nonparametric`; the `nonparametric_hybrid` and `nonparametric_hybrid_2sided` values are hybrid strategies the pipeline composes on top of ibicus.
+:::
+
+## Per-variable overrides
+
+`debias_approach` and every other `VariableConfig` field resolve per variable through three tiers, last writer wins:
+
+| Tier | Source | Scope |
+| --- | --- | --- |
+| 1 | `VariableConfig.for_variable()` table | Built-in default for that variable |
+| 2 | `--debias-approach` and the other `VariableConfig` CLI flags | Every variable in the run (CLI only) |
+| 3 | `variable_overrides` (YAML) or `--variable-override` (CLI) | One named variable |
+
+There is no run-wide tier in YAML, deliberately. A top-level `debias_approach` would be silently discarded by `extra = "ignore"`, so it is rejected outright. Set `variable_config` directly in a single-variable config, or name each variable under `variable_overrides` in a matrix config.
+
+`variable_overrides` is keyed by variable name, so it is order-independent. A key naming a variable outside the run is an error, not a silent no-op. It is only valid in matrix configs; a single-variable config should use `variable_config` directly.
+
+```bash
+bcsd run-matrix --gcm CESM2-WACCM \
+  --variable tasmax --variable dtr \
+  --member 007 --scenario ssp245 \
+  --predict-period-start 2015 --predict-period-end 2069 \
+  --variable-override dtr:debias_approach=nonparametric
+```
+
+:::{note}
+`dtr` overrides propagate into `tasmin`, which the pipeline reconstructs as `tasmax - dtr`. The `tasmin` output's `srm_downscaling:bias_correction_method` attribute reports only `tasmin`'s own approach.
+:::
+
+## Overrides and the artifact cache
+
+Store paths key on `(gcm, obs_dataset, subset)` and group paths on `(stage, variable, ensemble_member)`. Neither encodes `VariableConfig`, so two runs that differ only in a `variable_overrides` entry resolve to exactly the same location on the same branch.
+
+The pipeline detects this rather than preventing it. On a cache hit, it compares the artifact's `srm_downscaling:config_json` provenance attribute against the current run's `variable_config` and raises `CacheConfigMismatchError` when they differ, naming both values. Without the check, the second run would report a hit, skip the stage, and feed artifacts built under different bias-correction settings to every downstream stage.
+
+To run two configurations side by side, give each its own branch:
+
+```bash
+BCSD_BRANCH=v0.13.0-dtr-nonparam bcsd run-matrix ... --variable-override dtr:debias_approach=nonparametric
+```
+
+| Case | Behavior |
+| --- | --- |
+| Stored `variable_config` matches | Normal cache hit |
+| Stored `variable_config` differs | `CacheConfigMismatchError`, naming each differing field |
+| No `config_json` attribute (artifact predates config provenance) | Hit allowed, logged at debug; unverifiable is not the same as mismatched |
+| Regridded observations (`obs/...`) | Never verified, since regridding reads no `VariableConfig` field |
+| Sibling-variable lookup, e.g. `tasmin` reading `dtr` | Never verified, since the sibling's intended config is not knowable from this run |
 
 ## PipelineOptions Fields (operational)
 
