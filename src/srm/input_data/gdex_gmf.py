@@ -78,7 +78,11 @@ OUTPUT_SHARDS: dict[str, int] = {"time": 30, "lat": 720, "lon": 1440}
 _DRY_RUN_STEPS = 365
 # FILL_MAX = 1e-9
 # FILL_MIN = 0.9 * FILL_MAX
-TRAIN_PERIOD = ("1960", "2008")  # matches the BCSD training window
+# Scan window for the dry-pixel patch below. This is the obs-comparison training window
+# (configs/qa/obs-comparison/cesm2-waccm-std.yaml), not the BCSD default of 1978-2014: it
+# ends at 2008 because that is where the GDEX record stops, and starts at 1960 to match the
+# window the ERA5 side of that comparison trains on.
+TRAIN_PERIOD = ("1960", "2008")
 VARIABLE_CONFIG_WINDOW = VariableConfig.model_fields["running_window_length"].default
 
 
@@ -455,8 +459,13 @@ def process(
 ) -> None:
     """Materialize GDEX variables to the unified icechunk store.
 
-    Accepts native GDEX daily names; renames to CMIP6 in output (prcp→pr, dlwrf→rlds, tmin→tasmin, tmax→tasmax).
-    Valid variables: tas, prcp, dlwrf, tmin, tmax.
+    Accepts native GDEX names and renames them to CMIP6 on write: prcp→pr, dlwrf→rlds,
+    dswrf→rsds, pres→ps, shum→huss, tmin→tasmin, tmax→tasmax. tas keeps its name and is
+    the only 3-hourly source, so it is resampled to a daily mean; the rest are read from
+    pre-computed daily files.
+
+    That list is GDEX_VARS, derived from the rename mappings themselves, so the help text
+    and what --variable accepts cannot drift apart without the mappings changing.
     """
     variables = _resolve_variables(variable, all_variables, GDEX_VARS)
     process_gdex(
