@@ -13,6 +13,7 @@ import numpy as np
 import rasterix  # noqa: F401  # side-effect import: registers .proj/.rio accessors
 import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
+from xarray_regrid.utils import format_for_regrid
 
 from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
 from srm.config import SCENARIO_TO_GROUP
@@ -419,6 +420,11 @@ def interpolate_fine_to_coarse_grid(
     return da_coarse.astype(da_fine_to_coarsen.dtype)
 
 
+def _fine_target(da_fine_grid: xr.DataArray) -> xr.Dataset:
+    """Coordinate-only Dataset naming the target grid for the ``.regrid`` accessor."""
+    return xr.Dataset(coords={"lat": da_fine_grid["lat"], "lon": da_fine_grid["lon"]})
+
+
 # Both span tests below infer their tolerance from the median spacing of the coordinate
 # handed to them. Below a handful of cells on an axis that spacing stops being a
 # meaningful resolution estimate: two points at -45 and 45 infer a 90 degree step, and a
@@ -488,11 +494,6 @@ def coarse_domain_mask(
 ) -> xr.DataArray:
     """Boolean fine-grid mask marking cells inside the coarse interpolation domain.
 
-    This mirrors the domain that :func:`interpolate_coarse_to_fine_grid` interpolates
-    over, including its periodic longitude pad. The result is therefore exactly
-    ``~isnan(...)`` of that function's output whenever the coarse input is itself
-    NaN-free.
-
     Parameters
     ----------
     da_coarse_to_regrid : xr.DataArray
@@ -508,34 +509,21 @@ def coarse_domain_mask(
 
     Notes
     -----
-    This comes out all-True only when the coarse grid reaches the poles and the dateline
-    exactly, which is true of CESM2-WACCM and of no other GCM in the catalog. UKESM and
-    MIROC-ES2H store cell centers half a grid step inside the boundary, so a global run on
-    those grids yields a mask that excuses roughly 1% of fine cells. Do not use this to gate
-    a global run: see :func:`is_global_grid` and issues #553 and #554. It is for regional
-    subsets, whose frame of fine cells outside the outermost coarse centers interpolates to
-    NaN by design, as described in the Notes of :func:`interpolate_coarse_to_fine_grid`.
+    For regional subsets, whose frame of fine cells outside the outermost coarse centers
+    interpolates to NaN by design. Since issue #554 any global grid comes out all-True, so
+    this carries no information there; global runs are gated unmasked via
+    :func:`is_global_grid` instead, and must not be masked with this.
+
+    Derived by pushing a template of ones through :func:`interpolate_coarse_to_fine_grid`,
+    so it is exactly ``notnull()`` of the call the real data takes and cannot drift from it.
     """
-    coarse = da_coarse_to_regrid
-    if not coarse.indexes["lon"].is_monotonic_increasing:
-        coarse = coarse.sortby("lon")
-
-    lon_vals = coarse["lon"].values
-    lat_vals = coarse["lat"].values
-    fine_lat = da_fine_grid["lat"].values
-    fine_lon = da_fine_grid["lon"].values
-
-    lat_ok = (fine_lat >= lat_vals.min()) & (fine_lat <= lat_vals.max())
-    # The periodic pad appends the first coarse cell at +360, extending the domain to
-    # a full turn starting from the first coarse longitude.
-    lon_hi = lon_vals[0] + 360.0 if _lon_spans_globe(lon_vals) else lon_vals[-1]
-    lon_ok = (fine_lon >= lon_vals[0]) & (fine_lon <= lon_hi)
-
-    return xr.DataArray(
-        lat_ok[:, np.newaxis] & lon_ok[np.newaxis, :],
-        dims=["lat", "lon"],
-        coords={"lat": da_fine_grid["lat"], "lon": da_fine_grid["lon"]},
+    template = xr.ones_like(
+        da_coarse_to_regrid.isel(
+            {dim: 0 for dim in da_coarse_to_regrid.dims if dim not in ("lat", "lon")},
+            drop=True,
+        )
     )
+    return interpolate_coarse_to_fine_grid(template, da_fine_grid).notnull()
 
 
 def interpolate_coarse_to_fine_grid(
@@ -559,54 +547,21 @@ def interpolate_coarse_to_fine_grid(
 
     Notes
     -----
-    Uses ``slinear`` interpolation. This is preferred over ``linear`` here
-    because ``linear`` can introduce tiny negative artifacts for strictly
-    positive variables.
-
-
-    Fix for issue: https://github.com/carbonplan/srm-downscaling/issues/462
-
-    Global coarse grids (lon end-gap ~ one grid step) get their first cell
-    periodically wrapped to +360 before interpolating, since -180..180 lon has
-    no source point at exactly +180 and fine cells past the last coarse center
-    would otherwise fall outside the interpolation domain and return NaN.
-    Regional (subset) domains have a large end-gap, are detected as such, and
-    are left unpadded so out-of-domain fine cells correctly stay NaN.
-
-    References
-    ----------
-    xarray has no native cyclic-longitude support and padding seems to be the standard
-    workaround:
-    https://discourse.pangeo.io/t/interpolating-2d-data-with-periodic-boundaries-to-points-using-xarray/2702
-    https://github.com/pydata/xarray/issues/623
+    Bilinear. ``xarray-regrid``'s ``format_for_regrid`` pads the poles (zonal mean, ESMF
+    ``Pole="all"``) and both longitude seams; without that, global grids that stop short of
+    +/-90 or whose lon centers straddle -180 leave NaN caps and a NaN seam on the fine grid
+    (issue #554, extending #462). Regional domains are left unpadded, so out-of-domain cells
+    correctly stay NaN. Evidence: ``notebooks/QA_QC/regridding_QA.ipynb``.
     """
-    # Padding math and slinear interp both assume ascending lon. Check, and if not apply sortby
-    if not da_coarse_to_regrid.indexes["lon"].is_monotonic_increasing:
-        da_coarse_to_regrid = da_coarse_to_regrid.sortby("lon")
-
-    lon = da_coarse_to_regrid["lon"]
-    lon_vals = lon.values
-    spans_globe = _lon_spans_globe(lon_vals)
-
-    if spans_globe:
-        # Right-only wrap relies on -180 already being an exact coarse lon point,
-        # which holds for even lon-point-count grids (all current GCMs: CESM2,
-        # MIROC-ES2H, UKESM). An odd-count grid would need a left pad too.
-        # Wrap the first cell to just past the last (+360) so fine points between
-        # the last coarse center and +180 interpolate across the dateline instead
-        # of falling outside the domain and returning NaN.
-        right = da_coarse_to_regrid.isel(lon=[0]).assign_coords(lon=lon.isel(lon=[0]) + 360)
-        da_to_interp = xr.concat([da_coarse_to_regrid, right], dim="lon")
-    else:
-        da_to_interp = da_coarse_to_regrid
-
-    coarse_on_fine_grid = da_to_interp.interp(
-        lon=da_fine_grid["lon"],
-        lat=da_fine_grid["lat"],
-        method="slinear",
+    target = _fine_target(da_fine_grid)
+    # slinear, not linear: the same bilinear interpolant here, but scipy's linear path holds
+    # five output-sized float64 temporaries where slinear writes into one, and this runs
+    # eagerly. The cast back undoes scipy's upcast to float64.
+    return (
+        format_for_regrid(da_coarse_to_regrid, target)
+        .interp(lat=target["lat"], lon=target["lon"], method="slinear")
+        .astype(da_coarse_to_regrid.dtype)
     )
-
-    return coarse_on_fine_grid.astype(da_coarse_to_regrid.dtype)
 
 
 def fft_smooth_3harmonics(data):
@@ -780,10 +735,9 @@ def downscale_from_coarse(
         da_coarse_to_regrid=residuals, da_fine_grid=obs_fine
     )
     # A global coarse grid owes a NaN-free fine field, so the check runs unmasked: any NaN
-    # there is a real defect (issues #553, #554), not geometry. Masking with the coarse
-    # domain in that case would reproduce exactly the cells the interpolation leaves NaN,
-    # making the assertion unfirable. Only regional subsets have a legitimate out-of-domain
-    # frame, and only they get the mask; interior NaNs still abort those runs.
+    # there is a real defect (issues #553, #554), not geometry. Only regional subsets have a
+    # legitimate out-of-domain frame, and only they get the mask; interior NaNs still abort
+    # those runs.
     fine_domain_mask = (
         None if is_global_grid(residuals) else coarse_domain_mask(residuals, obs_fine)
     )
@@ -804,17 +758,17 @@ def downscale_from_coarse(
         recoarsened = interpolate_fine_to_coarse_grid(
             downscaled.drop_vars("dayofyear", errors="ignore").unify_chunks(), da
         )
+        # Routed through .regrid.nearest rather than a bare .interp so the correction
+        # inherits the same pole and seam padding as the residual interpolation above;
+        # otherwise it reintroduces exactly the NaN frame this function just cleared.
+        target = _fine_target(downscaled)
         if method == "additive":
             correction_coarse = da - recoarsened
-            correction_fine = correction_coarse.interp(
-                lat=downscaled.lat, lon=downscaled.lon, method="nearest"
-            )
+            correction_fine = correction_coarse.regrid.nearest(target)
             downscaled_corrected = downscaled + correction_fine
         elif method == "multiplicative":
             ratio_coarse = da / recoarsened.where(recoarsened != 0, 1.0)
-            ratio_fine = ratio_coarse.interp(
-                lat=downscaled.lat, lon=downscaled.lon, method="nearest"
-            )
+            ratio_fine = ratio_coarse.regrid.nearest(target)
             downscaled_corrected = downscaled * ratio_fine
         downscaled = downscaled_corrected
 
