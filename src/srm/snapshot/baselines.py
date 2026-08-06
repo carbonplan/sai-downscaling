@@ -1,4 +1,4 @@
-"""Tracked pointer to the canonical global snapshot baseline.
+"""Tracked pointer to the canonical global and regional snapshot baseline.
 
 ``CESM2_WACCM_GLOBAL`` records the icechunk store and branch holding the approved
 global run. The comparison notebook and :func:`srm.snapshot.runs.compare_runs` read
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Baseline:
-    """A global snapshot store and the icechunk branch to read it on.
+    """A snapshot store and the icechunk branch to read it on.
 
     Parameters
     ----------
