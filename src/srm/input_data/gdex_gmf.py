@@ -332,9 +332,9 @@ def _any_within_window(mask: xr.DataArray, window: int = VARIABLE_CONFIG_WINDOW)
 
 def always_dry_doy_windows(pr: xr.DataArray, window: int = VARIABLE_CONFIG_WINDOW) -> xr.DataArray:
     """``(dayofyear, lat, lon)`` mask of windows with no rain on any day, in any year."""
+    # GDEX-GMF is a global w/o ocean mask
     doy_max = pr.groupby("time.dayofyear").max()
-    observed = doy_max.notnull().any("dayofyear")
-    return ~_any_within_window(doy_max > 0, window) & observed
+    return ~_any_within_window(doy_max > 0, window)
 
 
 def patch_dry_pixels(
@@ -351,17 +351,23 @@ def patch_dry_pixels(
 
     pr = open_pr(OUTPUT_URI)
 
+    cells = pr.sizes["lat"] * pr.sizes["lon"]
+    observed = int(pr.isel(time=0).notnull().sum().compute())
+    if observed != cells:
+        raise ValueError(
+            f"pr has {cells - observed} NaN cells; GDEX-GMF is expected to be global and gap-free"
+        )
+
     always_dry = always_dry_doy_windows(pr.sel(time=slice(*TRAIN_PERIOD))).compute()
 
-    observed = int(pr.isel(time=0).notnull().sum().compute())
     flagged_doy_cells = int(always_dry.sum())
     flagged_cells = int(always_dry.any("dayofyear").sum())
     log.info(
-        "flagged %d doy-cells across %d cells (%.2f%% of %d observed)",
+        "flagged %d doy-cells across %d cells (%.2f%% of %d)",
         flagged_doy_cells,
         flagged_cells,
-        100 * flagged_cells / observed,
-        observed,
+        100 * flagged_cells / cells,
+        cells,
     )
     if flagged_cells == 0:
         raise ValueError("scan flagged nothing! No changes made")
