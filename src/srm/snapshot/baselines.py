@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class GlobalBaseline:
+class Baseline:
     """A global snapshot store and the icechunk branch to read it on.
 
     Parameters
@@ -37,10 +37,18 @@ class GlobalBaseline:
 # ``srm.validation._open_output_datatree`` opens it with ``from_env=True``; signed
 # requests from another account are accepted, so no anonymous-access special case is
 # needed here.
-CESM2_WACCM_GLOBAL = GlobalBaseline(
+CESM2_WACCM_GLOBAL = Baseline(
     uri=(
         "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling"
         "/output/production/CESM2-WACCM-ERA5-global.icechunk"
     ),
     branch="v0.12.0",
+)
+
+CESM2_WACCM_SOUTH_AFRICA = Baseline(
+    uri=(
+        "s3://carbonplan-scratch/srm"
+        "/output/qa/CESM2-WACCM-ERA5-lat-38.0to-19.0_lon13.0to36.0.icechunk"
+    ),
+    branch="regional-rerun-v0.12.0",
 )
