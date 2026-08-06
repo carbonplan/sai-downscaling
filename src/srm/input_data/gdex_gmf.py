@@ -343,8 +343,7 @@ def patch_dry_pixels(
     """Fill chronically dry precipitation windows onto a non-main icechunk branch.
 
     Scans the training window for day-of-year windows that never see rain, then replaces the
-    exact zeros on those days with ``FILL_CONST``. The whole record is rewritten, not just the
-    training years, so the fill stays consistent across the store.
+    exact zeros on those days with ``FILL_CONST``.
     """
     if branch == "main":
         raise ValueError("refusing to patch main; use a dedicated branch, then merge")
@@ -358,7 +357,8 @@ def patch_dry_pixels(
             f"pr has {cells - observed} NaN cells; GDEX-GMF is expected to be global and gap-free"
         )
 
-    always_dry = always_dry_doy_windows(pr.sel(time=slice(*TRAIN_PERIOD))).compute()
+    pr_train = pr.sel(time=slice(*TRAIN_PERIOD))
+    always_dry = always_dry_doy_windows(pr_train).compute()
 
     flagged_doy_cells = int(always_dry.sum())
     flagged_cells = int(always_dry.any("dayofyear").sum())
@@ -376,7 +376,7 @@ def patch_dry_pixels(
         dayofyear=np.arange(1, 367), fill_value=False
     )
 
-    doy = pr["time"].dt.dayofyear
+    doy = pr_train["time"].dt.dayofyear
     fill_days = (
         fill_doys.chunk({"dayofyear": -1})
         .sel(dayofyear=doy)
@@ -384,8 +384,12 @@ def patch_dry_pixels(
         .chunk({"time": OUTPUT_SHARDS["time"]})
     )
 
+    bad = int((fill_days & ((pr_train != 0) | pr_train.isnull())).sum().compute())
+    if bad:
+        raise ValueError(f"{bad} flagged day-cells are NaN or non-zero; refusing to fill")
+
     FILL_CONST = 1e-6
-    patched = xr.where(fill_days & (pr == 0), FILL_CONST, pr).astype(pr.dtype).rename("pr")
+    patched = xr.where(fill_days, FILL_CONST, pr_train).astype(pr.dtype).rename("pr")
     patched.attrs = pr.attrs
 
     log.info("Done: %s", patched)
