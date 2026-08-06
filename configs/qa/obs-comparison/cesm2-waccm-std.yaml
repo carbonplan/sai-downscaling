@@ -10,6 +10,7 @@
 # scales that product, so keep the list short enough for the runs to stay affordable.
 
 gcm: "CESM2-WACCM"
+ # tasmax and tasmin aren't available in the nex-gddp dataset
 variables: ["tas", "pr", "rsds"]
 
 ensemble_members: ["003"]

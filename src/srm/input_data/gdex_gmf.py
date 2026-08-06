@@ -380,15 +380,6 @@ def patch_dry_pixels(
 
     FILL_CONST = 1e-6
     patched = xr.where(fill_days & (pr == 0), FILL_CONST, pr).astype(pr.dtype).rename("pr")
-
-    # Jittered alternative, drawn from a narrow band so the filled window has non-zero variance.
-    # def _draw(block, block_id=None):
-    #     rng = np.random.default_rng((0, *block_id))
-    #     return rng.uniform(FILL_MIN, FILL_MAX, size=block.shape).astype(block.dtype)
-
-    # fill = pr.copy(data=pr.data.map_blocks(_draw, dtype=pr.dtype))
-    # patched = xr.where(fill_days & (pr == 0), fill, pr).astype(pr.dtype).rename("pr")
-
     patched.attrs = pr.attrs
 
     log.info("Done: %s", patched)
