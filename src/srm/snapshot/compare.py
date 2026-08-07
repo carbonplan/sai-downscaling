@@ -21,7 +21,11 @@ from dataclasses import dataclass, field
 
 import xarray as xr
 
-from srm.snapshot.tolerances import Tolerance, tolerance_for
+from srm.snapshot.tolerances import Tolerance
+
+#: Verdict for a leaf with no caller-supplied tolerance. Exact equality is the strictest
+#: setting, so falling back to it can only tighten a comparison, never loosen one.
+EXACT = Tolerance(rtol=0.0, atol=0.0)
 
 
 @dataclass(frozen=True)
@@ -41,12 +45,14 @@ class LeafDiff:
     frac_over_tol : float
         Fraction of cells exceeding tolerance (a shared NaN in both arrays is
         never a mismatch; with the default zero tolerance this is the fraction
-        not exactly equal to the snapshot).
+        not exactly equal to the snapshot). Descriptive only, for ranking and
+        plotting: ``within_tol`` is the verdict, and the two can disagree where
+        the snapshot holds ``inf``.
     nan_mismatch_count : int
         Count of cells where candidate and snapshot disagree on NaN-ness.
     shape_mismatch : bool
-        True if candidate and snapshot have different shapes, or their
-        coordinates do not align exactly.
+        True if candidate and snapshot have different dimension names or shapes,
+        or their coordinates do not align exactly.
     within_tol : bool
         True only if no cell is over tolerance, no NaN mismatch, no shape
         mismatch.
@@ -80,11 +86,13 @@ def _compare_dataarray(
     element-wise comparison down to the scalar summary statistics carried by
     :class:`LeafDiff`, so callers get a compact verdict instead of a whole diff array.
 
-    If the two arrays have different shapes, or their coordinates do not align
-    exactly, they cannot be compared cell-by-cell, so the function short-circuits:
-    it returns a :class:`LeafDiff` with ``shape_mismatch=True``, ``within_tol=False``,
-    and NaN/sentinel metrics rather than raising. Otherwise every metric is
-    computed and ``within_tol`` reflects the real element-wise verdict.
+    If the two arrays have different dimension names or shapes, or their coordinates
+    do not align exactly, they cannot be compared cell-by-cell, so the function
+    short-circuits: it returns a :class:`LeafDiff` with ``shape_mismatch=True``,
+    ``within_tol=False``, and NaN/sentinel metrics rather than raising. Otherwise
+    every metric is computed and ``within_tol`` comes from
+    :func:`xarray.testing.assert_equal` (exact mode) or
+    :func:`xarray.testing.assert_allclose` (band mode), not from ``frac_over_tol``.
 
     Parameters
     ----------
@@ -103,10 +111,12 @@ def _compare_dataarray(
     Returns
     -------
     LeafDiff
-        The populated comparison result. ``within_tol`` is authoritative; the
-        other fields (``max_abs_diff``, ``rmse``, ``frac_over_tol``,
-        ``nan_mismatch_count``) quantify *how far* off the arrays are when they
-        disagree.
+        The populated comparison result. ``within_tol`` is authoritative and is
+        taken from the xarray assertion; the other fields (``max_abs_diff``,
+        ``rmse``, ``frac_over_tol``, ``nan_mismatch_count``) quantify *how far*
+        off the arrays are when they disagree. ``frac_over_tol`` can read 0.0 on a
+        leaf the assertion rejects (an ``inf`` cell has no finite difference to
+        exceed a tolerance), so rank on it but never gate on it.
 
     Notes
     -----
@@ -116,7 +126,11 @@ def _compare_dataarray(
     ``skipna=True``, and disagreement on NaN-ness is tracked separately through
     ``nan_mismatch_count``.
     """
-    if candidate.shape != snapshot.shape:
+    # Dimension names have to match before any arithmetic happens. Subtracting a
+    # (y, x) array from a (lat, lon) array of the same shape does not raise, it
+    # broadcasts to the outer product: O(N^2) on a real leaf, which exhausts memory
+    # long before any verdict is reached.
+    if candidate.dims != snapshot.dims or candidate.shape != snapshot.shape:
         return LeafDiff(
             path=path,
             variable=variable,
@@ -157,7 +171,23 @@ def _compare_dataarray(
     rmse = float(((diff**2).mean(skipna=True) ** 0.5).compute())
     frac_over_tol = float(over.mean().compute())
     nan_mismatch_count = int(nan_mismatch.sum().compute())
-    within_tol = frac_over_tol == 0.0
+
+    # The verdict comes from xarray's own assertion, not from frac_over_tol. The
+    # hand-rolled `abs_diff > tol` comparison above only ever inspects values, so it
+    # inherits IEEE's rule that every comparison against NaN is False: a snapshot cell
+    # holding +/-inf collapses `tol` to NaN (rtol=0) or inf (rtol>0), `over` is False
+    # there, and a leaf differing by infinity reports as an exact match. The assertions
+    # handle inf correctly (inf == inf passes, inf vs finite fails) and additionally
+    # check index identity. Both are lazy reductions over dask, so this does not
+    # materialize either array.
+    try:
+        if rtol == 0.0 and atol == 0.0:
+            xr.testing.assert_equal(candidate, snapshot)
+        else:
+            xr.testing.assert_allclose(candidate, snapshot, rtol=rtol, atol=atol)
+        within_tol = True
+    except AssertionError:
+        within_tol = False
 
     return LeafDiff(
         path=path,
@@ -207,8 +237,9 @@ def compare(
         right default for a regional candidate against its regional snapshot,
         which should match bit-for-bit. Pass
         :data:`~srm.snapshot.tolerances.TOLERANCES` (or a custom mapping) to
-        restore an ``atol``/``rtol`` band instead; unknown variables then fall
-        back to :func:`~srm.snapshot.tolerances.tolerance_for`'s default.
+        restore an ``atol``/``rtol`` band instead. A variable absent from the
+        mapping is compared exactly, so a partial mapping bands only the
+        variables it names and leaves the rest strict.
 
     Returns
     -------
@@ -238,11 +269,13 @@ def compare(
                     )
                 )
                 continue
-            if tolerances is None:
-                rtol = atol = 0.0
-            else:
-                tol = tolerances.get(str(variable)) or tolerance_for(str(variable))
-                rtol, atol = tol.rtol, tol.atol
+            # A caller-supplied mapping is authoritative. A variable it omits is
+            # compared exactly rather than falling back to the module-level band, so a
+            # partial mapping can only tighten the check, never loosen it. The reverse
+            # made `tolerances={}` the loosest setting available instead of the
+            # strictest, which is the opposite of what the spelling suggests.
+            tol = EXACT if tolerances is None else tolerances.get(str(variable), EXACT)
+            rtol, atol = tol.rtol, tol.atol
             leaves.append(
                 _compare_dataarray(
                     cand_da,

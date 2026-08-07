@@ -205,3 +205,75 @@ def test_partial_coordinate_overlap_not_within_tol():
     b = xr.DataArray(np.full(3, 5.0), dims="x", coords={"x": [1, 2, 3]})
     d = _compare_dataarray(a, b, path="g/v", variable="tas")
     assert d.within_tol is False
+
+
+def _grid(values, dims=("lat", "lon"), coords=None):
+    """2-D array with named dims, for the dimension- and coordinate-identity checks."""
+    arr = np.asarray(values, dtype="float64")
+    coords = coords or {d: np.arange(s, dtype="float64") for d, s in zip(dims, arr.shape)}
+    return xr.DataArray(arr, dims=dims, coords=coords)
+
+
+def test_inf_in_snapshot_is_not_an_exact_match():
+    # tol = atol + rtol * abs(snapshot) is NaN when the snapshot holds inf and rtol is 0,
+    # and every comparison against NaN is False, so `abs_diff > tol` sees no mismatch.
+    # The verdict comes from assert_equal instead, which rejects the leaf.
+    candidate, snapshot = _da([1.0, 5.0, 3.0]), _da([1.0, np.inf, 3.0])
+    d = _compare_dataarray(candidate, snapshot, path="g/v", variable="tas")
+    assert d.within_tol is False
+    # The descriptive metric genuinely cannot see it; this is why it must not be the gate.
+    assert d.frac_over_tol == 0.0
+
+
+def test_opposite_infinities_are_not_an_exact_match():
+    d = _compare_dataarray(_da([-np.inf]), _da([np.inf]), path="g/v", variable="tas")
+    assert d.within_tol is False
+
+
+def test_matching_infinities_are_an_exact_match():
+    a = _da([1.0, np.inf])
+    d = _compare_dataarray(a, a, path="g/v", variable="tas")
+    assert d.within_tol is True
+
+
+def test_inf_in_snapshot_is_caught_under_a_tolerance_band_too():
+    from srm.snapshot.tolerances import TOLERANCES
+
+    candidate = xr.Dataset({"tas": _da([1.0, 5.0])})
+    snapshot = xr.Dataset({"tas": _da([1.0, np.inf])})
+    assert compare(candidate, snapshot, tolerances=TOLERANCES).within_tolerance is False
+
+
+def test_renamed_dims_are_a_shape_mismatch_not_a_match():
+    # Same shape and same values, different dim names. Subtracting these broadcasts to
+    # the outer product rather than raising, so this must short-circuit before any
+    # arithmetic: on a real leaf the diff array would be O(N^2).
+    candidate = _grid([[5.0, 5.0], [5.0, 5.0]], dims=("lat", "lon"))
+    snapshot = _grid([[5.0, 5.0], [5.0, 5.0]], dims=("y", "x"))
+    d = _compare_dataarray(candidate, snapshot, path="g/v", variable="tas")
+    assert d.shape_mismatch is True
+    assert d.within_tol is False
+
+
+def test_shifted_coordinates_at_equal_shape_are_a_shape_mismatch():
+    candidate = _grid([[1.0, 2.0]], dims=("lat", "lon"))
+    snapshot = _grid([[1.0, 2.0]], dims=("lat", "lon"), coords={"lat": [9.0], "lon": [8.0, 9.0]})
+    d = _compare_dataarray(candidate, snapshot, path="g/v", variable="tas")
+    assert d.shape_mismatch is True
+    assert d.within_tol is False
+
+
+def test_partial_tolerances_mapping_leaves_unlisted_variables_exact():
+    # A mapping that names only `pr` must not silently band `tas` with the module-level
+    # table: a partial mapping can tighten the check, never loosen it.
+    from srm.snapshot.tolerances import TOLERANCES
+
+    a = _ds([0.0, 0.0, 0.0], name="tas")
+    b = _ds([0.0, 0.0, 1e-3], name="tas")
+    assert compare(b, a, tolerances={"pr": TOLERANCES["pr"]}).within_tolerance is False
+
+
+def test_empty_tolerances_mapping_is_exact_not_loose():
+    a = _ds([0.0, 0.0, 0.0], name="tas")
+    b = _ds([0.0, 0.0, 1e-3], name="tas")
+    assert compare(b, a, tolerances={}).within_tolerance is False
