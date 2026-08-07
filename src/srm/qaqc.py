@@ -538,31 +538,195 @@ def check_units_and_range(
     return rows
 
 
-def check_ensemble_spread(ds: xr.Dataset, label: str, var: str = "tas", day_index: int = 0) -> dict:
-    """Return an ensemble-spread summary dict for DataFrame/plot display.
+# ---------------------------------------------------------------------------
+# Ensemble-spread check (#316)
+# ---------------------------------------------------------------------------
+#
+# Stitched groups put the gap-filled block at the front of the time axis, so day
+# 0 lands in it. MIROC-ES2H `ssp245` fills 2015-2019 from ESGF through a 10 -> 3
+# member map, making r01/r04/r07/r10 identical there by construction.
+#
+# Mid-record sampling would dodge that silently and never check 2015-2019, which
+# feeds the training period. So split on the gap-fill attrs instead: check the
+# native window for distinctness, the bridge window for the duplication
+# `gap_fill_member_map` predicts.
 
-    Computes the global spatial mean of `var` for each ensemble member on `day_index`.
-    Returns spread_ok=True when all member means are distinct (no exact duplicates).
-    Returns empty members/means lists when the dataset has no ensemble_member dimension
-    or the variable is absent.
+# Stores written before the ETL switched glyphs still carry "→"; matching one
+# glyph alone would find no pairs and report a vacuous pass.
+_GAP_FILL_ARROWS = ("→", "->")
 
-    Keys: source, variable, members, means, spread_ok.
+
+def _parse_gap_fill_member_map(raw: str) -> dict[str, str]:
+    """Parse a ``gap_fill_member_map`` attr into ``{member: source_member}``.
+
+    Parameters
+    ----------
+    raw : str
+        Comma-separated ``member->source`` pairs. Either arrow glyph is accepted.
+
+    Returns
+    -------
+    dict of str to str
+
+    Raises
+    ------
+    ValueError
+        If an entry has no recognized arrow, or nothing parses. Raising keeps an
+        unreadable map from passing as a validated one.
     """
-    if var not in ds or "ensemble_member" not in ds.dims:
-        return {"source": label, "variable": var, "members": [], "means": [], "spread_ok": True}
+    mapping: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        for arrow in _GAP_FILL_ARROWS:
+            if arrow in entry:
+                member, source = entry.split(arrow, 1)
+                mapping[member.strip()] = source.strip()
+                break
+        else:
+            raise ValueError(
+                f"gap_fill_member_map entry {entry!r} has no recognized arrow "
+                f"(expected one of {_GAP_FILL_ARROWS})"
+            )
+    if not mapping:
+        raise ValueError(f"gap_fill_member_map {raw!r} parsed to no member pairs")
+    return mapping
 
-    da = ds[var].isel(time=day_index)
-    means_da = da.mean(dim=["lat", "lon"]).compute()
+
+def _gap_fill_boundary(ds: xr.Dataset, gap_fill_period: str) -> int | None:
+    """Return the first time index after the gap-filled block.
+
+    ``gap_fill_period`` is the ETL's ``"<start>-<end>"`` year range (e.g.
+    ``"2015-2019"``). None when nothing follows the bridge.
+    """
+    end_year = int(gap_fill_period.split("-")[-1])
+    native = np.asarray(ds.time.dt.year.values) > end_year
+    return int(np.argmax(native)) if native.any() else None
+
+
+def _spread_row(
+    ds: xr.Dataset,
+    label: str,
+    var: str,
+    day_index: int,
+    window: str,
+    check: str,
+    expected_map: dict[str, str] | None = None,
+) -> dict:
+    """Compute one ensemble-spread row from the per-member global mean on a day."""
+    means_da = ds[var].isel(time=day_index).mean(dim=["lat", "lon"]).compute()
     members = [str(m) for m in means_da.ensemble_member.values]
     means = [float(v) for v in means_da.values]
-    spread_ok = len(set(means)) == len(means)
+
+    observed = _group_members_by_mean(members, means)
+    if expected_map is None:
+        ok = len(set(means)) == len(means)
+        expected_groups = None
+    else:
+        # Compare the whole partition, not just the duplicate count: that is what
+        # catches a mis-wired map.
+        expected: dict[str, list[str]] = {}
+        for member in members:
+            expected.setdefault(expected_map.get(member, member), []).append(member)
+        expected_groups = _format_groups(expected.values())
+        ok = {frozenset(g) for g in expected.values()} == {frozenset(g) for g in observed.values()}
+
     return {
         "source": label,
         "variable": var,
+        "window": window,
+        "check": check,
+        "day": str(ds.time.values[day_index])[:10],
+        "n_members": len(members),
+        "n_distinct": len(set(means)),
+        "ok": ok,
         "members": members,
         "means": means,
-        "spread_ok": spread_ok,
+        "groups": _format_groups(observed.values()),
+        "expected_groups": expected_groups,
     }
+
+
+def _group_members_by_mean(members: list[str], means: list[float]) -> dict[float, list[str]]:
+    """Group member labels by their exact global-mean value."""
+    groups: dict[float, list[str]] = {}
+    for member, mean in zip(members, means, strict=True):
+        groups.setdefault(mean, []).append(member)
+    return groups
+
+
+def _format_groups(groups) -> str:
+    """Render member groupings as a stable string for table display."""
+    return " | ".join("+".join(sorted(g)) for g in sorted(groups, key=lambda g: sorted(g)[0]))
+
+
+def check_ensemble_spread(
+    ds: xr.Dataset, label: str, var: str = "tas", day_index: int = 0
+) -> list[dict]:
+    """Return ensemble-spread summary rows for DataFrame/plot display (#316).
+
+    Takes the global spatial mean of `var` per ensemble member on one day. Groups
+    carrying the ETL's ``gap_fill_period``/``gap_fill_member_map`` attrs return two
+    rows, ``bridge`` and ``native``; all others return a single ``full`` row.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        Group dataset, with `ensemble_member`, `time`, `lat` and `lon` dims.
+    label : str
+        Row label, e.g. ``"MIROC-ES2H ssp245"``.
+    var : str, default "tas"
+        Variable to take the global mean of.
+    day_index : int, default 0
+        Offset into each window, reported back in the ``day`` column.
+
+    Returns
+    -------
+    list of dict
+        Keys ``source``, ``variable``, ``window``, ``check``, ``day``,
+        ``n_members``, ``n_distinct``, ``ok``, ``members``, ``means``, ``groups``,
+        ``expected_groups``. ``ok`` means all members distinct on ``full``/``native``
+        rows, and duplicates matching ``gap_fill_member_map`` on ``bridge`` rows.
+        A single row with empty members/means when the dataset has no
+        `ensemble_member` dim or lacks `var`.
+    """
+    if var not in ds or "ensemble_member" not in ds.dims:
+        return [
+            {
+                "source": label,
+                "variable": var,
+                "window": "full",
+                "check": "not applicable",
+                "day": None,
+                "n_members": 0,
+                "n_distinct": 0,
+                "ok": True,
+                "members": [],
+                "means": [],
+                "groups": "",
+                "expected_groups": None,
+            }
+        ]
+
+    gap_fill_period = ds.attrs.get("gap_fill_period")
+    boundary = _gap_fill_boundary(ds, gap_fill_period) if gap_fill_period else None
+    if boundary is None:
+        return [_spread_row(ds, label, var, day_index, "full", "all members distinct")]
+
+    expected_map = _parse_gap_fill_member_map(ds.attrs["gap_fill_member_map"])
+    return [
+        _spread_row(
+            ds,
+            label,
+            var,
+            day_index,
+            "bridge",
+            f"duplicates match gap_fill_member_map ({gap_fill_period})",
+            expected_map=expected_map,
+        ),
+        _spread_row(ds, label, var, boundary + day_index, "native", "all members distinct"),
+    ]
 
 
 def disagg_test_calculate_metrics(x, y, time_dim="time"):

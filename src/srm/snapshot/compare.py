@@ -1,9 +1,17 @@
-"""Tolerance-aware comparison of BCSD output datasets and datatrees.
+"""Comparison of BCSD output datasets and datatrees, exact by default.
 
 The single :func:`compare` engine backs the comparison notebook (via
 :func:`srm.snapshot.runs.compare_runs`), so the notebook's verdict comes straight
 from this code. All reductions are chunk-friendly so a few-GB South Africa diff runs
 without loading whole arrays into memory.
+
+A regional candidate and its regional snapshot are produced by the same code on the
+same grid, so they are expected to match bit-for-bit: :func:`compare` defaults to
+exact equality, with no per-variable tolerance band. Pass
+:data:`srm.snapshot.tolerances.TOLERANCES` (or a custom mapping) as ``tolerances`` to
+restore an ``atol``/``rtol`` band instead — e.g. for the notebook's ``global`` mode,
+which diffs against a differently-provenanced baseline where some regrid/dask
+nondeterminism is expected rather than a finding.
 """
 
 from __future__ import annotations
@@ -13,7 +21,11 @@ from dataclasses import dataclass, field
 
 import xarray as xr
 
-from srm.snapshot.tolerances import TOLERANCES, Tolerance, tolerance_for
+from srm.snapshot.tolerances import Tolerance
+
+#: Verdict for a leaf with no caller-supplied tolerance. Exact equality is the strictest
+#: setting, so falling back to it can only tighten a comparison, never loosen one.
+EXACT = Tolerance(rtol=0.0, atol=0.0)
 
 
 @dataclass(frozen=True)
@@ -25,17 +37,22 @@ class LeafDiff:
     path : str
         Group path of the leaf within the datatree (e.g. ``"g6_1p5k/tas"``).
     variable : str
-        Canonical variable name driving tolerance selection.
+        Canonical variable name, for reporting.
     max_abs_diff : float
         Maximum absolute difference over all cells (NaN if shapes mismatch).
     rmse : float
         Root-mean-square difference over all cells.
     frac_over_tol : float
-        Fraction of cells exceeding ``atol + rtol * abs(snapshot)``.
+        Fraction of cells exceeding tolerance (a shared NaN in both arrays is
+        never a mismatch; with the default zero tolerance this is the fraction
+        not exactly equal to the snapshot). Descriptive only, for ranking and
+        plotting: ``within_tol`` is the verdict, and the two can disagree where
+        the snapshot holds ``inf``.
     nan_mismatch_count : int
         Count of cells where candidate and snapshot disagree on NaN-ness.
     shape_mismatch : bool
-        True if candidate and snapshot have different shapes.
+        True if candidate and snapshot have different dimension names or shapes,
+        or their coordinates do not align exactly.
     within_tol : bool
         True only if no cell is over tolerance, no NaN mismatch, no shape
         mismatch.
@@ -57,45 +74,49 @@ def _compare_dataarray(
     *,
     path: str,
     variable: str,
-    rtol: float,
-    atol: float,
+    rtol: float = 0.0,
+    atol: float = 0.0,
 ) -> LeafDiff:
-    """Compare two DataArrays under absolute/relative tolerance.
+    """Compare two DataArrays under an absolute/relative tolerance, exact by default.
 
-    Both arrays are compared element-wise using the same tolerance rule as
-    :func:`xarray.testing.assert_allclose`: a cell passes when its absolute
-    difference is at most ``atol + rtol * abs(snapshot)``. The function reduces
-    the full element-wise comparison down to the scalar summary statistics
-    carried by :class:`LeafDiff`, so callers get a compact verdict instead of a
-    whole diff array.
+    A cell passes when its absolute difference is at most ``atol + rtol * abs(snapshot)``
+    — the same rule as :func:`xarray.testing.assert_allclose`. With the defaults
+    (``rtol=atol=0``) that band collapses to plain equality: a cell passes only when it is
+    numerically identical to the snapshot, or both are NaN. The function reduces the full
+    element-wise comparison down to the scalar summary statistics carried by
+    :class:`LeafDiff`, so callers get a compact verdict instead of a whole diff array.
 
-    If the two arrays have different shapes they cannot be compared cell-by-cell,
-    so the function short-circuits: it returns a :class:`LeafDiff` with
-    ``shape_mismatch=True``, ``within_tol=False``, and NaN/sentinel metrics
-    rather than raising. Otherwise every metric is computed and ``within_tol``
-    reflects the real element-wise verdict.
+    If the two arrays have different dimension names or shapes, or their coordinates
+    do not align exactly, they cannot be compared cell-by-cell, so the function
+    short-circuits: it returns a :class:`LeafDiff` with ``shape_mismatch=True``,
+    ``within_tol=False``, and NaN/sentinel metrics rather than raising. Otherwise
+    every metric is computed and ``within_tol`` comes from
+    :func:`xarray.testing.assert_equal` (exact mode) or
+    :func:`xarray.testing.assert_allclose` (band mode), not from ``frac_over_tol``.
 
     Parameters
     ----------
     candidate, snapshot : xr.DataArray
-        New and baseline arrays. ``snapshot`` is the reference in the relative
-        term, matching :func:`xarray.testing.assert_allclose`.
+        New and baseline arrays. ``snapshot`` is the reference in the relative term.
     path : str
         Leaf group path, for reporting.
     variable : str
         Canonical variable name, for reporting.
     rtol, atol : float
-        Relative and absolute tolerance. ``atol`` sets a fixed floor that
-        dominates near zero, while ``rtol`` scales the allowance with the
-        magnitude of ``snapshot`` and dominates for large values.
+        Relative and absolute tolerance, both zero by default (exact equality).
+        ``atol`` sets a fixed floor that dominates near zero, while ``rtol`` scales
+        the allowance with the magnitude of ``snapshot`` and dominates for large
+        values.
 
     Returns
     -------
     LeafDiff
         The populated comparison result. ``within_tol`` is authoritative and is
-        taken from :func:`xarray.testing.assert_allclose`; the other fields
-        (``max_abs_diff``, ``rmse``, ``frac_over_tol``, ``nan_mismatch_count``)
-        quantify *how far* off the arrays are when they disagree.
+        taken from the xarray assertion; the other fields (``max_abs_diff``,
+        ``rmse``, ``frac_over_tol``, ``nan_mismatch_count``) quantify *how far*
+        off the arrays are when they disagree. ``frac_over_tol`` can read 0.0 on a
+        leaf the assertion rejects (an ``inf`` cell has no finite difference to
+        exceed a tolerance), so rank on it but never gate on it.
 
     Notes
     -----
@@ -105,7 +126,26 @@ def _compare_dataarray(
     ``skipna=True``, and disagreement on NaN-ness is tracked separately through
     ``nan_mismatch_count``.
     """
-    if candidate.shape != snapshot.shape:
+    # Dimension names have to match before any arithmetic happens. Subtracting a
+    # (y, x) array from a (lat, lon) array of the same shape does not raise, it
+    # broadcasts to the outer product: O(N^2) on a real leaf, which exhausts memory
+    # long before any verdict is reached.
+    if candidate.dims != snapshot.dims or candidate.shape != snapshot.shape:
+        return LeafDiff(
+            path=path,
+            variable=variable,
+            max_abs_diff=float("nan"),
+            rmse=float("nan"),
+            frac_over_tol=1.0,
+            nan_mismatch_count=-1,
+            shape_mismatch=True,
+            within_tol=False,
+        )
+    try:
+        # join="exact" requires identical indexes, so this also catches the case
+        # where shapes happen to match but the two arrays sit on different grids.
+        candidate, snapshot = xr.align(candidate, snapshot, join="exact")
+    except ValueError:
         return LeafDiff(
             path=path,
             variable=variable,
@@ -119,23 +159,36 @@ def _compare_dataarray(
 
     diff = candidate - snapshot  # signed error, per element
     abs_diff = abs(diff)  # magnitude of the error, ignoring sign
-    # Per-element allowed difference, using numpy's isclose convention:
-    # a fixed floor (atol) plus a term that scales with the reference value
-    # (rtol * |snapshot|). atol dominates near zero; rtol dominates for large values.
-    tol = atol + rtol * abs(snapshot)
-    over = abs_diff > tol  # elements whose error exceeds their tolerance
     nan_mismatch = candidate.isnull() != snapshot.isnull()  # NaN in one array but not the other
+    # Per-element allowed difference, using numpy's isclose convention: a fixed floor
+    # (atol) plus a term that scales with the reference value (rtol * |snapshot|).
+    # NaN > tol is always False, so a shared NaN never counts as "over"; a one-sided
+    # NaN is instead caught by the explicit nan_mismatch term below.
+    tol = atol + rtol * abs(snapshot)
+    over = (abs_diff > tol) | nan_mismatch
 
     max_abs_diff = float(abs_diff.max(skipna=True).compute())
     rmse = float(((diff**2).mean(skipna=True) ** 0.5).compute())
     frac_over_tol = float(over.mean().compute())
     nan_mismatch_count = int(nan_mismatch.sum().compute())
 
+    # The verdict comes from xarray's own assertion, not from frac_over_tol. The
+    # hand-rolled `abs_diff > tol` comparison above only ever inspects values, so it
+    # inherits IEEE's rule that every comparison against NaN is False: a snapshot cell
+    # holding +/-inf collapses `tol` to NaN (rtol=0) or inf (rtol>0), `over` is False
+    # there, and a leaf differing by infinity reports as an exact match. The assertions
+    # handle inf correctly (inf == inf passes, inf vs finite fails) and additionally
+    # check index identity. Both are lazy reductions over dask, so this does not
+    # materialize either array.
     try:
-        xr.testing.assert_allclose(candidate, snapshot, rtol=rtol, atol=atol)
+        if rtol == 0.0 and atol == 0.0:
+            xr.testing.assert_equal(candidate, snapshot)
+        else:
+            xr.testing.assert_allclose(candidate, snapshot, rtol=rtol, atol=atol)
         within_tol = True
     except AssertionError:
         within_tol = False
+
     return LeafDiff(
         path=path,
         variable=variable,
@@ -180,8 +233,13 @@ def compare(
         New and baseline data. Must be the same type.
     tolerances : dict, optional
         Mapping of variable name to :class:`~srm.snapshot.tolerances.Tolerance`.
-        Defaults to :data:`~srm.snapshot.tolerances.TOLERANCES`; unknown
-        variables fall back to the default tolerance.
+        Defaults to ``None``, which compares every leaf for exact equality — the
+        right default for a regional candidate against its regional snapshot,
+        which should match bit-for-bit. Pass
+        :data:`~srm.snapshot.tolerances.TOLERANCES` (or a custom mapping) to
+        restore an ``atol``/``rtol`` band instead. A variable absent from the
+        mapping is compared exactly, so a partial mapping bands only the
+        variables it names and leaves the rest strict.
 
     Returns
     -------
@@ -191,17 +249,12 @@ def compare(
     if type(candidate) is not type(snapshot):
         raise TypeError(f"candidate ({type(candidate)}) and snapshot ({type(snapshot)}) must match")
 
-    table = TOLERANCES if tolerances is None else tolerances
     snapshot_groups = dict(_iter_leaf_datasets(snapshot))
     leaves: list[LeafDiff] = []
     for path, cand_ds in _iter_leaf_datasets(candidate):
         snap_ds = snapshot_groups.get(path)
         for variable, cand_da in cand_ds.data_vars.items():
             leaf_path = f"{path}/{variable}" if path else str(variable)
-            # Pick this variable's rtol/atol: exact match in the table, else a
-            # sensible per-variable default. Its .rtol/.atol flow into the
-            # atol + rtol * abs(snapshot) tolerance inside _compare_dataarray.
-            tol = table.get(str(variable)) or tolerance_for(str(variable))
             if snap_ds is None or variable not in snap_ds.data_vars:
                 leaves.append(
                     LeafDiff(
@@ -216,14 +269,21 @@ def compare(
                     )
                 )
                 continue
+            # A caller-supplied mapping is authoritative. A variable it omits is
+            # compared exactly rather than falling back to the module-level band, so a
+            # partial mapping can only tighten the check, never loosen it. The reverse
+            # made `tolerances={}` the loosest setting available instead of the
+            # strictest, which is the opposite of what the spelling suggests.
+            tol = EXACT if tolerances is None else tolerances.get(str(variable), EXACT)
+            rtol, atol = tol.rtol, tol.atol
             leaves.append(
                 _compare_dataarray(
                     cand_da,
                     snap_ds[variable],
                     path=leaf_path,
                     variable=str(variable),
-                    rtol=tol.rtol,
-                    atol=tol.atol,
+                    rtol=rtol,
+                    atol=atol,
                 )
             )
     return DiffReport(leaves=leaves)
@@ -235,7 +295,7 @@ class InvariantCheck:
 
     These are checked on the candidate alone (not diffed against the snapshot): a
     per-variable leaf diff compares tasmax and tasmin independently, so a broken
-    reconcile that leaves each field within tolerance yet violates ``tasmax >= tasmin``
+    reconcile that leaves each field matching the snapshot yet violates ``tasmax >= tasmin``
     would pass every leaf. The invariant closes that gap. The check itself lives in
     :mod:`srm.snapshot.runs` (it needs the qaqc checker); this dataclass is just the
     reported shape.
@@ -274,7 +334,7 @@ class DiffReport:
 
     @property
     def within_tolerance(self) -> bool:
-        """True only if every leaf is within tolerance (empty report is False).
+        """True only if every leaf exactly matches the snapshot (empty report is False).
 
         This reflects numeric drift vs the snapshot only. It does *not* fold in the
         physical-invariant checks — use :attr:`passed` for the overall merge verdict.
@@ -291,7 +351,7 @@ class DiffReport:
 
     @property
     def passed(self) -> bool:
-        """Overall merge verdict: within tolerance vs the snapshot *and* invariants hold."""
+        """Overall merge verdict: exact match vs the snapshot *and* invariants hold."""
         return self.within_tolerance and self.invariants_hold
 
     def to_lines(self) -> list[str]:

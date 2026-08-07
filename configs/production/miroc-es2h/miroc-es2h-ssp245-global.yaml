@@ -1,0 +1,24 @@
+# BCSD configuration: MIROC-ES2H / all variables / SSP245 / r01 / global (production)
+
+# === Model and Scenario ===
+gcm: "MIROC-ES2H"
+variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+ensemble_members: ["r01"]
+scenarios: ["SSP245"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2084
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-scratch/srm/cache"
+output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
+
+environment: "production"
+# version intentionally unset — derived from the installed package version at runtime
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true

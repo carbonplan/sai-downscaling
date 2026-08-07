@@ -3,10 +3,20 @@ name: deploy
 on:
     workflow_dispatch:
         inputs:
+            environment:
+                description: "Which config root to run. qa is regional and cheap; production is
+                    global and writes to the published output bucket."
+                required: true
+                default: qa
+                type: choice
+                options:
+                    - qa
+                    - production
             model:
                 description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm), or a single
-                    config file relative to configs/qa/ (e.g. cesm2-waccm/cesm2-waccm-g6-southafrica.yaml).
-                    Leave blank to run all models."
+                    config file relative to the chosen config root (e.g.
+                    cesm2-waccm/cesm2-waccm-g6-southafrica.yaml). Leave blank to run every model
+                    for that environment."
                 required: false
                 default: ""
                 type: string
@@ -26,7 +36,11 @@ on:
             - published
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.model || 'production' }}
+    # The environment is part of the key because qa and production write to separate
+    # store prefixes, so a production dispatch must not cancel a qa run of the same model.
+    # Two dispatches of the same environment and model do collide by design: they would
+    # be two writers on one icechunk branch.
+    group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && format('{0}-{1}', inputs.environment, inputs.model) || 'release' }}
     cancel-in-progress: true
 
 permissions:
@@ -38,7 +52,7 @@ jobs:
         name: QA run (${{ inputs.model || 'all models' }})
         timeout-minutes: 120
         runs-on: ubuntu-latest
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && inputs.environment == 'qa'
         environment:
             name: qa
         env:
@@ -79,31 +93,125 @@ jobs:
                   fi
                   uv run bcsd validate-output --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
 
-    production:
-        name: Production run
-        timeout-minutes: 360
+    snapshot:
+        # Produces the regional baseline the per-PR snapshot check compares against. It has
+        # to run at the release tag, on the same input stores as the production run, so that
+        # the next pull request's candidate differs from it only by that pull request's
+        # commits. Independent of the production job, so a slow global run does not delay it.
+        name: Snapshot baseline run
+        timeout-minutes: 120
         runs-on: ubuntu-latest
         if: github.event_name == 'release'
         environment:
-            name: production
+            name: qa
+        env:
+            TAG: ${{ github.event.release.tag_name }}
         steps:
             - uses: actions/checkout@v7
               with:
                   ref: ${{ github.event.release.tag_name }}
             - uses: ./.github/actions/setup
 
+            - name: Run BCSD pipeline (snapshot baseline)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # No --branch: at a release tag the default branch is the package version, which
+              # is the name baselines.py cites.
+              run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
+
+            - name: Validate output datasets (snapshot baseline)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd validate-output --config-path configs/snapshot/cesm2-waccm/
+
+            - name: Freeze the snapshot baseline under an immutable tag
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # The branch this wrote to stays writable, so a later qa run with a matching
+              # BCSD_BRANCH could overwrite the baseline in place and a comparison would then
+              # diff a candidate against itself. The tag pins the snapshot id.
+              run: uv run bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag "snapshot-$TAG"
+
+            - name: Report the pointer to update
+              run: |
+                  echo "### Snapshot baseline produced" >> "$GITHUB_STEP_SUMMARY"
+                  echo "" >> "$GITHUB_STEP_SUMMARY"
+                  echo "Repoint \`CESM2_WACCM_SOUTH_AFRICA\` in \`src/srm/snapshot/baselines.py\`:" >> "$GITHUB_STEP_SUMMARY"
+                  echo "" >> "$GITHUB_STEP_SUMMARY"
+                  echo '```python' >> "$GITHUB_STEP_SUMMARY"
+                  echo "branch=\"$TAG\",  # frozen as tag snapshot-$TAG" >> "$GITHUB_STEP_SUMMARY"
+                  echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+    production:
+        name: Production run (${{ matrix.model }})
+        timeout-minutes: 360
+        runs-on: ubuntu-latest
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
+            == 'production')
+        environment:
+            name: production
+        strategy:
+            # One job per GCM. Each GCM owns its own icechunk store
+            # ({gcm}-{obs_dataset}-{subset_id}.icechunk), so parallel models never commit
+            # to the same branch and cannot race each other. Splitting any finer, per
+            # config file, would break that: the scenario configs of a single GCM share
+            # one store, and `bcsd run` also deduplicates the obs and historical stages
+            # across every config under the path it is given.
+            #
+            # Each job gets its own 6h AWS session rather than sharing one across models,
+            # which is what a sequential run would exhaust: the CESM2-WACCM run alone
+            # takes ~4h.
+            #
+            # The release list is explicit rather than derived from the directory listing
+            # so that adding a folder under configs/production/ cannot silently start a
+            # global run at the next release. ukesm is deliberately absent: issue #529
+            # leaves a 0.70 K discontinuity at 2015 between our UKESM1.0 historical and
+            # the UKESM1.1 ARISE runs, so it is not fit to publish yet.
+            fail-fast: false
+            matrix:
+                model: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.model != '' && format('["{0}"]',
+                    inputs.model) || '["cesm2-waccm","miroc-es2h"]') }}
+        env:
+            # Mirrors the QA job: a value ending in .yaml is a single config file, anything
+            # else is a subfolder of every config in it.
+            PROD_CONFIG_PATH: ${{ endsWith(matrix.model, '.yaml') && format('configs/production/{0}', matrix.model) || format('configs/production/{0}/', matrix.model) }}
+            FORCE: ${{ inputs.force }}
+            BRANCH: ${{ inputs.branch }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  ref: ${{ github.event.release.tag_name || github.ref }}
+                  # setuptools_scm derives the package version from git tags and the icechunk
+                  # branch defaults to that version, with fallback_version = "999". A shallow
+                  # checkout on the dispatch path would therefore write production output to a
+                  # branch literally named 999.
+                  fetch-depth: 0
+            - uses: ./.github/actions/setup
+
             - name: Validate input datasets (production)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate --config-path configs/production/cesm2-waccm/
+              run: uv run bcsd validate --config-path "$PROD_CONFIG_PATH"
 
             - name: Run BCSD pipeline (production)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
               run: |
-                  uv run bcsd run --config-path configs/production/cesm2-waccm/
+                  EXTRA_ARGS=""
+                  if [[ "$FORCE" == "true" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --force"
+                  fi
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
+                  fi
+                  uv run bcsd run --config-path "$PROD_CONFIG_PATH" $EXTRA_ARGS
 
             - name: Validate output datasets (production)
               env:
                   DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate-output --config-path configs/production/cesm2-waccm/
+              run: |
+                  EXTRA_ARGS=""
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="--branch $BRANCH"
+                  fi
+                  uv run bcsd validate-output --config-path "$PROD_CONFIG_PATH" $EXTRA_ARGS

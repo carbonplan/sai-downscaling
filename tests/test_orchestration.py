@@ -27,6 +27,9 @@ from srm.orchestration import BCSDOrchestrator
 # Fixtures
 # ---------------------------------------------------------------------------
 
+# South Africa QA box, the standard regional extent used by the snapshot configs.
+_SA_BOUNDS = (-38, -19, 13, 36)
+
 
 @pytest.fixture
 def pipeline_options(tmp_path) -> PipelineOptions:
@@ -43,7 +46,11 @@ def orchestrator(pipeline_options) -> BCSDOrchestrator:
 
 
 def _make_config(
-    gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1", scenario="SSP245"
+    gcm="CESM2-WACCM",
+    variable="tas",
+    ensemble_member="r1i1p1f1",
+    scenario="SSP245",
+    subset_bounds=None,
 ) -> BCSDConfig:
     return BCSDConfig(
         gcm=gcm,
@@ -52,6 +59,7 @@ def _make_config(
         scenario=scenario,
         predict_period_start=2015,
         predict_period_end=2100,
+        subset_bounds=subset_bounds,
     )
 
 
@@ -338,6 +346,21 @@ class TestSubmitToCoiled:
 
         assert result == [f"{loc.store_path}::{loc.group}"]
         assert mock_coiled.batch.run.call_count == 1
+
+    @pytest.mark.parametrize("subset_bounds", [None, _SA_BOUNDS], ids=["global", "regional"])
+    def test_every_batch_is_purchased_on_demand(self, orchestrator, subset_bounds):
+        """Regional batches ran on spot briefly, but reclamation failed jobs outright."""
+        config = _make_config(subset_bounds=subset_bounds)
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        mock_coiled = self._make_coiled_mock(["done"])
+
+        with patch.dict("sys.modules", {"coiled": mock_coiled}):
+            orchestrator._submit_to_coiled("prepare_observations", [config])
+
+        assert mock_coiled.batch.run.call_args.kwargs["spot_policy"] == "on-demand"
 
     def test_retries_only_failed_tasks(self, orchestrator, multi_configs):
         """After a partial failure, only the still-missing configs are retried."""
@@ -687,3 +710,61 @@ class TestGetStatus:
         for stage_name, stage_info in status.items():
             with subtests.test(stage=stage_name):
                 assert stage_info["cached"] + len(stage_info["missing"]) == stage_info["total"]
+
+
+# ---------------------------------------------------------------------------
+# VM sizing
+# ---------------------------------------------------------------------------
+
+_STAGES = ("prepare_observations", "fit_historical", "transform_scenario")
+
+
+class TestVmSizing:
+    """Instance type scales with a batch's spatial extent.
+
+    Global batches must keep the original sizing, since they produce published output.
+    Regional batches subset before any heavy compute, so they run on smaller instances.
+    Purchase option does not vary with extent; see ``TestSubmitToCoiled``.
+    """
+
+    def test_global_batch_keeps_original_sizing(self, subtests):
+        configs = [_make_config()]
+        for stage in _STAGES:
+            with subtests.test(stage=stage):
+                assert (
+                    BCSDOrchestrator._vm_types_for(stage, configs)
+                    == (BCSDOrchestrator._STAGE_VM_TYPES[stage])
+                )
+
+    def test_regional_batch_is_smaller_than_global(self, subtests):
+        configs = [_make_config(subset_bounds=_SA_BOUNDS)]
+        for stage in _STAGES:
+            with subtests.test(stage=stage):
+                regional = BCSDOrchestrator._vm_types_for(stage, configs)
+                assert regional == BCSDOrchestrator._REGIONAL_STAGE_VM_TYPES[stage]
+                assert regional != BCSDOrchestrator._STAGE_VM_TYPES[stage]
+
+    def test_mixed_batch_sized_as_global(self, subtests):
+        """One instance type covers the batch, so it must fit the largest task in it."""
+        configs = [_make_config(subset_bounds=_SA_BOUNDS), _make_config()]
+        assert BCSDOrchestrator._is_regional(configs) is False
+        for stage in _STAGES:
+            with subtests.test(stage=stage):
+                assert (
+                    BCSDOrchestrator._vm_types_for(stage, configs)
+                    == (BCSDOrchestrator._STAGE_VM_TYPES[stage])
+                )
+
+    def test_empty_batch_sized_as_global(self):
+        assert BCSDOrchestrator._is_regional([]) is False
+        assert (
+            BCSDOrchestrator._vm_types_for("transform_scenario", [])
+            == (BCSDOrchestrator._STAGE_VM_TYPES["transform_scenario"])
+        )
+
+    def test_unknown_stage_falls_back_to_default(self, subtests):
+        for configs in ([_make_config()], [_make_config(subset_bounds=_SA_BOUNDS)]):
+            with subtests.test(regional=BCSDOrchestrator._is_regional(configs)):
+                assert BCSDOrchestrator._vm_types_for("no_such_stage", configs) == (
+                    BCSDOrchestrator._DEFAULT_VM_TYPE
+                )

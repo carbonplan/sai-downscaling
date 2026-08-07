@@ -1,11 +1,14 @@
 # Deploy the Pipeline
 
-The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. There are two environments:
+The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds three jobs:
 
-| Environment | Purpose | Trigger |
+| Job | Purpose | Trigger |
 |---|---|---|
-| `qa` | Fast regional validation | Manual (`workflow_dispatch`) |
-| `production` | Full global run | Automatic on GitHub release |
+| `qa` | Fast regional validation | Manual (`workflow_dispatch` with `environment: qa`) |
+| `snapshot` | Rebuild the regional snapshot baseline, then freeze it under an icechunk tag | Automatic on GitHub release |
+| `production` | Full global run, one job per GCM | Automatic on GitHub release, or manual (`workflow_dispatch` with `environment: production`) |
+
+`snapshot` and `production` run in parallel, so the six-hour global run does not hold up the baseline the next pull request compares against. `production` is itself a matrix with one job per GCM, so the models run concurrently and each gets its own six-hour AWS session instead of sharing one.
 
 ## Config structure
 
@@ -37,36 +40,70 @@ QA runs execute all configs in `configs/qa/` against a small South Africa spatia
 **To trigger a QA run:**
 
 1. Go to **Actions → deploy → Run workflow**
-2. Optionally enable **Force recompute** to bypass the S3 cache
-3. Optionally provide a **branch** override to pin a specific cache namespace (passed to the pipeline's `--branch` flag)
-4. Click **Run workflow**
+2. Leave **environment** set to `qa`, which is the default
+3. Optionally name a **model** to run one GCM subfolder (e.g. `miroc-es2h`), or a single config file relative to `configs/qa/` (e.g. `cesm2-waccm/cesm2-waccm-g6-southafrica.yaml`). Leave it blank to run every model.
+4. Optionally enable **Force recompute** to bypass the S3 cache
+5. Optionally provide a **branch** override to pin a specific cache namespace (passed to the pipeline's `--branch` flag)
+6. Click **Run workflow**
 
-The job runs two steps in order:
+The job runs three steps in order, against `configs/qa/` or the narrower path implied by **model**:
+
 1. `bcsd validate --config-path configs/qa/` — checks input datasets for the GCMs and scenarios referenced by the configs. Exits with code 1 on any blocking failure before Coiled compute is spent.
 2. `bcsd run --config-path configs/qa/` — runs the full pipeline.
+3. `bcsd validate-output --config-path configs/qa/` — checks the written output datasets.
 
 ## Production runs
 
-Production runs execute all configs in `configs/production/` globally. They trigger automatically when a GitHub release is published.
+Production runs execute the configs under `configs/production/{model}/` globally, as one GitHub Actions job per GCM. Each GCM owns a separate icechunk store keyed on `(gcm, obs_dataset, subset_id)`, so parallel jobs never commit to the same branch and cannot race each other. `fail-fast` is disabled, so one model failing does not cancel the others mid-run.
 
-**To trigger a production run:**
+The matrix is an explicit list in `deploy.yml` rather than a directory listing, so adding a folder under `configs/production/` cannot silently start a global run:
+
+| GCM | In the release matrix | Reason |
+| --- | --- | --- |
+| `cesm2-waccm` | Yes | |
+| `miroc-es2h` | Yes | |
+| `ukesm` | No | Issue #529 leaves a 0.70 K discontinuity at 2015 between the UKESM1.0 historical and the UKESM1.1 ARISE runs |
+
+**To run every model in the matrix:**
 
 1. Merge all intended changes to `main`
 2. Create and publish a GitHub release with a SemVer tag (e.g., `v1.2.3`)
-3. The `production` workflow job fires automatically
+3. The `production` and `snapshot` workflow jobs fire automatically
 
-The job checks out the release tag, installs the package at that tag (so the `branch` in all configs resolves to the release's package version), then runs:
-1. `bcsd validate --config-path configs/production/`
-2. `bcsd run --config-path configs/production/`
+**To run one model without cutting a release:**
+
+1. Go to **Actions → deploy → Run workflow**
+2. Set **environment** to `production`
+3. Set **model** to a GCM subfolder (e.g. `miroc-es2h`), or to a single config file relative to `configs/production/`. Leave it blank to run every model in the matrix.
+4. Set **branch** explicitly. At a release tag the default resolves to the release version, but off any other ref `setuptools_scm` resolves a development version such as `v0.12.0.post28`, which no documentation page or `baselines.py` entry cites.
+5. Click **Run workflow**
+
+Each job checks out the ref, installs the package at it (so the `branch` in all configs resolves to the package version), then runs:
+
+1. `bcsd validate --config-path configs/production/{model}/`
+2. `bcsd run --config-path configs/production/{model}/`
+3. `bcsd validate-output --config-path configs/production/{model}/`
+
+## Snapshot baseline runs
+
+The `snapshot` job runs `configs/snapshot/` at the release tag and produces the regional baseline the per-pull-request check compares against. It runs three steps:
+
+1. `bcsd run --config-path configs/snapshot/cesm2-waccm/` — writes to the branch named for the release's package version.
+2. `bcsd validate-output --config-path configs/snapshot/cesm2-waccm/`
+3. `bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag snapshot-<release tag>` — creates an icechunk tag so the state cannot be overwritten by a later run on the same branch.
+
+Repointing `CESM2_WACCM_SOUTH_AFRICA` in `src/srm/snapshot/baselines.py` at the new release is manual. The job prints the value in its workflow summary. See [How to Compare a Run Against the Snapshot](run-snapshot-tests.md).
 
 ## Adding a new production config
 
-To add a new GCM, variable, member, or scenario to future production runs:
+To add a variable, member, or scenario to a GCM that already runs in production:
 
-1. Edit an existing file under `configs/production/` to add a value to a list (e.g. append to `ensemble_members`), or create a new YAML file for a new GCM.
+1. Edit a file under `configs/production/{model}/` to add a value to a list (e.g. append to `ensemble_members`), or add another YAML file to that folder.
 2. Set `environment: "production"` and omit `branch`.
 3. Omit `subset_bounds` for a global run.
-4. Open a PR — the config will be picked up automatically on the next release.
+4. Open a pull request. The config is picked up on the next release, because each job loads every YAML under its own GCM folder.
+
+To add a **new GCM**, do the same in a new `configs/production/{model}/` folder, then add that folder name to the `strategy.matrix.model` list in `.github/workflows/deploy.yml`. Both steps are required: the matrix is a deliberate allowlist, so a config folder that is not named there is never run.
 
 ## Prerequisites
 
