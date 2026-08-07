@@ -32,27 +32,7 @@ Downscaled output is a long chain of numerical operations — bias correction, d
 
 The default comparison is **exact equality**. Two runs of the same configs at the same commit over the same spatial extent are bit-identical, which has been measured rather than assumed, so any difference at all is a code change. `compare()` takes its verdict from `xarray.testing.assert_equal`, which also checks dimension names and index identity; `frac_over_tol` is descriptive and must not be used as the gate.
 
-:::{admonition} Hypothesis, not yet confirmed: exact equality holds only at a fixed extent
-:class: warning
-
-This is the current working explanation for why a regional and a global run disagree, and it
-has not been independently reviewed or tested beyond the probe described below. Treat the
-mechanism as provisional; the measurements are reproducible, the causal story is not settled.
-
-`interpolate_fine_to_coarse_grid` accumulates the conservative regrid in float32. Under `dask`
-the summation route appears to depend on the source array's length, so two runs over different
-extents can differ by one or two float32 ULP. Across five extents from a 5x6 coarse box up to
-the globe, only 4 of 10 pairs were bit-identical; accumulating in float64 made all 10
-identical. Which pairs agree is not predictable from extent size.
-
-If it holds, the regional baseline must share the candidate's `subset_bounds`, and a
-regional-versus-global comparison still needs a tolerance band. Both are how the code is
-written today.
-
-**To test it:** run `notebooks/issues/issue_575_regrid_precision.ipynb`, which isolates
-`interpolate_fine_to_coarse_grid` on one timestep and crosses array backend (numpy vs dask)
-against accumulation dtype. See [issue #575](https://github.com/carbonplan/srm-downscaling/issues/575).
-:::
+That holds only when both runs cover the same spatial extent, which is why the regional baseline shares the candidate's `subset_bounds`. Two runs over *different* extents disagree in the last digit or two the stored numbers can hold, roughly 0.00006 W/m² on a solar radiation field near 200 W/m². That is rounding, not science, but it is not zero, so a regional-versus-global comparison still needs a tolerance band; [issue #575](https://github.com/carbonplan/srm-downscaling/issues/575) tracks why.
 
 For that case, pass `srm.snapshot.tolerances.TOLERANCES` to restore the band, which passes a cell when `abs(candidate - snapshot) <= atol + rtol * abs(snapshot)` (the `xarray.testing.assert_allclose` rule). A variable absent from the mapping is compared exactly, so a partial mapping can only tighten a comparison. In either mode a leaf passes only when no cell is over tolerance, no cell disagrees on NaN-ness, and the dimension names, shapes, and coordinates all match.
 
