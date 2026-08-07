@@ -1254,16 +1254,20 @@ def release(
             continue
         seen.add(cache._output_store)
         try:
+            # Logs one line per icechunk store it tags: the output store, plus the
+            # scratch store when the two are configured to different paths.
             cache.release(tag)
         except Exception as exc:  # icechunk raises on an existing tag or a missing branch
+            # A partially applied tag is possible here: release() tags output before
+            # scratch, so a failure on the second leaves the first tagged. Exiting
+            # non-zero is what matters, so the release does not report success.
             logger.error(
                 "Could not tag %s@%s as %r: %s", cache._output_store, cache.branch, tag, exc
             )
             raise typer.Exit(1) from exc
         tagged += 1
-        logger.info("✓ Tagged %s@%s as %r", cache._output_store, cache.branch, tag)
 
-    logger.info("✓ Released %d store(s) as %r", tagged, tag)
+    logger.info("✓ Released %d config store(s) as %r on branch %r", tagged, tag, options.branch)
 
 
 @app.command()
