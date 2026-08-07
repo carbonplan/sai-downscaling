@@ -105,28 +105,11 @@ class BCSDOrchestrator:
         table = cls._REGIONAL_STAGE_VM_TYPES if cls._is_regional(configs) else cls._STAGE_VM_TYPES
         return table.get(stage, cls._DEFAULT_VM_TYPE)
 
-    @classmethod
-    def _spot_policy_for(cls, configs: list[BCSDConfig]) -> str:
-        """
-        Select the purchase option, trading interruption risk against cost.
-
-        Regional runs are QA and snapshot work rather than published output, and
-        ``_submit_batch`` already re-submits configs whose artifacts are missing from the
-        cache after a job finishes, so a reclaimed spot instance lands in a path this code
-        handles. Global runs stay on-demand because they produce published output and a
-        reclaimed instance there can cost hours of recompute.
-
-        Parameters
-        ----------
-        configs : list[BCSDConfig]
-            Configurations making up a single batch submission.
-
-        Returns
-        -------
-        str
-            A ``coiled`` purchase option: ``"spot_with_fallback"`` or ``"on-demand"``.
-        """
-        return "spot_with_fallback" if cls._is_regional(configs) else "on-demand"
+    # Every batch runs on-demand regardless of spatial extent. Regional runs were briefly
+    # placed on spot to cut cost, but reclamation was frequent enough that jobs failed
+    # outright rather than being absorbed by the retry loop in `_submit_to_coiled`, and a
+    # regional batch is cheap enough that the savings do not pay for the lost runs.
+    _SPOT_POLICY: str = "on-demand"
 
     def __init__(self, options: PipelineOptions):
         """
@@ -307,9 +290,9 @@ class BCSDOrchestrator:
         JSON-serialized environment variable (CONFIG_JSON).
 
         The batch job consists of N tasks (one per config) running in parallel. Instance
-        type and purchase option come from ``_vm_types_for`` and ``_spot_policy_for``,
-        which size the batch by stage and by whether it is global or spatially subset.
-        Tasks write their outputs to the cache, which are then verified and collected.
+        type comes from ``_vm_types_for``, which sizes the batch by stage and by whether it
+        is global or spatially subset; every batch is purchased on-demand. Tasks write
+        their outputs to the cache, which are then verified and collected.
 
         Parameters
         ----------
@@ -344,9 +327,8 @@ class BCSDOrchestrator:
         # Sized from the full config list rather than `remaining` so a retry batch that
         # happens to be all-regional cannot silently shrink a global run mid-flight.
         vm_type = self._vm_types_for(stage, configs)
-        spot_policy = self._spot_policy_for(configs)
         logger.info(
-            f"→ {stage}: {len(configs)} tasks on {vm_type[0]} ({spot_policy}), "
+            f"→ {stage}: {len(configs)} tasks on {vm_type[0]} ({self._SPOT_POLICY}), "
             f"extent={'regional' if self._is_regional(configs) else 'global'}"
         )
 
@@ -386,7 +368,7 @@ class BCSDOrchestrator:
                 region="us-west-2",
                 map_over_task_var_dicts=task_var_dicts,
                 forward_aws_credentials=False,
-                spot_policy=spot_policy,
+                spot_policy=self._SPOT_POLICY,
                 logger=logger,
                 tag={"Project": "SRM"},
                 disk_size="100GB",
