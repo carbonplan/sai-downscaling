@@ -1221,6 +1221,52 @@ def cache_list(
 
 
 @app.command()
+def release(
+    config_path: str = typer.Option(
+        "configs/example.yaml", "--config-path", "-c", help="Path to YAML config or directory"
+    ),
+    tag: str = typer.Option(..., "--tag", help="icechunk tag to create (e.g. 'v0.13.0')"),
+    branch: str = typer.Option(
+        None, "--branch", help="Branch to tag. Defaults to the installed package version."
+    ),
+):
+    """Freeze the stores a config set writes to under an immutable icechunk tag.
+
+    A branch stays writable, so a later run can overwrite the state a comparison
+    baseline points at. Tagging pins the snapshot id, which is what makes a release
+    artifact safe to cite as a baseline.
+    """
+    configs, options = load_configs(config_path)
+    if not configs:
+        logger.error("No configs found at %s", config_path)
+        raise typer.Exit(1)
+
+    # One config set can span several stores (one per gcm/obs/subset triple). Tag each
+    # distinct store once; two configs sharing a store would otherwise collide on the
+    # second create_tag call.
+    seen: set[str] = set()
+    tagged = 0
+    for config in configs:
+        cache = ArtifactCache.from_config(config, options)
+        if branch:
+            cache.branch = branch
+        if cache._output_store in seen:
+            continue
+        seen.add(cache._output_store)
+        try:
+            cache.release(tag)
+        except Exception as exc:  # icechunk raises on an existing tag or a missing branch
+            logger.error(
+                "Could not tag %s@%s as %r: %s", cache._output_store, cache.branch, tag, exc
+            )
+            raise typer.Exit(1) from exc
+        tagged += 1
+        logger.info("✓ Tagged %s@%s as %r", cache._output_store, cache.branch, tag)
+
+    logger.info("✓ Released %d store(s) as %r", tagged, tag)
+
+
+@app.command()
 def validate(
     config_path: list[str] | None = typer.Option(
         None,
