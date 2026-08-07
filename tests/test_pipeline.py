@@ -1154,7 +1154,7 @@ class TestWeibullZeroBounded:
             predict_period_start=2015,
             predict_period_end=2100,
         )
-        assert cfg.debias_approach == "nonparametric_hybrid_2sided"
+        assert cfg.variable_config.debias_approach == "nonparametric_hybrid_2sided"
         pipeline = BCSDPipeline(cfg, pipeline_options)
 
         time = pd.date_range("2015-01-01", periods=6)

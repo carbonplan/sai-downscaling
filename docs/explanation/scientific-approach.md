@@ -32,7 +32,7 @@ In BCSD the bias correction requires training a different independent model for 
 
 ### Detrending
 
-Next, we detrended the GCM model output from future scenarios (ssp245 and G6-1.5K). We did this by first calculating the modelled historical mean monthly climatology from 1978 to 2014 (historical). Then, we calculated the GCM scenario trend as the 9-year running average for each month (e.g. running mean of all Februaries) minus the historical mean monthly climatology. We then removed the trend (either additively for temperature, or multiplicatively for precipitation and solar radiation) from the GCM scenario data and used this detrended GCM data for the subsequent bias correction step. We saved the trend, which we reapplied to the data at the end of the bias correction step.
+Next, we detrended the GCM model output from future scenarios (ssp245 and G6-1.5K). We did this by first calculating the modeled historical mean monthly climatology from 1978 to 2014 (historical). Then, we calculated the GCM scenario trend as the 9-year running average for each month (e.g. running mean of all Februaries) minus the historical mean monthly climatology. We then removed the trend (either additively for temperature, or multiplicatively for precipitation and solar radiation) from the GCM scenario data and used this detrended GCM data for the subsequent bias correction step. We saved the trend, which we reapplied to the data at the end of the bias correction step.
 
 ### Bias correction
 

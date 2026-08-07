@@ -8,9 +8,12 @@ spatial maps across pipeline stages. Intended for use in QA and diagnostic noteb
 import calendar
 import random
 
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
+import pandas as pd
 import seaborn as sns
 import xarray as xr
 from xclim.indices import dry_days, growing_degree_days, hot_days, tx_max
@@ -538,3 +541,200 @@ Climatezones = {
     "Seoul": (37.5503, 126.9971),
     "Chicago": (41.8832, -87.6324),
 }
+
+
+def plot_region_zoom(
+    exceedance: xr.DataArray,
+    regions: pd.DataFrame,
+    *,
+    direction: str,
+    units: str,
+    scale: float = 1.0,
+    pad: float = 8.0,
+    ncols: int = 3,
+) -> None:
+    """Zoomed maps of the ranked exceedance regions, one panel each.
+
+    The global maps show *that* a leaf is flagged; these show what each flagged patch looks like
+    locally, with a red cross marking the worst cell, which is the point the drill-down inspects.
+    """
+    if len(regions) == 0:
+        print(f"no {direction} regions to plot")
+        return
+
+    flagged = exceedance.where(exceedance > 0 if direction == "high" else exceedance < 0) * scale
+    cmap = "viridis_r" if direction == "high" else "viridis"
+    nrows = int(np.ceil(len(regions) / ncols))
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(6 * ncols, 4 * nrows),
+        subplot_kw={"projection": ccrs.PlateCarree()},
+        squeeze=False,
+    )
+
+    for ax, region in zip(axes.flat, regions.itertuples(), strict=False):
+        # A region straddling the antimeridian has no single bounding box, so centre the view on
+        # its circular-mean centroid instead of on a lon_min/lon_max that spans the whole globe.
+        if region.wraps_lon:
+            lon_lo, lon_hi = region.centroid_lon - 30.0, region.centroid_lon + 30.0
+        else:
+            lon_lo, lon_hi = region.lon_min - pad, region.lon_max + pad
+        ax.set_extent(
+            [lon_lo, lon_hi, max(-90.0, region.lat_min - pad), min(90.0, region.lat_max + pad)],
+            crs=ccrs.PlateCarree(),
+        )
+        flagged.plot(
+            ax=ax,
+            transform=ccrs.PlateCarree(),
+            cmap=cmap,
+            cbar_kwargs={"label": units, "shrink": 0.7},
+        )
+        ax.plot(
+            region.worst_lon,
+            region.worst_lat,
+            "x",
+            color="red",
+            ms=10,
+            mew=2,
+            transform=ccrs.PlateCarree(),
+        )
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor="0.3")
+        ax.set_title(
+            f"region {region.region}: {region.worst_value:.1f} {units} at "
+            f"({region.worst_lat:.2f}, {region.worst_lon:.2f}), {region.n_cells} cells"
+            + (" [wraps lon]" if region.wraps_lon else ""),
+            fontsize=9,
+        )
+
+    for ax in axes.flat[len(regions) :]:
+        ax.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+
+def point_series(
+    key: tuple[str, str, str],
+    lat: float,
+    lon: float,
+    low_bound: xr.DataArray,
+    high_bound: xr.DataArray,
+    tree,
+    leaves,
+    obs_fine,
+    gcm,
+    historical_member,
+) -> dict[str, xr.DataArray]:
+    """Every series the drill-down plots for one grid cell, all lazy and in stored units.
+
+    Nothing is computed here. Collect these dicts for every point of interest and pass them to a
+    SINGLE dask.compute so all the reads share one graph and one scheduler round-trip.
+
+    `low_bound`/`high_bound` are the leaf's fine-grid plausible bounds from `leaf_bounds`, so the
+    caller decides whether the expensive observed envelope underneath them was cached or rebuilt.
+    """
+    scenario, var, member = key
+    at_point = {"lat": lat, "lon": lon, "method": "nearest"}
+    coarse = tree[f"debiased_coarse/{scenario}"][f"{var}/{member}"].dataset[var]
+    return {
+        "downscaled": leaves[key].sel(**at_point),
+        "bound_low": low_bound.sel(**at_point),
+        "bound_high": high_bound.sel(**at_point),
+        "obs": obs_fine(var).sel(**at_point),
+        "raw_scenario": gcm[scenario][var].sel(ensemble_member=member).sel(**at_point),
+        "raw_historical": (
+            gcm["historical"][var].sel(ensemble_member=historical_member(*key)).sel(**at_point)
+        ),
+        "coarse_debiased": coarse.sel(**at_point),
+    }
+
+
+def plot_point_panels(
+    series: dict[str, xr.DataArray],
+    key: tuple[str, str, str],
+    lat: float,
+    lon: float,
+    *,
+    units: str,
+    scale: float = 1.0,
+) -> int:
+    """Four-panel drill-down for one grid cell, from already-computed point series.
+
+    Returns the number of days that leave the envelope at this point. Every series is stored in
+    the same units, so one scale converts the whole panel and the axes agree with the summary
+    table. (ERA5 `pr` comes from mean_total_precipitation_rate and the raw GCM PRECT is CMORized
+    to kg m-2 s-1 during ETL, so no series needs a different factor.)
+    """
+    scenario, var, member = key
+    values = series["downscaled"] * scale
+    bound_low = series["bound_low"] * scale
+    bound_high = series["bound_high"] * scale
+    obs = series["obs"] * scale
+    raw_scenario = series["raw_scenario"] * scale
+    raw_historical = series["raw_historical"] * scale
+    coarse_debiased = series["coarse_debiased"] * scale
+
+    doy = values["time.dayofyear"]
+    too_high = values > bound_high.sel(dayofyear=doy)
+    too_low = values < bound_low.sel(dayofyear=doy)
+    obs_doy_mean = obs.groupby("time.dayofyear").mean()
+
+    fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+
+    def _series(ax, da, **kw):
+        """Scatter a point time series against its day of year."""
+        ax.plot(da["time.dayofyear"], da, ".", ms=3, **kw)
+
+    def _envelope(ax):
+        """Overlay the plausible day-of-year envelope as dashed lines."""
+        bound_high.plot(ax=ax, color="black", ls="--", label="Plausible envelope")
+        bound_low.plot(ax=ax, color="black", ls="--")
+
+    def _outliers(ax):
+        """Downscaled values, with red rings on the days that leave the envelope."""
+        ax.plot(doy, values, ".", ms=3, label="Downscaled")
+        ax.plot(doy, values.where(too_high), "o", mfc="none", color="red", label="Outside envelope")
+        ax.plot(doy, values.where(too_low), "o", mfc="none", color="red")
+
+    # (0,0) Downscaled output vs envelope, with all inputs overlaid.
+    ax = axes[0, 0]
+    _outliers(ax)
+    _series(ax, raw_historical, label="Raw historical GCM")
+    _series(ax, raw_scenario, label="Raw scenario GCM")
+    _series(ax, obs, color="black", label="ERA5 obs")
+    _envelope(ax)
+    ax.set_title("Downscaled vs inputs")
+    ax.legend(fontsize=7)
+
+    # (0,1) Downscaled output and envelope, with the observed day-of-year mean.
+    ax = axes[0, 1]
+    _outliers(ax)
+    ax.plot(obs_doy_mean["dayofyear"], obs_doy_mean, "-k", label="Obs day-of-year mean")
+    _envelope(ax)
+    ax.set_title("Downscaled vs envelope")
+    ax.legend(fontsize=7)
+
+    # (1,0) Historical: obs and raw GCM.
+    ax = axes[1, 0]
+    _series(ax, raw_historical, color="C1", label="Raw historical GCM")
+    _series(ax, obs, color="black", label="ERA5 obs")
+    ax.plot(obs_doy_mean["dayofyear"], obs_doy_mean, "-k", label="Obs day-of-year mean")
+    _envelope(ax)
+    ax.set_title("Historical: obs and raw GCM")
+    ax.legend(fontsize=7)
+
+    # (1,1) Scenario: raw GCM and coarse debiased.
+    ax = axes[1, 1]
+    _series(ax, raw_scenario, color="C2", label="Raw scenario GCM")
+    _series(ax, coarse_debiased, color="C3", label="Coarse debiased")
+    _envelope(ax)
+    ax.set_title("Scenario: raw and coarse debiased")
+    ax.legend(fontsize=7)
+
+    for ax in axes.flat:
+        ax.set_ylabel(f"{var} ({units})")
+
+    fig.suptitle(f"{scenario}/{var}/{member} at lat={lat}, lon={lon}")
+    plt.tight_layout()
+    plt.show()
+    return int((too_high | too_low).sum())

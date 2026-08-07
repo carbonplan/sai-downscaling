@@ -17,6 +17,7 @@ from pathlib import Path
 
 import typer
 import yaml
+from pydantic import ValidationError
 from rich import box
 from rich.console import Console
 from rich.logging import RichHandler
@@ -137,11 +138,12 @@ def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
             continue
         seen.add(key)
         try:
-            hist, ssp245, *_ = resolve_member_lineage(
+            lineage = resolve_member_lineage(
                 cfg.gcm, cfg.scenario, cfg.ensemble_member, cfg.variable
             )
         except KeyError:
             continue
+        hist, ssp245 = lineage.historical, lineage.ssp245_bridge
         if hist == cfg.ensemble_member and ssp245 == cfg.ensemble_member:
             continue
         ssp = ssp245 if ssp245 != cfg.ensemble_member else "—"
@@ -154,11 +156,17 @@ def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
 def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
     """Print a per-scenario lineage table for the validate command.
 
-    Deduplicated by (member, hist, ssp245_bridge, ssp245_esgf_bridge); variables
-    sharing the same parents are listed together. Skipped when no lineage is
-    registered for the GCM/scenario pair.
+    Deduplicated by (member, hist, ssp245_bridge, ssp245_esgf_bridge, sai_parent);
+    variables sharing the same parents are listed together. Skipped when no lineage
+    is registered for the GCM/scenario pair.
     """
-    from srm.lineage import get_lineage_entries
+
+    from srm.lineage import ScenarioMember, get_lineage_entries
+
+    def _sort_token(field: str | ScenarioMember | None) -> str:
+        if field is None:
+            return ""
+        return str(field)
 
     for scenario in scenarios:
         if scenario == "historical":
@@ -167,8 +175,9 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         if not entries:
             continue
 
-        has_ssp245 = any(ssp is not None for _, ssp, *_ in entries.values())
-        has_ssp245_esgf = any(esgf is not None for _, _, esgf in entries.values())
+        has_ssp245 = any(e.ssp245_bridge is not None for e in entries.values())
+        has_ssp245_esgf = any(e.ssp245_esgf_bridge is not None for e in entries.values())
+        has_sai_parent = any(e.sai_parent is not None for e in entries.values())
 
         tbl = Table(
             title=f"Lineage — {scenario}",
@@ -184,21 +193,37 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
             tbl.add_column("→ SSP245 bridge", style="yellow", justify="right")
         if has_ssp245_esgf:
             tbl.add_column("→ SSP245 ESGF bridge", style="magenta", justify="right")
+        if has_sai_parent:
+            tbl.add_column("→ SAI parent", style="blue", justify="right")
 
-        seen: dict[tuple[str, str, str | None, str | None], list[str]] = {}
-        for (member, var), (hist, ssp245, ssp245_esgf) in sorted(entries.items()):
-            key = (member, hist, ssp245, ssp245_esgf)
+        seen: dict[tuple[str, str, str | None, str | None, ScenarioMember | None], list[str]] = {}
+        for (member, var), entry in sorted(entries.items()):
+            key = (
+                member,
+                entry.historical,
+                entry.ssp245_bridge,
+                entry.ssp245_esgf_bridge,
+                entry.sai_parent,
+            )
             if key not in seen:
                 seen[key] = []
             if var not in seen[key]:
                 seen[key].append(var)
 
-        for (member, hist, ssp245, ssp245_esgf), variables in sorted(seen.items()):
+        # Sort on rendered tokens rather than the raw key: the key mixes str, None, and
+        # ScenarioMember, and Python compares element-wise only once the earlier fields
+        # tie, so a raw sort raises TypeError the moment two rows differ only in a
+        # None-vs-set field or only in their SAI parent.
+        for (member, hist, ssp245, ssp245_esgf, sai_parent), variables in sorted(
+            seen.items(), key=lambda item: tuple(_sort_token(field) for field in item[0])
+        ):
             row = [member, "/".join(sorted(variables)), hist]
             if has_ssp245:
                 row.append(ssp245 or "—")
             if has_ssp245_esgf:
                 row.append(ssp245_esgf or "—")
+            if has_sai_parent:
+                row.append(str(sai_parent) if sai_parent else "—")
             tbl.add_row(*row)
 
         console.print(tbl)
@@ -253,11 +278,12 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
         if config.scenario is None:
             continue
         try:
-            hist, ssp245, *_ = resolve_member_lineage(
+            lineage = resolve_member_lineage(
                 config.gcm, config.scenario, config.ensemble_member, config.variable
             )
         except KeyError:
             continue
+        hist, ssp245 = lineage.historical, lineage.ssp245_bridge
 
         hist_group = f"historical/{config.variable}"
         known = _members(config.gcm, hist_group)
@@ -283,6 +309,111 @@ def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
         raise ValueError("Resolved ensemble members not found in stores:\n" + "\n".join(errors))
 
 
+def _validate_variable_overrides(overrides: dict, variables: list[str]) -> None:
+    """
+    Validate the shape of a ``variable_overrides`` mapping.
+
+    Parameters
+    ----------
+    overrides : dict
+        Mapping of variable name to a mapping of ``VariableConfig`` field to value.
+    variables : list[str]
+        Variables the run actually covers.
+
+    Raises
+    ------
+    ValueError
+        If a key names a variable outside the run, a value is not a mapping, or a
+        field is not a ``VariableConfig`` field.
+    """
+    valid_fields = set(VariableConfig.model_fields)
+    for var, fields in overrides.items():
+        if var not in variables:
+            raise ValueError(
+                f"variable_overrides key {var!r} is not in variables {sorted(variables)}. "
+                "Every override must target a variable included in the run."
+            )
+        if not isinstance(fields, dict):
+            raise ValueError(
+                f"variable_overrides[{var!r}] must be a mapping of field -> value, "
+                f"got {type(fields).__name__}"
+            )
+        unknown = sorted(set(fields) - valid_fields)
+        if unknown:
+            raise ValueError(
+                f"variable_overrides[{var!r}] has unknown field(s) {unknown}. "
+                f"Valid fields: {sorted(valid_fields)}"
+            )
+
+
+def _resolve_variable_config(
+    variable: str,
+    run_wide: dict | None = None,
+    overrides: dict[str, dict] | None = None,
+) -> VariableConfig:
+    """
+    Resolve a ``VariableConfig`` through the three precedence tiers.
+
+    Tiers, last writer wins: per-variable table defaults, then run-wide values, then
+    the per-variable override entry. ``None`` values are skipped so an unset CLI flag
+    never clobbers a default. Construction goes through ``VariableConfig(**merged)``
+    rather than ``model_copy(update=...)`` because ``model_copy`` does not validate,
+    which previously let bad values through to the pipeline.
+
+    Parameters
+    ----------
+    variable : str
+        Variable name, used to look up the table defaults.
+    run_wide : dict or None
+        Values applied to every variable in the run.
+    overrides : dict[str, dict] or None
+        Mapping of variable name to per-variable values.
+
+    Returns
+    -------
+    VariableConfig
+        Fully resolved and validated config for ``variable``.
+    """
+    merged = VariableConfig.for_variable(variable).model_dump()
+    for source in (run_wide or {}, (overrides or {}).get(variable, {})):
+        merged.update({k: v for k, v in source.items() if v is not None})
+    return VariableConfig(**merged)
+
+
+def _parse_variable_overrides(items: list[str]) -> dict[str, dict[str, str]]:
+    """
+    Parse repeated ``--variable-override`` values into a nested mapping.
+
+    Each item has the form ``{variable}:{field}={value}``, split on the first ``:``
+    and then the first ``=``. Repeating the flag accumulates, both across variables
+    and within one variable.
+
+    Parameters
+    ----------
+    items : list[str]
+        Raw flag values, e.g. ``["dtr:debias_approach=nonparametric"]``.
+
+    Returns
+    -------
+    dict[str, dict[str, str]]
+        Mapping of variable name to field-value pairs. Values stay strings and are
+        coerced by pydantic during ``VariableConfig`` construction.
+
+    Raises
+    ------
+    ValueError
+        If an item does not match ``variable:field=value``.
+    """
+    parsed: dict[str, dict[str, str]] = defaultdict(dict)
+    for item in items:
+        variable, sep, rest = item.partition(":")
+        field, sep2, value = rest.partition("=")
+        if not (sep and sep2 and variable.strip() and field.strip()):
+            raise ValueError(f"--variable-override must be 'variable:field=value', got {item!r}")
+        parsed[variable.strip()][field.strip()] = value.strip()
+    return dict(parsed)
+
+
 def _is_matrix_config(config_dict: dict) -> bool:
     """Return True if any expandable field contains a list."""
     return any(
@@ -304,19 +435,42 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
             val = None
         axes[field] = val if isinstance(val, list) else [val]
 
-    if "variable_config" in d and len(axes["variable"]) > 1:
-        raise ValueError(
-            "Cannot use 'variable_config' in a matrix config with multiple variables "
-            f"({axes['variable']}). Remove 'variable_config' to use per-variable defaults, "
-            "or split into separate config files."
-        )
+    overrides = d.pop("variable_overrides", None) or {}
+    if overrides:
+        _validate_variable_overrides(overrides, axes["variable"])
 
-    return [
-        BCSDConfig(gcm=gcm, variable=variable, ensemble_member=member, scenario=scenario, **d)
-        for gcm, variable, member, scenario in itertools.product(
-            axes["gcm"], axes["variable"], axes["ensemble_member"], axes["scenario"]
+    if "variable_config" in d:
+        if len(axes["variable"]) > 1:
+            raise ValueError(
+                "Cannot use 'variable_config' in a matrix config with multiple variables "
+                f"({axes['variable']}). Use 'variable_overrides' to set per-variable values, "
+                "or split into separate config files."
+            )
+        if overrides:
+            raise ValueError(
+                "Cannot combine 'variable_config' with 'variable_overrides'. An explicit "
+                "'variable_config' is passed through verbatim, so the overrides would be "
+                "silently discarded. Fold the override values into 'variable_config', or "
+                "drop 'variable_config' and use 'variable_overrides' alone."
+            )
+
+    configs = []
+    for gcm, variable, member, scenario in itertools.product(
+        axes["gcm"], axes["variable"], axes["ensemble_member"], axes["scenario"]
+    ):
+        kwargs = dict(d)
+        if "variable_config" not in kwargs:
+            kwargs["variable_config"] = _resolve_variable_config(variable, None, overrides)
+        configs.append(
+            BCSDConfig(
+                gcm=gcm,
+                variable=variable,
+                ensemble_member=member,
+                scenario=scenario,
+                **kwargs,
+            )
         )
-    ]
+    return configs
 
 
 def load_configs(config_path: str) -> tuple[list[BCSDConfig], PipelineOptions]:
@@ -386,7 +540,7 @@ def configs_from_matrix(
     branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
-    debias_approach: str = "nonparametric_hybrid_2sided",
+    debias_approach: str | None = None,
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
@@ -395,6 +549,7 @@ def configs_from_matrix(
     downscaling_method: str | None = None,
     downscaling_clim_method: str | None = None,
     detrend_method: str | None = None,
+    variable_overrides: dict[str, dict] | None = None,
 ) -> tuple[list[BCSDConfig], PipelineOptions]:
     """
     Generate BCSDConfig objects for every cartesian-product combination of GCMs,
@@ -430,8 +585,10 @@ def configs_from_matrix(
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
-    debias_approach : str
-        Debias approach (parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided)
+    debias_approach : str | None
+        Override VariableConfig.debias_approach for every variable (parametric,
+        nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided). None uses
+        each variable's own default.
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -446,6 +603,10 @@ def configs_from_matrix(
         Override VariableConfig.downscaling_clim_method (simple, fft)
     detrend_method : str | None
         Override VariableConfig.detrend_method (additive, multiplicative)
+    variable_overrides : dict[str, dict] | None
+        Per-variable overrides keyed by variable name, e.g.
+        ``{"dtr": {"debias_approach": "nonparametric"}}``. Takes precedence over the
+        run-wide parameters above.
 
     Returns
     -------
@@ -460,23 +621,22 @@ def configs_from_matrix(
         verbose=verbose,
         save_intermediate=save_intermediate,
     )
+    variable_overrides = variable_overrides or {}
+    if variable_overrides:
+        _validate_variable_overrides(variable_overrides, variables)
+
+    run_wide = {
+        "debias_approach": debias_approach,
+        "detrend_data": detrend_data,
+        "do_windowing": do_windowing,
+        "running_window_length": running_window_length,
+        "downscaling_method": downscaling_method,
+        "downscaling_clim_method": downscaling_clim_method,
+        "detrend_method": detrend_method,
+    }
+
     configs = []
     for gcm, variable, member, scenario in itertools.product(gcms, variables, members, scenarios):
-        vc = VariableConfig.for_variable(variable)
-        overrides = {
-            k: v
-            for k, v in {
-                "detrend_data": detrend_data,
-                "do_windowing": do_windowing,
-                "running_window_length": running_window_length,
-                "downscaling_method": downscaling_method,
-                "downscaling_clim_method": downscaling_clim_method,
-                "detrend_method": detrend_method,
-            }.items()
-            if v is not None
-        }
-        if overrides:
-            vc = vc.model_copy(update=overrides)
         configs.append(
             BCSDConfig(
                 gcm=gcm,
@@ -488,8 +648,7 @@ def configs_from_matrix(
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
                 subset_bounds=subset_bounds,
-                debias_approach=debias_approach,
-                variable_config=vc,
+                variable_config=_resolve_variable_config(variable, run_wide, variable_overrides),
             )
         )
     return configs, options
@@ -724,10 +883,15 @@ def run_matrix(
         "--save-intermediate",
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
-    debias_approach: str = typer.Option(
-        "nonparametric_hybrid_2sided",
+    debias_approach: str | None = typer.Option(
+        None,
         "--debias-approach",
-        help="Debias approach: parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided",
+        help=(
+            "Debias approach for every variable: parametric, nonparametric, "
+            "nonparametric_hybrid, nonparametric_hybrid_2sided. "
+            "Omit to use each variable's default. Override one variable with "
+            "--variable-override."
+        ),
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     # VariableConfig overrides
@@ -751,6 +915,15 @@ def run_matrix(
     detrend_method: str | None = typer.Option(
         None, "--detrend-method", help="Override detrend_method (additive, multiplicative)"
     ),
+    variable_override: list[str] = typer.Option(
+        [],
+        "--variable-override",
+        help=(
+            "Per-variable setting as 'variable:field=value' (repeatable), e.g. "
+            "'dtr:debias_approach=nonparametric'. Takes precedence over the run-wide "
+            "flags above."
+        ),
+    ),
 ):
     """Run BCSD pipeline over cartesian product of GCMs x variables x members x scenarios.
 
@@ -767,6 +940,16 @@ def run_matrix(
           --predict-period-start 2015 --predict-period-end 2100
 
     Omit --scenario for historical-only runs.
+
+    Give one variable a different setting with --variable-override
+    (repeatable, 'variable:field=value'):
+
+        bcsd run-matrix \\
+          --gcm CESM2-WACCM \\
+          --variable tasmax --variable dtr \\
+          --member 007 --scenario ssp245 \\
+          --predict-period-start 2015 --predict-period-end 2100 \\
+          --variable-override dtr:debias_approach=nonparametric
     """
     # Normalize: no --scenario given -> historical-only (scenario=None)
     scenario_values: list[str | None] = scenario if scenario else [None]
@@ -794,30 +977,41 @@ def run_matrix(
             )
             raise typer.Exit(1)
 
-    configs, options = configs_from_matrix(
-        gcms=gcm,
-        variables=variable,
-        members=member,
-        scenarios=scenario_values,
-        train_period_start=train_period_start,
-        train_period_end=train_period_end,
-        predict_period_start=predict_period_start,
-        predict_period_end=predict_period_end,
-        scratch_dir=scratch_dir,
-        output_dir=output_dir,
-        environment=environment,
-        branch=branch,
-        subset_bounds=parsed_bounds,
-        save_intermediate=save_intermediate,
-        debias_approach=debias_approach,
-        verbose=verbose,
-        detrend_data=detrend_data,
-        do_windowing=do_windowing,
-        running_window_length=running_window_length,
-        downscaling_method=downscaling_method,
-        downscaling_clim_method=downscaling_clim_method,
-        detrend_method=detrend_method,
-    )
+    try:
+        parsed_overrides = _parse_variable_overrides(variable_override)
+    except ValueError as exc:
+        logger.error(str(exc))
+        raise typer.Exit(1)
+
+    try:
+        configs, options = configs_from_matrix(
+            gcms=gcm,
+            variables=variable,
+            members=member,
+            scenarios=scenario_values,
+            train_period_start=train_period_start,
+            train_period_end=train_period_end,
+            predict_period_start=predict_period_start,
+            predict_period_end=predict_period_end,
+            scratch_dir=scratch_dir,
+            output_dir=output_dir,
+            environment=environment,
+            branch=branch,
+            subset_bounds=parsed_bounds,
+            save_intermediate=save_intermediate,
+            debias_approach=debias_approach,
+            verbose=verbose,
+            detrend_data=detrend_data,
+            do_windowing=do_windowing,
+            running_window_length=running_window_length,
+            downscaling_method=downscaling_method,
+            downscaling_clim_method=downscaling_clim_method,
+            detrend_method=detrend_method,
+            variable_overrides=parsed_overrides,
+        )
+    except (ValueError, ValidationError) as exc:
+        logger.error(str(exc))
+        raise typer.Exit(1)
 
     _validate_lineage_members(configs)
     _validate_predict_periods(configs)
@@ -985,7 +1179,7 @@ def cache_clear(
     if not confirm:
         confirm = typer.confirm(f"Really delete {desc}?")
         if not confirm:
-            logger.warning("Cancelled")
+            logger.warning("Canceled")
             return
 
     deleted = cache.clear_cache(stage=stage, gcm=gcm, variable=variable)
@@ -1024,6 +1218,56 @@ def cache_list(
         table.add_row(artifact)
 
     console.print(table)
+
+
+@app.command()
+def release(
+    config_path: str = typer.Option(
+        "configs/example.yaml", "--config-path", "-c", help="Path to YAML config or directory"
+    ),
+    tag: str = typer.Option(..., "--tag", help="icechunk tag to create (e.g. 'v0.13.0')"),
+    branch: str = typer.Option(
+        None, "--branch", help="Branch to tag. Defaults to the installed package version."
+    ),
+):
+    """Freeze the stores a config set writes to under an immutable icechunk tag.
+
+    A branch stays writable, so a later run can overwrite the state a comparison
+    baseline points at. Tagging pins the snapshot id, which is what makes a release
+    artifact safe to cite as a baseline.
+    """
+    configs, options = load_configs(config_path)
+    if not configs:
+        logger.error("No configs found at %s", config_path)
+        raise typer.Exit(1)
+
+    # One config set can span several stores (one per gcm/obs/subset triple). Tag each
+    # distinct store once; two configs sharing a store would otherwise collide on the
+    # second create_tag call.
+    seen: set[str] = set()
+    tagged = 0
+    for config in configs:
+        cache = ArtifactCache.from_config(config, options)
+        if branch:
+            cache.branch = branch
+        if cache._output_store in seen:
+            continue
+        seen.add(cache._output_store)
+        try:
+            # Logs one line per icechunk store it tags: the output store, plus the
+            # scratch store when the two are configured to different paths.
+            cache.release(tag)
+        except Exception as exc:  # icechunk raises on an existing tag or a missing branch
+            # A partially applied tag is possible here: release() tags output before
+            # scratch, so a failure on the second leaves the first tagged. Exiting
+            # non-zero is what matters, so the release does not report success.
+            logger.error(
+                "Could not tag %s@%s as %r: %s", cache._output_store, cache.branch, tag, exc
+            )
+            raise typer.Exit(1) from exc
+        tagged += 1
+
+    logger.info("✓ Released %d config store(s) as %r on branch %r", tagged, tag, options.branch)
 
 
 @app.command()

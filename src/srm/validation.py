@@ -40,7 +40,7 @@ BLOCKING_CHECKS = {
 
 
 GCM_OPTIONS = ("CESM2-WACCM", "MIROC-ES2H", "UKESM")
-SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K")
+SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K", "G6-1.5K-END")
 # On-disk variable group names; canonical (lowercase), so no translation needed.
 VARIABLE_OPTIONS = get_args(VariableName)
 
@@ -49,7 +49,7 @@ VARIABLE_OPTIONS = get_args(VariableName)
 # These end dates used to run a day or more past the scenario's nominal end, which looked like
 # CESM writing an extra time step. It was not: CAM stamps interval statistics at the END of the
 # averaging interval and prefixes each history stream with a zero-width initial-state record, so
-# the raw axis labelled every daily mean one day late (issue #521). The ETL now rebuilds the axis
+# the raw axis labeled every daily mean one day late (issue #521). The ETL now rebuilds the axis
 # from time_bnds via srm.utils.decode_time_from_bounds, which is where that convention is
 # documented in full, and TIME_RANGE in srm.input_data.cesm2_waccm clamps what remains.
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
@@ -59,6 +59,8 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
         "historical": ("1850-01-01", "2014-12-31"),
         "SSP245": ("2015-01-01", "2099-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
+        # Termination-shock continuation of G6-1.5K member 002
+        "G6-1.5K-END": ("2085-01-01", "2100-12-31"),
     },
     "MIROC-ES2H": {
         "historical": ("1850-01-01", "2014-12-31"),
@@ -89,6 +91,9 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "001": ("2035-01-01", "2084-12-31"),
             "002": ("2035-01-01", "2084-12-31"),
             "003": ("2035-01-01", "2084-12-31"),
+        },
+        "G6-1.5K-END": {
+            "002": ("2085-01-01", "2100-12-31"),
         },
         "historical": {
             "001": ("1978-01-01", "2014-12-31"),
@@ -244,6 +249,12 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
     built from a handful of days, which then poisons the 9-year centred rolling mean in
     :func:`srm.downscaling_utils.detrend` for the surrounding years.
 
+    Both bounds are enforced for every scenario, SAI included. A SAI run whose
+    ``predict_period_start`` precedes its own data start still executes, because the
+    pipeline bridges the gap, but the bridged years are another scenario's data wearing
+    this scenario's label (see :meth:`BCSDPipeline._load_ssp245_bridge`), so they are
+    rejected here rather than silently published.
+
     Returns a blocking FAIL when the requested predict period falls outside the member's
     valid bounds, PASS when it fits, and SKIP when no bounds are known for the member or
     the config has no scenario/predict period (historical-only).
@@ -283,13 +294,23 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
     }
 
     issues: list[str] = []
-    # SAI/G6 runs intentionally start before the scenario data (predict_period_start may
-    # be 2015 while G6 data begins 2035); the pipeline bridges that gap with SSP245. Only
-    # enforce the start bound for non-SAI scenarios.
-    if not config.is_sai_scenario and config.predict_period_start < valid_start_year:
+    # The start bound is enforced for SAI scenarios too, even though the pipeline *can* run
+    # with an earlier start by bridging the gap. Those bridge years are not scenario data:
+    # for G6-1.5K they are SSP245, and for G6-1.5K-END they are SSP245 followed by G6-1.5K.
+    # Emitting them under the scenario's own label is what issue #448 hit, where pre-2035
+    # g6_1p5k output was bridged from different SSP245 realizations per variable (tas from
+    # 003, tasmax/tasmin from 008) and produced tas > tasmax. The fix there was to start at
+    # the scenario's own data year, which is what this check now requires of every config.
+    if config.predict_period_start < valid_start_year:
         issues.append(
             f"predict_period_start {config.predict_period_start} is before data start "
             f"{valid_start_year}"
+            + (
+                f"; {config.scenario} data begins in {valid_start_year} and earlier years "
+                f"would be emitted as bridge data carrying the scenario's label"
+                if config.is_sai_scenario
+                else ""
+            )
         )
     if config.predict_period_end is not None and config.predict_period_end > valid_end_year:
         issues.append(
@@ -451,7 +472,7 @@ class DatasetValidator(pydantic.BaseModel):
         D1/D2: All lineage-resolved parent members must exist in their stores.
 
         For each (member, variable) pair registered in the lineage table, resolves the
-        historical_member and (for G6-1.5K) the ssp245_member, then checks those exist
+        historical and (for G6-1.5K) the ssp245_bridge member, then checks those exist
         in the respective groups of the unified GCM datatree.
 
         Skipped when no lineage is registered for this (gcm, scenario).
@@ -467,10 +488,16 @@ class DatasetValidator(pydantic.BaseModel):
 
         hist_members_needed: set[str] = set()
         ssp245_members_needed: set[str] = set()
-        for hist, ssp245, *_ in entries.values():
-            hist_members_needed.add(hist)
-            if ssp245 is not None:
-                ssp245_members_needed.add(ssp245)
+        # Keyed by parent scenario so a future second termination run resolves independently.
+        sai_parents_needed: dict[str, set[str]] = {}
+        for entry in entries.values():
+            hist_members_needed.add(entry.historical)
+            if entry.ssp245_bridge is not None:
+                ssp245_members_needed.add(entry.ssp245_bridge)
+            if entry.sai_parent is not None:
+                sai_parents_needed.setdefault(entry.sai_parent.scenario, set()).add(
+                    entry.sai_parent.member
+                )
 
         dt, err = self._open_datatree()
         if err is not None:
@@ -509,10 +536,33 @@ class DatasetValidator(pydantic.BaseModel):
                 issues.append(f"{len(missing_ssp245)} resolved SSP245 bridge member(s) missing")
                 detail["missing_ssp245"] = missing_ssp245
 
+        # A scenario that continues an earlier SAI run needs that run's members too: the
+        # bridge reads them for every year between the SSP245 segment and the scenario start.
+        for parent_scenario, parent_members in sorted(sai_parents_needed.items()):
+            parent_group = SCENARIO_TO_GROUP[parent_scenario]
+            if parent_group not in dt.children:
+                return self._result(
+                    CheckStatus.FAIL,
+                    f"'{parent_group}' group not present in datatree for {self.gcm}; "
+                    f"{self.scenario} continues {parent_scenario} and cannot be bridged without it",
+                )
+            parent_ds = dt[parent_group].to_dataset()
+            parent_available = set(_get_ensemble_members(parent_ds) or [])
+            detail[f"{parent_group}_needed"] = sorted(parent_members)
+            detail[f"{parent_group}_available"] = sorted(parent_available)
+            missing_parent = sorted(parent_members - parent_available)
+            if missing_parent:
+                issues.append(
+                    f"{len(missing_parent)} resolved {parent_scenario} SAI parent member(s) missing"
+                )
+                detail[f"missing_{parent_group}"] = missing_parent
+
         if issues:
             return self._result(CheckStatus.FAIL, "; ".join(issues), detail)
 
         store_labels = "historical" + (" and SSP245" if ssp245_members_needed else "")
+        if sai_parents_needed:
+            store_labels += " and " + ", ".join(sorted(sai_parents_needed))
         return self._result(
             CheckStatus.PASS,
             f"All {len(entries)} lineage entries resolve to available members "

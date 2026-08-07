@@ -545,7 +545,7 @@ def check_ensemble_spread(
 
     Computes the global spatial mean of `var` for each ensemble member on `day_index`,
     defaulting to mid-record to avoid the gap-fill/merge seams at the start of a group
-    (e.g. MIROC-ES2H ssp245's 2015-2019 bridge.
+    (e.g. MIROC-ES2H ssp245's 2015-2019 bridge).
     Returns spread_ok=True when all member means are distinct (no exact duplicates).
     Returns empty members/means lists when the dataset has no ensemble_member dimension
     or the variable is absent.
@@ -902,6 +902,219 @@ def calculate_reasonable_bounds_doy(
 
 
 # ---------------------------------------------------------------------------
+# Exceedance region finding
+# ---------------------------------------------------------------------------
+#
+# The plausible-value check produces, per leaf, a pair of 2-D maps of how far the
+# downscaled output strays outside its envelope. Those maps say a leaf is flagged
+# but not *where*: reading a global map by eye conflates an isolated coastline or
+# sea-ice fleck with a coherent patch worth investigating.
+#
+# find_exceedance_regions turns such a map into ranked connected components, so
+# that distinction becomes a column. The two private helpers below exist because
+# the maps are global: longitude is periodic, so a patch straddling the
+# antimeridian must not be reported as two regions, and its centroid must not
+# average to the opposite side of the planet.
+
+
+_REGION_COLUMNS = [
+    "region",
+    "n_cells",
+    "area_frac",
+    "worst_value",
+    "worst_lat",
+    "worst_lon",
+    "centroid_lat",
+    "centroid_lon",
+    "lat_min",
+    "lat_max",
+    "lon_min",
+    "lon_max",
+    "wraps_lon",
+]
+
+
+def _merge_labels_across_lon_seam(labels: np.ndarray) -> np.ndarray:
+    """Join labelled components that touch across the periodic longitude seam.
+
+    ``scipy.ndimage.label`` treats the array as a flat plane, so a patch
+    straddling the antimeridian is reported as two regions. Longitude is
+    periodic, so components flagged at both the first and last column of the
+    same (or a diagonally adjacent, matching 8-connectivity) row are one region.
+    Latitude is *not* periodic, so the poles get no equivalent treatment.
+    """
+    n_lat = labels.shape[0]
+    pairs: list[tuple[int, int]] = []
+    for offset in (-1, 0, 1):
+        left_rows = np.arange(max(0, -offset), min(n_lat, n_lat - offset))
+        if left_rows.size == 0:
+            continue
+        left = labels[left_rows, 0]
+        right = labels[left_rows + offset, -1]
+        touching = (left > 0) & (right > 0)
+        pairs.extend(zip(left[touching].tolist(), right[touching].tolist(), strict=True))
+
+    if not pairs:
+        return labels
+
+    parent = {}
+
+    def find(node: int) -> int:
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    for a, b in pairs:
+        root_a, root_b = find(a), find(b)
+        if root_a != root_b:
+            parent[max(root_a, root_b)] = min(root_a, root_b)
+
+    remap = np.arange(labels.max() + 1)
+    for label in range(1, labels.max() + 1):
+        if label in parent:
+            remap[label] = find(label)
+    return remap[labels]
+
+
+def _circular_mean_lon(lon_values: np.ndarray) -> float:
+    """Mean longitude that behaves correctly across the antimeridian.
+
+    An arithmetic mean of a region spanning the seam averages, say, -179 and 179
+    to 0 -- the wrong side of the planet. Averaging unit vectors instead keeps
+    the centroid inside the region.
+    """
+    radians = np.deg2rad(lon_values)
+    return float(np.rad2deg(np.arctan2(np.sin(radians).mean(), np.cos(radians).mean())))
+
+
+def find_exceedance_regions(
+    exceedance: xr.DataArray,
+    *,
+    direction: str,
+    min_cells: int = 1,
+    top_n: int = 10,
+    scale: float = 1.0,
+) -> pd.DataFrame:
+    """Rank the coherent regions where a leaf leaves its plausible envelope.
+
+    Turns a 2-D exceedance map into connected components, so the distinction
+    between an isolated fleck (usually a coastline or sea-ice edge effect) and a
+    coherent patch worth investigating becomes a column rather than something
+    eyeballed off a global map. 8-connectivity is used, so diagonally touching
+    cells join, and components spanning the longitude seam are merged.
+
+    Parameters
+    ----------
+    exceedance : xarray.DataArray
+        Signed 2-D ``(lat, lon)`` map: ``over`` (flagged above zero) or ``under``
+        (flagged below zero), as produced by the plausible-value check.
+    direction : {"high", "low"}
+        Which sign counts as flagged. ``"high"`` flags ``> 0``, ``"low"`` flags
+        ``< 0``.
+    min_cells : int, default 1
+        Drop components smaller than this, filtering isolated flecks.
+    top_n : int, default 10
+        Keep at most this many regions, ranked by exceedance magnitude.
+    scale : float, default 1.0
+        Multiplier applied to ``worst_value`` only, for reporting units (86400
+        for ``pr`` in mm day-1). Area metrics stay dimensionless.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per region, ranked by ``abs(worst_value)`` descending, with
+        columns ``region``, ``n_cells``, ``area_frac``, ``worst_value``,
+        ``worst_lat``, ``worst_lon``, ``centroid_lat``, ``centroid_lon``,
+        ``lat_min``, ``lat_max``, ``lon_min``, ``lon_max``, ``wraps_lon``.
+        Empty (but correctly columned) when nothing is flagged.
+
+    Notes
+    -----
+    ``area_frac`` is an unweighted cell-count fraction, using the same convention
+    as the check's own ``frac_area_too_high = (over > 0).mean(["lat", "lon"])``.
+    That overweights high latitudes relative to true surface area; a
+    cos(lat)-weighted figure would be more physical but would not share a
+    convention with the summary table.
+
+    Do not expect ``area_frac`` to sum to the check's flagged fraction. It only
+    does so with ``min_cells=1`` and a ``top_n`` large enough to keep every
+    component, and neither is the normal case: a flagged variable is typically
+    thousands of small components, so realistic settings return the few worst
+    ones and account for a small share of the flagged area. The sum over
+    returned regions is a lower bound on the check's fraction, not a
+    reconciliation of it.
+
+    ``lon_min``/``lon_max`` are meaningless for a region flagged as
+    ``wraps_lon``: such a region straddles the seam, so its bounding box is two
+    boxes, not one. ``centroid_lon`` stays usable in that case because it is a
+    circular mean, which is why callers should prefer it for centring a view.
+    """
+    from scipy import ndimage
+
+    if direction not in {"high", "low"}:
+        raise ValueError(f"direction must be 'high' or 'low', got {direction!r}")
+
+    values = np.asarray(exceedance.values, dtype="float64")
+    if values.ndim != 2:
+        raise ValueError(f"expected a 2-D (lat, lon) map, got dims {exceedance.dims}")
+
+    finite = np.isfinite(values)
+    mask = (values > 0) & finite if direction == "high" else (values < 0) & finite
+    if not mask.any():
+        return pd.DataFrame(columns=_REGION_COLUMNS)
+
+    labels, _ = ndimage.label(mask, structure=ndimage.generate_binary_structure(2, 2))
+    labels = _merge_labels_across_lon_seam(labels)
+
+    lat = np.asarray(exceedance["lat"].values, dtype="float64")
+    lon = np.asarray(exceedance["lon"].values, dtype="float64")
+    total_cells = values.size
+    last_column = values.shape[1] - 1
+
+    rows = []
+    for label in np.unique(labels[labels > 0]):
+        selected = labels == label
+        n_cells = int(selected.sum())
+        if n_cells < min_cells:
+            continue
+
+        rows_idx, cols_idx = np.nonzero(selected)
+        magnitudes = np.abs(values[rows_idx, cols_idx])
+        worst = int(np.argmax(magnitudes))
+        region_lats = lat[rows_idx]
+        region_lons = lon[cols_idx]
+        wraps = bool(selected[:, 0].any() and selected[:, last_column].any())
+
+        rows.append(
+            {
+                "n_cells": n_cells,
+                "area_frac": n_cells / total_cells,
+                "worst_value": float(values[rows_idx[worst], cols_idx[worst]]) * scale,
+                "worst_lat": float(region_lats[worst]),
+                "worst_lon": float(region_lons[worst]),
+                "centroid_lat": float(region_lats.mean()),
+                "centroid_lon": _circular_mean_lon(region_lons),
+                "lat_min": float(region_lats.min()),
+                "lat_max": float(region_lats.max()),
+                "lon_min": float(region_lons.min()),
+                "lon_max": float(region_lons.max()),
+                "wraps_lon": wraps,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=_REGION_COLUMNS)
+
+    regions = pd.DataFrame.from_records(rows)
+    regions = regions.reindex(regions.worst_value.abs().sort_values(ascending=False).index)
+    regions = regions.head(top_n).reset_index(drop=True)
+    regions.insert(0, "region", np.arange(1, len(regions) + 1))
+    return regions[_REGION_COLUMNS]
+
+
+# ---------------------------------------------------------------------------
 # Trend-distortion analysis
 #
 # "Distortion" is a difference of differences: how much a scenario-to-scenario delta changes once
@@ -967,11 +1180,11 @@ def _baseline_member(
     registers no such parent for the combination.
     """
     label = GROUP_TO_SCENARIO[after_group]
-    historical_member, ssp245_member, _ = resolve_member_lineage(gcm, label, after_member, variable)
+    lineage = resolve_member_lineage(gcm, label, after_member, variable)
     if before_group == "historical":
-        return historical_member
+        return lineage.historical
     if before_group == "ssp245":
-        return ssp245_member
+        return lineage.ssp245_bridge
     raise ValueError(f"no lineage rule for a {before_group!r} baseline")
 
 

@@ -8,14 +8,16 @@ plus intermediate artifacts when save_intermediate is enabled.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import icechunk
+import zarr
 
-from srm.bcsd_config import BCSDConfig, DebiasApproach, PipelineOptions, VariableConfig
+from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.config import _ROOT_MESSAGES, SCENARIO_TO_GROUP, _icechunk_storage_for_path
 
 logger = logging.getLogger(__name__)
@@ -31,10 +33,18 @@ class StoreLocation:
         S3 URI or local path to the icechunk repository.
     group : str
         Zarr group path within the repository (e.g. ``"obs/tas"``).
+    config_variable : str or None, optional
+        Variable whose ``VariableConfig`` governs this artifact's contents, or
+        ``None`` when the artifact does not depend on ``VariableConfig`` (regridded
+        observations) or when the governing config is not knowable in this process
+        (an explicit sibling-variable lookup). Store paths do not encode
+        ``VariableConfig``, so :meth:`ArtifactCache.exists` uses this to detect a
+        cache hit that was computed under different bias-correction settings.
     """
 
     store_path: str
     group: str
+    config_variable: str | None = None
 
 
 class CacheCheckError(Exception):
@@ -42,6 +52,17 @@ class CacheCheckError(Exception):
 
     Distinguishes real errors (S3 auth failure, permission denied, network error)
     from a simple cache miss. Callers can catch this to decide fallback behavior.
+    """
+
+
+class CacheConfigMismatchError(Exception):
+    """Raised when a cached artifact was computed under a different VariableConfig.
+
+    Store paths key on ``(gcm, obs_dataset, subset)`` and group paths on
+    ``(stage, variable, member)``; neither encodes ``VariableConfig``. Without this
+    check, a run using ``variable_overrides`` would silently treat an artifact built
+    with different bias-correction settings as its own cache hit, and every
+    downstream stage would consume it.
     """
 
 
@@ -77,8 +98,10 @@ class ArtifactCache:
         environment : str
             Environment name (qa, production) for cache namespace isolation.
         branch : str
-            icechunk branch for output writes (e.g. ``"v2"``). Scratch intermediate
-            artifacts always write to ``"main"`` regardless of this value.
+            icechunk branch for reads and writes (e.g. ``"v2"``). Applies to the scratch
+            store as well as the output store; see :meth:`_branch_for`. ``main`` is kept
+            as an empty anchor that every versioned branch forks from, so it never holds
+            run output.
         output_dir : str, optional
             Directory for final scenario outputs. If None, scenarios go to scratch.
         """
@@ -134,11 +157,6 @@ class ArtifactCache:
         lat_min, lat_max, lon_min, lon_max = subset_bounds
         return f"lat{lat_min}to{lat_max}_lon{lon_min}to{lon_max}"
 
-    @staticmethod
-    def _get_varconfig_id(variable_config: VariableConfig, debias_approach: DebiasApproach) -> str:
-        """8-character hash of VariableConfig fields + debias_approach. See ``VariableConfig.to_hash``."""
-        return variable_config.to_hash(debias_approach)
-
     def _require_config(self) -> BCSDConfig:
         if self.config is None:
             raise RuntimeError(
@@ -192,6 +210,7 @@ class ArtifactCache:
         return StoreLocation(
             self._output_store,
             f"historical/{var}/{hist_member}",
+            config_variable=None if variable is not None else config.variable,
         )
 
     def _scenario_group(self) -> str:
@@ -212,6 +231,7 @@ class ArtifactCache:
         return StoreLocation(
             self._output_store,
             f"{self._scenario_group()}/{var}/{config.ensemble_member}",
+            config_variable=None if variable is not None else config.variable,
         )
 
     @property
@@ -236,6 +256,7 @@ class ArtifactCache:
         return StoreLocation(
             self._output_store,
             f"debiased_coarse/historical/{var}/{hist_member}",
+            config_variable=None if variable is not None else config.variable,
         )
 
     def debiased_coarse_scenario_loc(self, variable: str | None = None) -> StoreLocation:
@@ -251,6 +272,7 @@ class ArtifactCache:
         return StoreLocation(
             self._output_store,
             f"debiased_coarse/{self._scenario_group()}/{var}/{config.ensemble_member}",
+            config_variable=None if variable is not None else config.variable,
         )
 
     def detrended_scenario_loc(self) -> StoreLocation:
@@ -259,6 +281,7 @@ class ArtifactCache:
         return StoreLocation(
             self._scratch_store,
             f"detrended_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
+            config_variable=config.variable,
         )
 
     def trend_scenario_loc(self) -> StoreLocation:
@@ -267,6 +290,7 @@ class ArtifactCache:
         return StoreLocation(
             self._scratch_store,
             f"trend_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
+            config_variable=config.variable,
         )
 
     def debiased_scenario_loc(self) -> StoreLocation:
@@ -275,6 +299,7 @@ class ArtifactCache:
         return StoreLocation(
             self._scratch_store,
             f"debiased_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
+            config_variable=config.variable,
         )
 
     # ── branch helpers ────────────────────────────────────────────────────────
@@ -323,6 +348,9 @@ class ArtifactCache:
         ------
         CacheCheckError
             If an existing store cannot be read after ``max_attempts`` attempts.
+        CacheConfigMismatchError
+            If the artifact exists but was computed under a different
+            ``VariableConfig``. See :meth:`_verify_variable_config`.
         """
         branch = self._branch_for()
         storage = _icechunk_storage_for_path(loc.store_path)
@@ -341,7 +369,13 @@ class ArtifactCache:
                 logger.debug(
                     "Cache %s: %s / %s", "hit" if hit else "miss", loc.store_path, loc.group
                 )
+                if hit:
+                    self._verify_variable_config(repo, branch, loc)
                 return hit
+            except CacheConfigMismatchError:
+                # A real, decided answer about the artifact, not an infra failure.
+                # Retrying would only repeat it and then mask it as a CacheCheckError.
+                raise
             except Exception as err:  # transient infra error against an existing store
                 last_error = err
                 if attempt < max_attempts - 1:
@@ -359,6 +393,86 @@ class ArtifactCache:
             f"Could not verify {loc.store_path} / {loc.group} on branch {branch!r} "
             f"after {max_attempts} attempts"
         ) from last_error
+
+    def _verify_variable_config(
+        self, repo: icechunk.Repository, branch: str, loc: StoreLocation
+    ) -> None:
+        """Confirm a cache hit was computed under this run's ``VariableConfig``.
+
+        Store and group paths encode ``(gcm, obs_dataset, subset)`` and
+        ``(stage, variable, member)`` respectively, so two runs differing only in a
+        ``variable_overrides`` entry resolve to the same location. Left unchecked,
+        the second run reports a hit, skips the stage, and every downstream stage
+        silently consumes artifacts built with different bias-correction settings.
+
+        The comparison reads the ``srm_downscaling:config_json`` provenance attribute
+        written by ``BCSDPipeline._build_attrs`` and compares only its nested
+        ``variable_config``. Other config differences are out of scope here: they
+        either already appear in the path or are legitimate (a wider predict period
+        reusing a cached historical fit, for instance).
+
+        Skipped, each deliberately, when:
+
+        - no config is bound to this cache;
+        - ``loc.config_variable`` is ``None``, meaning the artifact does not depend on
+          ``VariableConfig`` (regridded obs) or is an explicit sibling-variable lookup
+          whose intended config this process cannot know;
+        - the attribute is absent, i.e. the artifact predates config provenance, or the
+          group holds no readable zarr metadata. Unverifiable is not the same as
+          mismatched, so this logs and allows the hit.
+
+        Parameters
+        ----------
+        repo : icechunk.Repository
+            Already-open repository for ``loc.store_path``.
+        branch : str
+            Branch the hit was found on.
+        loc : StoreLocation
+            Location of the artifact that matched.
+
+        Raises
+        ------
+        CacheConfigMismatchError
+            If the stored ``variable_config`` differs from this run's.
+        """
+        config = self.config
+        if config is None or loc.config_variable is None:
+            return
+        if loc.config_variable != config.variable:
+            return
+
+        try:
+            session = repo.readonly_session(branch=branch)
+            attrs = dict(zarr.open_group(session.store, path=loc.group, mode="r").attrs)
+            raw = attrs.get("srm_downscaling:config_json")
+            stored = json.loads(raw)["variable_config"] if raw else None
+        except CacheConfigMismatchError:
+            raise
+        except Exception as err:
+            logger.debug("Could not read config provenance from %s: %s", loc.group, err)
+            return
+
+        if stored is None:
+            logger.debug(
+                "No config provenance on %s; cannot verify VariableConfig, allowing hit", loc.group
+            )
+            return
+
+        current = config.variable_config.model_dump()
+        differing = {k: (stored.get(k), v) for k, v in current.items() if stored.get(k) != v}
+        if not differing:
+            return
+
+        detail = "; ".join(
+            f"{k}: cached={was!r} current={now!r}" for k, (was, now) in differing.items()
+        )
+        raise CacheConfigMismatchError(
+            f"{loc.store_path} / {loc.group} on branch {branch!r} was computed with a "
+            f"different VariableConfig ({detail}). Store paths do not encode "
+            "VariableConfig, so reusing this artifact would mix bias-correction "
+            "settings. Run on a separate branch (--branch / BCSD_BRANCH), or force a "
+            "recompute to overwrite it."
+        )
 
     def list_groups_on_branch(self, store_path: str) -> list[str]:
         """Return all zarr group paths committed on the current branch of a store.

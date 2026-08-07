@@ -73,41 +73,41 @@ def _mock_dt_entry(
 
 class TestResolveLineage:
     def test_g6_member_001_standard_vars(self):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", "tas")
-        assert hist == "r1i1p1f1"
-        assert ssp245 == "001"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", "tas")
+        assert entry.historical == "r1i1p1f1"
+        assert entry.ssp245_bridge == "001"
 
     def test_g6_member_002_standard_vars(self):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", "pr")
-        assert hist == "r2i1p1f1"
-        assert ssp245 == "002"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", "pr")
+        assert entry.historical == "r2i1p1f1"
+        assert entry.ssp245_bridge == "002"
 
     def test_g6_member_003_standard_vars(self):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", "tas")
-        assert hist == "r3i1p1f1"
-        assert ssp245 == "003"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", "tas")
+        assert entry.historical == "r3i1p1f1"
+        assert entry.ssp245_bridge == "003"
 
     def test_g6_member_001_tasmax_uses_corrected_historical(self):
         """tasmax member 001 → corrected historical run '001', SSP245 bridge '009'."""
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", "tasmax")
-        assert hist == "001"
-        assert ssp245 == "009"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", "tasmax")
+        assert entry.historical == "001"
+        assert entry.ssp245_bridge == "009"
 
     def test_g6_member_002_tasmax_uses_corrected_historical(self):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", "tasmax")
-        assert hist == "001"
-        assert ssp245 == "007"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", "tasmax")
+        assert entry.historical == "001"
+        assert entry.ssp245_bridge == "007"
 
     def test_g6_member_003_tasmax_uses_corrected_historical(self):
-        hist, ssp245, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", "tasmax")
-        assert hist == "001"
-        assert ssp245 == "008"
+        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", "tasmax")
+        assert entry.historical == "001"
+        assert entry.ssp245_bridge == "008"
 
     def test_all_supported_g6_variables_resolved(self, subtests):
         for var in ("tas", "pr", "rsds", "tasmax"):
             with subtests.test(variable=var):
-                hist, *_ = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", var)
-                assert hist is not None
+                entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", var)
+                assert entry.historical is not None
 
     def test_unknown_gcm_raises_key_error(self):
         with pytest.raises(KeyError):
