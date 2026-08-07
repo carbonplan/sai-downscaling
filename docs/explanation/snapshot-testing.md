@@ -4,33 +4,57 @@ This page explains why the BCSD pipeline has a snapshot regression check and why
 
 ## How it works
 
-A cheap South Africa run produces candidate output, and `compare_runs` aligns the canonical global snapshot to that extent and diffs the two under per-variable tolerances. The comparison notebook then renders the `DiffReport` as maps and tables for a human to judge.
+A cheap South Africa run produces candidate output, and `compare_runs` diffs it against a regional baseline on the same extent for exact equality. The comparison notebook then renders the `DiffReport` as maps and tables for a human to judge.
 
 ```mermaid
 graph TB
+    REL[release published] -->|deploy.yml snapshot job| SNAP
     RUN[bcsd run<br/>South Africa configs] -->|produces| CAND[Candidate output store]
-    SNAP[("Global snapshot on source.coop<br/>pointer in baselines.py")]
+    SNAP[("Regional baseline, same extent<br/>pointer in baselines.py")]
 
-    SNAP -->|align to candidate extent| ALN[Snapshot on candidate grid]
+    SNAP --> CMP
     CAND --> CMP
-    ALN --> CMP
 
     subgraph "srm.snapshot: compare_runs → compare()"
-        CMP["per-variable tolerances"] --> REP["DiffReport<br/>max_abs, rmse, frac over tol"]
+        CMP["assert_equal<br/>exact by default"] --> REP["DiffReport<br/>max_abs, rmse, frac over tol"]
     end
 
     REP --> NB[comparison notebook<br/>maps, heatmap, distributions]
     NB --> V{human decision}
     V -->|no change| MERGE["merge"]
-    V -->|change or intended| GLOBAL["full global run,<br/>document, get approval,<br/>then repoint baselines.py"]
-    GLOBAL -.->|becomes new baseline| SNAP
+    V -->|change or intended| GLOBAL["full global run under tolerances,<br/>document, get approval, merge"]
+    GLOBAL -.->|next release rebuilds| SNAP
 ```
 
 ## Why it exists, and why tolerances
 
 Downscaled output is a long chain of numerical operations — bias correction, detrending, regridding, spatial disaggregation — layered on `ibicus`, `xarray_regrid`, `dask`, and `icechunk`. A refactor meant to be a no-op, or a routine dependency bump, can quietly shift a temperature field by a tenth of a degree across a whole scenario, with no test failing because the pipeline still produces a plausible dataset. The snapshot check makes that drift loud: it freezes a blessed run and compares fresh output against it cell by cell.
 
-Exact equality would be useless, because the pipeline is not bit-reproducible — `dask` reductions accumulate in nondeterministic order and regridding weights differ across library versions. The comparison is therefore tolerance-aware, passing a cell when `abs(candidate - snapshot) <= atol + rtol * abs(snapshot)` (the `xarray.testing.assert_allclose` rule), and a leaf passes only when no cell exceeds tolerance, no cell disagrees on NaN-ness, and the shapes match. This absorbs rounding noise while still catching a real scientific change, which by construction is far larger.
+The default comparison is **exact equality**. Two runs of the same configs at the same commit over the same spatial extent are bit-identical, which has been measured rather than assumed, so any difference at all is a code change. `compare()` takes its verdict from `xarray.testing.assert_equal`, which also checks dimension names and index identity; `frac_over_tol` is descriptive and must not be used as the gate.
+
+:::{admonition} Hypothesis, not yet confirmed: exact equality holds only at a fixed extent
+:class: warning
+
+This is the current working explanation for why a regional and a global run disagree, and it
+has not been independently reviewed or tested beyond the probe described below. Treat the
+mechanism as provisional; the measurements are reproducible, the causal story is not settled.
+
+`interpolate_fine_to_coarse_grid` accumulates the conservative regrid in float32. Under `dask`
+the summation route appears to depend on the source array's length, so two runs over different
+extents can differ by one or two float32 ULP. Across five extents from a 5x6 coarse box up to
+the globe, only 4 of 10 pairs were bit-identical; accumulating in float64 made all 10
+identical. Which pairs agree is not predictable from extent size.
+
+If it holds, the regional baseline must share the candidate's `subset_bounds`, and a
+regional-versus-global comparison still needs a tolerance band. Both are how the code is
+written today.
+
+**To test it:** run `notebooks/issues/issue_575_regrid_precision.ipynb`, which isolates
+`interpolate_fine_to_coarse_grid` on one timestep and crosses array backend (numpy vs dask)
+against accumulation dtype. See [issue #575](https://github.com/carbonplan/srm-downscaling/issues/575).
+:::
+
+For that case, pass `srm.snapshot.tolerances.TOLERANCES` to restore the band, which passes a cell when `abs(candidate - snapshot) <= atol + rtol * abs(snapshot)` (the `xarray.testing.assert_allclose` rule). A variable absent from the mapping is compared exactly, so a partial mapping can only tighten a comparison. In either mode a leaf passes only when no cell is over tolerance, no cell disagrees on NaN-ness, and the dimension names, shapes, and coordinates all match.
 
 ## Per-variable tolerances
 
@@ -38,9 +62,18 @@ One global tolerance cannot fit every variable, because they live on different s
 
 ## The baseline and the cheap proxy
 
-There is one canonical baseline: the blessed global run in CarbonPlan's public [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling), recorded as a store URI and icechunk branch in `srm.snapshot.baselines.CESM2_WACCM_GLOBAL`. "Which run is the baseline" is therefore a version-controlled value that the notebook and `compare_runs` both read, so repointing it is a reviewed edit to `baselines.py` rather than an untracked change on a bucket. Comparing full global output on every change would be prohibitively expensive, so the routine check runs over a small South Africa subset instead; the [how-to guide](../how-to/run-snapshot-tests.md) covers the halo and trimming mechanics that make the subset comparable to the global baseline.
+There are two baselines in `srm.snapshot.baselines`, each a store URI and an icechunk branch. "Which run is the baseline" is a version-controlled value that the notebook and `compare_runs` both read, so repointing is a reviewed edit rather than an untracked change on a bucket.
 
-The subset proxy has one limitation worth knowing. The bias correction fits a per-variable distribution: `tas`, `tasmax`, and `tasmin` use a numerically stable Gaussian, but `hurs`, `rsds`, and `dtr` use iterative maximum-likelihood fits (a beta distribution, with Weibull and Gumbel tails) that are sensitive to tiny input perturbations. Windowing the domain changes the `dask` and regrid reduction order and perturbs those fits at the floating-point level, so `hurs`, `rsds`, and `dtr` can diff spuriously in a South-Africa-versus-global comparison — interior differences that a wider halo cannot fix. Judge those three from the full global comparison (`mode = "global"`), where both runs feed identical inputs to the fits; the cheap proxy is a reliable regression signal only for the numerically stable variables (`tas`, `tasmax`, `tasmin`, `pr`).
+| pointer | mode | run | verdict |
+|---|---|---|---|
+| `CESM2_WACCM_SOUTH_AFRICA` | `southafrica` (default) | regional, same `subset_bounds` as the candidate | exact |
+| `CESM2_WACCM_GLOBAL` | `global` | the blessed global run on [Source Cooperative](https://source.coop/carbonplan/srm-downscaling) | tolerance band |
+
+The regional baseline is produced automatically by the `snapshot` job in `.github/workflows/deploy.yml` on every published release, then frozen under an icechunk tag. Repointing `CESM2_WACCM_SOUTH_AFRICA` at the new release is the one manual step, and the job's summary prints the value to paste.
+
+Comparing full global output on every change would be prohibitively expensive, so the routine check runs over the South Africa subset. The [how-to guide](../how-to/run-snapshot-tests.md) covers the halo and trimming mechanics.
+
+A regional baseline also removes a limitation the old global baseline carried. The bias correction fits a per-variable distribution: `tas`, `tasmax`, and `tasmin` use a numerically stable Gaussian, but `hurs`, `rsds`, and `dtr` use iterative maximum-likelihood fits (a beta distribution, with Weibull and Gumbel tails) that are sensitive to tiny input perturbations. Against a *global* baseline the domain window changes the regrid reduction order and perturbs those fits, so those three diff spuriously and have to be judged from `mode = "global"`. Against a same-extent regional baseline both sides feed identical inputs to the fits, so all seven variables are reliable and any difference is real.
 
 ## Human judgment and the label gate
 

@@ -1,11 +1,14 @@
 # Deploy the Pipeline
 
-The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. There are two environments:
+The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds three jobs:
 
-| Environment | Purpose | Trigger |
+| Job | Purpose | Trigger |
 |---|---|---|
 | `qa` | Fast regional validation | Manual (`workflow_dispatch`) |
+| `snapshot` | Rebuild the regional snapshot baseline, then freeze it under an icechunk tag | Automatic on GitHub release |
 | `production` | Full global run | Automatic on GitHub release |
+
+`snapshot` and `production` run in parallel, so the six-hour global run does not hold up the baseline the next pull request compares against.
 
 ## Config structure
 
@@ -53,11 +56,21 @@ Production runs execute all configs in `configs/production/` globally. They trig
 
 1. Merge all intended changes to `main`
 2. Create and publish a GitHub release with a SemVer tag (e.g., `v1.2.3`)
-3. The `production` workflow job fires automatically
+3. The `production` and `snapshot` workflow jobs fire automatically
 
 The job checks out the release tag, installs the package at that tag (so the `branch` in all configs resolves to the release's package version), then runs:
 1. `bcsd validate --config-path configs/production/`
 2. `bcsd run --config-path configs/production/`
+
+## Snapshot baseline runs
+
+The `snapshot` job runs `configs/snapshot/` at the release tag and produces the regional baseline the per-pull-request check compares against. It runs three steps:
+
+1. `bcsd run --config-path configs/snapshot/cesm2-waccm/` — writes to the branch named for the release's package version.
+2. `bcsd validate-output --config-path configs/snapshot/cesm2-waccm/`
+3. `bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag snapshot-<release tag>` — creates an icechunk tag so the state cannot be overwritten by a later run on the same branch.
+
+Repointing `CESM2_WACCM_SOUTH_AFRICA` in `src/srm/snapshot/baselines.py` at the new release is manual. The job prints the value in its workflow summary. See [How to Compare a Run Against the Snapshot](run-snapshot-tests.md).
 
 ## Adding a new production config
 
