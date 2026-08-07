@@ -1,10 +1,9 @@
-# BCSD configuration: MIROC-ES2H / tas / SSP245 / GeoMIP members / global (production)
+# BCSD configuration: MIROC-ES2H / all variables / SSP245 / r01 / global (production)
 
 # === Model and Scenario ===
 gcm: "MIROC-ES2H"
-variables: ["tas"]
-ensemble_members:
-  ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
+variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+ensemble_members: ["r01"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
