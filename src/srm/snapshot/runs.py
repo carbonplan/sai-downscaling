@@ -1,12 +1,13 @@
-"""Compare a candidate BCSD run against the global snapshot.
+"""Compare a candidate BCSD run against the snapshot.
 
 :func:`compare_runs` opens two output stores on the same icechunk branch and diffs
-them leaf-by-leaf under the per-variable tolerances, reporting leaves that appear on
-only one side. It performs **no coordinate alignment**: the two stores are compared
-as-is, so a grid mismatch surfaces as an out-of-tolerance / shape-mismatch leaf rather
-than being silently reconciled. To compare a regional candidate against the global
-snapshot, subset the snapshot to the candidate's extent first (see the comparison
-notebook).
+them leaf-by-leaf, by default for exact equality, reporting leaves that appear on
+only one side. Pass ``tolerances`` to compare under an ``atol``/``rtol`` band instead
+(see :func:`srm.snapshot.compare.compare`). It performs **no coordinate alignment**:
+the two stores are compared as-is, so a grid mismatch surfaces as a mismatch /
+shape-mismatch leaf rather than being silently reconciled. To compare a regional
+candidate against the global snapshot, subset the snapshot to the candidate's extent
+first (see the comparison notebook).
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from srm.snapshot.compare import (
     _iter_leaf_datasets,
     compare,
 )
+from srm.snapshot.tolerances import Tolerance
 from srm.validation import _open_output_datatree
 
 
@@ -28,7 +30,7 @@ def _check_tasmax_ge_tasmin(candidate) -> list[InvariantCheck]:
     """Verify ``tasmax >= tasmin`` per (scenario group, member) on the candidate tree.
 
     The per-variable leaf diff compares tasmax and tasmin independently, so a broken
-    reconcile that leaves each field within tolerance yet inverts the pair would pass
+    reconcile that leaves each field matching the snapshot yet inverts the pair would pass
     every leaf. This pairs the sibling ``{group}/tasmax/{member}`` and
     ``{group}/tasmin/{member}`` final-product leaves and runs the same NaN-safe gate
     ``bcsd validate`` uses (:meth:`~srm.qaqc.DatasetChecker.validate_tasmax_ge_tasmin`,
@@ -72,14 +74,17 @@ def _compare_datatrees(
     *,
     scenarios: list[str] | None = None,
     variables: list[str] | None = None,
+    tolerances: dict[str, Tolerance] | None = None,
 ) -> DiffReport:
     """Diff ``candidate`` against ``snapshot`` across all leaves (no alignment).
 
     Runs :func:`~srm.snapshot.compare.compare` (which flags candidate leaves absent
     from the snapshot), then appends leaves present only in the snapshot so nothing is
     silently skipped. ``scenarios`` / ``variables`` restrict the reported leaves.
+    ``tolerances`` is passed straight through to :func:`~srm.snapshot.compare.compare`
+    (default: exact equality).
     """
-    report = compare(candidate, snapshot)
+    report = compare(candidate, snapshot, tolerances=tolerances)
     leaves = list(report.leaves)
 
     cand_pairs = {(p, str(v)) for p, ds in _iter_leaf_datasets(candidate) for v in ds.data_vars}
@@ -117,6 +122,7 @@ def compare_runs(
     snapshot_branch: str,
     scenarios: list[str] | None = None,
     variables: list[str] | None = None,
+    tolerances: dict[str, Tolerance] | None = None,
 ) -> DiffReport:
     """Open two output stores and compare them as-is.
 
@@ -124,8 +130,12 @@ def compare_runs(
     snapshot are separate stores, so each is read on its own icechunk branch (the
     candidate need not be on the snapshot's branch). The stores must be on the same grid
     (see the module docstring); use the comparison notebook to subset the global
-    snapshot to a regional candidate first.
+    snapshot to a regional candidate first. ``tolerances`` defaults to ``None`` (exact
+    equality); pass :data:`srm.snapshot.tolerances.TOLERANCES` to compare under a
+    tolerance band instead.
     """
     candidate = _open_output_datatree(candidate_uri, branch=candidate_branch)
     snapshot = _open_output_datatree(snapshot_uri, branch=snapshot_branch)
-    return _compare_datatrees(candidate, snapshot, scenarios=scenarios, variables=variables)
+    return _compare_datatrees(
+        candidate, snapshot, scenarios=scenarios, variables=variables, tolerances=tolerances
+    )

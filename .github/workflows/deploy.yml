@@ -79,6 +79,55 @@ jobs:
                   fi
                   uv run bcsd validate-output --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
 
+    snapshot:
+        # Produces the regional baseline the per-PR snapshot check compares against. It has
+        # to run at the release tag, on the same input stores as the production run, so that
+        # the next pull request's candidate differs from it only by that pull request's
+        # commits. Independent of the production job, so a slow global run does not delay it.
+        name: Snapshot baseline run
+        timeout-minutes: 120
+        runs-on: ubuntu-latest
+        if: github.event_name == 'release'
+        environment:
+            name: qa
+        env:
+            TAG: ${{ github.event.release.tag_name }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  ref: ${{ github.event.release.tag_name }}
+            - uses: ./.github/actions/setup
+
+            - name: Run BCSD pipeline (snapshot baseline)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # No --branch: at a release tag the default branch is the package version, which
+              # is the name baselines.py cites.
+              run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
+
+            - name: Validate output datasets (snapshot baseline)
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              run: uv run bcsd validate-output --config-path configs/snapshot/cesm2-waccm/
+
+            - name: Freeze the snapshot baseline under an immutable tag
+              env:
+                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # The branch this wrote to stays writable, so a later qa run with a matching
+              # BCSD_BRANCH could overwrite the baseline in place and a comparison would then
+              # diff a candidate against itself. The tag pins the snapshot id.
+              run: uv run bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag "snapshot-$TAG"
+
+            - name: Report the pointer to update
+              run: |
+                  echo "### Snapshot baseline produced" >> "$GITHUB_STEP_SUMMARY"
+                  echo "" >> "$GITHUB_STEP_SUMMARY"
+                  echo "Repoint \`CESM2_WACCM_SOUTH_AFRICA\` in \`src/srm/snapshot/baselines.py\`:" >> "$GITHUB_STEP_SUMMARY"
+                  echo "" >> "$GITHUB_STEP_SUMMARY"
+                  echo '```python' >> "$GITHUB_STEP_SUMMARY"
+                  echo "branch=\"$TAG\",  # frozen as tag snapshot-$TAG" >> "$GITHUB_STEP_SUMMARY"
+                  echo '```' >> "$GITHUB_STEP_SUMMARY"
+
     production:
         name: Production run
         timeout-minutes: 360
