@@ -348,6 +348,42 @@ class TestBuildOceanMask:
         assert captured["lat"] == sorted(captured["lat"], reverse=True)
 
 
+def test_rasterix_default_engine_rasterizes_without_error():
+    """Guard for the ``rusterize<0.9`` cap in pyproject.
+
+    rusterize 0.9 made ``res`` and ``out_shape`` mutually exclusive, but rasterix 0.2.2 still
+    passes both, so rasterix's auto-detected engine (it prefers rusterize when installed) raised
+    ``ValueError`` on every call. Both ``_build_ocean_mask`` and
+    ``docs/data-access-notebooks/subsetting-and-exporting.ipynb`` go through that path, so a lock
+    that drifts back to 0.9 has to fail here rather than partway through a Coiled run.
+    """
+    import geopandas as gpd
+    import numpy as np
+    import shapely
+    from rasterix.rasterize import geometry_clip
+
+    ds = xr.Dataset(
+        {"tas": (("lat", "lon"), np.ones((8, 10), dtype="float32"))},
+        coords={"lat": np.linspace(10, 3, 8), "lon": np.linspace(0, 9, 10)},
+    ).chunk({"lat": 4, "lon": 5})  # chunked, so the dask wrapper is exercised as the notebook does
+    country = gpd.GeoDataFrame(geometry=[shapely.box(2, 4, 6, 8)], crs="EPSG:4326")
+
+    def clip(**kwargs):
+        return geometry_clip(ds, country[["geometry"]], xdim="lon", ydim="lat", **kwargs).compute()
+
+    # clip=True (the default) crops to the geometry's bounding box, so with all_touched every
+    # surviving cell is inside the polygon and none are masked.
+    touched = clip(all_touched=True)
+    assert touched["tas"].size < ds["tas"].size
+    assert int(touched["tas"].isnull().sum()) == 0
+
+    # Without all_touched, the edge cells the polygon only grazes are dropped, which is what
+    # proves a real mask was rasterized rather than an all-true array returned.
+    centers = clip(all_touched=False)
+    assert int(centers["tas"].notnull().sum()) > 0
+    assert int(centers["tas"].isnull().sum()) > 0
+
+
 # ---------------------------------------------------------------------------
 # fit_historical – dependency validation & cache routing
 # ---------------------------------------------------------------------------

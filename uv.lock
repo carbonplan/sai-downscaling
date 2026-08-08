@@ -2901,7 +2901,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "ptyprocess" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [
@@ -3716,23 +3716,23 @@ wheels = [
 
 [[package]]
 name = "rusterize"
-version = "0.9.1"
+version = "0.8.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/73/76/ef460af6c96a9fd9c0fb218ab357b97046920b287e61a618c21413e5ad1b/rusterize-0.9.1.tar.gz", hash = "sha256:8f1138f50d12dae928dae5bf760e0884451d09673ae6d55ee1cea5da08c8e877", size = 744181, upload-time = "2026-07-16T20:23:04.347Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5c/05/0b824a53b651e84a39e31481674f3ca9db0f6df64fd476af474ce688fbaa/rusterize-0.8.1.tar.gz", hash = "sha256:2376de4e40a2c305bf760c45e31a6d9af0adb15a2475aa06606608efe2c75a0e", size = 741142, upload-time = "2026-06-16T22:36:48.956Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/8a/2625474903deaf9bd24625dab5cbcf802e441918f8e00db45456e7b8425e/rusterize-0.9.1-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:3065917263a9644a5b2d5556e61209ae8c2fe633baa0649bf605d9a4995a6502", size = 12625236, upload-time = "2026-07-16T20:22:40.114Z" },
-    { url = "https://files.pythonhosted.org/packages/45/33/1af74bc9fb247bcc196bf3eb544b3ab2ee6dcf96c99e6b8e5f22c029e590/rusterize-0.9.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:ecea4545616d4444da72f0479ee825871fa239082a7a3a40c1ad38fd9bf0e478", size = 11585166, upload-time = "2026-07-16T20:22:42.578Z" },
-    { url = "https://files.pythonhosted.org/packages/da/eb/21cf6ed185144e43eb83072fd41723791bcee6ee6ab8510531b6a8ef5869/rusterize-0.9.1-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:fec2183e52f93db3c4c38ef9b587084ea6e8c586d00275381c71115bea730217", size = 12134478, upload-time = "2026-07-16T20:22:45.063Z" },
-    { url = "https://files.pythonhosted.org/packages/36/7d/143076b4a5393c0a55ec6e8ca0f8f9c0f9588ac137a4183de87aae8a9652/rusterize-0.9.1-cp311-abi3-manylinux_2_28_armv7l.whl", hash = "sha256:a9cd9907f9c12033ae513a431ba6f9790ac2cb1113925083e7e1a10159473964", size = 13041065, upload-time = "2026-07-16T20:22:47.699Z" },
-    { url = "https://files.pythonhosted.org/packages/24/d6/d62ec9cf1cd1f7bd0b438f943eb860e5f0eb68e57c1efffcc7689c1f33c3/rusterize-0.9.1-cp311-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:7c3f67b4e9c31dddb34a4780d169ade4db35eb50fb8cf26dc11567522f7a78bb", size = 14083790, upload-time = "2026-07-16T20:22:50.032Z" },
-    { url = "https://files.pythonhosted.org/packages/ca/61/2eab337fbf534d7a5c701a40a6c82d44eaa1640e104a0b5739bf698a9830/rusterize-0.9.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:7855c664cd729e24b5bd770d1ea1d97726c8d009a85a29c56f3cf20ca3e1ca6e", size = 13113273, upload-time = "2026-07-16T20:22:52.519Z" },
-    { url = "https://files.pythonhosted.org/packages/66/c6/bd886fa0289f7546420b55c8255344328cb7156a9eb46368067bccabf29a/rusterize-0.9.1-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:75e23b1db767c055635e7da07c4a0798111c89d14b84a9747fdf8ab53f310ba9", size = 12320952, upload-time = "2026-07-16T20:22:54.842Z" },
-    { url = "https://files.pythonhosted.org/packages/43/78/5fe407eb9cbe832d0cd2cb3d1035444bed6dfe96f5c5585675d8cda1513f/rusterize-0.9.1-cp311-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:edd35259bf19439e9d5bfd0e8e61713346e18289bebf73529243c763a5a54d8b", size = 13315965, upload-time = "2026-07-16T20:22:57.094Z" },
-    { url = "https://files.pythonhosted.org/packages/16/ed/5c25a5794a6753dc7ce38dc47d45de92ecb1e398cfb86099719645604ca9/rusterize-0.9.1-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:e69da20ea4ccc10ea33ced33eaed78523ea37fec428be9eb056b64b08ca4c51e", size = 13194937, upload-time = "2026-07-16T20:22:59.75Z" },
-    { url = "https://files.pythonhosted.org/packages/59/12/c11866164a43b070c91d691a0daa08a5b513c74e5baa56006ebf395bc683/rusterize-0.9.1-cp311-abi3-win_amd64.whl", hash = "sha256:e76e78f3b06d49516182b4b8263a16b6cc565607c0be4007b0bb7e19d03c5bac", size = 13486114, upload-time = "2026-07-16T20:23:02.067Z" },
+    { url = "https://files.pythonhosted.org/packages/27/62/4ba4ef3c59f69392234e2a1e2165af735b9e8654d12d2cf227245e5358c2/rusterize-0.8.1-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:038cfb9a97cb6502c9c94a0750cb38986030bb92737b34e1632704a257351241", size = 17532126, upload-time = "2026-06-16T22:36:23.382Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/c8/6857f47997db5a5f600fbbc062f542577611cfa54c237a8d608ab580cece/rusterize-0.8.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:8eb65a05865a9e4a7ae74fce1d24602110ef32d740c3ff2cfb9dfecda1bbaea2", size = 16184660, upload-time = "2026-06-16T22:36:26.118Z" },
+    { url = "https://files.pythonhosted.org/packages/53/75/066a433e900de0951c23ef13dfd2947b0930325e4a436732253f2e67af0a/rusterize-0.8.1-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:62df7cb82d5b327e3b02e3299a109b71418563dcfc8776d93c343a9c416fe9a0", size = 16905109, upload-time = "2026-06-16T22:36:28.639Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/5e/6c0a4ddc5a8deafc00769f3696cf70908363b4dab4105a69bacf7b377272/rusterize-0.8.1-cp311-abi3-manylinux_2_28_armv7l.whl", hash = "sha256:801f20d0633b0522b70a74121a78399412c992ddac3f984980a5b9df2f5fe7b6", size = 17923124, upload-time = "2026-06-16T22:36:31.254Z" },
+    { url = "https://files.pythonhosted.org/packages/15/e0/182c98c0f708bdb47c977d24e3f13d71a4eddfd895665c5b848d5bc3d412/rusterize-0.8.1-cp311-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:1f9cdbb4927da467971081b0be309d375644a4cae9133897c23bdcfccf22491a", size = 19359561, upload-time = "2026-06-16T22:36:33.92Z" },
+    { url = "https://files.pythonhosted.org/packages/72/9d/0a13858df84014f80e707548034011a355646e4680fea74d530e047ce83c/rusterize-0.8.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:e736ac9c551577b5cb19aaded84d1840c95c6b0a6ee6c29501ec6c5a81e09fb8", size = 18067542, upload-time = "2026-06-16T22:36:36.302Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/05/f95a32ac798cf72f5dedbbfea488062684bfae227773c1ee2ce2142ca4cb/rusterize-0.8.1-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:7d9946f9b582f85cfb171d22d60c284a5b14ad0715c9ef8842098b1b44fe0231", size = 17097992, upload-time = "2026-06-16T22:36:38.929Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/72/7f7708243fa737fa13f65796d9463ff21b714d74a8804c6b128133603672/rusterize-0.8.1-cp311-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:4d8c5e9aac4eef3e618bc2b02d7093bce3d48b941b8d7dd3ea62f8b1d61c9159", size = 18154839, upload-time = "2026-06-16T22:36:41.475Z" },
+    { url = "https://files.pythonhosted.org/packages/62/8b/65172015e0c458e1a428d03db66844430a1347aae2dfafba3f986d034ad2/rusterize-0.8.1-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:133aba0ae22ae49a1c2ae0b9914f4281944e15d6d585891a7b292e824ec97a32", size = 18138388, upload-time = "2026-06-16T22:36:44.028Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/22/e7e224de6fb60b669f5cfe4cd1a195c78f0212af901194bf40bf9855b57d/rusterize-0.8.1-cp311-abi3-win_amd64.whl", hash = "sha256:15486ea102717ce6abdda70406a4890fe8ddb5b9c1e7bb2babd967fdacaf0d10", size = 18260741, upload-time = "2026-06-16T22:36:46.432Z" },
 ]
 
 [[package]]
@@ -4255,7 +4255,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rasterix", specifier = ">=0.2.1" },
     { name = "rich", specifier = ">=13.0.0" },
-    { name = "rusterize", specifier = ">=0.8.0" },
+    { name = "rusterize", specifier = ">=0.8.0,<0.9" },
     { name = "s3fs", specifier = ">=0.4.2" },
     { name = "scipy", specifier = ">=1.16.0" },
     { name = "tabulate", specifier = ">=0.9.0" },
