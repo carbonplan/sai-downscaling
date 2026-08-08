@@ -10,8 +10,11 @@ pipeline execution.
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 import itertools
+import operator
+from collections import defaultdict
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
@@ -1670,3 +1673,661 @@ def distortion_summary(
     if sign_flip is not None:
         summary["frac_area_sign_flip"] = weighted_fraction(sign_flip, weights, valid=valid)
     return summary
+
+
+# --- Output-store integrity checks ----------------------------------------------------------------
+# Shared by the QA notebooks under docs/explanation/qa-qc/. A *leaf* is one
+# (gcm, group, variable, member) path in an output store; every check works per leaf, so a run over
+# one GCM and a run over several differ only in how many keys reach the same functions.
+
+SPATIAL = ("lat", "lon")
+TEMP_VARS = frozenset({"tas", "tasmax", "tasmin"})
+HOT_K = 65 + 273.15  # outlandishly_high_temp threshold
+COLD_K = -100 + 273.15  # outlandishly_low_temp threshold
+PR_OUTLANDISH = 2000 / 86400  # 2000 mm/day in kg m-2 s-1 (~0.02315); largest recorded ~1825 mm/day
+
+#: Group path to scenario label, for the groups an output store can carry. Extends
+#: :data:`srm.config.GROUP_TO_SCENARIO` with the termination-shock group, which only CESM2-WACCM has.
+OUTPUT_SCENARIO_LABELS: dict[str, str] = {
+    "historical": "historical",
+    "ssp245": "SSP245",
+    "g6_1p5k": "G6-1.5K",
+    "g6_1p5k_end": "G6-1.5K-END",
+}
+
+
+def output_group_labels(scenario_labels: dict[str, str] | None = None) -> dict[str, str]:
+    """Group path to scenario label for both output families.
+
+    The fine-grid groups sit at the top level and the bias-corrected coarse ones mirror them under
+    ``debiased_coarse/``, so every scenario appears twice with the same label.
+    """
+    labels = OUTPUT_SCENARIO_LABELS if scenario_labels is None else scenario_labels
+    return {**labels, **{f"debiased_coarse/{g}": s for g, s in labels.items()}}
+
+
+def family_of(group: str) -> str:
+    """Which of the two grids a leaf lives on."""
+    return "debiased_coarse" if group.startswith("debiased_coarse") else "fine"
+
+
+def has_group(tree: xr.DataTree, group: str) -> bool:
+    """Whether a store carries a group path, walking the ``debiased_coarse/x`` form segment by segment."""
+    node = tree
+    for part in group.split("/"):
+        if part not in node.children:
+            return False
+        node = node.children[part]
+    return True
+
+
+def discover_leaves(
+    trees: dict[str, xr.DataTree],
+    group_labels: dict[str, str] | None = None,
+    variables: list[str] | None = None,
+) -> dict[tuple[str, str, str, str], xr.DataArray]:
+    """One lazy DataArray per (gcm, group, variable, member) across every store.
+
+    Variables are discovered from the tree unless ``variables`` restricts them, so a store carrying
+    a variable the caller did not think to list is still checked rather than silently skipped.
+    """
+    groups = output_group_labels() if group_labels is None else group_labels
+    leaves: dict[tuple[str, str, str, str], xr.DataArray] = {}
+    for gcm, tree in trees.items():
+        for group in groups:
+            if not has_group(tree, group):
+                continue
+            node = tree[group]
+            for v in node.children:
+                if variables is not None and v not in variables:
+                    continue
+                for m in node[v].children:
+                    leaves[(gcm, group, v, m)] = node[f"{v}/{m}"].dataset[v]
+    return leaves
+
+
+def leaf_table(rows: dict) -> pd.DataFrame:
+    """One row per leaf, indexed by (gcm, scenario, variable, member).
+
+    The MultiIndex is built explicitly: pandas only infers one from tuple keys when there's a row.
+    """
+    df = pd.DataFrame.from_dict(rows, orient="index")
+    df.index = pd.MultiIndex.from_tuples(
+        rows.keys(), names=["gcm", "scenario", "variable", "member"]
+    )
+    return df
+
+
+def pair_table(rows: dict, names: list[str]) -> pd.DataFrame:
+    """Table for the checks that report per grid or per group rather than per leaf."""
+    df = pd.DataFrame.from_dict(rows, orient="index")
+    df.index = pd.MultiIndex.from_tuples(rows.keys(), names=names)
+    return df
+
+
+def leaf_stats(da: xr.DataArray, spatial: tuple[str, ...] = SPATIAL) -> xr.Dataset:
+    """Lazy per-leaf reductions, fused into one pass over each array on compute."""
+    dims = list(spatial)
+    return xr.Dataset(
+        {
+            # Per-cell NaN count: the total answers "any NaNs?", and the map is what lets an
+            # interior-NaN check tell a structural regrid border from a real gap.
+            "nan_days": da.isnull().sum("time"),
+            "min": da.min(),
+            "max": da.max(),
+            # Per-day spatial moments, reused by the duplicate, range, all-zero and duplicate-leaf
+            # checks. Four independent moments identify a duplicate day without a second read.
+            "fingerprint": xr.concat(
+                [da.min(dims), da.max(dims), da.mean(dims), da.std(dims)],
+                dim=pd.Index(["min", "max", "mean", "std"], name="stat"),
+            ),
+        }
+    )
+
+
+def pr_physical(da: xr.DataArray) -> xr.Dataset:
+    """Per-cell day counts for the precipitation constraints, folded into the per-leaf read."""
+    return xr.Dataset(
+        {
+            "neg_days": (da < 0).sum("time"),  # non-negativity: expected 0 everywhere
+            "high_days": (da > PR_OUTLANDISH).sum("time"),  # outlandish daily total
+        },
+        attrs={"n_time": da.sizes["time"]},
+    )
+
+
+def compute_with_retry(*collections, attempts: int = 3, label: str = "", sleep: float = 5.0):
+    """dask.compute with retries, so a transient scheduler glitch does not abort a whole run."""
+    import time
+
+    import dask
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return dask.compute(*collections)
+        except Exception as exc:
+            if attempt == attempts:
+                raise
+            print(f"    {label}retry {attempt}/{attempts - 1} after {type(exc).__name__}")
+            time.sleep(sleep)
+
+
+def check_no_nans(stats: dict) -> pd.DataFrame:
+    """Total NaN cell-days per leaf; pass = zero.
+
+    On a spatial subset every fine-grid leaf fails this on the interpolation border, which is
+    structural rather than a defect; :func:`check_interior_nans` is the version that carries
+    information there.
+    """
+    df = leaf_table({k: {"n_nan_cell_days": int(s.nan_days.sum())} for k, s in stats.items()})
+    df["pass"] = df.n_nan_cell_days == 0
+    return df
+
+
+def structural_border(stats: dict, leaves: dict) -> dict[tuple[str, str], xr.DataArray]:
+    """Per (gcm, family): the cells that are NaN on every day of every leaf on that grid.
+
+    Taken across all leaves on a grid rather than per leaf. A per-leaf border would be
+    self-fulfilling, since an always-NaN hole from a real bug would define itself as border.
+    """
+    grids: dict[tuple[str, str], list] = defaultdict(list)
+    for k, s in stats.items():
+        grids[(k[0], family_of(k[1]))].append(s.nan_days == leaves[k].sizes["time"])
+    return {key: functools.reduce(operator.and_, masks) for key, masks in grids.items()}
+
+
+def check_interior_nans(stats: dict, leaves: dict) -> pd.DataFrame:
+    """NaN cell-days outside the structural border; pass = zero."""
+    borders = structural_border(stats, leaves)
+    df = leaf_table(
+        {
+            k: {
+                "n_nan_cells": int((s.nan_days > 0).sum()),  # cells NaN on at least one day
+                "n_nan_cell_days": int(s.nan_days.sum()),  # scales with record length
+                "interior_nan_cell_days": int(
+                    s.nan_days.where(~borders[(k[0], family_of(k[1]))], 0).sum()
+                ),
+            }
+            for k, s in stats.items()
+        }
+    )
+    df["pass"] = df.interior_nan_cell_days == 0
+    return df
+
+
+def duplicate_pairs(fp: xr.DataArray) -> list[tuple[str, str]]:
+    """Day-pairs sharing an identical (min, max, mean, std) spatial fingerprint.
+
+    A shared fingerprint is reported directly: four independent moments make a collision between
+    two genuinely different fields effectively impossible, and confirming it costs a second pass.
+    """
+    arr = fp.transpose("time", "stat").values
+    valid = ~np.isnan(arr).any(axis=1)
+    times = fp.time.values[valid]
+
+    _, inv = np.unique(arr[valid], axis=0, return_inverse=True)
+    groups: dict[int, list] = {}
+    for t, g in zip(times, inv):
+        groups.setdefault(int(g), []).append(t)
+
+    def fmt(t) -> str:
+        return str(np.datetime_as_string(t, unit="D"))
+
+    return [(fmt(g[0]), fmt(t)) for g in groups.values() if len(g) > 1 for t in g[1:]]
+
+
+def check_no_duplicates(stats: dict) -> pd.DataFrame:
+    """Per-leaf list of duplicated days; pass = none."""
+    df = leaf_table(
+        {k: {"duplicate_pairs": duplicate_pairs(s.fingerprint)} for k, s in stats.items()}
+    )
+    df["pass"] = df.duplicate_pairs.str.len() == 0
+    return df
+
+
+def irregular_days(variable: str, fp: xr.DataArray) -> list[tuple[str, float]]:
+    """(date, K) for days whose spatial max/min breaches the outlandish temperature thresholds."""
+    if variable not in TEMP_VARS:
+        return []
+    smax, smin = fp.sel(stat="max"), fp.sel(stat="min")
+    bad = ((smax > HOT_K) | (smin < COLD_K)).values
+    vals = smax.where(smax > HOT_K, smin).values[bad]  # report whichever extreme tripped
+    return [(str(t)[:10], round(float(x), 1)) for t, x in zip(fp.time.values[bad], vals)]
+
+
+def check_reasonable_ranges(stats: dict) -> pd.DataFrame:
+    """Each leaf's global min/max against VAR_SPATIAL_RANGES, plus report-only outlandish days."""
+    df = leaf_table(
+        {
+            k: {
+                "min": float(s["min"]),
+                "max": float(s["max"]),
+                "irregular_days": irregular_days(k[2], s["fingerprint"]),
+            }
+            for k, s in stats.items()
+        }
+    )
+    df["pass"] = [
+        VAR_SPATIAL_RANGES[v]["min"][0] <= mn <= VAR_SPATIAL_RANGES[v]["min"][1]
+        and VAR_SPATIAL_RANGES[v]["max"][0] <= mx <= VAR_SPATIAL_RANGES[v]["max"][1]
+        for (_gcm, _s, v, _m), mn, mx in zip(df.index, df["min"], df["max"])
+    ]
+    df["n_irregular_days"] = df.irregular_days.str.len()
+    return df
+
+
+def check_time_bounds(leaves: dict, group_labels: dict[str, str] | None = None) -> pd.DataFrame:
+    """Each leaf's endpoints against its raw input bounds, with no exemptions.
+
+    ``bridged_pre_sai`` flags a SAI leaf starting before its raw input bound and ``stale_end_tail``
+    a leaf running past it; both are regression sentinels rather than separate checks.
+    """
+    # Imported here rather than at module scope: srm.validation imports this module, so a top-level
+    # import would be circular.
+    from srm.validation import resolve_member_time_bounds
+
+    groups = output_group_labels() if group_labels is None else group_labels
+    df = leaf_table(
+        {
+            (gcm, s, v, m): {
+                "actual_start": str(da.time.values[0])[:10],
+                "actual_end": str(da.time.values[-1])[:10],
+                "n_time": da.sizes["time"],
+                "expected": resolve_member_time_bounds(gcm, groups[s], m),
+            }
+            for (gcm, s, v, m), da in leaves.items()
+        }
+    )
+    expected_start = df.expected.str[0].fillna("0000-01-01")  # no known bounds -> pass
+    expected_end = df.expected.str[1].fillna("9999-12-31")
+    is_sai = df.index.get_level_values("scenario").str.upper().str.contains("G6|SAI")
+    starts_before_raw = df.actual_start < expected_start
+    ends_after_raw = df.actual_end > expected_end
+    df["bridged_pre_sai"] = is_sai & starts_before_raw
+    df["stale_end_tail"] = ends_after_raw
+    df["pass"] = ~starts_before_raw & ~ends_after_raw
+    return df
+
+
+def all_zero_days(fp: xr.DataArray) -> list[str]:
+    """Dates whose entire spatial field is exactly 0 (spatial min and max both 0); see #425."""
+    smin, smax = fp.sel(stat="min"), fp.sel(stat="max")
+    bad = ((smin == 0) & (smax == 0)).values
+    return [str(t)[:10] for t in fp.time.values[bad]]
+
+
+def check_no_all_zero(stats: dict) -> pd.DataFrame:
+    """Per-leaf list of all-zero days; pass = none.
+
+    A whole field of exactly zero is a write or masking error rather than weather, ``pr`` included:
+    individual cells are legitimately zero, a correct global field is not. That last part stops
+    holding on a small, semi-arid subset, where domain-wide dry days are real.
+    """
+    df = leaf_table(
+        {k: {"all_zero_days": all_zero_days(s["fingerprint"])} for k, s in stats.items()}
+    )
+    df["pass"] = df.all_zero_days.str.len() == 0
+    return df
+
+
+def _equal_nan(a: np.ndarray, b: np.ndarray) -> bool:
+    """Elementwise equality treating NaN as matching NaN, as xarray's ``equals`` does.
+
+    A fine grid's interpolation border is NaN in every leaf, so a strict ``==`` would stop real
+    duplicates pairing.
+    """
+    return bool(np.array_equal(a, b, equal_nan=True))
+
+
+def duplicate_leaves(stats: dict) -> list[tuple]:
+    """Leaf pairs whose fingerprints agree on every shared day, within one (gcm, family).
+
+    Returns (leaf, leaf, start, end, n_overlap, full_a, full_b); each ``full_x`` says whether the
+    shared window is the whole of that leaf's record, so a scenario written from the run it branches
+    out of shows up as a partial-window pair rather than being missed.
+
+    Scope is the grid family rather than the scenario group, and the comparison is on the shared
+    window rather than ``equals``, which compares coordinates too and so never pairs leaves on
+    different time axes. Overlap indices are cached per axis pair, since alignment is a property of
+    the axes and not of the leaves.
+    """
+    by_family: dict[tuple[str, str], list] = defaultdict(list)
+    for k in stats:
+        by_family[(k[0], family_of(k[1]))].append(k)
+
+    pairs = []
+    for keys in by_family.values():
+        fps = {k: stats[k].fingerprint.transpose("time", "stat").values for k in keys}
+        times = {k: stats[k].fingerprint.time.values for k in keys}
+        axes = {k: times[k].tobytes() for k in keys}
+        overlaps: dict[tuple[bytes, bytes], tuple] = {}
+
+        for a, b in itertools.combinations(keys, 2):
+            axis_pair = (axes[a], axes[b])
+            if axis_pair not in overlaps:
+                # Time coordinates are unique and sorted, so intersect1d's indices are exact.
+                overlaps[axis_pair] = np.intersect1d(times[a], times[b], return_indices=True)
+            shared, ia, ib = overlaps[axis_pair]
+            if not len(shared):
+                continue  # disjoint records can't be duplicates of one another
+            fa, fb = fps[a], fps[b]
+            # Screen on the first shared day: four comparisons reject essentially every pair.
+            if not _equal_nan(fa[ia[0]], fb[ib[0]]) or not _equal_nan(fa[ia], fb[ib]):
+                continue
+            pairs.append(
+                (
+                    a,
+                    b,
+                    str(shared[0])[:10],
+                    str(shared[-1])[:10],
+                    len(shared),
+                    len(shared) == len(times[a]),
+                    len(shared) == len(times[b]),
+                )
+            )
+    return pairs
+
+
+def check_time_axis(leaves: dict) -> pd.DataFrame:
+    """One uniform 1-day step per leaf, catching gaps and repeats between Check 4's endpoints."""
+    rows = {}
+    for k, da in leaves.items():
+        # pd.Timedelta normalizes resolution: a raw timedelta64[ns] step converts back to an int
+        # and would never compare equal.
+        steps = [pd.Timedelta(s) for s in np.unique(np.diff(da.time.values))]
+        rows[k] = {
+            "n_time": da.sizes["time"],
+            "distinct_steps": [str(s) for s in steps],
+            "pass": steps == [pd.Timedelta(days=1)],
+        }
+    return leaf_table(rows)
+
+
+def check_grids(leaves: dict, expected_fine: tuple | None = None) -> pd.DataFrame:
+    """One grid per (gcm, family), optionally pinning the fine family to a known grid.
+
+    ``expected_fine`` is ``(shape, lat_span, lon_span)``; pass it on a subset run to assert the
+    fine family really sits on the configured ``subset_bounds``.
+    """
+    grids: dict[tuple[str, str], set] = defaultdict(set)
+    for k, da in leaves.items():
+        grids[(k[0], family_of(k[1]))].add(
+            (
+                (da.sizes["lat"], da.sizes["lon"]),
+                (round(float(da.lat[0]), 4), round(float(da.lat[-1]), 4)),
+                (round(float(da.lon[0]), 4), round(float(da.lon[-1]), 4)),
+            )
+        )
+    rows = {}
+    for key, found in sorted(grids.items()):
+        shape, lat_span, lon_span = sorted(found)[0]
+        rows[key] = {
+            "n_distinct_grids": len(found),
+            "shape": shape,
+            "lat_span": lat_span,
+            "lon_span": lon_span,
+        }
+    df = pair_table(rows, ["gcm", "family"])
+    ok = df.n_distinct_grids == 1
+    if expected_fine is not None:
+        is_fine = df.index.get_level_values("family") == "fine"
+        matches = df.apply(
+            lambda r: (r["shape"], r.lat_span, r.lon_span) == tuple(expected_fine), axis=1
+        )
+        ok &= ~is_fine | matches
+    df["pass"] = ok
+    return df
+
+
+def check_inventory(leaves: dict, expected: dict) -> pd.DataFrame:
+    """Observed (variable, member) leaves against ``expected``, per (gcm, scenario group).
+
+    ``expected`` is keyed by ``(gcm, scenario)`` with the ``debiased_coarse/`` prefix stripped, and
+    maps variable to its member list. Build it from the run's configs rather than from
+    :mod:`srm.lineage`, which would check the pipeline against its own metadata.
+    """
+    observed: dict[tuple[str, str], set] = defaultdict(set)
+    for gcm, group, v, m in leaves:
+        observed[(gcm, group)].add((v, m))
+    rows = {}
+    for (gcm, group), obs in sorted(observed.items()):
+        want = {
+            (v, m) for v, members in expected[(gcm, group.split("/")[-1])].items() for m in members
+        }
+        rows[(gcm, group)] = {
+            "n_expected": len(want),
+            "n_observed": len(obs),
+            "missing": sorted(want - obs),
+            "unexpected": sorted(obs - want),
+        }
+    df = pair_table(rows, ["gcm", "group"])
+    df["pass"] = (df.missing.str.len() == 0) & (df.unexpected.str.len() == 0)
+    return df
+
+
+def check_groups(trees: dict, expected: dict) -> pd.DataFrame:
+    """Groups present in each store against the ones expected for that GCM.
+
+    Expectations come from ``expected``'s keys rather than a shared scenario list, since only
+    CESM2-WACCM carries ``g6_1p5k_end`` and a shared list would report it missing elsewhere.
+    """
+    rows = {}
+    for gcm, tree in trees.items():
+        want = {scenario for expected_gcm, scenario in expected if expected_gcm == gcm}
+        families = {
+            "fine": set(tree.children) - {"debiased_coarse"},
+            "debiased_coarse": set(tree["debiased_coarse"].children)
+            if "debiased_coarse" in tree.children
+            else set(),
+        }
+        for family, found in families.items():
+            rows[(gcm, family)] = {
+                "groups": sorted(found),
+                "missing": sorted(want - found),
+                "unchecked": sorted(found - want),
+            }
+    df = pair_table(rows, ["gcm", "family"])
+    df["pass"] = (df.missing.str.len() == 0) & (df.unchecked.str.len() == 0)
+    return df
+
+
+# --- Temperature ordering (tasmin <= tas <= tasmax) ------------------------------------------------
+
+
+def temperature_triplets(leaves: dict) -> list[tuple[str, str, str]]:
+    """(gcm, group, member) paths carrying tas AND tasmax AND tasmin.
+
+    Intersecting rather than listing excludes, without special-casing, any period whose three
+    temperature variables sit under different member ids.
+    """
+    have: dict[tuple[str, str, str], set[str]] = {}
+    for gcm, group, v, m in leaves:
+        have.setdefault((gcm, group, m), set()).add(v)
+    return sorted(gm for gm, vs in have.items() if TEMP_VARS <= vs)
+
+
+def ordering_violations(trees: dict, gcm: str, group: str, member: str) -> xr.Dataset:
+    """Per-cell count of days each ordering rule is broken, for one triplet.
+
+    The three variables can cover different spans within one member, so they are inner-joined on
+    time first.
+    """
+    node = trees[gcm][group]
+    tas = node[f"tas/{member}"].dataset["tas"]
+    tasmax = node[f"tasmax/{member}"].dataset["tasmax"]
+    tasmin = node[f"tasmin/{member}"].dataset["tasmin"]
+    tas, tasmax, tasmin = xr.align(tas, tasmax, tasmin, join="inner")
+    return xr.Dataset(
+        {
+            "max_lt_min": (tasmax < tasmin).sum("time"),  # expected 0 (#331 post-processing)
+            "max_lt_tas": (tasmax < tas).sum("time"),  # diagnostic (#448)
+            "min_gt_tas": (tasmin > tas).sum("time"),  # diagnostic (#448)
+        },
+        attrs={"n_time": tas.sizes["time"]},
+    )
+
+
+def consistency_summary(viol: dict) -> pd.DataFrame:
+    """Per-triplet ordering violation counts, with days_max<min as the #331 regression guard."""
+    rows = {}
+    for (gcm, group, m), ds in viol.items():
+        rows[(gcm, group, m)] = {
+            "n_time": ds.attrs["n_time"],
+            "days_max<min": int(ds.max_lt_min.sum()),  # #331 guarantee: should be 0
+            "cells_max<tas": int((ds.max_lt_tas > 0).sum()),
+            "frac_cells_max<tas": round(float((ds.max_lt_tas > 0).mean()), 5),
+            "cells_min>tas": int((ds.min_gt_tas > 0).sum()),
+            "frac_cells_min>tas": round(float((ds.min_gt_tas > 0).mean()), 5),
+        }
+    return pair_table(rows, ["gcm", "group", "member"])
+
+
+_LAND_MASKS: dict[tuple[int, int], xr.DataArray] = {}
+
+
+@functools.cache
+def _land_polygons():
+    """Union of the Natural Earth 50 m land polygons, cached for the session."""
+    import cartopy.io.shapereader as shpreader
+    import shapely
+
+    path = shpreader.natural_earth(resolution="50m", category="physical", name="land")
+    return shapely.union_all(list(shpreader.Reader(path).geometries()))
+
+
+def land_mask(template: xr.DataArray) -> xr.DataArray:
+    """Boolean mask on template's grid, True where the cell center falls on land.
+
+    Natural Earth rather than the pipeline's optional ocean mask, which has no Antarctica and
+    rasterizes with all_touched=True. Cached per grid shape, since families and GCM grids differ.
+    """
+    import shapely
+
+    key = (template.sizes["lat"], template.sizes["lon"])
+    if key not in _LAND_MASKS:
+        lon, lat = np.meshgrid(template["lon"].values, template["lat"].values)
+        _LAND_MASKS[key] = xr.DataArray(
+            shapely.contains_xy(_land_polygons(), lon, lat),
+            coords={"lat": template["lat"], "lon": template["lon"]},
+            dims=("lat", "lon"),
+        )
+    return _LAND_MASKS[key]
+
+
+def regions_for(land: xr.DataArray) -> dict[str, xr.DataArray]:
+    """Boolean region selectors on the land mask's grid, in reporting order."""
+    abslat = np.abs(land["lat"])
+    everywhere = xr.ones_like(land)
+    return {
+        "global": everywhere,
+        "land": land,
+        "ocean": ~land,
+        "land |lat|<60": land & (abslat < 60),
+        "ocean |lat|<60": ~land & (abslat < 60),
+        "|lat|>=60": everywhere & (abslat >= 60),
+    }
+
+
+ORDERING_CONDS = {"max<tas": "max_lt_tas", "min>tas": "min_gt_tas"}
+
+
+def regional_consistency_summary(viol: dict, spatial: tuple[str, ...] = SPATIAL) -> pd.DataFrame:
+    """Ordering violations per triplet and region, area-weighted by cos(lat)."""
+    dims = list(spatial)
+    rows = {}
+    for (gcm, group, member), ds in viol.items():
+        counts = ds["max_lt_tas"]
+        land = land_mask(counts)
+        weights = np.cos(np.deg2rad(ds["lat"])).broadcast_like(counts)
+        n_time = ds.attrs["n_time"]
+        for name, sel in regions_for(land).items():
+            w = weights.where(sel, 0.0)
+            row = {"area_frac": round(float(w.sum() / weights.sum()), 4)}
+            for label, cond in ORDERING_CONDS.items():
+                ever = (ds[cond] > 0).astype("float32")
+                freq = ds[cond] / n_time
+                row[f"frac_area_ever_{label}"] = round(float(ever.weighted(w).mean(dims)), 5)
+                row[f"mean_freq_{label}"] = round(float(freq.weighted(w).mean(dims)), 6)
+            row["days_max<min"] = int(ds["max_lt_min"].where(sel, 0).sum())
+            rows[(gcm, group, member, name)] = row
+    return pair_table(rows, ["gcm", "group", "member", "region"])
+
+
+def plot_violation_maps(viol: dict, figsize: tuple[float, float] = (16, 4)) -> None:
+    """Fraction of days each unguaranteed ordering rule breaks, masking cells that never violate."""
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+
+    conds = [("max_lt_tas", "days tasmax < tas"), ("min_gt_tas", "days tasmin > tas")]
+    for (gcm, group, m), ds in viol.items():
+        n_time = ds.attrs["n_time"]
+        fig, axes = plt.subplots(
+            1, 2, figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()}
+        )
+        for ax, (cond, title) in zip(axes, conds):
+            frac = (ds[cond] / n_time).where(ds[cond] > 0)
+            frac.plot(
+                ax=ax,
+                transform=ccrs.PlateCarree(),
+                cmap="magma_r",
+                cbar_kwargs={"label": "fraction of days", "shrink": 0.8},
+            )
+            ax.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
+            ax.gridlines(draw_labels=False, color="0.9", linewidth=0.4)
+            ax.set_title(f"{gcm}/{group}/{m}\n{title}")
+        plt.tight_layout()
+        plt.show()
+        plt.close(fig)
+
+
+# --- Precipitation physical constraints -----------------------------------------------------------
+
+
+def pr_physical_summary(phys: dict) -> pd.DataFrame:
+    """One row per pr leaf: negative and outlandish-high day and cell tallies."""
+    rows = {}
+    for (gcm, group, _v, m), ds in phys.items():
+        rows[(gcm, group, m)] = {
+            "n_time": ds.attrs["n_time"],
+            "neg_cell_days": int(ds.neg_days.sum()),
+            "cells_with_neg": int((ds.neg_days > 0).sum()),
+            "frac_cells_neg": round(float((ds.neg_days > 0).mean()), 5),
+            "high_cell_days": int(ds.high_days.sum()),
+            "cells_with_high": int((ds.high_days > 0).sum()),
+        }
+    return pair_table(rows, ["gcm", "group", "member"])
+
+
+def pr_high_days(fp: xr.DataArray) -> list[tuple[str, float]]:
+    """(date, kg m-2 s-1) for days whose spatial-max pr exceeds the outlandish threshold."""
+    smax = fp.sel(stat="max")
+    bad = (smax > PR_OUTLANDISH).values
+    return [(str(t)[:10], float(x)) for t, x in zip(fp.time.values[bad], smax.values[bad])]
+
+
+def plot_negativity_maps(phys: dict, figsize: tuple[float, float] = (8, 4)) -> None:
+    """Map the fraction of days pr < 0, for any leaf that ever goes negative."""
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+
+    plotted = False
+    for (gcm, group, _v, m), ds in phys.items():
+        if int((ds.neg_days > 0).sum()) == 0:
+            continue
+        plotted = True
+        frac = (ds.neg_days / ds.attrs["n_time"]).where(ds.neg_days > 0)
+        fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()})
+        frac.plot(
+            ax=ax,
+            transform=ccrs.PlateCarree(),
+            cmap="magma_r",
+            cbar_kwargs={"label": "fraction of days pr < 0", "shrink": 0.8},
+        )
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
+        ax.gridlines(draw_labels=False, color="0.9", linewidth=0.4)
+        ax.set_title(f"{gcm}/{group}/{m}\nnegative precipitation")
+        plt.tight_layout()
+        plt.show()
+        plt.close(fig)
+    if not plotted:
+        print("No leaf has any negative precipitation, nothing to map.")

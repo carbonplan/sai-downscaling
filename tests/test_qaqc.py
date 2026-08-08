@@ -11,19 +11,40 @@ from srm.qaqc import (
     CHECK_RED,
     DISTORTION_STAGES,
     _parse_gap_fill_member_map,
+    all_zero_days,
     area_weights,
     calculate_distortion_flags,
     calculate_reasonable_bounds_doy,
     check_ensemble_spread,
+    check_grids,
+    check_groups,
+    check_interior_nans,
+    check_inventory,
+    check_no_all_zero,
+    check_no_duplicates,
+    check_no_nans,
+    check_reasonable_ranges,
+    check_time_axis,
     compute_deltas,
+    discover_leaves,
     distortion_fields,
     distortion_summary,
+    duplicate_leaves,
+    duplicate_pairs,
     enumerate_scenario_comparisons,
+    family_of,
     find_exceedance_regions,
     highlight,
+    irregular_days,
+    leaf_stats,
     obs_doy_bounds,
+    output_group_labels,
+    pr_physical,
+    pr_physical_summary,
+    regions_for,
     scenario_delta_doy,
     sign_flip_mask,
+    temperature_triplets,
     weighted_fraction,
 )
 
@@ -812,3 +833,347 @@ def test_highlight_renders_a_multiindex_table():
 def test_highlight_registries_do_not_overlap():
     """A column in both would take its color from dict ordering rather than from intent."""
     assert not set(CHECK_RED) & set(CHECK_AMBER)
+
+
+# --- Output-store integrity checks ----------------------------------------------------------------
+
+_STATS = ["min", "max", "mean", "std"]
+
+
+def _da(seed: int, *, n_time: int = 6, start: str = "2015-01-01", nan_cells=(), zero_days=()):
+    """Small (time, lat, lon) array; `nan_cells` are (i, j) holes NaN on every day."""
+    rng = np.random.default_rng(seed)
+    values = rng.uniform(250, 300, size=(n_time, 3, 4))
+    for i, j in nan_cells:
+        values[:, i, j] = np.nan
+    for t in zero_days:
+        values[t] = 0.0
+    return xr.DataArray(
+        values,
+        dims=("time", "lat", "lon"),
+        coords={
+            "time": pd.date_range(start, periods=n_time, freq="D"),
+            "lat": [-10.0, 0.0, 10.0],
+            "lon": [0.0, 10.0, 20.0, 30.0],
+        },
+    )
+
+
+def _fp(values: np.ndarray, start: str = "2015-01-01"):
+    """Fingerprint DataArray shaped like leaf_stats builds, from a (time, 4) array."""
+    return xr.DataArray(
+        values.T,
+        dims=("stat", "time"),
+        coords={"stat": _STATS, "time": pd.date_range(start, periods=len(values), freq="D")},
+    )
+
+
+def _stats_of(leaves: dict) -> dict:
+    return {k: leaf_stats(da).compute() for k, da in leaves.items()}
+
+
+def test_output_group_labels_mirrors_every_scenario_under_debiased_coarse():
+    labels = output_group_labels({"historical": "historical", "ssp245": "SSP245"})
+
+    assert labels == {
+        "historical": "historical",
+        "ssp245": "SSP245",
+        "debiased_coarse/historical": "historical",
+        "debiased_coarse/ssp245": "SSP245",
+    }
+    assert family_of("debiased_coarse/ssp245") == "debiased_coarse"
+    assert family_of("ssp245") == "fine"
+
+
+def test_discover_leaves_finds_variables_the_caller_did_not_list():
+    tree = xr.DataTree.from_dict(
+        {
+            "ssp245/tas/003": _da(1).to_dataset(name="tas"),
+            "ssp245/hurs/003": _da(2).to_dataset(name="hurs"),
+            "debiased_coarse/ssp245/tas/003": _da(3).to_dataset(name="tas"),
+        }
+    )
+    labels = output_group_labels({"ssp245": "SSP245"})
+
+    found = discover_leaves({"MIROC-ES2H": tree}, labels)
+    assert set(found) == {
+        ("MIROC-ES2H", "ssp245", "tas", "003"),
+        ("MIROC-ES2H", "ssp245", "hurs", "003"),
+        ("MIROC-ES2H", "debiased_coarse/ssp245", "tas", "003"),
+    }
+
+    restricted = discover_leaves({"MIROC-ES2H": tree}, labels, variables=["tas"])
+    assert all(k[2] == "tas" for k in restricted)
+
+
+def test_discover_leaves_skips_a_group_a_store_does_not_carry():
+    tree = xr.DataTree.from_dict({"ssp245/tas/r01": _da(1).to_dataset(name="tas")})
+    labels = output_group_labels({"ssp245": "SSP245", "g6_1p5k_end": "G6-1.5K-END"})
+
+    found = discover_leaves({"MIROC-ES2H": tree}, labels)
+    assert set(found) == {("MIROC-ES2H", "ssp245", "tas", "r01")}
+
+
+def test_leaf_stats_fuses_the_reductions_one_read_serves():
+    stats = leaf_stats(_da(1, nan_cells=[(0, 0)])).compute()
+
+    assert stats.nan_days.sel(lat=-10.0, lon=0.0) == 6  # NaN on every day
+    assert int(stats.nan_days.sum()) == 6
+    assert stats.fingerprint.sizes == {"stat": 4, "time": 6}
+    assert float(stats["min"]) <= float(stats["max"])
+
+
+def test_check_no_nans_and_interior_nans_split_a_border_from_a_real_hole():
+    # Both leaves share the (0, 0) border hole; only the second has an extra interior gap.
+    leaves = {
+        ("G", "ssp245", "tas", "a"): _da(1, nan_cells=[(0, 0)]),
+        ("G", "ssp245", "tas", "b"): _da(2, nan_cells=[(0, 0), (1, 1)]),
+    }
+    stats = _stats_of(leaves)
+
+    assert not check_no_nans(stats)["pass"].any()  # both fail the plain check
+
+    interior = check_interior_nans(stats, leaves)
+    assert interior.loc[("G", "ssp245", "tas", "a"), "pass"]
+    assert not interior.loc[("G", "ssp245", "tas", "b"), "pass"]
+    assert interior.loc[("G", "ssp245", "tas", "b"), "interior_nan_cell_days"] == 6
+
+
+def test_duplicate_pairs_reports_a_repeated_day():
+    values = np.arange(16, dtype=float).reshape(4, 4)
+    values[3] = values[1]  # day 3 duplicates day 1
+    pairs = duplicate_pairs(_fp(values))
+
+    assert pairs == [("2015-01-02", "2015-01-04")]
+    stats = {("G", "ssp245", "tas", "a"): xr.Dataset({"fingerprint": _fp(values)})}
+    assert not check_no_duplicates(stats)["pass"].all()
+
+
+def test_duplicate_pairs_ignores_all_nan_days():
+    values = np.arange(12, dtype=float).reshape(3, 4)
+    values[0] = np.nan
+    values[1] = np.nan  # two NaN days must not pair with each other
+
+    assert duplicate_pairs(_fp(values)) == []
+
+
+def test_irregular_days_only_applies_to_temperature():
+    hot = np.tile([250.0, 400.0, 300.0, 5.0], (2, 1))  # spatial max 400 K is past 65 C
+
+    assert irregular_days("tas", _fp(hot))[0][1] == 400.0
+    assert irregular_days("pr", _fp(hot)) == []
+
+
+def test_check_reasonable_ranges_fails_a_leaf_outside_the_variable_envelope():
+    celsius = _da(1) - 273.15  # tas in Celsius trips the Kelvin envelope
+    leaves = {("G", "ssp245", "tas", "a"): _da(1), ("G", "ssp245", "tas", "b"): celsius}
+    ranges = check_reasonable_ranges(_stats_of(leaves))
+
+    assert ranges.loc[("G", "ssp245", "tas", "a"), "pass"]
+    assert not ranges.loc[("G", "ssp245", "tas", "b"), "pass"]
+
+
+def test_all_zero_days_flags_a_wholly_zero_field():
+    leaves = {("G", "ssp245", "pr", "a"): _da(1, zero_days=[2])}
+    stats = _stats_of(leaves)
+
+    assert all_zero_days(stats[("G", "ssp245", "pr", "a")].fingerprint) == ["2015-01-03"]
+    assert not check_no_all_zero(stats)["pass"].all()
+
+
+def test_check_time_axis_catches_a_gap_between_the_endpoints():
+    good = _da(1, n_time=5)
+    gapped = good.isel(time=[0, 1, 3, 4])  # day 3 missing, endpoints intact
+    leaves = {("G", "ssp245", "tas", "a"): good, ("G", "ssp245", "tas", "b"): gapped}
+    axis = check_time_axis(leaves)
+
+    assert axis.loc[("G", "ssp245", "tas", "a"), "pass"]
+    assert not axis.loc[("G", "ssp245", "tas", "b"), "pass"]
+
+
+def test_check_grids_requires_one_grid_per_family_and_can_pin_the_fine_one():
+    leaves = {
+        ("G", "ssp245", "tas", "a"): _da(1),
+        ("G", "debiased_coarse/ssp245", "tas", "a"): _da(2),
+    }
+
+    assert check_grids(leaves)["pass"].all()
+
+    pinned = check_grids(leaves, expected_fine=((3, 4), (-10.0, 10.0), (0.0, 30.0)))
+    assert pinned.loc[("G", "fine"), "pass"]
+
+    wrong = check_grids(leaves, expected_fine=((77, 93), (-38.0, -19.0), (13.0, 36.0)))
+    assert not wrong.loc[("G", "fine"), "pass"]
+    assert wrong.loc[("G", "debiased_coarse"), "pass"]  # the pin applies to the fine family only
+
+
+def test_check_inventory_reports_missing_and_unexpected_leaves():
+    leaves = {
+        ("G", "ssp245", "tas", "r01"): _da(1),
+        ("G", "ssp245", "pr", "r99"): _da(2),
+    }
+    expected = {("G", "ssp245"): {"tas": ["r01"], "pr": ["r01"]}}
+    inv = check_inventory(leaves, expected)
+
+    assert inv.loc[("G", "ssp245"), "missing"] == [("pr", "r01")]
+    assert inv.loc[("G", "ssp245"), "unexpected"] == [("pr", "r99")]
+    assert not inv["pass"].all()
+
+
+def test_check_groups_expects_only_what_that_gcm_should_carry():
+    trees = {
+        "CESM2-WACCM": xr.DataTree.from_dict(
+            {
+                "ssp245/tas/003": _da(1).to_dataset(name="tas"),
+                "g6_1p5k_end/tas/002": _da(2).to_dataset(name="tas"),
+                "debiased_coarse/ssp245/tas/003": _da(3).to_dataset(name="tas"),
+                "debiased_coarse/g6_1p5k_end/tas/002": _da(4).to_dataset(name="tas"),
+            }
+        ),
+        "MIROC-ES2H": xr.DataTree.from_dict(
+            {
+                "ssp245/tas/r01": _da(5).to_dataset(name="tas"),
+                "debiased_coarse/ssp245/tas/r01": _da(6).to_dataset(name="tas"),
+            }
+        ),
+    }
+    expected = {
+        ("CESM2-WACCM", "ssp245"): {},
+        ("CESM2-WACCM", "g6_1p5k_end"): {},
+        ("MIROC-ES2H", "ssp245"): {},
+    }
+    groups = check_groups(trees, expected)
+
+    # g6_1p5k_end belongs to CESM2-WACCM alone, so MIROC must not be reported as missing it.
+    assert groups["pass"].all()
+
+    # A store missing the whole coarse family is a real defect, and is reported as one.
+    bare = {"MIROC-ES2H": xr.DataTree.from_dict({"ssp245/tas/r01": _da(7).to_dataset(name="tas")})}
+    assert not check_groups(bare, {("MIROC-ES2H", "ssp245"): {}}).loc[
+        ("MIROC-ES2H", "debiased_coarse"), "pass"
+    ]
+
+
+def test_temperature_triplets_excludes_a_member_missing_one_variable():
+    leaves = {
+        ("C", "historical", "tas", "r3i1p1f1"): _da(1),
+        ("C", "historical", "tasmax", "001"): _da(2),
+        ("C", "historical", "tasmin", "001"): _da(3),
+        ("M", "historical", "tas", "r1i1p4f2"): _da(4),
+        ("M", "historical", "tasmax", "r1i1p4f2"): _da(5),
+        ("M", "historical", "tasmin", "r1i1p4f2"): _da(6),
+    }
+
+    # CESM's historical splits tas from tasmax/tasmin across member ids, so it forms no triplet;
+    # MIROC shares one member across all three and does.
+    assert temperature_triplets(leaves) == [("M", "historical", "r1i1p4f2")]
+
+
+def test_pr_physical_counts_negative_and_outlandish_days():
+    da = _da(1) * 0  # start from zeros so the counts are exact
+    da[0, 0, 0] = -1.0
+    da[1, 0, 0] = 1.0  # ~86400 mm/day, past the outlandish threshold
+    phys = pr_physical(da).compute()
+
+    summary = pr_physical_summary({("G", "ssp245", "pr", "a"): phys})
+    assert summary.loc[("G", "ssp245", "a"), "neg_cell_days"] == 1
+    assert summary.loc[("G", "ssp245", "a"), "high_cell_days"] == 1
+
+
+def test_regions_for_partitions_land_and_ocean():
+    land = xr.DataArray(
+        np.array([[True, False], [False, False]]),
+        dims=("lat", "lon"),
+        coords={"lat": [0.0, 70.0], "lon": [0.0, 10.0]},
+    )
+    regions = regions_for(land)
+
+    assert int(regions["land"].sum()) + int(regions["ocean"].sum()) == land.size
+    assert int(regions["|lat|>=60"].sum()) == 2  # the 70 degree row
+
+
+def _dup_stats(times, values):
+    return xr.Dataset({"fingerprint": _fp(values, start=times)})
+
+
+def test_duplicate_leaves_pairs_identical_leaves_in_one_family():
+    values = np.arange(16, dtype=float).reshape(4, 4)
+    stats = {
+        ("G", "ssp245", "tas", "a"): _dup_stats("2015-01-01", values),
+        ("G", "ssp245", "tas", "b"): _dup_stats("2015-01-01", values),
+        ("G", "ssp245", "pr", "a"): _dup_stats("2015-01-01", values + 1),
+    }
+    (pair,) = duplicate_leaves(stats)
+
+    assert {pair[0], pair[1]} == {("G", "ssp245", "tas", "a"), ("G", "ssp245", "tas", "b")}
+    assert pair[4:] == (4, True, True)  # whole record of both
+
+
+def test_duplicate_leaves_catches_a_scenario_bridged_from_another():
+    values = np.arange(32, dtype=float).reshape(8, 4)
+    stats = {
+        ("G", "ssp245", "tas", "003"): _dup_stats("2015-01-01", values),
+        ("G", "g6_1p5k", "tas", "003"): _dup_stats("2015-01-01", values[:3]),
+    }
+    (pair,) = duplicate_leaves(stats)
+
+    # Contained in the longer leaf: partial for ssp245, the whole record for g6.
+    assert pair[4:] == (3, False, True)
+
+
+def test_duplicate_leaves_never_pairs_across_families_or_gcms():
+    values = np.arange(16, dtype=float).reshape(4, 4)
+    assert (
+        duplicate_leaves(
+            {
+                ("G", "ssp245", "tas", "a"): _dup_stats("2015-01-01", values),
+                ("G", "debiased_coarse/ssp245", "tas", "a"): _dup_stats("2015-01-01", values),
+            }
+        )
+        == []
+    )
+    assert (
+        duplicate_leaves(
+            {
+                ("G", "ssp245", "tas", "a"): _dup_stats("2015-01-01", values),
+                ("H", "ssp245", "tas", "a"): _dup_stats("2015-01-01", values),
+            }
+        )
+        == []
+    )
+
+
+def test_duplicate_leaves_ignores_disjoint_and_differing_records():
+    values = np.arange(16, dtype=float).reshape(4, 4)
+    assert (
+        duplicate_leaves(
+            {
+                ("G", "historical", "tas", "a"): _dup_stats("1978-01-01", values),
+                ("G", "ssp245", "tas", "a"): _dup_stats("2015-01-01", values),
+            }
+        )
+        == []
+    )
+
+    changed = values.copy()
+    changed[-1, 0] += 1e-9  # one differing day breaks the pair
+    assert (
+        duplicate_leaves(
+            {
+                ("G", "ssp245", "tas", "a"): _dup_stats("2015-01-01", values),
+                ("G", "ssp245", "tas", "b"): _dup_stats("2015-01-01", changed),
+            }
+        )
+        == []
+    )
+
+
+def test_duplicate_leaves_treats_nan_as_matching_nan():
+    values = np.arange(16, dtype=float).reshape(4, 4)
+    values[0] = np.nan  # a fully masked day, as the fine grid's border produces
+    stats = {
+        ("G", "ssp245", "tas", "a"): _dup_stats("2015-01-01", values),
+        ("G", "ssp245", "tas", "b"): _dup_stats("2015-01-01", values),
+    }
+
+    assert len(duplicate_leaves(stats)) == 1
