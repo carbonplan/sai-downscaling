@@ -83,6 +83,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "debias_approach": "nonparametric"
             },
             "dtr": {
                 "detrend_data": False,
