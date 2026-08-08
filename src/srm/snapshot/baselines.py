@@ -29,8 +29,8 @@ class Baseline:
 
 # Bump ``uri``/``branch`` here to start a new baseline version; the comparison notebook
 # and ``compare_runs`` both read this value. Data must live on the named branch ("main"
-# is an empty anchor and must not be used). Verified 2026-07-28: this store's branches
-# are {"main", "v0.12.0"}, and "v0.12.0" holds the approved global run.
+# is an empty anchor and must not be used). Verified 2026-08-07: this store's branches
+# are {"main", "v0.12.0", "v0.13.0"}, and "v0.13.0" holds the approved global run.
 #
 # Published production output moved off the private ``carbonplan-srm`` bucket to
 # CarbonPlan's Source Cooperative repository. The bucket is public, but
@@ -42,7 +42,7 @@ CESM2_WACCM_GLOBAL = Baseline(
         "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling"
         "/output/production/CESM2-WACCM-ERA5-global.icechunk"
     ),
-    branch="v0.12.0",
+    branch="v0.13.0",
 )
 
 CESM2_WACCM_SOUTH_AFRICA = Baseline(

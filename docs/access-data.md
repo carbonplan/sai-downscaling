@@ -65,35 +65,54 @@ downscaling step.
 ## Choosing the right branch
 
 Each pipeline run writes to an icechunk branch whose name matches the release tag that triggered
-it. The branch defaults to the installed `srm` package version (e.g. `v0.12.0`), so release tags
+it. The branch defaults to the installed `srm` package version (e.g. `v0.13.0`), so release tags
 follow semantic versioning rather than a date stamp. To read a specific run's output, use the
 corresponding release tag as the branch name. Production releases are listed at
 [github.com/carbonplan/srm-downscaling/releases](https://github.com/carbonplan/srm-downscaling/releases).
 
-The **current production release is branch `v0.12.0`** of the global CESM2-WACCM store at
-`s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk`.
-The examples below read it anonymously, since a Source Cooperative repository needs no AWS
-credentials.
+The **current production release is branch `v0.13.0`**. Two global stores carry it, both under
+`s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/`:
+
+| Store | Branches |
+| --- | --- |
+| `CESM2-WACCM-ERA5-global.icechunk` | `main`, `v0.12.0`, `v0.13.0` |
+| `MIROC-ES2H-ERA5-global.icechunk` | `main`, `v0.13.0` |
+
+MIROC-ES2H is new in `v0.13.0`, so it has no earlier release to read. The examples below use the
+CESM2-WACCM store and read it anonymously, since a Source Cooperative repository needs no AWS
+credentials; point `prefix` at the MIROC store to read that one instead.
 
 The store also carries a `main` branch, but it is an empty anchor commit rather than a run. Reading
 it returns no data, so always name a release branch explicitly.
 
 ## What the current release contains
 
-Branch `v0.12.0` of the global CESM2-WACCM store holds the groups below. Member labels are not
-uniform across variables within a release, so check this table rather than assuming one member
-covers every variable.
+Branch `v0.13.0` holds the groups below. Member labels are not uniform across variables within a
+release, so check this table rather than assuming one member covers every variable.
+
+CESM2-WACCM splits its members: `tasmax`, `tasmin` and `dtr` come from a corrected model run stored
+under its own ids, because of a known CMIP6 bug in those variables.
 
 | Scenario group | Variables | Members |
 | --- | --- | --- |
-| `historical` | `tas`, `pr`, `rsds`, `hurs` | `r3i1p1f1` |
+| `historical` | `tas`, `pr`, `rsds`, `hurs` | `r2i1p1f1`, `r3i1p1f1` |
 | `historical` | `tasmax`, `tasmin`, `dtr` | `001` |
 | `ssp245` | `tas`, `pr`, `rsds`, `hurs` | `003`, `008` |
 | `ssp245` | `tasmax`, `tasmin`, `dtr` | `008` |
-| `g6_1p5k` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin`, `dtr` | `003` |
+| `g6_1p5k` | all seven | `002`, `003` |
+| `g6_1p5k_end` | all seven | `002` |
 
-The `debiased_coarse/` subtree mirrors this inventory exactly, with one coarse-grid group for every
-fine-grid group listed above. This release contains no `esgf_ssp245` group.
+MIROC-ES2H uses one member across every variable:
+
+| Scenario group | Variables | Members |
+| --- | --- | --- |
+| `historical` | all seven | `r1i1p4f2` |
+| `ssp245` | all seven | `r01` |
+| `g6_1p5k` | all seven | `r01` |
+
+`g6_1p5k_end` is the termination-shock continuation of `g6_1p5k` (2085-2100) and only CESM2-WACCM
+carries it. The `debiased_coarse/` subtree mirrors each inventory exactly, with one coarse-grid
+group for every fine-grid group listed above. Neither store contains an `esgf_ssp245` group.
 
 ## Opening a single variable/member/scenario
 
@@ -109,7 +128,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")  # current production release
+session = repo.readonly_session(branch="v0.13.0")  # current production release
 
 ds = xr.open_zarr(
     session.store,
@@ -138,7 +157,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")  # current production release
+session = repo.readonly_session(branch="v0.13.0")  # current production release
 
 dt = xr.open_datatree(
     session.store,
@@ -168,7 +187,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")
+session = repo.readonly_session(branch="v0.13.0")
 
 dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_format=3)
 print(dt)
@@ -245,7 +264,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")
+session = repo.readonly_session(branch="v0.13.0")
 
 # Debiased coarse historical (coarse GCM grid, ~1°)
 ds_hist_coarse = xr.open_zarr(
