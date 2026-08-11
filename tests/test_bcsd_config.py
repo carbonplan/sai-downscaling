@@ -353,10 +353,12 @@ class TestVariableConfigDebiasDefaults:
     """Every supported variable must carry an explicit debias_approach default."""
 
     def test_all_variables_have_debias_approach(self, subtests):
+        # pr uses QDM (trend-preserving); all other variables use the field default.
+        expected = {"pr": "qdm"}
         for var in ("tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"):
             with subtests.test(variable=var):
                 vc = VariableConfig.for_variable(var)
-                assert vc.debias_approach == "nonparametric_hybrid_2sided"
+                assert vc.debias_approach == expected.get(var, "nonparametric_hybrid_2sided")
 
 
 class TestConfigJsonRoundTrip:

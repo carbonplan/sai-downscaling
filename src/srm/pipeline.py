@@ -21,7 +21,7 @@ import icechunk
 import numpy as np
 import scipy.stats
 import xarray as xr
-from ibicus.debias import QuantileMapping
+from ibicus.debias import QuantileDeltaMapping, QuantileMapping
 from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
@@ -79,7 +79,23 @@ class _WeibullMinZeroBounded(type(scipy.stats.weibull_min)):
 _weibull_min_zero_bounded = _WeibullMinZeroBounded(a=0.0, name="weibull_min_floc0")
 
 
-def _make_debiaser(variable: str, distribution=None, **kwargs):
+def _make_debiaser(variable: str, distribution=None, debias_approach: str | None = None, **kwargs):
+    if debias_approach == "qdm":
+        # QuantileDeltaMapping has no 'detrending' param (QuantileMapping-only) and its
+        # mapping_type is fixed here regardless of what the caller computed for QM, so
+        # both are dropped rather than forwarded. distribution=None + mapping_type=
+        # "nonparametric", trend_preservation="relative", censor_values_to_zero/threshold
+        # mirror ibicus's own built-in defaults for pr (Cannon et al. 2015 QDM).
+        kwargs.pop("detrending", None)
+        kwargs.pop("mapping_type", None)
+        return QuantileDeltaMapping(
+            distribution=distribution,
+            mapping_type="nonparametric",
+            trend_preservation="relative",
+            censor_values_to_zero=True,
+            censoring_threshold=0.05 / 86400,
+            **kwargs,
+        )
     if distribution is None:
         if variable in ["tas", "tasmax"]:
             distribution = scipy.stats.norm
@@ -803,6 +819,7 @@ class BCSDPipeline:
         )
         debiaser = _make_debiaser(
             variable=self.config.variable,
+            debias_approach=debias_approach,
             mapping_type=mapping_type,
             detrending="no_detrending",
             running_window_mode=self.config.variable_config.do_windowing,
@@ -1479,6 +1496,11 @@ class BCSDPipeline:
                 **apply_kwargs
             )
 
+        elif debias_approach == "qdm":
+            debiased_np = _make_debiaser(debias_approach="qdm", **common_kwargs).apply(
+                **apply_kwargs
+            )
+
         elif debias_approach == "nonparametric_hybrid":
             parametric_np = _make_debiaser(mapping_type="parametric", **common_kwargs).apply(
                 **apply_kwargs
@@ -1532,7 +1554,8 @@ class BCSDPipeline:
 
         else:
             raise ValueError(
-                "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
+                "debias_approach must be 'parametric', 'nonparametric', 'qdm', "
+                "'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
 
         assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)
