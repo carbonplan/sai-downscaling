@@ -80,6 +80,7 @@ def write_individual_flags(
     ens: str,
     flag_dir: str,
     write_mode: str = "w",
+    time_varying: bool = True,
 ):
     flag_data = flag_data.rename(flag_name)
     flag_data.attrs = {
@@ -88,7 +89,10 @@ def write_individual_flags(
         "short_name": flag_name,
     }
 
-    flag_data = flag_data.chunk({"lat": 100, "lon": 100, "time": 8000})
+    if time_varying:
+        flag_data = flag_data.chunk({"lat": 100, "lon": 100, "time": 8000})
+    else:
+        flag_data = flag_data.chunk({"lat": 100, "lon": 100})
 
     tag = f"{gcm}_{var}_{scenario}_{ens}"
     flag_data.to_zarr(
