@@ -23,6 +23,26 @@ from srm.config import VarSpec
 logger = logging.getLogger(__name__)
 console = Console()
 
+RAW_ROOT = "input/raw"
+
+
+def raw_netcdf_prefix(gcm: str, source: str) -> str:
+    """Build the S3 key prefix for a GCM's raw NetCDF drop.
+
+    Parameters
+    ----------
+    gcm : str
+        GCM directory name as it appears under ``input/raw/``, e.g. ``"CESM2-WACCM"``.
+    source : str
+        Source drop slug, e.g. ``"historical"``, ``"g6-1p5k"``, ``"ssp245-t-pr"``.
+
+    Returns
+    -------
+    str
+        Prefix of the form ``input/raw/{gcm}/netcdf/{source}``, without a trailing slash.
+    """
+    return f"{RAW_ROOT}/{gcm}/netcdf/{source}"
+
 
 def setup_logging() -> None:
     """Configure root logger with a Rich handler backed by the shared console."""
