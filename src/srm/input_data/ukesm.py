@@ -25,6 +25,7 @@ from srm.input_data.etl_utils import (
     get_aws_creds,
     group_paths_by_member,
     open_netcdf_from_s3,
+    raw_netcdf_prefix,
     setup_logging,
     trim_negative_precipitation,
     update_variable_attrs,
@@ -52,15 +53,15 @@ UNIFIED_PREFIX = "input/processed/ukesm.icechunk"
 
 # Raw NetCDF prefixes on S3 — primary source for each scenario
 S3_INPUT_PREFIX: dict[str, str] = {
-    "historical": "input/tensor/UKESM/netcdf/historical",
-    "SSP245": "input/tensor/UKESM/transfer/SSP2-4.5/",
-    "G6-1.5K": "input/tensor/UKESM/transfer/G6-1.5K",
+    "historical": raw_netcdf_prefix("UKESM", "historical"),
+    "SSP245": raw_netcdf_prefix("UKESM", "ssp245"),
+    "G6-1.5K": raw_netcdf_prefix("UKESM", "g6-1p5k"),
 }
 
 # Private T/PR NetCDF prefixes — secondary source for pr/tas/tasmin/tasmax
 T_PR_INPUT_PREFIX: dict[str, str] = {
-    "SSP245": "input/tensor/UKESM/UKESM_SSP245_T_PR_NETCDF/UKESM_SSP245_T_PR",
-    "G6-1.5K": "input/tensor/UKESM/UKESM_G6-1.5K_T_PR_NETCDF/UKESM_G6-1.5K_T_PR",
+    "SSP245": raw_netcdf_prefix("UKESM", "ssp245-t-pr"),
+    "G6-1.5K": raw_netcdf_prefix("UKESM", "g6-1p5k-t-pr"),
 }
 
 # Filename prefixes to look for in T_PR_INPUT_PREFIX, per variable
