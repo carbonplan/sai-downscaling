@@ -12,7 +12,7 @@
 
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs"]
+variables: ["pr"]
 ensemble_members: ["003"]
 scenarios: ["SSP245"]
 
@@ -23,9 +23,25 @@ predict_period_end: 2099
 
 # === PipelineOptions: Operational Settings ===
 scratch_dir: "s3://carbonplan-scratch/srm/cache"
-output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
+output_dir: "s3://carbonplan-scratch/srm/output"
 
-environment: "production"
+environment: "qa"
+branch: "qdm-test"
 # version intentionally unset — derived from the installed package version at runtime
 verbose: true
 save_intermediate: true
+
+# Variable-specific settings (auto-loaded from per-variable defaults if not specified)
+variable_config:
+  detrend_data: true                   # Whether to detrend (auto-set based on variable)
+  detrend_method: "additive"           # "additive" or "multiplicative" trend model
+  do_windowing: true                   # Use a running window for quantile mapping
+  running_window_length: 31            # Running-window length in days (default: 31)
+  downscaling_method: "additive"       # "additive" for temperature-like vars, "multiplicative" for pr/rsds
+  downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
+  debias_approach: "qdm"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided
+
+# Per-variable overrides, keyed by variable name (matrix configs only)
+variable_overrides:
+  dtr:
+    debias_approach: "nonparametric"
