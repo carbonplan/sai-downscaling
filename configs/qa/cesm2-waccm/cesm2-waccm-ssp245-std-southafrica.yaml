@@ -27,7 +27,7 @@ subset_bounds: [-38, -19, 13, 36]
 scratch_dir: "s3://carbonplan-scratch/srm-qdm/cache"
 output_dir: "s3://carbonplan-scratch/srm-qdm/output"
 environment: "qa"
-branch: "qdm-test"
+branch: "qdm-test2"
 
 # === Additional Options ===
 verbose: true
