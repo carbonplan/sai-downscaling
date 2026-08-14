@@ -84,18 +84,29 @@ def _make_debiaser(variable: str, distribution=None, debias_approach: str | None
         # QuantileDeltaMapping has no 'detrending' param (QuantileMapping-only) and its
         # mapping_type is fixed here regardless of what the caller computed for QM, so
         # both are dropped rather than forwarded. distribution=None + mapping_type=
-        # "nonparametric", trend_preservation="relative", censor_values_to_zero/threshold
-        # mirror ibicus's own built-in defaults for pr (Cannon et al. 2015 QDM).
+        # "nonparametric" mirrors ibicus's own built-in defaults (Cannon et al. 2015 QDM).
+        # trend_preservation follows the same paper's variable-scale convention: absolute
+        # for interval-scale temperature (tas/tasmax/tasmin), relative for ratio-scale/
+        # bounded variables (pr, rsds, hurs) and dtr (kept relative per the existing
+        # convention of debiasing dtr rather than tasmin directly). Zero-censoring
+        # applies to pr's hurdle-model-style dry-day handling (threshold in kg m-2 s-1,
+        # i.e. 0.05 mm/day) and to rsds's near-zero irradiance floor (threshold in W m-2,
+        # already a rate so no per-day conversion is needed).
         kwargs.pop("detrending", None)
         kwargs.pop("mapping_type", None)
-        return QuantileDeltaMapping(
+        trend_preservation = "absolute" if variable in ("tas", "tasmax", "tasmin") else "relative"
+        qdm_kwargs = dict(
             distribution=distribution,
             mapping_type="nonparametric",
-            trend_preservation="relative",
-            censor_values_to_zero=True,
-            censoring_threshold=0.05 / 86400,
-            **kwargs,
+            trend_preservation=trend_preservation,
         )
+        if variable == "pr":
+            qdm_kwargs["censor_values_to_zero"] = True
+            qdm_kwargs["censoring_threshold"] = 0.05 / 86400
+        elif variable == "rsds":
+            qdm_kwargs["censor_values_to_zero"] = True
+            qdm_kwargs["censoring_threshold"] = 1.0
+        return QuantileDeltaMapping(**qdm_kwargs, **kwargs)
     if distribution is None:
         if variable in ["tas", "tasmax"]:
             distribution = scipy.stats.norm
@@ -825,7 +836,11 @@ class BCSDPipeline:
             running_window_mode=self.config.variable_config.do_windowing,
             running_window_length=self.config.variable_config.running_window_length,
             running_window_step_length=1,
-            running_window_mode_over_years_of_cm_future=False,
+            # running_window_mode_over_years_of_cm_future intentionally left unset so
+            # each ibicus class falls back to its own default: QuantileDeltaMapping
+            # defaults to True (31-yr window, 1-yr step — the canonical Cannon et al.
+            # 2015 QDM trend-evolution window), while QuantileMapping (every non-qdm
+            # approach) defaults to False.
         )
 
         obs_coarse = obs_coarse.as_numpy()
@@ -1472,7 +1487,11 @@ class BCSDPipeline:
             running_window_mode=self.config.variable_config.do_windowing,
             running_window_length=self.config.variable_config.running_window_length,
             running_window_step_length=1,
-            running_window_mode_over_years_of_cm_future=False,
+            # running_window_mode_over_years_of_cm_future intentionally left unset so
+            # each ibicus class falls back to its own default: QuantileDeltaMapping
+            # defaults to True (31-yr window, 1-yr step — the canonical Cannon et al.
+            # 2015 QDM trend-evolution window), while QuantileMapping (every non-qdm
+            # approach) defaults to False.
         )
         apply_kwargs = dict(
             obs=obs_np,
