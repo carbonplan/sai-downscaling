@@ -197,6 +197,14 @@ def _get_netcdf_urls(scenario: str, variable: str) -> list[tuple[str, str]]:
 
 def _preprocess_ukesm(ds: xr.Dataset, scenario: str, subset: bool = False) -> xr.Dataset:
     if subset:
+        # Dry-run only: seek to the window before head-sampling. The T/PR files open before
+        # the G6-1.5K window, so sampling the head of the file leaves nothing behind once the
+        # authoritative clip below runs. Sampling here rather than only after that clip keeps
+        # to_proleptic_gregorian's chunk({"time": -1}) from pulling the whole series.
+        # Start bound only: the raw axis is 360_day, where "12-31" does not exist.
+        if scenario in TIME_RANGE:
+            start_year = TIME_RANGE[scenario].split("-")[0]
+            ds = ds.sel(time=slice(f"{start_year}-01-01", None))
         ds = ds.isel(time=slice(0, _DRY_RUN_STEPS))
 
     # Keep only standard spatial/temporal coords; drop everything else before calendar
@@ -232,6 +240,11 @@ def _preprocess_ukesm(ds: xr.Dataset, scenario: str, subset: bool = False) -> xr
     if scenario in TIME_RANGE:
         start_year, end_year = TIME_RANGE[scenario].split("-")
         ds = ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
+
+    # Sample AFTER the clip: the T/PR source files open before the G6-1.5K window, so
+    # taking the head of the file first leaves nothing behind once the clip is applied.
+    if subset:
+        ds = ds.isel(time=slice(0, _DRY_RUN_STEPS))
 
     return trim_negative_precipitation(ds)
 
