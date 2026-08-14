@@ -7,6 +7,8 @@ import pytest
 import xarray as xr
 
 from srm.qaqc import (
+    CHECK_AMBER,
+    CHECK_RED,
     DISTORTION_STAGES,
     _parse_gap_fill_member_map,
     area_weights,
@@ -18,6 +20,7 @@ from srm.qaqc import (
     distortion_summary,
     enumerate_scenario_comparisons,
     find_exceedance_regions,
+    highlight,
     obs_doy_bounds,
     scenario_delta_doy,
     sign_flip_mask,
@@ -689,3 +692,123 @@ def test_check_ensemble_spread_handles_a_missing_variable():
 
     assert row["ok"] is True
     assert row["members"] == [] and row["means"] == []
+
+
+# --- Check-table highlighting -------------------------------------------------------------------
+
+
+def _colors(df: pd.DataFrame, **kwargs) -> dict:
+    """{(row label, column): "red" | "amber" | "green" | None} for every cell of a styled table."""
+    names = {"#f8d7da": "red", "#fff3cd": "amber", "#d1e7dd": "green"}
+    colors = {(row, col): None for row in df.index for col in df.columns}
+    for (row, col), props in highlight(df, **kwargs)._compute().ctx.items():
+        background = next((value for prop, value in props if prop == "background-color"), None)
+        colors[(df.index[row], df.columns[col])] = names.get(background)
+    return colors
+
+
+def _summary() -> pd.DataFrame:
+    """Stand-in for the QA notebooks' per-leaf Part 1 summary: one clean leaf, one broken."""
+    return pd.DataFrame(
+        {
+            "no_nans": [True, False],
+            "no_interior_nans": [True, False],
+            "reasonable_range": [True, False],
+            "n_irregular_days": [0, 3],
+            "bridged_pre_sai": [False, True],
+            "stale_end_tail": [False, False],
+            "n_time": [31046, 31046],
+        },
+        index=["clean", "broken"],
+    )
+
+
+def test_highlight_colors_a_boolean_check_by_whether_it_passed():
+    colors = _colors(_summary())
+
+    assert colors[("clean", "no_interior_nans")] == "green"
+    assert colors[("broken", "no_interior_nans")] == "red"
+
+
+def test_highlight_colors_sentinel_booleans_red_only_when_they_fire():
+    colors = _colors(_summary())
+
+    assert colors[("broken", "bridged_pre_sai")] == "red"
+    assert colors[("clean", "bridged_pre_sai")] == "green"
+    assert colors[("broken", "stale_end_tail")] == "green"
+
+
+def test_highlight_reports_irregular_days_amber_rather_than_red():
+    colors = _colors(_summary())
+
+    assert colors[("broken", "n_irregular_days")] == "amber"
+    assert colors[("clean", "n_irregular_days")] == "green"
+
+
+def test_highlight_leaves_unregistered_columns_alone():
+    colors = _colors(_summary().assign(some_new_metric=[0, 1]))
+
+    assert colors[("clean", "n_time")] is None
+    assert colors[("broken", "some_new_metric")] is None
+
+
+def test_highlight_demotes_a_column_from_red_to_amber():
+    plain = _colors(_summary())
+    demoted = _colors(_summary(), demote=["no_nans"])
+
+    assert plain[("broken", "no_nans")] == "red"
+    assert demoted[("broken", "no_nans")] == "amber"
+    assert demoted[("broken", "no_interior_nans")] == "red"  # others keep their severity
+
+
+def test_highlight_rejects_demoting_an_unregistered_column():
+    with pytest.raises(KeyError, match="no_nan"):
+        highlight(_summary(), demote=["no_nan"])
+
+
+def test_highlight_flags_list_columns_only_when_they_are_non_empty():
+    df = pd.DataFrame(
+        {"missing": [[], [("dtr", "003")]], "unexpected": [[], []], "pass": [True, False]},
+        index=["complete", "short"],
+    )
+    colors = _colors(df)
+
+    assert colors[("complete", "missing")] == "green"
+    assert colors[("short", "missing")] == "red"
+    assert colors[("short", "unexpected")] == "green"
+    assert colors[("short", "pass")] == "red"
+
+
+def test_highlight_requires_exactly_one_grid_per_family():
+    colors = _colors(pd.DataFrame({"n_distinct_grids": [1, 2]}, index=["fine", "coarse"]))
+
+    assert colors[("fine", "n_distinct_grids")] == "green"
+    assert colors[("coarse", "n_distinct_grids")] == "red"
+
+
+def test_highlight_flags_counts_that_should_be_zero():
+    df = pd.DataFrame(
+        {"days_max<min": [0, 7], "neg_cell_days": [0, 12], "high_cell_days": [0, 0]},
+        index=["clean", "regressed"],
+    )
+    colors = _colors(df)
+
+    assert colors[("clean", "days_max<min")] == "green"
+    assert colors[("regressed", "days_max<min")] == "red"
+    assert colors[("regressed", "neg_cell_days")] == "red"
+    assert colors[("regressed", "high_cell_days")] == "green"
+
+
+def test_highlight_renders_a_multiindex_table():
+    df = _summary()
+    df.index = pd.MultiIndex.from_tuples(
+        [("CESM2-WACCM", "ssp245", "tas", "003"), ("UKESM", "g6_1p5k", "pr", "r2i1p1f2")],
+        names=["gcm", "scenario", "variable", "member"],
+    )
+
+    assert "#f8d7da" in highlight(df).to_html()
+
+
+def test_highlight_registries_do_not_overlap():
+    """A column in both would take its color from dict ordering rather than from intent."""
+    assert not set(CHECK_RED) & set(CHECK_AMBER)

@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import cf_xarray  # noqa: F401  # registers CF accessor
@@ -50,6 +51,110 @@ VAR_SPATIAL_RANGES: dict[str, dict[str, tuple[float, float]]] = {
     "hurs": {"min": (0, 40), "max": (40, 900)},
     "dtr": {"min": (0, 10), "max": (10, 150)},
 }
+
+# --- Check-table highlighting -------------------------------------------------------------------
+# Per-column definition of what counts as a problem in a QA check table, applied by `highlight`.
+# Column names are shared across the QA notebooks because they name the same checks. A column in
+# neither registry is left unstyled, so adding a column to a check without registering it here gets
+# no color rather than the wrong one.
+
+_STYLE_FAIL = "background-color: #f8d7da; color: #842029"
+_STYLE_WARN = "background-color: #fff3cd; color: #664d03"
+_STYLE_OK = "background-color: #d1e7dd; color: #0f5132"
+
+
+def _is_false(col: pd.Series) -> pd.Series:
+    return ~col.astype(bool)
+
+
+def _is_true(col: pd.Series) -> pd.Series:
+    return col.astype(bool)
+
+
+def _is_nonzero(col: pd.Series) -> pd.Series:
+    return col != 0
+
+
+def _is_nonempty(col: pd.Series) -> pd.Series:
+    return col.str.len() > 0
+
+
+def _is_not_one(col: pd.Series) -> pd.Series:
+    return col != 1
+
+
+#: Check columns whose failure condition is a defect to act on.
+CHECK_RED: dict[str, Callable[[pd.Series], pd.Series]] = {
+    "pass": _is_false,
+    "no_nans": _is_false,
+    "no_interior_nans": _is_false,
+    "no_duplicate_timesteps": _is_false,
+    "no_all_zero_days": _is_false,
+    "reasonable_range": _is_false,
+    "within_input_time_bounds": _is_false,
+    "regular_time_axis": _is_false,
+    "bridged_pre_sai": _is_true,
+    "stale_end_tail": _is_true,
+    "missing": _is_nonempty,
+    "unexpected": _is_nonempty,
+    "unchecked": _is_nonempty,
+    "duplicate_pairs": _is_nonempty,
+    "all_zero_days": _is_nonempty,
+    "n_distinct_grids": _is_not_one,
+    "days_max<min": _is_nonzero,
+    "neg_cell_days": _is_nonzero,
+    "cells_with_neg": _is_nonzero,
+    "frac_cells_neg": _is_nonzero,
+    "high_cell_days": _is_nonzero,
+    "cells_with_high": _is_nonzero,
+}
+
+#: Check columns reported for inspection rather than failed, so they color amber rather than red.
+CHECK_AMBER: dict[str, Callable[[pd.Series], pd.Series]] = {
+    "n_irregular_days": _is_nonzero,
+}
+
+
+def highlight(df: pd.DataFrame, *, demote: Iterable[str] = ()) -> pd.io.formats.style.Styler:
+    """Color a QA check table so failing cells stand out.
+
+    Every column in :data:`CHECK_RED` or :data:`CHECK_AMBER` is colored green where its condition
+    holds and red (or amber) where it does not. Unregistered columns are left alone.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        A check table. Its index and columns must both be unique, which ``Styler.apply`` requires.
+    demote : iterable of str, optional
+        Registered red columns to color amber instead, for a notebook where that column's failure
+        is structural rather than a defect. On a regional subset, for instance, every fine-grid leaf
+        fails ``no_nans`` on the interpolation border left by downscaling.
+
+    Returns
+    -------
+    pandas.io.formats.style.Styler
+        Styler over ``df``, ready to ``display``.
+
+    Raises
+    ------
+    KeyError
+        If ``demote`` names a column absent from :data:`CHECK_RED`, so a typo cannot silently leave
+        that column red.
+    """
+    demoted = set(demote)
+    if unknown := demoted - set(CHECK_RED):
+        raise KeyError(f"cannot demote unregistered columns: {sorted(unknown)}")
+    red = {name: rule for name, rule in CHECK_RED.items() if name not in demoted}
+    amber = CHECK_AMBER | {name: CHECK_RED[name] for name in demoted}
+
+    def paint(col: pd.Series) -> list[str]:
+        name = str(col.name)  # Series.name is Hashable; check-table columns are always strings
+        for rules, style in ((red, _STYLE_FAIL), (amber, _STYLE_WARN)):
+            if name in rules:
+                return np.where(rules[name](col), style, _STYLE_OK).tolist()
+        return [""] * len(col)
+
+    return df.style.apply(paint)
 
 
 class ValidationResult:

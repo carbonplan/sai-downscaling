@@ -27,6 +27,7 @@ from srm.input_data.etl_utils import (
     get_aws_creds,
     group_paths_by_member,
     open_netcdf_from_s3,
+    raw_netcdf_prefix,
     setup_logging,
     trim_negative_precipitation,
     update_variable_attrs,
@@ -51,11 +52,10 @@ UNIFIED_PREFIX = "input/processed/cesm2-waccm.icechunk"
 
 
 NETCDF_PREFIX: dict[str, str] = {
-    "historical": "input/tensor/CESM2/CESM2-WACCM-Historical/netcdf",
-    "SSP245": "input/tensor/CESM2/CESM2-WACCM-SSP245/netcdf",
-    "G6-1.5K": "input/tensor/CESM2/CESM2-WACCM-G6-1.5K/netcdf",
-    # The only CESM scenario sourced from input/raw/ rather than input/tensor/.
-    "G6-1.5K-END": "input/raw/CESM2-WACCM/netcdf/g6-1p5k-end",
+    "historical": raw_netcdf_prefix("CESM2-WACCM", "historical"),
+    "SSP245": raw_netcdf_prefix("CESM2-WACCM", "ssp245"),
+    "G6-1.5K": raw_netcdf_prefix("CESM2-WACCM", "g6-1p5k"),
+    "G6-1.5K-END": raw_netcdf_prefix("CESM2-WACCM", "g6-1p5k-end"),
 }
 
 ENSEMBLE_MEMBERS: dict[str, list[str]] = {
