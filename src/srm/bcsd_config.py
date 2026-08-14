@@ -21,7 +21,12 @@ from pydantic import BaseModel, Field, computed_field, field_validator, model_va
 _cache_version = f"v{_Version(_pkg_version('srm')).public}"
 
 DebiasApproach = Literal[
-    "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided", "qdm"
+    "parametric",
+    "nonparametric",
+    "nonparametric_hybrid",
+    "nonparametric_hybrid_2sided",
+    "qdm",
+    "isimip",
 ]
 DownscalingMethod = Literal["additive", "multiplicative"]
 DownscalingClimMethod = Literal["simple", "fft"]
