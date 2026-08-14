@@ -6,8 +6,8 @@
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs"]
-ensemble_members: ["001", "002", "003", "004", "005"]
+variables: ["pr"]
+ensemble_members: ["003"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
@@ -24,10 +24,21 @@ predict_period_end: 2099
 subset_bounds: [-38, -19, 13, 36]
 
 # === Storage ===
-scratch_dir: "s3://carbonplan-scratch/srm/cache"
-output_dir: "s3://carbonplan-scratch/srm/output"
+scratch_dir: "s3://carbonplan-scratch/srm-qdm/cache"
+output_dir: "s3://carbonplan-scratch/srm-qdm/output"
 environment: "qa"
+branch: "qdm-test"
 
 # === Additional Options ===
 verbose: true
 save_intermediate: true
+
+
+# Variable-specific settings (auto-loaded from per-variable defaults if not specified)
+variable_config:
+  detrend_data: false                   # Whether to detrend (auto-set based on variable)
+  do_windowing: true                   # Use a running window for quantile mapping
+  running_window_length: 31            # Running-window length in days (default: 31)
+  downscaling_method: "multiplicative"       # "additive" for temperature-like vars, "multiplicative" for pr/rsds
+  downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
+  debias_approach: "qdm"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided
