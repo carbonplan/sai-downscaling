@@ -24,10 +24,10 @@ predict_period_end: 2099
 subset_bounds: [-38, -19, 13, 36]
 
 # === Storage ===
-scratch_dir: "s3://carbonplan-scratch/srm-qdm/cache"
-output_dir: "s3://carbonplan-scratch/srm-qdm/output"
+scratch_dir: "s3://carbonplan-scratch/srm-isimip/cache"
+output_dir: "s3://carbonplan-scratch/srm-isimip/output"
 environment: "qa"
-branch: "qdm-test2"
+branch: "isimip-test"
 
 # === Additional Options ===
 verbose: true
@@ -41,4 +41,4 @@ variable_config:
   running_window_length: 31            # Running-window length in days (default: 31)
   downscaling_method: "multiplicative"       # "additive" for temperature-like vars, "multiplicative" for pr/rsds
   downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
-  debias_approach: "qdm"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided
+  debias_approach: "isimip"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided
