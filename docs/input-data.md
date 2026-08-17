@@ -19,17 +19,40 @@ icechunk stores that reference external chunks).
 
 ## Bucket layout
 
-```
+```text
 s3://carbonplan-srm/
-├── input/
+├── input/                    # permanent, never removed by a cleanup sweep
 │   ├── raw/                  # source NetCDF exactly as fetched from the modeling centers
 │   │   ├── CESM2-WACCM/netcdf/{historical,ssp245,g6-1p5k,g6-1p5k-end}/
 │   │   ├── MIROC-ES2H/netcdf/{historical,esgf-ssp245,baseline,g6-1p5k}/
 │   │   └── UKESM/netcdf/{historical,ssp245,g6-1p5k,ssp245-t-pr,g6-1p5k-t-pr}/
 │   ├── processed/            # unified per-GCM icechunk stores with scenario zarr groups
 │   └── vector/               # vector assets (ocean mask)
-└── output/                   # downscaled results, one icechunk store per (gcm, obs, subset)
+└── scratch/                  # transient pipeline data, cleaned as a single prefix
+    ├── cache/                # stage 1 and 2 artifacts, namespaced by {environment}
+    ├── output/               # qa scenario results, one store per (gcm, obs, subset)
+    ├── snapshot/             # snapshot reference runs, split into cache/ and output/
+    └── obs-comparison/       # obs-dataset comparison runs, split into cache/ and output/
 ```
+
+Everything under `scratch/` is reproducible from `input/` and is safe to delete once a set of
+methods is settled. Published production results are the one exception to this bucket: they are
+written to CarbonPlan's Source Cooperative repository
+(`s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/`), so no config in
+`configs/production/` sets `output_dir` here. Production runs still stage their intermediate
+artifacts in `scratch/cache/production/`, which is why the prefix carries both environments.
+
+### Store separation
+
+The store path is `{dir}/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk`, with no
+config-hash segment. Runs that share a GCM, observational dataset, subset, and environment
+therefore resolve to the same store, even when their training periods differ. The `snapshot/` and
+`obs-comparison/` prefixes exist to keep those runs off the shared qa store:
+
+| Prefix | Why it is separate |
+| --- | --- |
+| `scratch/snapshot/` | Snapshot proxies use the same South Africa bounds and `environment: qa` as the qa configs, so a shared prefix would resolve to one store. |
+| `scratch/obs-comparison/` | Comparison runs train through 2008 rather than 2014, so a shared cache would overwrite qa `historical/` groups with differently trained data. |
 
 ### Raw source archive
 

@@ -23,8 +23,8 @@ subset_bounds: [-38, -19, 13, 36]
 # === Storage ===
 # Same scratch prefix as every other QA and production config, so the obs and
 # fit_historical artifacts shared with the SSP245 config are reused from cache.
-scratch_dir: "s3://carbonplan-scratch/srm/cache"
-output_dir: "s3://carbonplan-scratch/srm/output"
+scratch_dir: "s3://carbonplan-srm/scratch/cache"
+output_dir: "s3://carbonplan-srm/scratch/output"
 environment: "qa"
 
 # === Additional Options ===

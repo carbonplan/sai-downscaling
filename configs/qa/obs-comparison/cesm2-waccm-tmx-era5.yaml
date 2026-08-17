@@ -15,8 +15,8 @@ train_period_end: 2008
 predict_period_start: 2015
 predict_period_end: 2069
 
-scratch_dir: "s3://carbonplan-srm/output/qa/bcsd-cache"
-output_dir: "s3://carbonplan-srm/output/obs-comparison"
+scratch_dir: "s3://carbonplan-srm/scratch/obs-comparison/cache"
+output_dir: "s3://carbonplan-srm/scratch/obs-comparison/output"
 environment: "qa"
 verbose: true
 save_intermediate: true
