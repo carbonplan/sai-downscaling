@@ -78,6 +78,32 @@ def regional_config() -> BCSDConfig:
 
 
 @pytest.fixture
+def dtr_config() -> BCSDConfig:
+    """dtr config — bias corrected so tasmin can be derived, never published fine."""
+    return BCSDConfig(
+        gcm="CESM2-WACCM",
+        variable="dtr",
+        ensemble_member="008",
+        scenario="SSP245",
+        predict_period_start=2015,
+        predict_period_end=2100,
+    )
+
+
+@pytest.fixture
+def dtr_cache(tmp_path, dtr_config) -> ArtifactCache:
+    """ArtifactCache with dtr_config bound and a separate output_dir."""
+    return ArtifactCache.from_config(
+        dtr_config,
+        PipelineOptions(
+            scratch_dir=str(tmp_path / "cache"),
+            environment="qa",
+            output_dir=str(tmp_path / "outputs"),
+        ),
+    )
+
+
+@pytest.fixture
 def bound_cache(tmp_path, base_config) -> ArtifactCache:
     """ArtifactCache with base_config bound, backed by local filesystem, no output_dir."""
     cache = ArtifactCache(
@@ -527,6 +553,88 @@ class TestExists:
 
 
 # ---------------------------------------------------------------------------
+# stage_loc — which artifact marks a stage complete
+# ---------------------------------------------------------------------------
+
+
+class TestStageLoc:
+    """stage_loc is the single answer to 'which artifact means this stage finished'."""
+
+    def test_obs_stage_is_obs_loc(self, bound_cache_with_output, base_config):
+        loc = bound_cache_with_output.stage_loc("prepare_observations", base_config)
+        assert loc == bound_cache_with_output.obs_loc
+
+    def test_fit_historical_is_fine_loc_for_normal_variable(
+        self, bound_cache_with_output, base_config
+    ):
+        loc = bound_cache_with_output.stage_loc(
+            "fit_historical", base_config, hist_member="r3i1p1f1"
+        )
+        assert loc.group == "historical/tas/r3i1p1f1"
+
+    def test_fit_historical_falls_back_to_config_member(self, bound_cache_with_output, base_config):
+        loc = bound_cache_with_output.stage_loc("fit_historical", base_config)
+        assert loc.group == f"historical/tas/{base_config.ensemble_member}"
+
+    def test_transform_scenario_is_fine_loc_for_normal_variable(
+        self, bound_cache_with_output, base_config
+    ):
+        loc = bound_cache_with_output.stage_loc("transform_scenario", base_config)
+        assert loc.group == "ssp245/tas/r1i1p1f1"
+
+    def test_fit_historical_is_coarse_loc_for_dtr(self, dtr_cache, dtr_config):
+        loc = dtr_cache.stage_loc("fit_historical", dtr_config, hist_member="001")
+        assert loc.group == "debiased_coarse/historical/dtr/001"
+
+    def test_transform_scenario_is_coarse_loc_for_dtr(self, dtr_cache, dtr_config):
+        loc = dtr_cache.stage_loc("transform_scenario", dtr_config)
+        assert loc.group == "debiased_coarse/ssp245/dtr/008"
+
+    def test_dtr_obs_stage_is_still_the_obs_loc(self, dtr_cache, dtr_config):
+        """Only the disaggregated outputs are dropped; obs regridding is unaffected."""
+        assert dtr_cache.stage_loc("prepare_observations", dtr_config) == dtr_cache.obs_loc
+
+    def test_unknown_stage_raises(self, bound_cache_with_output, base_config):
+        with pytest.raises(ValueError, match="Unknown stage"):
+            bound_cache_with_output.stage_loc("nope", base_config)
+
+    def test_transform_scenario_without_scenario_raises(self, tmp_path):
+        config = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        cache = ArtifactCache.from_config(config, PipelineOptions(scratch_dir=str(tmp_path)))
+        with pytest.raises(ValueError, match="scenario must be specified"):
+            cache.stage_loc("transform_scenario", config)
+
+    def test_equal_but_distinct_config_is_accepted(self, bound_cache_with_output, base_config):
+        twin = base_config.model_copy(deep=True)
+        assert twin is not base_config
+        loc = bound_cache_with_output.stage_loc("transform_scenario", twin)
+        assert loc.group == "ssp245/tas/r1i1p1f1"
+
+    def test_unbound_config_raises_rather_than_mixing(self, subtests, bound_cache_with_output):
+        # The location properties read the *bound* config while dispatch reads the passed
+        # one, so a mismatch would silently return a path for the wrong artifact.
+        for field, value in (
+            ("variable", "dtr"),
+            ("scenario", "G6-1.5K"),
+            ("ensemble_member", "008"),
+            ("gcm", "MIROC-ES2H"),
+        ):
+            with subtests.test(field=field):
+                other = bound_cache_with_output.config.model_copy(update={field: value})
+                with pytest.raises(ValueError, match="disagrees with the config bound"):
+                    bound_cache_with_output.stage_loc("transform_scenario", other)
+
+    def test_mismatch_message_names_the_offending_field(self, bound_cache_with_output):
+        other = bound_cache_with_output.config.model_copy(update={"variable": "dtr"})
+        with pytest.raises(ValueError, match="'variable'"):
+            bound_cache_with_output.stage_loc("fit_historical", other)
+
+    def test_unbound_cache_raises(self, local_cache, base_config):
+        with pytest.raises(RuntimeError, match="No config bound"):
+            local_cache.stage_loc("fit_historical", base_config)
+
+
+# ---------------------------------------------------------------------------
 # check_dependencies / validate_dependencies
 # ---------------------------------------------------------------------------
 
@@ -615,6 +723,19 @@ class TestCheckDependencies:
         assert "fine_tasmax" in deps
         assert deps["fine_tasmax"][1].group == "historical/tasmax/r1i1p1f1"
 
+    def test_mismatched_config_raises_rather_than_mixing(self, bound_cache, base_config):
+        other = base_config.model_copy(update={"variable": "dtr"})
+        with pytest.raises(ValueError, match="disagrees with the config bound"):
+            bound_cache.check_dependencies("fit_historical", other)
+
+    def test_dtr_transform_scenario_gates_on_the_coarse_historical_group(
+        self, dtr_cache, dtr_config
+    ):
+        # dtr writes no fine historical (issue #461), so its scenario gate must be the
+        # coarse group or the stage could never start.
+        deps = dtr_cache.check_dependencies("transform_scenario", dtr_config, hist_member="001")
+        assert deps["historical"][1].group == "debiased_coarse/historical/dtr/001"
+
 
 class TestValidateDependencies:
     def test_raises_missing(self, bound_cache, base_config):
@@ -636,6 +757,13 @@ class TestValidateDependencies:
             bound_cache.historical_loc(base_config.ensemble_member), branch=bound_cache.branch
         )
         bound_cache.validate_dependencies("transform_scenario", base_config)
+
+    def test_dtr_scenario_deps_satisfied_by_the_coarse_group_alone(self, dtr_cache, dtr_config):
+        make_icechunk_group(dtr_cache.obs_loc, branch=dtr_cache.branch)
+        make_icechunk_group(
+            dtr_cache.debiased_coarse_historical_loc("001"), branch=dtr_cache.branch
+        )
+        dtr_cache.validate_dependencies("transform_scenario", dtr_config, hist_member="001")
 
 
 # ---------------------------------------------------------------------------
@@ -674,6 +802,23 @@ class TestGetOutputPath:
                 path = bound_cache.get_output_path(stage, bound_cache.config)
                 assert isinstance(path, str)
                 assert path.endswith(".icechunk")
+
+    def test_delegates_to_stage_loc(self, subtests, bound_cache, base_config):
+        # get_output_path must stay a thin view on stage_loc so the two can never
+        # disagree about which artifact ends a stage.
+        for stage in ("prepare_observations", "fit_historical", "transform_scenario"):
+            with subtests.test(stage=stage):
+                assert (
+                    bound_cache.get_output_path(stage, base_config)
+                    == bound_cache.stage_loc(stage, base_config).store_path
+                )
+
+    def test_dtr_returns_a_path_for_every_stage(self, subtests, dtr_cache, dtr_config):
+        # dtr's coarse and fine locs live in the same store, so only the *group* differs
+        # (that distinction is stage_loc's job). get_output_path must still not raise.
+        for stage in ("prepare_observations", "fit_historical", "transform_scenario"):
+            with subtests.test(stage=stage):
+                assert dtr_cache.get_output_path(stage, dtr_config).endswith(".icechunk")
 
 
 # ---------------------------------------------------------------------------

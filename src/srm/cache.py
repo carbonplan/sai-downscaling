@@ -22,6 +22,14 @@ from srm.config import _ROOT_MESSAGES, SCENARIO_TO_GROUP, _icechunk_storage_for_
 
 logger = logging.getLogger(__name__)
 
+# Variables published on the coarse grid only. ``dtr`` is bias corrected solely so that
+# ``tasmin = tasmax - dtr`` can be reconstructed (see
+# :func:`srm.downscaling_utils.derive_tasmin`). Once the fine ``tasmax``/``tasmin`` pair has
+# been reconciled to satisfy ``tasmax >= tasmin`` (issue #331), a disaggregated ``dtr`` no
+# longer equals ``tasmax - tasmin``, so it is not published; the ``debiased_coarse`` groups
+# are kept for provenance and because the derivation reads them (issue #461).
+COARSE_ONLY_VARIABLES: frozenset[str] = frozenset({"dtr"})
+
 
 @dataclass(frozen=True)
 class StoreLocation:
@@ -164,6 +172,59 @@ class ArtifactCache:
                 "or pass config explicitly to the path methods."
             )
         return self.config
+
+    # Fields that select which artifact a location points at: the first three fix the
+    # store path, the last three the group within it.
+    _LOCATION_FIELDS: tuple[str, ...] = (
+        "gcm",
+        "obs_dataset",
+        "subset_bounds",
+        "variable",
+        "scenario",
+        "ensemble_member",
+    )
+
+    def _require_bound(self, config: BCSDConfig) -> BCSDConfig:
+        """Return the bound config, rejecting a ``config`` that points somewhere else.
+
+        The location properties are all built from the bound config, while the stage
+        methods that take a ``config`` argument dispatch on that argument. Mixing the two
+        would silently yield a path for the wrong variable or scenario, so a disagreement
+        on any location-selecting field is an error rather than a guess.
+
+        Parameters
+        ----------
+        config : BCSDConfig
+            Config supplied by the caller.
+
+        Returns
+        -------
+        BCSDConfig
+            The config bound to this cache.
+
+        Raises
+        ------
+        RuntimeError
+            If no config is bound.
+        ValueError
+            If ``config`` disagrees with the bound config on a location-selecting field.
+        """
+        bound = self._require_config()
+        if config is bound:
+            return bound
+        mismatched = [
+            field
+            for field in self._LOCATION_FIELDS
+            if getattr(config, field) != getattr(bound, field)
+        ]
+        if mismatched:
+            raise ValueError(
+                f"config disagrees with the config bound to this cache on {mismatched}; "
+                f"locations are built from the bound config, so bind it first "
+                f"(cache.config = config) or build a cache with "
+                f"ArtifactCache.from_config(config, options)"
+            )
+        return bound
 
     # ── store-path helpers ────────────────────────────────────────────────────
 
@@ -553,6 +614,70 @@ class ArtifactCache:
 
     # ── dependency helpers ────────────────────────────────────────────────────
 
+    # ── stage completion ──────────────────────────────────────────────────────
+
+    def stage_loc(
+        self, stage: str, config: BCSDConfig, hist_member: str | None = None
+    ) -> StoreLocation:
+        """
+        Return the artifact whose presence means ``stage`` is complete for ``config``.
+
+        For most variables that is the fine downscaled output. Variables in
+        :data:`COARSE_ONLY_VARIABLES` are never spatially disaggregated, so their terminal
+        artifact is the ``debiased_coarse`` group instead (issue #461). Every completion
+        check routes through here — the orchestrator's cache-skip, its post-run retry
+        partitioning, ``get_status``, :meth:`get_output_path`, and the downstream
+        dependency gate in :meth:`check_dependencies` — so the two cases cannot drift
+        apart.
+
+        Locations are built from the config bound to this cache, so ``config`` must be
+        that same config (see :meth:`_require_bound`); it supplies the ensemble-member
+        fallback.
+
+        Parameters
+        ----------
+        stage : str
+            Pipeline stage: 'prepare_observations', 'fit_historical', or 'transform_scenario'.
+        config : BCSDConfig
+            Configuration for the run. Must agree with the bound config.
+        hist_member : str, optional
+            Resolved historical ensemble member. Defaults to ``config.ensemble_member``.
+
+        Returns
+        -------
+        StoreLocation
+            Terminal artifact for the stage.
+
+        Raises
+        ------
+        RuntimeError
+            If no config is bound to this cache.
+        ValueError
+            If ``config`` points at a different artifact than the bound config, if
+            ``stage`` is unknown, or if ``transform_scenario`` is requested for a config
+            that has no scenario.
+        """
+        config = self._require_bound(config)
+
+        if stage == "prepare_observations":
+            return self.obs_loc
+
+        elif stage == "fit_historical":
+            member = hist_member or config.ensemble_member
+            if config.variable in COARSE_ONLY_VARIABLES:
+                return self.debiased_coarse_historical_loc(member)
+            return self.historical_loc(member)
+
+        elif stage == "transform_scenario":
+            if config.scenario is None:
+                raise ValueError("scenario must be specified for transform_scenario stage")
+            if config.variable in COARSE_ONLY_VARIABLES:
+                return self.debiased_coarse_scenario_loc()
+            return self.scenario_loc
+
+        else:
+            raise ValueError(f"Unknown stage: {stage}")
+
     def check_dependencies(
         self, stage: str, config: BCSDConfig, hist_member: str | None = None
     ) -> dict[str, tuple[bool, StoreLocation]]:
@@ -572,11 +697,23 @@ class ArtifactCache:
         -------
         dict[str, tuple[bool, StoreLocation]]
             Mapping of dependency name to (exists, StoreLocation) tuple.
+
+        Raises
+        ------
+        RuntimeError
+            If no config is bound to this cache.
+        ValueError
+            If ``config`` points at a different artifact than the bound config, or if
+            ``stage`` is unknown.
         """
         if stage == "prepare_observations":
             return {}
 
-        elif stage == "fit_historical":
+        # Dependency locations come from the bound config while the branches below
+        # dispatch on ``config``; reject the mismatch instead of mixing the two.
+        config = self._require_bound(config)
+
+        if stage == "fit_historical":
             loc = self.obs_loc
             deps = {"obs_regridded": (self.exists(loc), loc)}
             if config.variable == "tasmin":
@@ -594,7 +731,9 @@ class ArtifactCache:
 
         elif stage == "transform_scenario":
             obs_loc = self.obs_loc
-            hist_loc = self.historical_loc(hist_member or config.ensemble_member)
+            # Whatever ended fit_historical for this variable is what gates this stage —
+            # for coarse-only variables that is the debiased_coarse group (issue #461).
+            hist_loc = self.stage_loc("fit_historical", config, hist_member=hist_member)
             deps = {
                 "obs_regridded": (self.exists(obs_loc), obs_loc),
                 "historical": (self.exists(hist_loc), hist_loc),
@@ -665,20 +804,20 @@ class ArtifactCache:
         -------
         str
             Full path to the icechunk store.
+
+        Raises
+        ------
+        ValueError
+            If ``stage`` is unknown, or if ``transform_scenario`` is requested for a
+            config that has no scenario.
+
+        Notes
+        -----
+        A thin view on :meth:`stage_loc`, which owns the stage-to-artifact mapping. A
+        coarse-only variable's coarse and fine artifacts live in the same store, so the
+        two differ only in ``group``; use :meth:`stage_loc` when that matters.
         """
-        if stage == "prepare_observations":
-            return self.obs_loc.store_path
-
-        elif stage == "fit_historical":
-            return self.historical_loc(hist_member or config.ensemble_member).store_path
-
-        elif stage == "transform_scenario":
-            if config.scenario is None:
-                raise ValueError("scenario must be specified for transform_scenario stage")
-            return self.scenario_loc.store_path
-
-        else:
-            raise ValueError(f"Unknown stage: {stage}")
+        return self.stage_loc(stage, config, hist_member=hist_member).store_path
 
     def clear_cache(
         self,
