@@ -45,7 +45,7 @@ debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 | Component | Values | Example |
 | --- | --- | --- |
 | `scenario_group` | `ssp245`, `g6_1p5k`, `esgf_ssp245` | `ssp245` |
-| `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `dtr`, `hurs` | `tas` |
+| `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `hurs`; plus `dtr` under `debiased_coarse/` only | `tas` |
 | `ensemble_member` | e.g. `003`, `008`, `r3i1p1f1` | `003` |
 | `hist_member` | resolved historical parent member | `r3i1p1f1` |
 
@@ -61,6 +61,13 @@ The `debiased_coarse` groups hold GCM data after quantile-mapping bias correctio
 spatial disaggregation to ERA5 resolution — they remain at the native coarse GCM grid (~1–2°).
 These are useful for research that needs to isolate the bias-correction step from the spatial
 downscaling step.
+
+`dtr` is the one variable that appears under `debiased_coarse/` but not under the fine-resolution
+groups. The pipeline bias-corrects it only so that `tasmin = tasmax − dtr` can be reconstructed, and
+the published `tasmax`/`tasmin` pair is then adjusted to satisfy `tasmax >= tasmin` without
+revisiting `dtr`, so a disaggregated `dtr` would no longer equal `tasmax − tasmin`. Releases
+published before this change, including branch `v0.12.0` below, still carry the fine `dtr` groups;
+use `tasmax − tasmin` rather than a stored `dtr` if you need the diurnal range.
 
 ## Choosing the right branch
 
