@@ -19,8 +19,8 @@ predict_period_end: 2069
 # trims back to the region of interest (roi_bounds) before diffing.
 subset_bounds: [-38, -19, 13, 36]
 
-scratch_dir: "s3://carbonplan-scratch/srm/cache"
-output_dir: "s3://carbonplan-scratch/srm/output"
+scratch_dir: "s3://carbonplan-srm/snapshot/cache"
+output_dir: "s3://carbonplan-srm/snapshot/output"
 environment: "qa"
 verbose: true
 save_intermediate: true
