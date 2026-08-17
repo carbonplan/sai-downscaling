@@ -17,6 +17,45 @@ built-in catalog. The catalog holds three dataset types: `Datatree` (unified per
 organized as zarr group trees), `Dataset` (flat icechunk stores), and `VirtualDataset` (virtual
 icechunk stores that reference external chunks).
 
+## Bucket layout
+
+```
+s3://carbonplan-srm/
+├── input/
+│   ├── raw/                  # source NetCDF exactly as fetched from the modeling centers
+│   │   ├── CESM2-WACCM/netcdf/{historical,ssp245,g6-1p5k,g6-1p5k-end}/
+│   │   ├── MIROC-ES2H/netcdf/{historical,esgf-ssp245,baseline,g6-1p5k}/
+│   │   └── UKESM/netcdf/{historical,ssp245,g6-1p5k,ssp245-t-pr,g6-1p5k-t-pr}/
+│   ├── processed/            # unified per-GCM icechunk stores with scenario zarr groups
+│   └── vector/               # vector assets (ocean mask)
+└── output/                   # downscaled results, one icechunk store per (gcm, obs, subset)
+```
+
+### Raw source archive
+
+Raw drops are named for the source run, which is not always the ETL scenario key. The table below
+maps each drop directory to the key the ETL modules use to request it:
+
+| GCM | Source drop | ETL scenario key | Contents |
+| --- | --- | --- | --- |
+| `CESM2-WACCM` | `historical` | `historical` | CMIP6 historical, 1850-2014 |
+| `CESM2-WACCM` | `ssp245` | `SSP245` | SSP2-4.5, 2015-2099 |
+| `CESM2-WACCM` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI, 2035-2084 |
+| `CESM2-WACCM` | `g6-1p5k-end` | `G6-1.5K-END` | G6-1.5K termination run, 2085-2100 |
+| `MIROC-ES2H` | `historical` | `historical` | CMIP6 historical, 1850-2014 |
+| `MIROC-ES2H` | `esgf-ssp245` | `esgf-ssp245` | ESGF SSP2-4.5, 2015-2100 |
+| `MIROC-ES2H` | `baseline` | `ssp245` | GeoMIP baseline (SSP245 continuation), from 2020 |
+| `MIROC-ES2H` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI |
+| `UKESM` | `historical` | `historical` | CMIP6 historical |
+| `UKESM` | `ssp245` | `SSP245` | SSP2-4.5, primary source |
+| `UKESM` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI, primary source |
+| `UKESM` | `ssp245-t-pr` | `SSP245` | private T/PR archive, source for `pr`/`tas`/`tasmin`/`tasmax` |
+| `UKESM` | `g6-1p5k-t-pr` | `G6-1.5K` | private T/PR archive, source for `pr`/`tas`/`tasmin`/`tasmax` |
+
+ERA5, GDEX-GMF and NASA-NEX have no raw copy in this bucket. Their ETLs stream directly from
+ARCO-ERA5 on GCS, from OSDF/DTN over HTTPS, and by virtual reference into `s3://nex-gddp-cmip6`
+respectively.
+
 ## Listing available datasets
 
 ```{code-cell} python
