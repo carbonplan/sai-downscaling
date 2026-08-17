@@ -319,6 +319,59 @@ class TestTasminOrdering:
 
 
 # ---------------------------------------------------------------------------
+# coarse-only variables: dtr is bias corrected so tasmin can be derived from it, but
+# is never disaggregated, so its debiased_coarse group is what marks a stage complete
+# (issue #461).
+# ---------------------------------------------------------------------------
+
+
+class TestCoarseOnlyStageLoc:
+    def test_fit_historical_points_at_the_coarse_group(self, orchestrator):
+        config = _make_config(variable="dtr", ensemble_member="008")
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "fit_historical", config, hist_member="001")
+        assert loc.group == "debiased_coarse/historical/dtr/001"
+
+    def test_transform_scenario_points_at_the_coarse_group(self, orchestrator):
+        config = _make_config(variable="dtr", ensemble_member="008")
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        assert loc.group == "debiased_coarse/ssp245/dtr/008"
+
+    def test_normal_variable_still_points_at_the_fine_group(self, orchestrator):
+        config = _make_config(variable="tas", ensemble_member="003")
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        assert loc.group == "ssp245/tas/003"
+
+    def test_submit_stage_skips_dtr_when_only_the_coarse_group_exists(self, orchestrator):
+        # Without this, a finished dtr task looks uncached and re-runs every invocation.
+        config = _make_config(variable="dtr", ensemble_member="008")
+        cache = orchestrator._get_cache()
+        cache.config = config
+        coarse_loc = cache.debiased_coarse_scenario_loc()
+        _make_icechunk_group(coarse_loc, branch=cache.branch)
+
+        with patch.object(orchestrator, "_run_local") as mock_local:
+            result = orchestrator.submit_stage("transform_scenario", [config], use_coiled=False)
+
+        mock_local.assert_not_called()
+        assert result == [f"{coarse_loc.store_path}::{coarse_loc.group}"]
+
+    def test_submit_stage_does_not_skip_dtr_on_a_stale_fine_group(self, orchestrator):
+        # A fine dtr group left behind by a pre-#461 run must not read as complete.
+        config = _make_config(variable="dtr", ensemble_member="008")
+        cache = orchestrator._get_cache()
+        cache.config = config
+        _make_icechunk_group(cache.scenario_loc, branch=cache.branch)
+
+        with patch.object(orchestrator, "_run_local", return_value=["computed"]) as mock_local:
+            orchestrator.submit_stage("transform_scenario", [config], use_coiled=False)
+
+        mock_local.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # _submit_to_coiled (retry logic)
 # ---------------------------------------------------------------------------
 
