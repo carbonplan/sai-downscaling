@@ -50,8 +50,8 @@ uv run bcsd run-matrix \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario ssp245 --scenario G6-1.5K \
   --predict-period-start 2015 --predict-period-end 2100 \
-  --scratch-dir "s3://carbonplan-scratch/srm/cache" \
-  --output-dir "s3://carbonplan-scratch/srm/outputs/"
+  --scratch-dir "s3://carbonplan-srm/scratch/cache" \
+  --output-dir "s3://carbonplan-srm/scratch/output/"
 ```
 
 Use `--dry-run` to preview the generated matrix before executing:
@@ -81,8 +81,8 @@ train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
 predict_period_end: 2100
-scratch_dir: "s3://carbonplan-scratch/srm/cache"
-output_dir: "s3://carbonplan-scratch/srm/outputs"
+scratch_dir: "s3://carbonplan-srm/scratch/cache"
+output_dir: "s3://carbonplan-srm/scratch/output"
 environment: "qa"
 # branch defaults to installed package version; omit unless pinning a specific cache namespace
 EOF
@@ -105,8 +105,8 @@ uv run bcsd run-matrix \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 --scenario G6-1.5K \
   --predict-period-start 2015 --predict-period-end 2100 \
-  --scratch-dir "s3://carbonplan-scratch/srm/cache" \
-  --output-dir "s3://carbonplan-scratch/srm/outputs/" \
+  --scratch-dir "s3://carbonplan-srm/scratch/cache" \
+  --output-dir "s3://carbonplan-srm/scratch/output/" \
   --environment qa
 ```
 
@@ -125,8 +125,8 @@ uv run bcsd run-matrix \
   --member r1i1p1f1 \
   --scenario SSP245 --scenario G6-1.5K \
   --predict-period-start 2015 --predict-period-end 2100 \
-  --scratch-dir "s3://carbonplan-scratch/srm/cache" \
-  --output-dir "s3://carbonplan-scratch/srm/outputs/"
+  --scratch-dir "s3://carbonplan-srm/scratch/cache" \
+  --output-dir "s3://carbonplan-srm/scratch/output/"
 # obs and historical artifacts are computed once and reused for both scenarios
 ```
 
