@@ -45,6 +45,13 @@ CESM2_WACCM_GLOBAL = Baseline(
     branch="v0.12.0",
 )
 
+# Deliberately still on ``carbonplan-scratch`` while other non-production paths moved to
+# ``s3://carbonplan-srm/scratch/``: copying 302 GiB to reach one of 20 branches buys
+# nothing, and a baseline does not belong in a prefix meant to be deleted wholesale. The
+# next release rebuilds it under ``scratch/snapshot/output/qa/``.
+#
+# ``branch`` is writable, not a frozen tag: the ``bcsd release`` freeze step has never run
+# here, so a run with a matching ``BCSD_BRANCH`` could overwrite what this cites.
 CESM2_WACCM_SOUTH_AFRICA = Baseline(
     uri=(
         "s3://carbonplan-scratch/srm"

@@ -49,7 +49,7 @@ There are two baselines in `srm.snapshot.baselines`, each a store URI and an ice
 | `CESM2_WACCM_SOUTH_AFRICA` | `southafrica` (default) | regional, same `subset_bounds` as the candidate | exact |
 | `CESM2_WACCM_GLOBAL` | `global` | the blessed global run on [Source Cooperative](https://source.coop/carbonplan/srm-downscaling) | tolerance band |
 
-The regional baseline is produced automatically by the `snapshot` job in `.github/workflows/deploy.yml` on every published release, then frozen under an icechunk tag. Repointing `CESM2_WACCM_SOUTH_AFRICA` at the new release is the one manual step, and the job's summary prints the value to paste.
+The regional baseline is produced automatically by the `snapshot` job in `.github/workflows/deploy.yml` on every published release, then frozen under an icechunk tag. Repointing `CESM2_WACCM_SOUTH_AFRICA` at the new release is the one manual step, and the job's summary prints both fields to paste, the store URI as well as the branch.
 
 Comparing full global output on every change would be prohibitively expensive, so the routine check runs over the South Africa subset. The [how-to guide](../how-to/run-snapshot-tests.md) covers the halo and trimming mechanics.
 
