@@ -21,7 +21,7 @@ import icechunk
 import numpy as np
 import scipy.stats
 import xarray as xr
-from ibicus.debias import QuantileDeltaMapping, QuantileMapping
+from ibicus.debias import ISIMIP, QuantileDeltaMapping, QuantileMapping
 from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
@@ -107,6 +107,36 @@ def _make_debiaser(variable: str, distribution=None, debias_approach: str | None
             qdm_kwargs["censor_values_to_zero"] = True
             qdm_kwargs["censoring_threshold"] = 1.0
         return QuantileDeltaMapping(**qdm_kwargs, **kwargs)
+    if debias_approach == "isimip":
+        # ISIMIP.from_variable() already encodes the full canonical ISIMIP3BASD
+        # reference settings per variable (distribution, bounds/thresholds,
+        # trend_preservation_method, nonparametric_qm, etc. — Lange 2019/2021),
+        # so unlike qdm we defer to ibicus's own per-variable defaults entirely
+        # rather than hand-picking them here.
+        #
+        # Canonical ISIMIP debiases tas, tasrange (= tasmax - tasmin), and
+        # tasskew (= (tas - tasmin) / (tasmax - tasmin)), then reconstructs
+        # tasmax/tasmin from those three — it has no direct setting for tasmax
+        # or tasmin as standalone debiasing targets. srm's dtr is physically
+        # identical to ISIMIP's tasrange, so it maps directly; srm's tasmax
+        # (bias-corrected directly, with tasmin derived as tasmax - dtr) has no
+        # canonical ISIMIP equivalent and isn't supported here.
+        if variable == "tasmax":
+            raise ValueError(
+                "debias_approach='isimip' is not supported for tasmax: canonical "
+                "ISIMIP debiases tas, tasrange (tasmax - tasmin), and tasskew "
+                "((tas - tasmin) / (tasmax - tasmin)) instead of tasmax directly, "
+                "then reconstructs tasmax/tasmin from those three. srm's pipeline "
+                "bias-corrects tasmax directly, which has no canonical ISIMIP "
+                "equivalent. Use 'qdm' or another approach for tasmax, or select "
+                "'isimip' for dtr (mapped to ISIMIP's tasrange) instead."
+            )
+        isimip_variable = "tasrange" if variable == "dtr" else variable
+        kwargs.pop("detrending", None)
+        kwargs.pop("mapping_type", None)
+        if distribution is not None:
+            kwargs["distribution"] = distribution
+        return ISIMIP.from_variable(isimip_variable, **kwargs)
     if distribution is None:
         if variable in ["tas", "tasmax"]:
             distribution = scipy.stats.norm
@@ -852,6 +882,7 @@ class BCSDPipeline:
         obs_np = obs_coarse.values
         cm_hist_np = model_hist.values
 
+        np.random.seed(0)
         debiased_np = debiaser.apply(
             obs=obs_np,
             cm_hist=cm_hist_np,
@@ -1510,6 +1541,7 @@ class BCSDPipeline:
             failsafe=True,
         )
 
+        np.random.seed(0)
         if debias_approach in ["parametric", "nonparametric"]:
             debiased_np = _make_debiaser(mapping_type=debias_approach, **common_kwargs).apply(
                 **apply_kwargs
@@ -1517,6 +1549,11 @@ class BCSDPipeline:
 
         elif debias_approach == "qdm":
             debiased_np = _make_debiaser(debias_approach="qdm", **common_kwargs).apply(
+                **apply_kwargs
+            )
+
+        elif debias_approach == "isimip":
+            debiased_np = _make_debiaser(debias_approach="isimip", **common_kwargs).apply(
                 **apply_kwargs
             )
 
@@ -1573,7 +1610,7 @@ class BCSDPipeline:
 
         else:
             raise ValueError(
-                "debias_approach must be 'parametric', 'nonparametric', 'qdm', "
+                "debias_approach must be 'parametric', 'nonparametric', 'qdm', 'isimip', "
                 "'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
             )
 
