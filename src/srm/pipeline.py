@@ -882,6 +882,7 @@ class BCSDPipeline:
         obs_np = obs_coarse.values
         cm_hist_np = model_hist.values
 
+        np.random.seed(0)
         debiased_np = debiaser.apply(
             obs=obs_np,
             cm_hist=cm_hist_np,
@@ -1540,6 +1541,7 @@ class BCSDPipeline:
             failsafe=True,
         )
 
+        np.random.seed(0)
         if debias_approach in ["parametric", "nonparametric"]:
             debiased_np = _make_debiaser(mapping_type=debias_approach, **common_kwargs).apply(
                 **apply_kwargs
