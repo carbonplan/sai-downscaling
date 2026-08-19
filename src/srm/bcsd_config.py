@@ -39,11 +39,28 @@ class VariableConfig(BaseModel):
 
     detrend_data: bool
     do_windowing: bool
-    running_window_length: int = 31
     downscaling_method: DownscalingMethod
     downscaling_clim_method: DownscalingClimMethod
     detrend_method: DetrendMethod = "additive"
     debias_approach: DebiasApproach = "nonparametric_hybrid_2sided"
+
+    # Running-window settings for parametric/nonparametric/isimip/nonparametric_hybrid*
+    # approaches, i.e. every debias_approach except "qdm" (see qdm_* fields below).
+    # Defaults match ibicus's own QuantileMapping/ISIMIP defaults.
+    running_window_length: int = 31
+    running_window_step_length: int = 1
+
+    # Running-window settings used only when debias_approach="qdm". QuantileDeltaMapping
+    # windows differently from every other debiaser: it has its own within-year window
+    # (typically wider) plus a second window over years of cm_future that smooths trend
+    # estimation and has no equivalent in QuantileMapping/ISIMIP. Defaults match ibicus's
+    # own QuantileDeltaMapping defaults (Cannon et al. 2015), so leaving these unset
+    # reproduces exactly what QuantileDeltaMapping.from_variable()/for_precipitation()
+    # would do on their own.
+    qdm_running_window_length: int = 91
+    qdm_running_window_step_length: int = 31
+    qdm_running_window_over_years_of_cm_future_length: int = 31
+    qdm_running_window_over_years_of_cm_future_step_length: int = 1
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
