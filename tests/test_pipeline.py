@@ -551,6 +551,7 @@ class TestTransformScenarioBehavior:
             CHUNK_LAT,
             CHUNK_LON,
             CHUNK_TIME,
+            COMPRESSOR,
             SHARD_LAT,
             SHARD_LON,
             SHARD_TIME,
@@ -570,6 +571,7 @@ class TestTransformScenarioBehavior:
         entry = encoding["pr"]
         assert entry["chunks"] == (CHUNK_TIME, CHUNK_LAT, CHUNK_LON)
         assert entry["shards"] == (SHARD_TIME, SHARD_LAT, SHARD_LON)
+        assert entry["compressors"] == [COMPRESSOR]
 
 
 # ---------------------------------------------------------------------------
