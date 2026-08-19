@@ -534,8 +534,8 @@ def configs_from_matrix(
     train_period_end: int = 2014,
     predict_period_start: int | None = None,
     predict_period_end: int | None = None,
-    scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
-    output_dir: str = "s3://carbonplan-scratch/srm/outputs/",
+    scratch_dir: str = "s3://carbonplan-srm/scratch/cache/",
+    output_dir: str = "s3://carbonplan-srm/scratch/output/",
     environment: str = "qa",
     branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
@@ -861,10 +861,10 @@ def run_matrix(
         None, help="End year of prediction period. Required when --scenario is provided."
     ),
     scratch_dir: str = typer.Option(
-        "s3://carbonplan-scratch/srm/cache/", help="Base directory for cached artifacts"
+        "s3://carbonplan-srm/scratch/cache/", help="Base directory for cached artifacts"
     ),
     output_dir: str = typer.Option(
-        "s3://carbonplan-scratch/srm/outputs/", help="Directory for final outputs"
+        "s3://carbonplan-srm/scratch/output/", help="Directory for final outputs"
     ),
     environment: str = typer.Option("qa", help="Environment (qa, production)"),
     branch: str = typer.Option("main", help="icechunk output branch (e.g. 'v2', 'v3')"),
