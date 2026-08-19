@@ -72,8 +72,8 @@ uv run bcsd run-matrix [OPTIONS]
 - `--predict-period-end INTEGER`: end year of prediction period (required when `--scenario` is given)
 - `--train-period-start INTEGER`: start year of training period (default: `1978`)
 - `--train-period-end INTEGER`: end year of training period (default: `2014`)
-- `--scratch-dir TEXT`: base directory for cached artifacts (default: `s3://carbonplan-scratch/srm/cache/`)
-- `--output-dir TEXT`: directory for final outputs (default: `s3://carbonplan-scratch/srm/outputs/`)
+- `--scratch-dir TEXT`: base directory for cached artifacts (default: `s3://carbonplan-srm/scratch/cache/`)
+- `--output-dir TEXT`: directory for final outputs (default: `s3://carbonplan-srm/scratch/output/`)
 - `--environment TEXT`: environment (default: `qa`)
 - `--branch TEXT`: icechunk output branch (default: `main`)
 - `--subset-bounds TEXT`: spatial bounds as `'lat_min,lat_max,lon_min,lon_max'`
@@ -108,8 +108,8 @@ uv run bcsd run-matrix \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 --scenario G6-1.5K \
   --predict-period-start 2015 --predict-period-end 2100 \
-  --scratch-dir "s3://carbonplan-scratch/srm/cache/" \
-  --output-dir "s3://carbonplan-scratch/srm/outputs/"
+  --scratch-dir "s3://carbonplan-srm/scratch/cache/" \
+  --output-dir "s3://carbonplan-srm/scratch/output/"
 
 # Give one variable a different bias-correction approach
 uv run bcsd run-matrix \
@@ -246,7 +246,7 @@ Exactly one of positional `STORE_URIS` **or** `--config-path` is required.
 
 ```bash
 # Validate explicit output store(s)
-uv run bcsd validate-output s3://carbonplan-scratch/srm/outputs/qa/main/... --no-coiled
+uv run bcsd validate-output s3://carbonplan-srm/scratch/output/qa/main/... --no-coiled
 
 # Derive the store URIs from the same configs `bcsd run` consumes
 uv run bcsd validate-output --config-path configs/qa/
@@ -278,15 +278,15 @@ uv run bcsd status --config-path configs/example.yaml --verbose
 
 # Output:
 # Cache Configuration:
-#   Cache Path: s3://carbonplan-scratch/srm/cache/
-#   Output Path: s3://carbonplan-scratch/srm/outputs/
+#   Cache Path: s3://carbonplan-srm/scratch/cache/
+#   Output Path: s3://carbonplan-srm/scratch/output/
 #   Environment: qa
 #   Branch: main
 #
 # Example Paths:
-#   Obs: s3://carbonplan-scratch/srm/cache/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
-#   Historical: s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
-#   Scenario: s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+#   Obs: s3://carbonplan-srm/scratch/cache/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+#   Historical: s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+#   Scenario: s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
 #
 # (one icechunk store per GCM-obs-subset tuple; obs/historical/scenario are
 #  groups inside it, and versions are icechunk branches, not path segments)

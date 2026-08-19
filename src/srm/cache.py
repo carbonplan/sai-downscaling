@@ -83,7 +83,7 @@ class ArtifactCache:
 
     def __init__(
         self,
-        scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
+        scratch_dir: str = "s3://carbonplan-srm/scratch/cache/",
         environment: str = "qa",
         branch: str = "main",
         output_dir: str | None = None,
