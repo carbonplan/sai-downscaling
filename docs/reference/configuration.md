@@ -142,8 +142,8 @@ These fields control storage paths and runtime behavior. They do not affect comp
 
 ```yaml
 # Storage paths
-scratch_dir: "s3://bucket/path"        # Base directory for intermediate artifacts (default: s3://carbonplan-scratch/srm/cache/)
-output_dir: "s3://bucket/path"         # Directory for final downscaled outputs — historical + scenario (default: s3://carbonplan-scratch/srm/outputs/)
+scratch_dir: "s3://bucket/path"        # Base directory for intermediate artifacts (default: s3://carbonplan-srm/scratch/cache/)
+output_dir: "s3://bucket/path"         # Directory for final downscaled outputs — historical + scenario (default: s3://carbonplan-srm/scratch/output/)
 
 # Environment and versioning
 environment: "qa"                      # Environment: qa, production (default: "qa")

@@ -133,14 +133,33 @@ jobs:
               run: uv run bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag "snapshot-$TAG"
 
             - name: Report the pointer to update
+              # Print both fields: `branch` changes every release and `uri` changes when the
+              # configs move, so naming only one invites a pointer that cites a store with no
+              # such branch. Resolved from the configs so the summary cannot drift from them.
               run: |
-                  echo "### Snapshot baseline produced" >> "$GITHUB_STEP_SUMMARY"
-                  echo "" >> "$GITHUB_STEP_SUMMARY"
-                  echo "Repoint \`CESM2_WACCM_SOUTH_AFRICA\` in \`src/srm/snapshot/baselines.py\`:" >> "$GITHUB_STEP_SUMMARY"
-                  echo "" >> "$GITHUB_STEP_SUMMARY"
-                  echo '```python' >> "$GITHUB_STEP_SUMMARY"
-                  echo "branch=\"$TAG\",  # frozen as tag snapshot-$TAG" >> "$GITHUB_STEP_SUMMARY"
-                  echo '```' >> "$GITHUB_STEP_SUMMARY"
+                  URI=$(uv run python - <<'PY'
+                  from srm.cache import ArtifactCache
+                  from srm.cli import load_configs
+
+                  configs, options = load_configs("configs/snapshot/cesm2-waccm/")
+                  stores = {ArtifactCache.from_config(c, options)._output_store for c in configs}
+                  # One store per (gcm, obs, subset); every snapshot config shares that triple.
+                  assert len(stores) == 1, f"expected one snapshot output store, got {sorted(stores)}"
+                  print(stores.pop())
+                  PY
+                  ) || URI="<read output_dir from configs/snapshot/cesm2-waccm/>"
+                  {
+                      echo "### Snapshot baseline produced"
+                      echo ""
+                      echo "Repoint \`CESM2_WACCM_SOUTH_AFRICA\` in \`src/srm/snapshot/baselines.py\`:"
+                      echo ""
+                      echo '```python'
+                      echo "CESM2_WACCM_SOUTH_AFRICA = Baseline("
+                      echo "    uri=\"$URI\","
+                      echo "    branch=\"$TAG\",  # frozen as tag snapshot-$TAG"
+                      echo ")"
+                      echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
 
     production:
         name: Production run (${{ matrix.model }})

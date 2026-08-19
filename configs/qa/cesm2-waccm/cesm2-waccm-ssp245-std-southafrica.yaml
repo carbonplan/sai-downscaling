@@ -24,8 +24,8 @@ predict_period_end: 2099
 subset_bounds: [-38, -19, 13, 36]
 
 # === Storage ===
-scratch_dir: "s3://carbonplan-scratch/srm-isimip/cache"
-output_dir: "s3://carbonplan-scratch/srm-isimip/output"
+scratch_dir: "s3://carbonplan-srm/scratch/cache"
+output_dir: "s3://carbonplan-srm/scratch/output"
 environment: "qa"
 branch: "isimip-test"
 

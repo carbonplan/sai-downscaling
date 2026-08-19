@@ -8,21 +8,28 @@ zarr groups on a named branch (by default the installed package version).
 
 ```
 # Scratch store — obs regridded + optional intermediates
-s3://carbonplan-scratch/srm/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+s3://carbonplan-srm/scratch/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3   ← defaults to installed package version
 
 # Output store — fine-res historical + scenario results + debiased coarse data
-s3://carbonplan-scratch/srm/outputs/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
+s3://carbonplan-srm/scratch/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
 
 # Examples for CESM2-WACCM, ERA5, global run:
-s3://carbonplan-scratch/srm/cache/qa/CESM2-WACCM-ERA5-global.icechunk
-s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-global.icechunk
+s3://carbonplan-srm/scratch/cache/qa/CESM2-WACCM-ERA5-global.icechunk
+s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM-ERA5-global.icechunk
 
 # Regional subset (South Africa):
-s3://carbonplan-scratch/srm/cache/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
-s3://carbonplan-scratch/srm/outputs/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+s3://carbonplan-srm/scratch/cache/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
 ```
+
+The paths above are the defaults, which every non-production config uses. Production configs
+override `output_dir` to CarbonPlan's Source Cooperative repository and keep only their
+intermediate artifacts under `scratch/cache/production/`, so nothing in this how-to deletes
+published data. Two config families also override both directories to avoid resolving to a shared
+store: `configs/snapshot/` writes under `scratch/snapshot/` and `configs/qa/obs-comparison/` writes
+under `scratch/obs-comparison/`.
 
 Within each store the zarr groups are:
 

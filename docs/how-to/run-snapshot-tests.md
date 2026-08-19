@@ -40,7 +40,7 @@ Both baselines are rebuilt at release time. Publishing a GitHub release triggers
 | `snapshot` | the regional baseline over `configs/snapshot/cesm2-waccm/`, then freezes it as icechunk tag `snapshot-<release tag>` | `CESM2_WACCM_SOUTH_AFRICA` |
 | `production` | the global run | `CESM2_WACCM_GLOBAL` |
 
-The one manual step is repointing `src/srm/snapshot/baselines.py` at the new release. The `snapshot` job prints the exact value in its workflow summary. Do this in the release pull request, otherwise every subsequent comparison diffs against the previous release and inherits its already-approved changes as failures.
+The one manual step is repointing `src/srm/snapshot/baselines.py` at the new release. The `snapshot` job prints both fields in its workflow summary, the store URI as well as the branch. Paste the whole block: a release can move the URI too, and a pointer with a new branch on an old store resolves to a branch that does not exist. Do this in the release pull request, otherwise every subsequent comparison diffs against the previous release and inherits its already-approved changes as failures.
 
 To rebuild a baseline outside a release, run the same two commands the job runs:
 
