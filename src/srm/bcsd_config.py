@@ -376,11 +376,11 @@ class PipelineOptions(pydantic_settings.BaseSettings):
     """
 
     scratch_dir: str = Field(
-        "s3://carbonplan-scratch/srm/cache/",
+        "s3://carbonplan-srm/scratch/cache/",
         description="Base directory for cached intermediate artifacts",
     )
     output_dir: str = Field(
-        "s3://carbonplan-scratch/srm/outputs/", description="Directory for final downscaled outputs"
+        "s3://carbonplan-srm/scratch/output/", description="Directory for final downscaled outputs"
     )
     environment: str = Field(
         default="qa",
@@ -421,7 +421,7 @@ class CacheConfig(BaseModel):
     """Configuration for artifact caching behavior"""
 
     base_dir: str = Field(
-        "s3://carbonplan-scratch/srm/cache/", description="Base directory for cache storage"
+        "s3://carbonplan-srm/scratch/cache/", description="Base directory for cache storage"
     )
     force_recompute: bool = Field(
         False, description="Force recomputation even if cached artifacts exist"

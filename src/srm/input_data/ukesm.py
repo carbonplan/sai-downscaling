@@ -25,6 +25,7 @@ from srm.input_data.etl_utils import (
     get_aws_creds,
     group_paths_by_member,
     open_netcdf_from_s3,
+    raw_netcdf_prefix,
     setup_logging,
     trim_negative_precipitation,
     update_variable_attrs,
@@ -52,15 +53,15 @@ UNIFIED_PREFIX = "input/processed/ukesm.icechunk"
 
 # Raw NetCDF prefixes on S3 — primary source for each scenario
 S3_INPUT_PREFIX: dict[str, str] = {
-    "historical": "input/tensor/UKESM/netcdf/historical",
-    "SSP245": "input/tensor/UKESM/transfer/SSP2-4.5/",
-    "G6-1.5K": "input/tensor/UKESM/transfer/G6-1.5K",
+    "historical": raw_netcdf_prefix("UKESM", "historical"),
+    "SSP245": raw_netcdf_prefix("UKESM", "ssp245"),
+    "G6-1.5K": raw_netcdf_prefix("UKESM", "g6-1p5k"),
 }
 
 # Private T/PR NetCDF prefixes — secondary source for pr/tas/tasmin/tasmax
 T_PR_INPUT_PREFIX: dict[str, str] = {
-    "SSP245": "input/tensor/UKESM/UKESM_SSP245_T_PR_NETCDF/UKESM_SSP245_T_PR",
-    "G6-1.5K": "input/tensor/UKESM/UKESM_G6-1.5K_T_PR_NETCDF/UKESM_G6-1.5K_T_PR",
+    "SSP245": raw_netcdf_prefix("UKESM", "ssp245-t-pr"),
+    "G6-1.5K": raw_netcdf_prefix("UKESM", "g6-1p5k-t-pr"),
 }
 
 # Filename prefixes to look for in T_PR_INPUT_PREFIX, per variable
@@ -196,6 +197,14 @@ def _get_netcdf_urls(scenario: str, variable: str) -> list[tuple[str, str]]:
 
 def _preprocess_ukesm(ds: xr.Dataset, scenario: str, subset: bool = False) -> xr.Dataset:
     if subset:
+        # Dry-run only: seek to the window before head-sampling. The T/PR files open before
+        # the G6-1.5K window, so sampling the head of the file leaves nothing behind once the
+        # authoritative clip below runs. Sampling here rather than only after that clip keeps
+        # to_proleptic_gregorian's chunk({"time": -1}) from pulling the whole series.
+        # Start bound only: the raw axis is 360_day, where "12-31" does not exist.
+        if scenario in TIME_RANGE:
+            start_year = TIME_RANGE[scenario].split("-")[0]
+            ds = ds.sel(time=slice(f"{start_year}-01-01", None))
         ds = ds.isel(time=slice(0, _DRY_RUN_STEPS))
 
     # Keep only standard spatial/temporal coords; drop everything else before calendar
@@ -231,6 +240,11 @@ def _preprocess_ukesm(ds: xr.Dataset, scenario: str, subset: bool = False) -> xr
     if scenario in TIME_RANGE:
         start_year, end_year = TIME_RANGE[scenario].split("-")
         ds = ds.sel(time=slice(f"{start_year}-01-01", f"{end_year}-12-31"))
+
+    # Sample AFTER the clip: the T/PR source files open before the G6-1.5K window, so
+    # taking the head of the file first leaves nothing behind once the clip is applied.
+    if subset:
+        ds = ds.isel(time=slice(0, _DRY_RUN_STEPS))
 
     return trim_negative_precipitation(ds)
 

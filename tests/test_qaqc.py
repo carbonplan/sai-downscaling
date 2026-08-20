@@ -7,15 +7,20 @@ import pytest
 import xarray as xr
 
 from srm.qaqc import (
+    CHECK_AMBER,
+    CHECK_RED,
     DISTORTION_STAGES,
+    _parse_gap_fill_member_map,
     area_weights,
     calculate_distortion_flags,
     calculate_reasonable_bounds_doy,
+    check_ensemble_spread,
     compute_deltas,
     distortion_fields,
     distortion_summary,
     enumerate_scenario_comparisons,
     find_exceedance_regions,
+    highlight,
     obs_doy_bounds,
     scenario_delta_doy,
     sign_flip_mask,
@@ -554,3 +559,256 @@ def test_distortion_fields_pairs_the_documented_stages():
     # what isolates downscaling from debiasing.
     absolute, _ = distortion_fields(deltas, deltas, "downscaled_debiased_vs_coarse_debiased")
     assert float(absolute.max()) == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------------------
+# Ensemble spread / gap-fill seam
+# ---------------------------------------------------------------------------
+
+
+def _spread_ds(member_values: dict[str, list[float]], *, start: str = "2015-01-01") -> xr.Dataset:
+    """Build a (member, time, lat, lon) dataset whose global mean per day is given."""
+    members = list(member_values)
+    n_time = len(next(iter(member_values.values())))
+    time = pd.date_range(start, periods=n_time, freq="YS")
+    lat = np.array([-30.0, 30.0])
+    lon = np.array([0.0, 180.0])
+    data = np.array(
+        [[[[v, v], [v, v]] for v in member_values[m]] for m in members], dtype="float64"
+    )
+    return xr.Dataset(
+        {"tas": (["ensemble_member", "time", "lat", "lon"], data)},
+        coords={"ensemble_member": members, "time": time, "lat": lat, "lon": lon},
+    )
+
+
+def _gap_filled_ds() -> xr.Dataset:
+    """MIROC-ES2H ssp245 in miniature: a 3 -> 1 bridge, then distinct native years."""
+    ds = _spread_ds(
+        {
+            "r01": [1.0, 1.0, 10.0, 20.0],
+            "r02": [2.0, 2.0, 11.0, 21.0],
+            "r03": [1.0, 1.0, 12.0, 22.0],
+            "r04": [1.0, 1.0, 13.0, 23.0],
+        }
+    )
+    ds.attrs.update(
+        {
+            "gap_fill_period": "2015-2016",
+            "gap_fill_member_map": "r01→rA, r02→rB, r03→rA, r04→rA",
+        }
+    )
+    return ds
+
+
+def test_parse_gap_fill_member_map_accepts_both_arrow_glyphs():
+    assert _parse_gap_fill_member_map("r01→rA, r02→rB") == {"r01": "rA", "r02": "rB"}
+    assert _parse_gap_fill_member_map("r01->rA, r02->rB") == {"r01": "rA", "r02": "rB"}
+
+
+def test_parse_gap_fill_member_map_raises_rather_than_passing_vacuously():
+    with pytest.raises(ValueError, match="no recognized arrow"):
+        _parse_gap_fill_member_map("r01 rA, r02 rB")
+    with pytest.raises(ValueError, match="no member pairs"):
+        _parse_gap_fill_member_map("   ")
+
+
+def test_check_ensemble_spread_returns_one_full_row_without_gap_fill_attrs():
+    ds = _spread_ds({"r01": [1.0, 2.0], "r02": [3.0, 4.0]})
+    rows = check_ensemble_spread(ds, "GCM group")
+
+    assert [r["window"] for r in rows] == ["full"]
+    assert rows[0]["ok"] is True
+    assert rows[0]["day"] == "2015-01-01"
+
+
+def test_check_ensemble_spread_still_flags_real_duplication():
+    ds = _spread_ds({"r01": [1.0], "r02": [1.0]})
+    (row,) = check_ensemble_spread(ds, "GCM group")
+
+    assert row["ok"] is False
+    assert row["n_distinct"] == 1
+    assert row["n_members"] == 2
+
+
+def test_check_ensemble_spread_splits_a_gap_filled_group_into_two_windows():
+    rows = check_ensemble_spread(_gap_filled_ds(), "MIROC-ES2H ssp245")
+
+    assert [r["window"] for r in rows] == ["bridge", "native"]
+    bridge, native = rows
+
+    # Passes despite 4 members collapsing to 2 means: the map predicts exactly that.
+    assert bridge["ok"] is True
+    assert bridge["n_distinct"] == 2
+    assert bridge["day"] == "2015-01-01"
+    assert bridge["groups"] == bridge["expected_groups"] == "r01+r03+r04 | r02"
+
+    assert native["ok"] is True
+    assert native["n_distinct"] == 4
+    assert native["day"] == "2017-01-01"
+    assert native["expected_groups"] is None
+
+
+def test_check_ensemble_spread_bridge_fails_when_the_member_map_is_miswired():
+    ds = _gap_filled_ds()
+    # Data still groups r01+r03+r04; the map now claims r04 came from rB.
+    ds.attrs["gap_fill_member_map"] = "r01→rA, r02→rB, r03→rA, r04→rB"
+    bridge, native = check_ensemble_spread(ds, "MIROC-ES2H ssp245")
+
+    assert bridge["ok"] is False
+    assert bridge["groups"] == "r01+r03+r04 | r02"
+    assert bridge["expected_groups"] == "r01+r03 | r02+r04"
+    assert native["ok"] is True
+
+
+def test_check_ensemble_spread_checks_the_bridge_rather_than_skipping_it():
+    ds = _gap_filled_ds()
+    # Broken stitch: r04 should match r01/r03 over the bridge. Mid-record never sees it.
+    ds["tas"].loc[{"ensemble_member": "r04", "time": ds.time.values[:2]}] = 9.0
+    bridge, native = check_ensemble_spread(ds, "MIROC-ES2H ssp245")
+
+    assert bridge["ok"] is False
+    assert bridge["groups"] == "r01+r03 | r02 | r04"
+    assert native["ok"] is True
+
+
+def test_check_ensemble_spread_day_index_offsets_within_each_window():
+    rows = check_ensemble_spread(_gap_filled_ds(), "MIROC-ES2H ssp245", day_index=1)
+
+    assert [r["day"] for r in rows] == ["2016-01-01", "2018-01-01"]
+    assert all(r["ok"] for r in rows)
+
+
+def test_check_ensemble_spread_treats_an_all_bridge_group_as_a_single_row():
+    ds = _spread_ds({"r01": [1.0, 1.0], "r02": [2.0, 2.0]})
+    ds.attrs.update({"gap_fill_period": "2015-2016", "gap_fill_member_map": "r01→rA"})
+
+    assert [r["window"] for r in check_ensemble_spread(ds, "GCM group")] == ["full"]
+
+
+def test_check_ensemble_spread_handles_a_missing_variable():
+    ds = _spread_ds({"r01": [1.0]}).rename({"tas": "pr"})
+    (row,) = check_ensemble_spread(ds, "GCM group")
+
+    assert row["ok"] is True
+    assert row["members"] == [] and row["means"] == []
+
+
+# --- Check-table highlighting -------------------------------------------------------------------
+
+
+def _colors(df: pd.DataFrame, **kwargs) -> dict:
+    """{(row label, column): "red" | "amber" | "green" | None} for every cell of a styled table."""
+    names = {"#f8d7da": "red", "#fff3cd": "amber", "#d1e7dd": "green"}
+    colors = {(row, col): None for row in df.index for col in df.columns}
+    for (row, col), props in highlight(df, **kwargs)._compute().ctx.items():
+        background = next((value for prop, value in props if prop == "background-color"), None)
+        colors[(df.index[row], df.columns[col])] = names.get(background)
+    return colors
+
+
+def _summary() -> pd.DataFrame:
+    """Stand-in for the QA notebooks' per-leaf Part 1 summary: one clean leaf, one broken."""
+    return pd.DataFrame(
+        {
+            "no_nans": [True, False],
+            "no_interior_nans": [True, False],
+            "reasonable_range": [True, False],
+            "n_irregular_days": [0, 3],
+            "bridged_pre_sai": [False, True],
+            "stale_end_tail": [False, False],
+            "n_time": [31046, 31046],
+        },
+        index=["clean", "broken"],
+    )
+
+
+def test_highlight_colors_a_boolean_check_by_whether_it_passed():
+    colors = _colors(_summary())
+
+    assert colors[("clean", "no_interior_nans")] == "green"
+    assert colors[("broken", "no_interior_nans")] == "red"
+
+
+def test_highlight_colors_sentinel_booleans_red_only_when_they_fire():
+    colors = _colors(_summary())
+
+    assert colors[("broken", "bridged_pre_sai")] == "red"
+    assert colors[("clean", "bridged_pre_sai")] == "green"
+    assert colors[("broken", "stale_end_tail")] == "green"
+
+
+def test_highlight_reports_irregular_days_amber_rather_than_red():
+    colors = _colors(_summary())
+
+    assert colors[("broken", "n_irregular_days")] == "amber"
+    assert colors[("clean", "n_irregular_days")] == "green"
+
+
+def test_highlight_leaves_unregistered_columns_alone():
+    colors = _colors(_summary().assign(some_new_metric=[0, 1]))
+
+    assert colors[("clean", "n_time")] is None
+    assert colors[("broken", "some_new_metric")] is None
+
+
+def test_highlight_demotes_a_column_from_red_to_amber():
+    plain = _colors(_summary())
+    demoted = _colors(_summary(), demote=["no_nans"])
+
+    assert plain[("broken", "no_nans")] == "red"
+    assert demoted[("broken", "no_nans")] == "amber"
+    assert demoted[("broken", "no_interior_nans")] == "red"  # others keep their severity
+
+
+def test_highlight_rejects_demoting_an_unregistered_column():
+    with pytest.raises(KeyError, match="no_nan"):
+        highlight(_summary(), demote=["no_nan"])
+
+
+def test_highlight_flags_list_columns_only_when_they_are_non_empty():
+    df = pd.DataFrame(
+        {"missing": [[], [("dtr", "003")]], "unexpected": [[], []], "pass": [True, False]},
+        index=["complete", "short"],
+    )
+    colors = _colors(df)
+
+    assert colors[("complete", "missing")] == "green"
+    assert colors[("short", "missing")] == "red"
+    assert colors[("short", "unexpected")] == "green"
+    assert colors[("short", "pass")] == "red"
+
+
+def test_highlight_requires_exactly_one_grid_per_family():
+    colors = _colors(pd.DataFrame({"n_distinct_grids": [1, 2]}, index=["fine", "coarse"]))
+
+    assert colors[("fine", "n_distinct_grids")] == "green"
+    assert colors[("coarse", "n_distinct_grids")] == "red"
+
+
+def test_highlight_flags_counts_that_should_be_zero():
+    df = pd.DataFrame(
+        {"days_max<min": [0, 7], "neg_cell_days": [0, 12], "high_cell_days": [0, 0]},
+        index=["clean", "regressed"],
+    )
+    colors = _colors(df)
+
+    assert colors[("clean", "days_max<min")] == "green"
+    assert colors[("regressed", "days_max<min")] == "red"
+    assert colors[("regressed", "neg_cell_days")] == "red"
+    assert colors[("regressed", "high_cell_days")] == "green"
+
+
+def test_highlight_renders_a_multiindex_table():
+    df = _summary()
+    df.index = pd.MultiIndex.from_tuples(
+        [("CESM2-WACCM", "ssp245", "tas", "003"), ("UKESM", "g6_1p5k", "pr", "r2i1p1f2")],
+        names=["gcm", "scenario", "variable", "member"],
+    )
+
+    assert "#f8d7da" in highlight(df).to_html()
+
+
+def test_highlight_registries_do_not_overlap():
+    """A column in both would take its color from dict ordering rather than from intent."""
+    assert not set(CHECK_RED) & set(CHECK_AMBER)

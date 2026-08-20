@@ -534,8 +534,8 @@ def configs_from_matrix(
     train_period_end: int = 2014,
     predict_period_start: int | None = None,
     predict_period_end: int | None = None,
-    scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
-    output_dir: str = "s3://carbonplan-scratch/srm/outputs/",
+    scratch_dir: str = "s3://carbonplan-srm/scratch/cache/",
+    output_dir: str = "s3://carbonplan-srm/scratch/output/",
     environment: str = "qa",
     branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
@@ -861,10 +861,10 @@ def run_matrix(
         None, help="End year of prediction period. Required when --scenario is provided."
     ),
     scratch_dir: str = typer.Option(
-        "s3://carbonplan-scratch/srm/cache/", help="Base directory for cached artifacts"
+        "s3://carbonplan-srm/scratch/cache/", help="Base directory for cached artifacts"
     ),
     output_dir: str = typer.Option(
-        "s3://carbonplan-scratch/srm/outputs/", help="Directory for final outputs"
+        "s3://carbonplan-srm/scratch/output/", help="Directory for final outputs"
     ),
     environment: str = typer.Option("qa", help="Environment (qa, production)"),
     branch: str = typer.Option("main", help="icechunk output branch (e.g. 'v2', 'v3')"),
@@ -1218,6 +1218,56 @@ def cache_list(
         table.add_row(artifact)
 
     console.print(table)
+
+
+@app.command()
+def release(
+    config_path: str = typer.Option(
+        "configs/example.yaml", "--config-path", "-c", help="Path to YAML config or directory"
+    ),
+    tag: str = typer.Option(..., "--tag", help="icechunk tag to create (e.g. 'v0.13.0')"),
+    branch: str = typer.Option(
+        None, "--branch", help="Branch to tag. Defaults to the installed package version."
+    ),
+):
+    """Freeze the stores a config set writes to under an immutable icechunk tag.
+
+    A branch stays writable, so a later run can overwrite the state a comparison
+    baseline points at. Tagging pins the snapshot id, which is what makes a release
+    artifact safe to cite as a baseline.
+    """
+    configs, options = load_configs(config_path)
+    if not configs:
+        logger.error("No configs found at %s", config_path)
+        raise typer.Exit(1)
+
+    # One config set can span several stores (one per gcm/obs/subset triple). Tag each
+    # distinct store once; two configs sharing a store would otherwise collide on the
+    # second create_tag call.
+    seen: set[str] = set()
+    tagged = 0
+    for config in configs:
+        cache = ArtifactCache.from_config(config, options)
+        if branch:
+            cache.branch = branch
+        if cache._output_store in seen:
+            continue
+        seen.add(cache._output_store)
+        try:
+            # Logs one line per icechunk store it tags: the output store, plus the
+            # scratch store when the two are configured to different paths.
+            cache.release(tag)
+        except Exception as exc:  # icechunk raises on an existing tag or a missing branch
+            # A partially applied tag is possible here: release() tags output before
+            # scratch, so a failure on the second leaves the first tagged. Exiting
+            # non-zero is what matters, so the release does not report success.
+            logger.error(
+                "Could not tag %s@%s as %r: %s", cache._output_store, cache.branch, tag, exc
+            )
+            raise typer.Exit(1) from exc
+        tagged += 1
+
+    logger.info("✓ Released %d config store(s) as %r on branch %r", tagged, tag, options.branch)
 
 
 @app.command()

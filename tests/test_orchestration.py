@@ -27,6 +27,9 @@ from srm.orchestration import BCSDOrchestrator
 # Fixtures
 # ---------------------------------------------------------------------------
 
+# South Africa QA box, the standard regional extent used by the snapshot configs.
+_SA_BOUNDS = (-38, -19, 13, 36)
+
 
 @pytest.fixture
 def pipeline_options(tmp_path) -> PipelineOptions:
@@ -343,6 +346,21 @@ class TestSubmitToCoiled:
 
         assert result == [f"{loc.store_path}::{loc.group}"]
         assert mock_coiled.batch.run.call_count == 1
+
+    @pytest.mark.parametrize("subset_bounds", [None, _SA_BOUNDS], ids=["global", "regional"])
+    def test_every_batch_is_purchased_on_demand(self, orchestrator, subset_bounds):
+        """Regional batches ran on spot briefly, but reclamation failed jobs outright."""
+        config = _make_config(subset_bounds=subset_bounds)
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        mock_coiled = self._make_coiled_mock(["done"])
+
+        with patch.dict("sys.modules", {"coiled": mock_coiled}):
+            orchestrator._submit_to_coiled("prepare_observations", [config])
+
+        assert mock_coiled.batch.run.call_args.kwargs["spot_policy"] == "on-demand"
 
     def test_retries_only_failed_tasks(self, orchestrator, multi_configs):
         """After a partial failure, only the still-missing configs are retried."""
@@ -695,19 +713,18 @@ class TestGetStatus:
 
 
 # ---------------------------------------------------------------------------
-# VM sizing and purchase option
+# VM sizing
 # ---------------------------------------------------------------------------
 
-_SA_BOUNDS = (-38, -19, 13, 36)
 _STAGES = ("prepare_observations", "fit_historical", "transform_scenario")
 
 
 class TestVmSizing:
-    """Instance type and spot policy scale with a batch's spatial extent.
+    """Instance type scales with a batch's spatial extent.
 
-    Global batches must keep the original on-demand sizing, since they produce
-    published output. Regional batches subset before any heavy compute, so they run on
-    smaller instances and tolerate spot reclamation via the existing retry loop.
+    Global batches must keep the original sizing, since they produce published output.
+    Regional batches subset before any heavy compute, so they run on smaller instances.
+    Purchase option does not vary with extent; see ``TestSubmitToCoiled``.
     """
 
     def test_global_batch_keeps_original_sizing(self, subtests):
@@ -751,14 +768,3 @@ class TestVmSizing:
                 assert BCSDOrchestrator._vm_types_for("no_such_stage", configs) == (
                     BCSDOrchestrator._DEFAULT_VM_TYPE
                 )
-
-    def test_global_batch_stays_on_demand(self):
-        assert BCSDOrchestrator._spot_policy_for([_make_config()]) == "on-demand"
-
-    def test_regional_batch_uses_spot(self):
-        configs = [_make_config(subset_bounds=_SA_BOUNDS)]
-        assert BCSDOrchestrator._spot_policy_for(configs) == "spot_with_fallback"
-
-    def test_mixed_batch_stays_on_demand(self):
-        configs = [_make_config(subset_bounds=_SA_BOUNDS), _make_config()]
-        assert BCSDOrchestrator._spot_policy_for(configs) == "on-demand"
