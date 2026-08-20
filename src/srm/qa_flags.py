@@ -125,11 +125,11 @@ def write_individual_flags(
 
     tag = f"{gcm}_{var}_{scenario}_{ens}"
     flag_data.to_zarr(
-        flag_dir + tag + ".zarr", 
-        mode=write_mode, 
-        consolidated=False, 
+        flag_dir + tag + ".zarr",
+        mode=write_mode,
+        consolidated=False,
         align_chunks=True,
-        encoding={flag_name: {"_FillValue": None}}
+        encoding={flag_name: {"_FillValue": None}},
     )
 
 
