@@ -108,7 +108,7 @@ def write_individual_flags(
     time_varying: bool = True,
 ):
     flag_data = flag_data.rename(flag_name)
-    flag_data = flag_data.fillna(0).astype(np.uint8)
+    flag_data = flag_data.astype(np.uint8)
     flag_data.attrs = {
         "long_name": "Quality flag",
         "description": "0=no known issue; 1=known issue",
