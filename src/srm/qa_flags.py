@@ -16,6 +16,34 @@ PLAUSIBLE_RANGES: dict[str, tuple[float, float]] = {
     "dtr": (0, 150),
 }
 
+# Variable-specific tolerances for differences in scenario comparisons (i.e. trends) between the raw GCM and  debiased, downscaled output (re-coarsened to native GCM grid). Grid cells where the scenario comparison differs by more than the absolute tolerance (in that variable's units defined in this dictionary) AND the percent tolerance are flagged.
+TREND_VARIABLE_SETTINGS = {
+    "tas": {
+        "units": "K",
+        "scale": 1.0,
+        "abs_tol": 0.25,
+        "pct_tol": 0.0,
+        "sign_flip": 0.25,
+    },
+    "tasmax": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.25},
+    "tasmin": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.25},
+    "pr": {
+        "units": "mm/yr",
+        "scale": 31536000.0,
+        "abs_tol": 10.0,
+        "pct_tol": 2.0,
+        "sign_flip": 5.0,
+    },
+    "rsds": {"units": "W m-2", "scale": 1.0, "abs_tol": 1.0, "pct_tol": 0.25, "sign_flip": 0.5},
+    "hurs": {
+        "units": "%",
+        "scale": 1.0,
+        "abs_tol": 5.0,
+        "pct_tol": 1.0,
+        "sign_flip": 0.5,
+    },
+}
+
 
 def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = "annual"):
     """
@@ -83,6 +111,7 @@ def write_individual_flags(
     time_varying: bool = True,
 ):
     flag_data = flag_data.rename(flag_name)
+    flag_data = flag_data.fillna(0).astype(np.uint8)
     flag_data.attrs = {
         "long_name": "Quality flag",
         "description": "0=no known issue; 1=known issue",
@@ -96,7 +125,11 @@ def write_individual_flags(
 
     tag = f"{gcm}_{var}_{scenario}_{ens}"
     flag_data.to_zarr(
-        flag_dir + tag + ".zarr", mode=write_mode, consolidated=False, align_chunks=True
+        flag_dir + tag + ".zarr", 
+        mode=write_mode, 
+        consolidated=False, 
+        align_chunks=True,
+        encoding={flag_name: {"_FillValue": None}}
     )
 
 
