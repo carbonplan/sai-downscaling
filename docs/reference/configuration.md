@@ -32,7 +32,7 @@ Both singular (`variable`) and plural (`variables`) key names are accepted. All 
 
 `predict_period_start` and `predict_period_end` must fall within the valid data extent of every ensemble member the config expands to. Those extents are not uniform: some members are truncated years before the nominal scenario end and the unified store NaN-pads them to that end, so a predict period that overshoots would silently downscale padding. `bcsd run` and `bcsd run-matrix` guard against this with `check_config_time_domain` before submitting any work, raising a blocking error that lists every config whose predict period falls outside its member's bounds.
 
-The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/srm/validation.py`; the CESM2-WACCM SSP245 spread is representative:
+The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/saidownscale/validation.py`; the CESM2-WACCM SSP245 spread is representative:
 
 | Members | Valid end year |
 |---|---|
@@ -113,14 +113,14 @@ bcsd run-matrix --gcm CESM2-WACCM \
 ```
 
 :::{note}
-`dtr` overrides propagate into `tasmin`, which the pipeline reconstructs as `tasmax - dtr`. The `tasmin` output's `srm_downscaling:bias_correction_method` attribute reports only `tasmin`'s own approach.
+`dtr` overrides propagate into `tasmin`, which the pipeline reconstructs as `tasmax - dtr`. The `tasmin` output's `saidownscale_downscaling:bias_correction_method` attribute reports only `tasmin`'s own approach.
 :::
 
 ## Overrides and the artifact cache
 
 Store paths key on `(gcm, obs_dataset, subset)` and group paths on `(stage, variable, ensemble_member)`. Neither encodes `VariableConfig`, so two runs that differ only in a `variable_overrides` entry resolve to exactly the same location on the same branch.
 
-The pipeline detects this rather than preventing it. On a cache hit, it compares the artifact's `srm_downscaling:config_json` provenance attribute against the current run's `variable_config` and raises `CacheConfigMismatchError` when they differ, naming both values. Without the check, the second run would report a hit, skip the stage, and feed artifacts built under different bias-correction settings to every downstream stage.
+The pipeline detects this rather than preventing it. On a cache hit, it compares the artifact's `saidownscale_downscaling:config_json` provenance attribute against the current run's `variable_config` and raises `CacheConfigMismatchError` when they differ, naming both values. Without the check, the second run would report a hit, skip the stage, and feed artifacts built under different bias-correction settings to every downstream stage.
 
 To run two configurations side by side, give each its own branch:
 
@@ -167,13 +167,13 @@ All `PipelineOptions` fields are optional — defaults are suitable for most run
 
 ## Branch Defaulting
 
-The `branch` field defaults to the **public version of the installed `srm` package** (e.g. `v1.0.post12`),
+The `branch` field defaults to the **public version of the installed `saidownscale` package** (e.g. `v1.0.post12`),
 derived via:
 
 ```python
 from packaging.version import Version
 from importlib.metadata import version as pkg_version
-"v" + Version(pkg_version("srm")).public  # e.g. "v1.0.post12", strips local/dirty markers
+"v" + Version(pkg_version("saidownscale")).public  # e.g. "v1.0.post12", strips local/dirty markers
 ```
 
 The branch is an icechunk branch created inside each unified per-GCM store. This means:
@@ -217,7 +217,7 @@ This is useful for:
 
 ## Variable-Specific Auto-Configuration
 
-The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/srm/bcsd_config.py`). All variables use a `running_window_length` of `31` days.
+The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/saidownscale/bcsd_config.py`). All variables use a `running_window_length` of `31` days.
 
 | Variable | detrend_data | detrend_method | do_windowing | downscaling_method | downscaling_clim_method |
 | --- | --- | --- | --- | --- | --- |

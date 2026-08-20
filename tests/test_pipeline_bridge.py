@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import xarray as xr
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
-from srm.lineage import ScenarioMember
-from srm.pipeline import BCSDPipeline
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
+from saidownscale.lineage import ScenarioMember
+from saidownscale.pipeline import BCSDPipeline
 
 
 def _make_config(**overrides) -> BCSDConfig:
@@ -74,7 +74,7 @@ def test_bridge_returns_primary_when_esgf_member_none(tmp_path):
     assert pipeline._ssp245_esgf_member is None
 
     geomip_start = 2015
-    with patch("srm.pipeline._catalog") as mock_cat:
+    with patch("saidownscale.pipeline._catalog") as mock_cat:
         mock_cat.get.side_effect = lambda k: _mock_catalog_get(
             k, geomip_start=geomip_start, esgf_start=2015, primary_member="001"
         )
@@ -91,7 +91,7 @@ def test_bridge_returns_primary_when_no_gap(tmp_path):
     pipeline = BCSDPipeline(config, _make_options(tmp_path))
     assert pipeline._ssp245_esgf_member == "r1i1p4f2"
 
-    with patch("srm.pipeline._catalog") as mock_cat:
+    with patch("saidownscale.pipeline._catalog") as mock_cat:
         mock_cat.get.side_effect = lambda k: _mock_catalog_get(
             k, geomip_start=2015, esgf_start=2015
         )
@@ -117,8 +117,8 @@ def test_bridge_prepends_esgf_when_gap_detected(tmp_path):
     esgf_mock_entry.to_xarray.return_value = _make_annual_ds(2015, 2084, "r1i1p4f2")
 
     with (
-        patch("srm.pipeline.get_experiment", return_value=geomip_da),
-        patch("srm.pipeline._catalog") as mock_cat,
+        patch("saidownscale.pipeline.get_experiment", return_value=geomip_da),
+        patch("saidownscale.pipeline._catalog") as mock_cat,
     ):
         mock_cat.get.return_value = esgf_mock_entry
         result = pipeline._load_ssp245_bridge()
@@ -160,7 +160,7 @@ def test_bridge_esgf_uses_correct_member(tmp_path):
             m.to_xarray.return_value = geomip_ds
         return m
 
-    with patch("srm.pipeline._catalog") as mock_cat:
+    with patch("saidownscale.pipeline._catalog") as mock_cat:
         mock_cat.get.side_effect = _side_effect
         result = pipeline._load_ssp245_bridge()
 
@@ -200,7 +200,7 @@ def test_bridge_calendar_aligned_to_primary(tmp_path):
         m.to_xarray.return_value = esgf_ds if "esgf" in key else geomip_ds
         return m
 
-    with patch("srm.pipeline._catalog") as mock_cat:
+    with patch("saidownscale.pipeline._catalog") as mock_cat:
         mock_cat.get.side_effect = _side_effect
         result = pipeline._load_ssp245_bridge()
 
@@ -225,8 +225,8 @@ def test_bridge_empty_esgf_gap_returns_primary(tmp_path):
     esgf_mock_entry.to_xarray.return_value = _make_annual_ds(2020, 2084, "r1i1p4f2")
 
     with (
-        patch("srm.pipeline.get_experiment", return_value=geomip_da),
-        patch("srm.pipeline._catalog") as mock_cat,
+        patch("saidownscale.pipeline.get_experiment", return_value=geomip_da),
+        patch("saidownscale.pipeline._catalog") as mock_cat,
     ):
         mock_cat.get.return_value = esgf_mock_entry
         result = pipeline._load_ssp245_bridge()
@@ -272,7 +272,8 @@ def test_bridge_appends_sai_parent_for_termination_run(tmp_path):
     g6_da = _make_annual_ds(2035, 2084, "002")["tas"]
 
     with patch(
-        "srm.pipeline.get_experiment", side_effect=_experiment_by_scenario(ssp245_da, g6_da)
+        "saidownscale.pipeline.get_experiment",
+        side_effect=_experiment_by_scenario(ssp245_da, g6_da),
     ):
         result = pipeline._load_ssp245_bridge()
 
@@ -301,7 +302,8 @@ def test_bridge_sai_parent_takes_precedence_over_ssp245(tmp_path):
     g6_da = _make_annual_ds(2035, 2084, "002")["tas"]  # zeros
 
     with patch(
-        "srm.pipeline.get_experiment", side_effect=_experiment_by_scenario(ssp245_da, g6_da)
+        "saidownscale.pipeline.get_experiment",
+        side_effect=_experiment_by_scenario(ssp245_da, g6_da),
     ):
         result = pipeline._load_ssp245_bridge()
 
@@ -333,7 +335,8 @@ def test_bridge_sai_parent_tmax_uses_truncated_ssp245_without_gap(tmp_path):
     g6_da = _make_annual_ds(2035, 2084, "002", var="tasmax")["tasmax"]
 
     with patch(
-        "srm.pipeline.get_experiment", side_effect=_experiment_by_scenario(ssp245_da, g6_da)
+        "saidownscale.pipeline.get_experiment",
+        side_effect=_experiment_by_scenario(ssp245_da, g6_da),
     ):
         result = pipeline._load_ssp245_bridge()
 
@@ -353,7 +356,8 @@ def test_bridge_unchanged_when_no_sai_parent(tmp_path):
     g6_da = _make_annual_ds(2035, 2084, "002")["tas"]
 
     with patch(
-        "srm.pipeline.get_experiment", side_effect=_experiment_by_scenario(ssp245_da, g6_da)
+        "saidownscale.pipeline.get_experiment",
+        side_effect=_experiment_by_scenario(ssp245_da, g6_da),
     ) as mock_get:
         result = pipeline._load_ssp245_bridge()
 
@@ -368,7 +372,7 @@ def test_bridge_unchanged_when_no_sai_parent(tmp_path):
 
 def test_termination_stitch_is_continuous_through_2100():
     """End to end shape: historical + bridge + termination run leaves no year gap."""
-    from srm.pipeline import stitch_historical_scenario
+    from saidownscale.pipeline import stitch_historical_scenario
 
     model_hist = _make_da_with_member(1950, 2014, "r2i1p1f1")
     bridge = _make_da_with_member(2015, 2084, "002")
@@ -408,7 +412,7 @@ def _make_da_with_member(start_year: int, end_year: int, member: str) -> xr.Data
 def test_stitch_historical_scenario_mismatched_ensemble_member():
     """stitch_historical_scenario must not raise MergeError when hist/bridge/scenario
     carry different ensemble_member scalar coords (the MIROC G6-1.5K case)."""
-    from srm.pipeline import stitch_historical_scenario
+    from saidownscale.pipeline import stitch_historical_scenario
 
     model_hist = _make_da_with_member(1950, 2014, "r1i1p4f2")
     ssp_bridge = _make_da_with_member(2015, 2034, "r01")

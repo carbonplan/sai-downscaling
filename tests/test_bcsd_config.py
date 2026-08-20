@@ -7,7 +7,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from srm.bcsd_config import (
+from saidownscale.bcsd_config import (
     BCSDConfig,
     CacheConfig,
     PipelineOptions,

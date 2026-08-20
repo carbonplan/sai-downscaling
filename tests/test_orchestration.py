@@ -19,9 +19,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import make_icechunk_group as _make_icechunk_group
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import ArtifactCache
-from srm.orchestration import BCSDOrchestrator
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
+from saidownscale.cache import ArtifactCache
+from saidownscale.orchestration import BCSDOrchestrator
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -454,7 +454,7 @@ class TestSubmitToCoiled:
 
 class TestRunLocal:
     def test_routes_prepare_observations(self, orchestrator, config):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -467,7 +467,7 @@ class TestRunLocal:
         assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_fit_historical(self, orchestrator, config):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -481,7 +481,7 @@ class TestRunLocal:
         assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_transform_scenario(self, orchestrator, config):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -497,7 +497,7 @@ class TestRunLocal:
             orchestrator._run_local("bad_stage", [config])
 
     def test_creates_pipeline_per_config(self, orchestrator, multi_configs):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
             mock_instance.prepare_observations.return_value = "path"
@@ -507,7 +507,7 @@ class TestRunLocal:
         assert MockPipeline.call_count == len(multi_configs)
 
     def test_returns_path_per_config(self, orchestrator, multi_configs):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -524,7 +524,7 @@ class TestRunLocal:
         }
         for stage, method_name in stage_to_method.items():
             with subtests.test(stage=stage):
-                with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+                with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
                     mock_instance = MagicMock()
                     MockPipeline.return_value = mock_instance
                     getattr(mock_instance, method_name).return_value = f"{stage}_path"

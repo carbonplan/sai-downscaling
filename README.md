@@ -19,8 +19,8 @@ Scalable downscaling pipeline for Solar Radiation Management (SRM) model outputs
 ## Installation
 
 ```bash
-git clone https://github.com/carbonplan/srm-downscaling.git
-cd srm-downscaling
+git clone https://github.com/carbonplan/sai-downscale.git
+cd sai-downscale
 uv sync --all-groups
 ```
 
@@ -41,15 +41,15 @@ Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 CarbonPlan is a nonprofit organization that uses data and science for climate action. We aim to improve the transparency and scientific integrity of climate solutions through open data and tools. Find out more at [carbonplan.org](https://carbonplan.org/) or get in touch by [opening an issue](https://github.com/carbonplan/{repo-name}/issues/new) or [sending us an email](mailto:hello@carbonplan.org)
 
-[github-ci-badge]: https://github.com/carbonplan/srm-downscaling/actions/workflows/test.yml/badge.svg
-[github-ci-link]: https://github.com/carbonplan/srm-downscaling/actions/workflows/test.yml
-[deploy-badge]: https://github.com/carbonplan/srm-downscaling/actions/workflows/deploy.yml/badge.svg
-[deploy-link]: https://github.com/carbonplan/srm-downscaling/actions/workflows/deploy.yml
+[github-ci-badge]: https://github.com/carbonplan/sai-downscale/actions/workflows/test.yml/badge.svg
+[github-ci-link]: https://github.com/carbonplan/sai-downscale/actions/workflows/test.yml
+[deploy-badge]: https://github.com/carbonplan/sai-downscale/actions/workflows/deploy.yml/badge.svg
+[deploy-link]: https://github.com/carbonplan/sai-downscale/actions/workflows/deploy.yml
 [codecov-badge]: https://img.shields.io/codecov/c/github/carbonplan/srm-downscaling.svg?logo=codecov
 [codecov-link]: https://codecov.io/gh/carbonplan/srm-downscaling
 [license-badge]: https://img.shields.io/github/license/carbonplan/srm-downscaling
-[repo-link]: https://github.com/carbonplan/srm-downscaling
+[repo-link]: https://github.com/carbonplan/sai-downscale
 [pre-commit.ci-badge]: https://results.pre-commit.ci/badge/github/carbonplan/srm-downscaling/main.svg
 [pre-commit.ci-link]: https://results.pre-commit.ci/latest/github/carbonplan/srm-downscaling/main
-[rtd-badge]: https://readthedocs.org/projects/srm-downscaling/badge/?version=latest
-[rtd-link]: https://srm-downscaling.readthedocs.io/en/latest/?badge=latest
+[rtd-badge]: https://readthedocs.org/projects/sai-downscale/badge/?version=latest
+[rtd-link]: https://sai-downscale.readthedocs.io/en/latest/?badge=latest

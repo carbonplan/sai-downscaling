@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from conftest import make_icechunk_group
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import (
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
+from saidownscale.cache import (
     ArtifactCache,
     CacheCheckError,
     CacheConfigMismatchError,
@@ -471,7 +471,7 @@ class TestExists:
         Silently returning False here is what caused the v0.8.0 production deploy
         to discard 13 valid, already-committed scenario outputs.
         """
-        import srm.cache as cache_module
+        import saidownscale.cache as cache_module
 
         monkeypatch.setattr("time.sleep", lambda *a, **kw: None)
 
@@ -485,7 +485,7 @@ class TestExists:
 
     def test_transient_error_is_retried_then_succeeds(self, bound_cache, tmp_path, monkeypatch):
         """A transient read error is retried; a real hit is still reported True."""
-        import srm.cache as cache_module
+        import saidownscale.cache as cache_module
 
         monkeypatch.setattr("time.sleep", lambda *a, **kw: None)
         loc = StoreLocation(str(tmp_path / "valid.icechunk"), "obs/tas")
@@ -692,7 +692,7 @@ def _write_artifact_with_attrs(loc: StoreLocation, branch: str, attrs: dict | No
     import xarray as xr
     from icechunk.xarray import to_icechunk
 
-    from srm.config import _ensure_root_group, _icechunk_storage_for_path
+    from saidownscale.config import _ensure_root_group, _icechunk_storage_for_path
 
     storage = _icechunk_storage_for_path(loc.store_path)
     repo = icechunk.Repository.open_or_create(storage)
@@ -709,7 +709,7 @@ def _write_artifact_with_attrs(loc: StoreLocation, branch: str, attrs: dict | No
 
 def _provenance(config) -> dict:
     """The subset of pipeline provenance attrs that verification reads."""
-    return {"srm_downscaling:config_json": config.model_dump_json()}
+    return {"saidownscale_downscaling:config_json": config.model_dump_json()}
 
 
 class TestVariableConfigVerification:

@@ -1,4 +1,4 @@
-"""Tests for srm.snapshot.runs._compare_datatrees (the tree-level comparison).
+"""Tests for saidownscale.snapshot.runs._compare_datatrees (the tree-level comparison).
 
 compare_runs() is a thin S3 wrapper over this function; the diff + one-sided-leaf
 reporting + filtering live here and are tested with tiny synthetic datatrees (no S3).
@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from srm.snapshot.runs import _compare_datatrees
+from saidownscale.snapshot.runs import _compare_datatrees
 
 
 def _leaf(lats, lons, val, name="tas"):

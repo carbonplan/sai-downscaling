@@ -7,8 +7,8 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
-from srm.cli import (
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
+from saidownscale.cli import (
     _expand_matrix_config,
     _parse_variable_overrides,
     _resolve_variable_config,
@@ -17,7 +17,7 @@ from srm.cli import (
     app,
     configs_from_matrix,
 )
-from srm.validation import CheckResult, CheckStatus
+from saidownscale.validation import CheckResult, CheckStatus
 
 
 class TestConfigsFromMatrix:
@@ -217,7 +217,7 @@ branch: "v9"
         )
 
         with patch(
-            "srm.validation.validate_output_store", return_value=[passing_result]
+            "saidownscale.validation.validate_output_store", return_value=[passing_result]
         ) as mock_validate:
             result = CliRunner().invoke(
                 app, ["validate-output", "--config-path", str(config_file), "--no-coiled"]
@@ -240,7 +240,7 @@ branch: "v9"
         )
 
         with patch(
-            "srm.validation.validate_output_store", return_value=[passing_result]
+            "saidownscale.validation.validate_output_store", return_value=[passing_result]
         ) as mock_validate:
             result = CliRunner().invoke(
                 app,
@@ -505,7 +505,7 @@ class TestRunMatrixOverrideFlag:
     def test_dry_run_applies_per_variable_override(self):
         # `_validate_lineage_members` runs before the --dry-run branch and opens each
         # GCM's unified datatree over the network. Patch it out so this test stays hermetic.
-        with patch("srm.cli._validate_lineage_members"):
+        with patch("saidownscale.cli._validate_lineage_members"):
             result = CliRunner().invoke(
                 app,
                 [
@@ -580,7 +580,7 @@ branch: "v9"
         # Two configs (tas, pr) share one gcm/obs/subset triple, so they resolve to a
         # single store. Tagging it twice would fail on the second create_tag call.
         config_file = self._write_config(tmp_path)
-        with patch("srm.cache.ArtifactCache.release") as mock_release:
+        with patch("saidownscale.cache.ArtifactCache.release") as mock_release:
             result = CliRunner().invoke(
                 app, ["release", "--config-path", str(config_file), "--tag", "snapshot-v1.0.0"]
             )
@@ -591,7 +591,7 @@ branch: "v9"
         config_file = self._write_config(tmp_path)
         seen = {}
         with patch(
-            "srm.cache.ArtifactCache.release",
+            "saidownscale.cache.ArtifactCache.release",
             autospec=True,
             side_effect=lambda self, tag: seen.update(branch=self.branch, tag=tag),
         ):
@@ -614,7 +614,9 @@ branch: "v9"
         # icechunk refuses to move an existing tag. Swallowing that would leave the
         # release green while the baseline still points at the previous run.
         config_file = self._write_config(tmp_path)
-        with patch("srm.cache.ArtifactCache.release", side_effect=ValueError("tag exists")):
+        with patch(
+            "saidownscale.cache.ArtifactCache.release", side_effect=ValueError("tag exists")
+        ):
             result = CliRunner().invoke(
                 app, ["release", "--config-path", str(config_file), "--tag", "snapshot-v1.0.0"]
             )

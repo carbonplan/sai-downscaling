@@ -29,14 +29,14 @@
         "xarray[accel]>=2026.7.0",
         "zarr>=3.1.5",
 ]
-    description = "SRM"
+    description = "SAI Downscale"
     dynamic = ["version"]
-    name = "srm"
+    name = "saidownscale"
     readme = "README.md"
     requires-python = ">=3.13, <3.13.14"
 
 [project.scripts]
-    bcsd = "srm.cli:app"
+    bcsd = "saidownscale.cli:app"
 
 [build-system]
     build-backend = "setuptools.build_meta"
@@ -51,10 +51,10 @@
     no-build-package = ["netcdf4"]
 
 [tool.uv.sources]
-    srm = { workspace = true, editable = true }
+    saidownscale = { workspace = true, editable = true }
 
 [tool.pytest.ini_options]
-    addopts = "-m 'not input_data and not slow' -ra --cov-report=term-missing --cov-report=xml --cov=src/srm "
+    addopts = "-m 'not input_data and not slow' -ra --cov-report=term-missing --cov-report=xml --cov=src/saidownscale "
     markers = [
         "input_data: marks tests that validate external input datasets (run with 'pytest -m input_data')",
         "slow: marks tests that require S3/source data access (run with 'pytest -m slow')",

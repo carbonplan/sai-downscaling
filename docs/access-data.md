@@ -20,7 +20,7 @@ right branch, and load data.
 ## Anatomy of an output store
 
 Published production output lives in CarbonPlan's
-[Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling), which is
+[Source Cooperative repository](https://source.coop/carbonplan/sai-downscale), which is
 world-readable and needs no AWS credentials. Store paths follow this pattern:
 
 ```text
@@ -65,10 +65,10 @@ downscaling step.
 ## Choosing the right branch
 
 Each pipeline run writes to an icechunk branch whose name matches the release tag that triggered
-it. The branch defaults to the installed `srm` package version (e.g. `v0.12.0`), so release tags
+it. The branch defaults to the installed `saidownscale` package version (e.g. `v0.12.0`), so release tags
 follow semantic versioning rather than a date stamp. To read a specific run's output, use the
 corresponding release tag as the branch name. Production releases are listed at
-[github.com/carbonplan/srm-downscaling/releases](https://github.com/carbonplan/srm-downscaling/releases).
+[github.com/carbonplan/sai-downscale/releases](https://github.com/carbonplan/sai-downscale/releases).
 
 The **current production release is branch `v0.12.0`** of the global CESM2-WACCM store at
 `s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk`.
@@ -176,43 +176,43 @@ print(dt)
 
 ## Inspecting dataset provenance
 
-Every dataset written by the pipeline carries a set of `srm_downscaling:*` attributes that record
+Every dataset written by the pipeline carries a set of `saidownscale_downscaling:*` attributes that record
 the exact configuration used to produce it. These live on `ds.attrs` and are written at the time
 the icechunk commit is made, so they travel with the data regardless of how or where it is
 accessed.
 
 | Attribute | Contents |
 | --- | --- |
-| `srm_downscaling:config_json` | Full `BCSDConfig` serialized as a JSON string |
-| `srm_downscaling:config_hash` | 12-character SHA-256 of computation-affecting fields only |
-| `srm_downscaling:version` | `srm` package version that produced the data |
-| `srm_downscaling:gcm` | GCM name |
-| `srm_downscaling:scenario` | Scenario (or `"historical"`) |
-| `srm_downscaling:variable` | Variable name |
-| `srm_downscaling:ensemble_member` | Ensemble member label |
-| `srm_downscaling:historical_ensemble_member` | Resolved historical lineage member |
-| `srm_downscaling:ssp245_ensemble_member` | Resolved SSP2-4.5 bridge member |
-| `srm_downscaling:observation_dataset` | Observation dataset used (e.g. `ERA5`) |
-| `srm_downscaling:bias_correction_method` | Quantile-mapping method |
-| `srm_downscaling:downscaling_method` | Spatial disaggregation method |
-| `srm_downscaling:train_period` | Training period as `"{start}-{end}"` |
-| `srm_downscaling:creation_date` | UTC date the artifact was written |
+| `saidownscale_downscaling:config_json` | Full `BCSDConfig` serialized as a JSON string |
+| `saidownscale_downscaling:config_hash` | 12-character SHA-256 of computation-affecting fields only |
+| `saidownscale_downscaling:version` | `saidownscale` package version that produced the data |
+| `saidownscale_downscaling:gcm` | GCM name |
+| `saidownscale_downscaling:scenario` | Scenario (or `"historical"`) |
+| `saidownscale_downscaling:variable` | Variable name |
+| `saidownscale_downscaling:ensemble_member` | Ensemble member label |
+| `saidownscale_downscaling:historical_ensemble_member` | Resolved historical lineage member |
+| `saidownscale_downscaling:ssp245_ensemble_member` | Resolved SSP2-4.5 bridge member |
+| `saidownscale_downscaling:observation_dataset` | Observation dataset used (e.g. `ERA5`) |
+| `saidownscale_downscaling:bias_correction_method` | Quantile-mapping method |
+| `saidownscale_downscaling:downscaling_method` | Spatial disaggregation method |
+| `saidownscale_downscaling:train_period` | Training period as `"{start}-{end}"` |
+| `saidownscale_downscaling:creation_date` | UTC date the artifact was written |
 
 ### Comparing a YAML config to a stored dataset
 
-`srm_downscaling:config_json` lets you round-trip a YAML config file directly against the attrs
+`saidownscale_downscaling:config_json` lets you round-trip a YAML config file directly against the attrs
 stored in a dataset — no field-by-field comparison needed.
 
 ```python
 import yaml
-from srm.bcsd_config import BCSDConfig
+from saidownscale.bcsd_config import BCSDConfig
 
 # Reconstruct BCSDConfig from the YAML you intend to run
 with open("configs/production/cesm2-waccm/cesm2-waccm-ssp245-std.yaml") as f:
     yaml_config = BCSDConfig(**yaml.safe_load(f))
 
 # Reconstruct BCSDConfig from what was actually written
-stored_config = BCSDConfig.model_validate_json(ds.attrs["srm_downscaling:config_json"])
+stored_config = BCSDConfig.model_validate_json(ds.attrs["saidownscale_downscaling:config_json"])
 
 # Quick equality check (computation-affecting fields only)
 yaml_config.config_hash == stored_config.config_hash

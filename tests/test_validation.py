@@ -1,4 +1,4 @@
-"""Unit tests for srm.validation.DatasetValidator.
+"""Unit tests for saidownscale.validation.DatasetValidator.
 
 All tests mock catalog.datasets so no S3 access is required.
 """
@@ -12,7 +12,7 @@ import pydantic
 import pytest
 import xarray as xr
 
-from srm.validation import (
+from saidownscale.validation import (
     _DS_CHECKER_CHECKS,
     OUTPUT_CHECKS,
     CheckStatus,
@@ -72,7 +72,7 @@ def _ds_with_time(start: str, end: str, freq: str = "D", calendar: str = "standa
 def mock_datasets(monkeypatch):
     """Replace catalog.datasets with a plain dict.  Tests populate it as needed."""
     datasets: dict = {}
-    monkeypatch.setattr("srm.validation.catalog.datasets", datasets)
+    monkeypatch.setattr("saidownscale.validation.catalog.datasets", datasets)
     return datasets
 
 
@@ -499,7 +499,7 @@ def test_validate_output_store_filters():
 
 
 def test_parse_variable():
-    from srm.validation import parse_variable
+    from saidownscale.validation import parse_variable
 
     assert parse_variable("tas") == "tas"
     with pytest.raises(ValueError, match="Unknown variable"):
@@ -507,7 +507,7 @@ def test_parse_variable():
 
 
 def test_open_output_datatree_rejects_non_s3():
-    from srm.validation import _open_output_datatree
+    from saidownscale.validation import _open_output_datatree
 
     with pytest.raises(ValueError, match="must be an s3:// URI"):
         _open_output_datatree("gs://bucket/key")
@@ -518,7 +518,7 @@ class TestCheckConfigTimeDomain:
 
     @staticmethod
     def _config(member, predict_end, predict_start=2015, scenario="SSP245"):
-        from srm.bcsd_config import BCSDConfig
+        from saidownscale.bcsd_config import BCSDConfig
 
         return BCSDConfig(
             gcm="CESM2-WACCM",
@@ -530,7 +530,7 @@ class TestCheckConfigTimeDomain:
         )
 
     def test_truncated_member_overrun_fails(self):
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         r = check_config_time_domain(self._config("007", 2100))
         assert r.status == CheckStatus.FAIL
@@ -539,20 +539,20 @@ class TestCheckConfigTimeDomain:
         assert "2069" in r.message
 
     def test_truncated_member_within_extent_passes(self):
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         r = check_config_time_domain(self._config("007", 2069))
         assert r.status == CheckStatus.PASS
 
     def test_full_member_passes(self):
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         r = check_config_time_domain(self._config("001", 2099))
         assert r.status == CheckStatus.PASS
 
     def test_full_member_to_2100_fails(self):
         # data ends 2099; configs asking for 2100 are flagged.
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         r = check_config_time_domain(self._config("003", 2100))
         assert r.status == CheckStatus.FAIL
@@ -564,7 +564,7 @@ class TestCheckConfigTimeDomain:
         # slice NaN-padding: a partially-NaN year poisons the detrend rolling mean. Before
         # issue #521 the guard also had to reject a stray non-NaN day at 2070-01-01, which
         # decoding the axis from time_bnds has since folded back into 2069.
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         assert check_config_time_domain(self._config(member, 2070)).status == CheckStatus.FAIL
         assert check_config_time_domain(self._config(member, 2069)).status == CheckStatus.PASS
@@ -573,7 +573,7 @@ class TestCheckConfigTimeDomain:
         # The pipeline can run a G6 config starting in 2015 by bridging with SSP245, but
         # those bridge years are not G6 data. Issue #448 is what that produced: pre-2035
         # g6_1p5k output bridged from per-variable SSP245 realizations, giving tas > tasmax.
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         r = check_config_time_domain(
             self._config("001", 2084, predict_start=2015, scenario="G6-1.5K")
@@ -583,7 +583,7 @@ class TestCheckConfigTimeDomain:
         assert "bridge" in r.message
 
     def test_sai_start_at_data_start_passes(self):
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         r = check_config_time_domain(
             self._config("001", 2084, predict_start=2035, scenario="G6-1.5K")
@@ -591,7 +591,7 @@ class TestCheckConfigTimeDomain:
         assert r.status == CheckStatus.PASS
 
     def test_sai_end_past_data_fails(self):
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         r = check_config_time_domain(
             self._config("001", 2086, predict_start=2035, scenario="G6-1.5K")
@@ -600,7 +600,7 @@ class TestCheckConfigTimeDomain:
         assert "2084" in r.message
 
     def test_termination_run_start_at_2085_passes(self):
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         r = check_config_time_domain(
             self._config("002", 2100, predict_start=2085, scenario="G6-1.5K-END")
@@ -611,7 +611,7 @@ class TestCheckConfigTimeDomain:
     def test_termination_run_early_start_fails(self, predict_start):
         # 2035 is the parent G6-1.5K start and 2015 the SSP245 start; both are bridge
         # years for this scenario, not termination-shock data.
-        from srm.validation import check_config_time_domain
+        from saidownscale.validation import check_config_time_domain
 
         r = check_config_time_domain(
             self._config("002", 2100, predict_start=predict_start, scenario="G6-1.5K-END")
@@ -620,8 +620,8 @@ class TestCheckConfigTimeDomain:
         assert "2085" in r.message
 
     def test_historical_only_skips(self):
-        from srm.bcsd_config import BCSDConfig
-        from srm.validation import check_config_time_domain
+        from saidownscale.bcsd_config import BCSDConfig
+        from saidownscale.validation import check_config_time_domain
 
         cfg = BCSDConfig(
             gcm="MIROC-ES2H", variable="tas", ensemble_member="r1i1p4f2", scenario=None
@@ -650,7 +650,7 @@ class TestTasmaxGeTasminOutputGate:
         )
 
     def test_is_blocking(self):
-        from srm.validation import BLOCKING_CHECKS
+        from saidownscale.validation import BLOCKING_CHECKS
 
         assert "tasmax_ge_tasmin" in BLOCKING_CHECKS
 

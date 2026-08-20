@@ -185,8 +185,8 @@ You can inspect cached artifacts programmatically using `ArtifactCache`:
 
 ```python
 import yaml
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import ArtifactCache
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
+from saidownscale.cache import ArtifactCache
 
 raw = yaml.safe_load(open("configs/example.yaml"))
 config = BCSDConfig(**raw)

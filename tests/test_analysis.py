@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from srm.analysis import BCSDRun, load_cached_data
-from srm.bcsd_config import BCSDConfig
-from srm.cache import ArtifactCache
+from saidownscale.analysis import BCSDRun, load_cached_data
+from saidownscale.bcsd_config import BCSDConfig
+from saidownscale.cache import ArtifactCache
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -56,9 +56,9 @@ class TestLoadCachedData:
         mock_ds = MagicMock(spec=xr.Dataset)
 
         with (
-            patch("srm.analysis.icechunk.s3_storage") as mock_storage,
-            patch("srm.analysis.icechunk.Repository.open") as mock_open,
-            patch("srm.analysis.xr.open_dataset", return_value=mock_ds),
+            patch("saidownscale.analysis.icechunk.s3_storage") as mock_storage,
+            patch("saidownscale.analysis.icechunk.Repository.open") as mock_open,
+            patch("saidownscale.analysis.xr.open_dataset", return_value=mock_ds),
         ):
             mock_repo = MagicMock()
             mock_open.return_value = mock_repo
@@ -77,9 +77,9 @@ class TestLoadCachedData:
         uri = "s3://bucket/prefix"
 
         with (
-            patch("srm.analysis.icechunk.s3_storage"),
-            patch("srm.analysis.icechunk.Repository.open") as mock_open,
-            patch("srm.analysis.xr.open_dataset") as mock_open_ds,
+            patch("saidownscale.analysis.icechunk.s3_storage"),
+            patch("saidownscale.analysis.icechunk.Repository.open") as mock_open,
+            patch("saidownscale.analysis.xr.open_dataset") as mock_open_ds,
         ):
             mock_open.return_value.readonly_session.return_value = MagicMock()
             load_cached_data(uri)
@@ -109,7 +109,7 @@ class TestBCSDRunConstruction:
         assert run._cache.config is config
 
     def test_cache_uses_default_scratch_dir(self, run):
-        from srm.bcsd_config import PipelineOptions
+        from saidownscale.bcsd_config import PipelineOptions
 
         assert run._cache.scratch_dir == PipelineOptions().scratch_dir.rstrip("/")
 
@@ -130,7 +130,7 @@ class TestBCSDRunConstruction:
 
 class TestBCSDRunDataProperties:
     def _patch_load(self, fake_ds):
-        return patch("srm.analysis.load_cached_data", return_value=fake_ds)
+        return patch("saidownscale.analysis.load_cached_data", return_value=fake_ds)
 
     def test_obs_calls_load_with_obs_path(self, run):
         fake_ds = _fake_ds()

@@ -9,9 +9,9 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.pipeline import BCSDPipeline
-from srm.qa_checks import NaNCheckError, assert_no_nans
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
+from saidownscale.pipeline import BCSDPipeline
+from saidownscale.qa_checks import NaNCheckError, assert_no_nans
 
 
 def _daily_da(values: np.ndarray, start: str = "2015-01-01") -> xr.DataArray:
@@ -336,7 +336,7 @@ class TestDebiaserOutputCheck:
         debiaser = MagicMock()
         debiaser.apply.return_value = failsafe_output
 
-        with patch("srm.pipeline._make_debiaser", return_value=debiaser):
+        with patch("saidownscale.pipeline._make_debiaser", return_value=debiaser):
             with pytest.raises(NaNCheckError, match="debiased_coarse"):
                 historical_pipeline._apply_bias_correction(
                     _daily_da(np.ones((10, 3, 4))), _daily_da(np.ones((10, 3, 4)))
@@ -346,7 +346,7 @@ class TestDebiaserOutputCheck:
         debiaser = MagicMock()
         debiaser.apply.return_value = np.ones((10, 3, 4))
 
-        with patch("srm.pipeline._make_debiaser", return_value=debiaser):
+        with patch("saidownscale.pipeline._make_debiaser", return_value=debiaser):
             result = historical_pipeline._apply_bias_correction(
                 _daily_da(np.ones((10, 3, 4))), _daily_da(np.ones((10, 3, 4)))
             )

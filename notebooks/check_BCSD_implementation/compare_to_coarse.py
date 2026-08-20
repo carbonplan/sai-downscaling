@@ -3,7 +3,7 @@ import icechunk
 import matplotlib.pyplot as plt
 import xarray as xr
 
-from srm import catalog
+from saidownscale import catalog
 
 
 def open_icechunk(path):

@@ -2,8 +2,8 @@
 
 ## Quick links
 
-- [**GitHub repository**](https://github.com/carbonplan/srm-downscaling)
-- [**Dataset releases**](https://github.com/carbonplan/srm-downscaling/releases)
+- [**GitHub repository**](https://github.com/carbonplan/sai-downscale)
+- [**Dataset releases**](https://github.com/carbonplan/sai-downscale/releases)
 
 ## Getting Started
 
@@ -28,12 +28,12 @@ If you want to **run the downscaling pipeline**:
 
 ## Support
 
-- **Issues & Bug Reports**: [GitHub Issues](https://github.com/carbonplan/srm-downscaling/issues)
+- **Issues & Bug Reports**: [GitHub Issues](https://github.com/carbonplan/sai-downscale/issues)
 - **General Inquiries**: [hello@carbonplan.org](mailto:hello@carbonplan.org)
 
 ## License
 
-SRM Downscaling code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/srm-downscaling/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
+SRM Downscaling code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/sai-downscale/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
 
 ```{toctree}
 :hidden:

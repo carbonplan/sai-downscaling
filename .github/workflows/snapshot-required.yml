@@ -25,15 +25,15 @@ jobs:
                   git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
                   FILES="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
                   echo "changed files:"; echo "$FILES"
-                  # Modeling-relevant = changes to the downscaling computation under src/srm/.
+                  # Modeling-relevant = changes to the downscaling computation under src/saidownscale/.
                   # Excluded: the snapshot harness and ETL packages (snapshot/, input_data/) and
                   # the plumbing/viz/validation modules that do not affect model output (cli,
                   # cache, encoding, batch_runner, analysis, plotting, validation). Changes
                   # anywhere else (configs, deps, tests, docs, notebooks) do not trigger the gate.
                   RELEVANT="$(echo "$FILES" \
-                    | grep -E '^src/srm/' \
-                    | grep -vE '^src/srm/(snapshot|input_data)/' \
-                    | grep -vE '^src/srm/(analysis|batch_runner|cache|cli|encoding|plotting|validation|qaqc)\.py$' \
+                    | grep -E '^src/saidownscale/' \
+                    | grep -vE '^src/saidownscale/(snapshot|input_data)/' \
+                    | grep -vE '^src/saidownscale/(analysis|batch_runner|cache|cli|encoding|plotting|validation|qaqc)\.py$' \
                     || true)"
                   echo "modeling-relevant files:"; echo "$RELEVANT"
                   if [[ -z "$RELEVANT" ]]; then
@@ -74,7 +74,7 @@ jobs:
                   1. Do a full global run and expand the comparison notebook to include a **global** comparison against the snapshot.
                   2. Document clearly **what** changed in the data and **why**, and get approval from **Claire or Ori** that it makes sense.
                   3. Merge.
-                  4. Update the snapshot to point to the new global run (`src/srm/snapshot/baselines.py`).
+                  4. Update the snapshot to point to the new global run (`src/saidownscale/snapshot/baselines.py`).
 
                   When done, add the **`snapshot-verified`** label to this PR to satisfy this gate.
                   CHECKLIST

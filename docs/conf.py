@@ -1,12 +1,12 @@
 import datetime
 
-import srm
+import saidownscale
 
-project = "SRM Downscaling"
+project = "SAI Downscale"
 this_year = datetime.datetime.now().year
 author = "CarbonPlan and contributors"
 copyright = f"{this_year}, {author}"
-version = srm.__version__
+version = saidownscale.__version__
 
 
 # -- General configuration ---------------------------------------------------
@@ -92,7 +92,7 @@ source_suffix = [".rst", ".md"]
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = "sphinx_book_theme"
-html_title = "SRM Downscaling"
+html_title = "SAI Downscale"
 html_favicon = "assets/favicon-180x180-light.png"
 
 html_theme_options = {
@@ -100,7 +100,7 @@ html_theme_options = {
         "<b>⚠️ Project in development</b> — This documentation describes a project that is "
         "<em>actively under development</em>. We welcome feedback to help guide future updates."
     ),
-    "repository_url": "https://github.com/carbonplan/srm-downscaling",
+    "repository_url": "https://github.com/carbonplan/sai-downscale",
     "repository_branch": "main",
     "path_to_docs": "docs",
     "use_repository_button": True,

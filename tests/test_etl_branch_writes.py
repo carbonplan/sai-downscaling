@@ -14,8 +14,8 @@ import pytest
 import xarray as xr
 import zarr
 
-from srm.config import _ensure_root_group
-from srm.input_data.etl_utils import determine_write_mode, write_variable_to_icechunk
+from saidownscale.config import _ensure_root_group
+from saidownscale.input_data.etl_utils import determine_write_mode, write_variable_to_icechunk
 
 BRANCH = "v521"
 

@@ -7,7 +7,7 @@ runs:
     - uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: arn:aws:iam::631969445205:role/github-action-role
-        role-session-name: srm-downscaling-role-session
+        role-session-name: sai-downscale-role-session
         aws-region: us-west-2
         role-duration-seconds: 21600 # 6h — cover the full blocking pipeline run (role MaxSessionDuration is 12h)
 

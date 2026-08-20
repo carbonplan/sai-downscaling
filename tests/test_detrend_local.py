@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from srm.downscaling_utils import calculate_baseline_climatology, detrend
-from srm.pipeline import _assert_stitched_continuity, stitch_historical_scenario
+from saidownscale.downscaling_utils import calculate_baseline_climatology, detrend
+from saidownscale.pipeline import _assert_stitched_continuity, stitch_historical_scenario
 
 
 def _daily_da(start_year: int, end_year: int, member: str | None = None) -> xr.DataArray:

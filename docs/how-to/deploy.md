@@ -92,7 +92,7 @@ The `snapshot` job runs `configs/snapshot/` at the release tag and produces the 
 2. `bcsd validate-output --config-path configs/snapshot/cesm2-waccm/`
 3. `bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag snapshot-<release tag>` — creates an icechunk tag so the state cannot be overwritten by a later run on the same branch.
 
-Repointing `CESM2_WACCM_SOUTH_AFRICA` in `src/srm/snapshot/baselines.py` at the new release is manual. The job prints both fields in its workflow summary, the store URI as well as the branch, because a release can move either one. See [How to Compare a Run Against the Snapshot](run-snapshot-tests.md).
+Repointing `CESM2_WACCM_SOUTH_AFRICA` in `src/saidownscale/snapshot/baselines.py` at the new release is manual. The job prints both fields in its workflow summary, the store URI as well as the branch, because a release can move either one. See [How to Compare a Run Against the Snapshot](run-snapshot-tests.md).
 
 ## Adding a new production config
 
