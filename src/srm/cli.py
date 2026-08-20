@@ -360,6 +360,10 @@ def _resolve_variable_config(
     rather than ``model_copy(update=...)`` because ``model_copy`` does not validate,
     which previously let bad values through to the pipeline.
 
+    ``debias_approach`` is resolved first (from an override, then run-wide, then the
+    default) and used to pick the per-variable table itself, since it determines
+    things like whether the variable is detrended before quantile mapping.
+
     Parameters
     ----------
     variable : str
@@ -374,8 +378,15 @@ def _resolve_variable_config(
     VariableConfig
         Fully resolved and validated config for ``variable``.
     """
-    merged = VariableConfig.for_variable(variable).model_dump()
-    for source in (run_wide or {}, (overrides or {}).get(variable, {})):
+    run_wide = run_wide or {}
+    var_overrides = (overrides or {}).get(variable, {})
+    debias_approach = (
+        var_overrides.get("debias_approach")
+        or run_wide.get("debias_approach")
+        or "nonparametric_hybrid_2sided"
+    )
+    merged = VariableConfig.for_variable(variable, debias_approach=debias_approach).model_dump()
+    for source in (run_wide, var_overrides):
         merged.update({k: v for k, v in source.items() if v is not None})
     return VariableConfig(**merged)
 
@@ -439,6 +450,14 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
     if overrides:
         _validate_variable_overrides(overrides, axes["variable"])
 
+    # A top-level 'debias_approach' applies to every variable in the matrix, e.g.
+    # switching a whole run between standard quantile mapping and quantile delta
+    # mapping. It has to be popped out of `d` here rather than left for BCSDConfig,
+    # which rejects 'debias_approach' at the top level since it's a per-variable
+    # setting everywhere else.
+    run_wide_debias_approach = d.pop("debias_approach", None)
+    run_wide = {"debias_approach": run_wide_debias_approach} if run_wide_debias_approach else {}
+
     if "variable_config" in d:
         if len(axes["variable"]) > 1:
             raise ValueError(
@@ -453,6 +472,13 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
                 "silently discarded. Fold the override values into 'variable_config', or "
                 "drop 'variable_config' and use 'variable_overrides' alone."
             )
+        if run_wide_debias_approach:
+            raise ValueError(
+                "Cannot combine 'variable_config' with a top-level 'debias_approach'. An "
+                "explicit 'variable_config' is passed through verbatim, so the top-level "
+                "value would be silently discarded. Fold 'debias_approach' into "
+                "'variable_config', or drop 'variable_config' and use the top-level key alone."
+            )
 
     configs = []
     for gcm, variable, member, scenario in itertools.product(
@@ -460,7 +486,7 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
     ):
         kwargs = dict(d)
         if "variable_config" not in kwargs:
-            kwargs["variable_config"] = _resolve_variable_config(variable, None, overrides)
+            kwargs["variable_config"] = _resolve_variable_config(variable, run_wide, overrides)
         configs.append(
             BCSDConfig(
                 gcm=gcm,
@@ -587,8 +613,8 @@ def configs_from_matrix(
         Save intermediate artifacts (detrended, debiased, etc.) to cache
     debias_approach : str | None
         Override VariableConfig.debias_approach for every variable (parametric,
-        nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided). None uses
-        each variable's own default.
+        nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided, qdm). None
+        uses each variable's own default.
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -888,7 +914,7 @@ def run_matrix(
         "--debias-approach",
         help=(
             "Debias approach for every variable: parametric, nonparametric, "
-            "nonparametric_hybrid, nonparametric_hybrid_2sided. "
+            "nonparametric_hybrid, nonparametric_hybrid_2sided, qdm. "
             "Omit to use each variable's default. Override one variable with "
             "--variable-override."
         ),

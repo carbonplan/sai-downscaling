@@ -344,18 +344,6 @@ class TestExpandMatrixConfigOverrides:
             "dtr": "nonparametric",
         }
 
-    def test_top_level_debias_approach_raises(self):
-        """The moved key must not be silently ignored in a matrix config either."""
-        with pytest.raises(ValidationError, match="variable_overrides"):
-            _expand_matrix_config(
-                {
-                    "gcm": "CESM2-WACCM",
-                    "variables": ["tasmax", "dtr"],
-                    "ensemble_member": "007",
-                    "debias_approach": "nonparametric",
-                }
-            )
-
     def test_variable_config_with_multiple_variables_still_raises(self):
         with pytest.raises(ValueError, match="variable_overrides"):
             _expand_matrix_config(

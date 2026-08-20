@@ -21,7 +21,7 @@ import icechunk
 import numpy as np
 import scipy.stats
 import xarray as xr
-from ibicus.debias import QuantileMapping
+from ibicus.debias import QuantileDeltaMapping, QuantileMapping
 from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
@@ -798,16 +798,26 @@ class BCSDPipeline:
         debias_approach = self.config.variable_config.debias_approach
         mapping_type = (
             "nonparametric"
-            if debias_approach in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
+            if debias_approach in ["nonparametric_hybrid", "nonparametric_hybrid_2sided", "qdm"]
             else debias_approach
         )
+        # Quantile delta mapping widens the seasonal window it maps quantiles over to
+        # 91 days, stepped every 31 days, instead of the narrower window the other
+        # approaches use here. This keeps the historical fit consistent with the
+        # windowing quantile delta mapping applies to the scenario itself.
+        if debias_approach == "qdm":
+            running_window_length = 91
+            running_window_step_length = 31
+        else:
+            running_window_length = self.config.variable_config.running_window_length
+            running_window_step_length = 1
         debiaser = _make_debiaser(
             variable=self.config.variable,
             mapping_type=mapping_type,
             detrending="no_detrending",
             running_window_mode=self.config.variable_config.do_windowing,
-            running_window_length=self.config.variable_config.running_window_length,
-            running_window_step_length=1,
+            running_window_length=running_window_length,
+            running_window_step_length=running_window_step_length,
             running_window_mode_over_years_of_cm_future=False,
         )
 
@@ -820,6 +830,7 @@ class BCSDPipeline:
         obs_np = obs_coarse.values
         cm_hist_np = model_hist.values
 
+        print(f"[_apply_bias_correction] {debiaser}")
         debiased_np = debiaser.apply(
             obs=obs_np,
             cm_hist=cm_hist_np,
@@ -1475,17 +1486,18 @@ class BCSDPipeline:
         )
 
         if debias_approach in ["parametric", "nonparametric"]:
-            debiased_np = _make_debiaser(mapping_type=debias_approach, **common_kwargs).apply(
-                **apply_kwargs
-            )
+            debiaser = _make_debiaser(mapping_type=debias_approach, **common_kwargs)
+            print(f"[_apply_bias_correction_scenario] {debiaser}")
+            debiased_np = debiaser.apply(**apply_kwargs)
 
         elif debias_approach == "nonparametric_hybrid":
-            parametric_np = _make_debiaser(mapping_type="parametric", **common_kwargs).apply(
-                **apply_kwargs
-            )
-            nonparametric_np = _make_debiaser(mapping_type="nonparametric", **common_kwargs).apply(
-                **apply_kwargs
-            )
+            parametric_debiaser = _make_debiaser(mapping_type="parametric", **common_kwargs)
+            print(f"[_apply_bias_correction_scenario] {parametric_debiaser}")
+            parametric_np = parametric_debiaser.apply(**apply_kwargs)
+
+            nonparametric_debiaser = _make_debiaser(mapping_type="nonparametric", **common_kwargs)
+            print(f"[_apply_bias_correction_scenario] {nonparametric_debiaser}")
+            nonparametric_np = nonparametric_debiaser.apply(**apply_kwargs)
 
             out_of_range, _, _ = calculate_out_of_range_mask(
                 model_hist=model_hist,
@@ -1503,23 +1515,28 @@ class BCSDPipeline:
                 low_dist = _weibull_min_zero_bounded
                 high_dist = scipy.stats.gumbel_r
 
-                parametric_low_np = _make_debiaser(
+                parametric_low_debiaser = _make_debiaser(
                     distribution=low_dist, mapping_type="parametric", **common_kwargs
-                ).apply(**apply_kwargs)
-                parametric_high_np = _make_debiaser(
+                )
+                print(f"[_apply_bias_correction_scenario] {parametric_low_debiaser}")
+                parametric_low_np = parametric_low_debiaser.apply(**apply_kwargs)
+
+                parametric_high_debiaser = _make_debiaser(
                     distribution=high_dist, mapping_type="parametric", **common_kwargs
-                ).apply(**apply_kwargs)
+                )
+                print(f"[_apply_bias_correction_scenario] {parametric_high_debiaser}")
+                parametric_high_np = parametric_high_debiaser.apply(**apply_kwargs)
             else:
                 # Unless explicitly specified, use the same parametric debiaser for both tails even if calling "nonparametric_hybrid_2sided"
-                parametric_low_np = _make_debiaser(
-                    mapping_type="parametric", **common_kwargs
-                ).apply(**apply_kwargs)
+                parametric_low_debiaser = _make_debiaser(mapping_type="parametric", **common_kwargs)
+                print(f"[_apply_bias_correction_scenario] {parametric_low_debiaser}")
+                parametric_low_np = parametric_low_debiaser.apply(**apply_kwargs)
 
                 parametric_high_np = parametric_low_np
 
-            nonparametric_np = _make_debiaser(mapping_type="nonparametric", **common_kwargs).apply(
-                **apply_kwargs
-            )
+            nonparametric_debiaser = _make_debiaser(mapping_type="nonparametric", **common_kwargs)
+            print(f"[_apply_bias_correction_scenario] {nonparametric_debiaser}")
+            nonparametric_np = nonparametric_debiaser.apply(**apply_kwargs)
 
             _, out_of_range_low, out_of_range_high = calculate_out_of_range_mask(
                 model_hist=model_hist,
@@ -1530,9 +1547,44 @@ class BCSDPipeline:
             debiased_np = np.where(out_of_range_low.values, parametric_low_np, nonparametric_np)
             debiased_np = np.where(out_of_range_high.values, parametric_high_np, debiased_np)
 
+        elif debias_approach == "qdm":
+            # Quantile delta mapping maps quantile changes between the historical and
+            # future model runs directly onto observations, which is what keeps the
+            # projected trend without a separate detrend/retrend step.
+            debiaser = (
+                QuantileDeltaMapping.for_precipitation()
+                if self.config.variable == "pr"
+                else QuantileDeltaMapping.from_variable(self.config.variable)
+            )
+
+            # Each future year's correction is estimated from a moving window
+            # centered on that year (31 years by default), so the method needs 15
+            # years of context on either side. At the start of the prediction period
+            # there isn't 15 years of future data yet to fill that window, so the
+            # last 15 years of the historical run are prepended here as stand-in
+            # context. Those padded years are then dropped from the result below,
+            # once they've served their purpose, leaving only the requested period.
+            pad_years = debiaser.running_window_over_years_of_cm_future_length // 2
+            pad_start_year = self.config.train_period_end - pad_years + 1
+            historical_pad = model_hist.sel(
+                time=slice(f"{pad_start_year}", f"{self.config.train_period_end}")
+            )
+            padded_future = xr.concat([historical_pad, scenario_detrended], dim="time")
+
+            qdm_apply_kwargs = {
+                **apply_kwargs,
+                "cm_future": padded_future.values,
+                "time_cm_future": padded_future["time"].values,
+            }
+            print(f"[_apply_bias_correction_scenario] {debiaser}")
+            debiased_padded_np = debiaser.apply(**qdm_apply_kwargs)
+            # remove the padding and take only the part of debiased_padded_np that is from the scenario
+            debiased_np = debiased_padded_np[historical_pad.sizes["time"] :]
+
         else:
             raise ValueError(
-                "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
+                "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', "
+                "'nonparametric_hybrid_2sided', or 'qdm'."
             )
 
         assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)

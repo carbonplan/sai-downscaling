@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, computed_field, field_validator, model_va
 _cache_version = f"v{_Version(_pkg_version('srm')).public}"
 
 DebiasApproach = Literal[
-    "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided"
+    "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided", "qdm"
 ]
 DownscalingMethod = Literal["additive", "multiplicative"]
 DownscalingClimMethod = Literal["simple", "fft"]
@@ -41,12 +41,21 @@ class VariableConfig(BaseModel):
     debias_approach: DebiasApproach = "nonparametric_hybrid_2sided"
 
     @classmethod
-    def for_variable(cls, variable: str) -> VariableConfig:
-        """Load variable-specific config from BCSD_CONFIG.
+    def for_variable(
+        cls, variable: str, debias_approach: DebiasApproach = "nonparametric_hybrid_2sided"
+    ) -> VariableConfig:
+        """Load variable-specific config for the given ``debias_approach``.
 
         Rows list only the fields that vary by variable. Anything uniform across all
-        variables, such as ``debias_approach`` and ``running_window_length``, is left
-        to the field default above so there is one place to change it.
+        variables and approaches, such as ``running_window_length``, is left to the
+        field default above so there is one place to change it.
+
+        ``debias_approach`` selects which table to read from: the standard quantile
+        mapping methods (parametric, nonparametric, and their hybrids) all share
+        ``BCSD_CONFIG``, while quantile delta mapping (``qdm``) uses ``QDM_CONFIG``.
+        QDM preserves the climate trend directly in its quantile mapping, so unlike
+        the other methods it never needs the separate detrend/retrend step — that is
+        the one difference between the two tables.
         """
         BCSD_CONFIG = {
             "pr": {
@@ -100,12 +109,64 @@ class VariableConfig(BaseModel):
             },
         }
 
-        if variable not in BCSD_CONFIG:
-            raise ValueError(
-                f"Unknown variable: {variable}. Must be one of {list(BCSD_CONFIG.keys())}"
-            )
+        QDMSD_CONFIG = {
+            "pr": {
+                "detrend_data": False,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "downscaling_method": "multiplicative",
+                "downscaling_clim_method": "fft",
+            },
+            "tas": {
+                "detrend_data": False,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "downscaling_method": "additive",
+                "downscaling_clim_method": "fft",
+            },
+            "tasmax": {
+                "detrend_data": False,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "downscaling_method": "additive",
+                "downscaling_clim_method": "fft",
+            },
+            "tasmin": {
+                "detrend_data": False,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "downscaling_method": "additive",
+                "downscaling_clim_method": "fft",
+            },
+            "rsds": {
+                "detrend_data": False,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "downscaling_method": "multiplicative",
+                "downscaling_clim_method": "fft",
+            },
+            "dtr": {
+                "detrend_data": False,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "downscaling_method": "multiplicative",
+                "downscaling_clim_method": "fft",
+            },
+            "hurs": {
+                "detrend_data": False,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "downscaling_method": "multiplicative",
+                "downscaling_clim_method": "fft",
+            },
+        }
 
-        return cls(**BCSD_CONFIG[variable])
+        table = QDMSD_CONFIG if debias_approach == "qdm" else BCSD_CONFIG
+
+        if variable not in table:
+            raise ValueError(f"Unknown variable: {variable}. Must be one of {list(table.keys())}")
+
+        return cls(**table[variable], debias_approach=debias_approach)
 
 
 class BCSDConfig(pydantic_settings.BaseSettings):
@@ -189,8 +250,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         ),
         "debias_approach": (
             "'debias_approach' moved from BCSDConfig onto VariableConfig. Set "
-            "'variable_config.debias_approach' for a single-variable config, or "
-            "'variable_overrides' in a matrix config (or --debias-approach / "
+            "'variable_config.debias_approach' for a single-variable config; in a matrix "
+            "config, use a top-level 'debias_approach' key to apply it to every variable, "
+            "or 'variable_overrides' to set it per variable (or --debias-approach / "
             "--variable-override on the CLI, or BCSD_VARIABLE_CONFIG as JSON in the "
             "environment)."
         ),
@@ -350,10 +412,10 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             predict_period_end=self.predict_period_end,
             subset_bounds=self.subset_bounds,
             # The sibling gets its own per-variable defaults but inherits this run's
-            # debias_approach, matching the pre-move behavior. model_copy is safe here
-            # because the source value is an already-validated Literal.
-            variable_config=VariableConfig.for_variable(variable).model_copy(
-                update={"debias_approach": self.variable_config.debias_approach}
+            # debias_approach, which also determines which table (BCSD_CONFIG vs.
+            # QDM_CONFIG) those defaults come from.
+            variable_config=VariableConfig.for_variable(
+                variable, debias_approach=self.variable_config.debias_approach
             ),
         )
 
