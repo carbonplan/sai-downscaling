@@ -87,7 +87,7 @@ def flag_global_exceedances(da, var: str, var_ranges: dict = PLAUSIBLE_RANGES):
     too_high = da > var_max
     too_low = da < var_min
 
-    outside_range = (too_low + too_high) > 0
+    outside_range = (too_low | too_high) > 0
 
     return outside_range
 
