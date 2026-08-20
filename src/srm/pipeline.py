@@ -157,10 +157,12 @@ def _make_debiaser(variable: str, distribution=None, debias_approach: str | None
             distribution = scipy.stats.beta
         elif variable == "pr":
             distribution = PrecipitationHurdleModelGamma
-    return QuantileMapping(distribution=distribution, **kwargs)
+    debiaser = QuantileMapping(distribution=distribution, **kwargs)
+    print(f"QuantileMapping options for {variable!r}: {attrs.asdict(debiaser)}")
+    return debiaser
 
 
-def _running_window_kwargs(variable_config: VariableConfig, debias_approach: str) -> dict:
+def _running_window_kwargs(variable_config: VariableConfig, debias_approach: str, scenario: str) -> dict:
     """Running-window kwargs to forward to ``_make_debiaser``, keyed by debias_approach.
 
     QuantileDeltaMapping ("qdm") windows differently from every other debiaser — a
@@ -170,17 +172,24 @@ def _running_window_kwargs(variable_config: VariableConfig, debias_approach: str
     running_window_length/running_window_step_length fields.
     """
     if debias_approach == "qdm":
-        return dict(
-            running_window_mode=variable_config.do_windowing,
-            running_window_length=variable_config.qdm_running_window_length,
-            running_window_step_length=variable_config.qdm_running_window_step_length,
-            running_window_over_years_of_cm_future_length=(
-                variable_config.qdm_running_window_over_years_of_cm_future_length
-            ),
-            running_window_over_years_of_cm_future_step_length=(
-                variable_config.qdm_running_window_over_years_of_cm_future_step_length
-            ),
-        )
+        if scenario == 'historical':
+            return dict(
+                running_window_mode=variable_config.do_windowing,
+                running_window_length=variable_config.qdm_running_window_length,
+                running_window_step_length=variable_config.qdm_running_window_step_length
+            )
+        elif scenario == 'scenario':
+            return dict(
+                running_window_mode=variable_config.do_windowing,
+                running_window_length=variable_config.qdm_running_window_length,
+                running_window_step_length=variable_config.qdm_running_window_step_length,
+                running_window_over_years_of_cm_future_length=(
+                    variable_config.qdm_running_window_over_years_of_cm_future_length
+                ),
+                running_window_over_years_of_cm_future_step_length=(
+                    variable_config.qdm_running_window_over_years_of_cm_future_step_length
+                ),
+            )
     return dict(
         running_window_mode=variable_config.do_windowing,
         running_window_length=variable_config.running_window_length,
@@ -890,25 +899,27 @@ class BCSDPipeline:
     ) -> xr.DataArray:
         """Apply quantile mapping to historical GCM data.
 
-        Uses nonparametric mapping for the nonparametric_hybrid case because modeled
-        historical is always within its own range, making the parametric tail unnecessary.
+        Uses plain nonparametric QuantileMapping for the nonparametric_hybrid,
+        nonparametric_hybrid_2sided, and qdm cases: modeled historical is always within
+        its own range, making the parametric tail unnecessary, and for qdm specifically
+        cm_future == cm_hist here, so there is no trend for QuantileDeltaMapping's
+        trend-preservation machinery to preserve.
         """
         debias_approach = self.config.variable_config.debias_approach
         mapping_type = (
             "nonparametric"
-            if debias_approach in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
+            if debias_approach in ["nonparametric_hybrid", "nonparametric_hybrid_2sided", "qdm"]
             else debias_approach
         )
         debiaser = _make_debiaser(
             variable=self.config.variable,
-            debias_approach=debias_approach,
+            # for the _apply_bias_correction case for any option we set the mapping type and the debias
+            # approach to be the same because everything is nonparametric.
+            debias_approach=mapping_type,
             mapping_type=mapping_type,
             detrending="no_detrending",
-            **_running_window_kwargs(self.config.variable_config, debias_approach),
-            # running_window_mode_over_years_of_cm_future intentionally left unset so
-            # each ibicus class falls back to its own default: QuantileDeltaMapping
-            # defaults to True (the canonical Cannon et al. 2015 QDM trend-evolution
-            # window), while QuantileMapping (every non-qdm approach) defaults to False.
+            # the running window settings are defined here. if 
+            **_running_window_kwargs(self.config.variable_config, debias_approach, 'historical'),
         )
 
         obs_coarse = obs_coarse.as_numpy()
@@ -1553,7 +1564,7 @@ class BCSDPipeline:
         common_kwargs = dict(
             variable=self.config.variable,
             detrending="no_detrending",
-            **_running_window_kwargs(self.config.variable_config, debias_approach),
+            **_running_window_kwargs(self.config.variable_config, debias_approach, 'scenario'),
             # running_window_mode_over_years_of_cm_future intentionally left unset so
             # each ibicus class falls back to its own default: QuantileDeltaMapping
             # defaults to True (the canonical Cannon et al. 2015 QDM trend-evolution
