@@ -6,8 +6,8 @@
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs"]
-ensemble_members: ["001", "002", "003", "004", "005"]
+variables: ["pr"]
+ensemble_members: ["003"]
 scenarios: ["SSP245"]
 
 # === Time Periods ===
