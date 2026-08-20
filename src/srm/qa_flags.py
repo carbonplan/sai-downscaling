@@ -37,6 +37,13 @@ TREND_VARIABLE_SETTINGS = {
 }
 
 
+def calculate_thresholds(obs_max, obs_min, obs_max_std, obs_min_std):
+    outlier_thresh_high = obs_max + (5 * obs_max_std)
+    outlier_thresh_low = obs_min - (5 * obs_min_std)
+
+    return outlier_thresh_low, outlier_thresh_high
+
+
 def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = "annual"):
     """
     Flags outliers based on the observational record
