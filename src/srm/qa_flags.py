@@ -6,8 +6,6 @@ import xarray as xr
 
 from srm.qaqc import VAR_SPATIAL_RANGES
 
-INDIVIDUAL_FLAG_DIR = "s3://carbonplan-scratch/srm/qaqc/flags/"
-
 # Variable-specific tolerances for differences in scenario comparisons (i.e. trends) between the raw GCM and  debiased, downscaled output (re-coarsened to native GCM grid). Grid cells where the scenario comparison differs by more than the absolute tolerance (in that variable's units defined in this dictionary) AND the percent tolerance are flagged.
 TREND_VARIABLE_SETTINGS = {
     "tas": {
