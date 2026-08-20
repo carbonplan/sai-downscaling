@@ -4,17 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
-INDIVIDUAL_FLAG_DIR = "s3://carbonplan-scratch/srm/qaqc/flags/"
+from srm.qaqc import VAR_SPATIAL_RANGES
 
-PLAUSIBLE_RANGES: dict[str, tuple[float, float]] = {
-    "tas": (150, 400),
-    "tasmax": (150, 400),
-    "tasmin": (150, 400),
-    "pr": (0, 0.03),
-    "rsds": (0, 500),
-    "hurs": (0, 400),
-    "dtr": (0, 150),
-}
+INDIVIDUAL_FLAG_DIR = "s3://carbonplan-scratch/srm/qaqc/flags/"
 
 # Variable-specific tolerances for differences in scenario comparisons (i.e. trends) between the raw GCM and  debiased, downscaled output (re-coarsened to native GCM grid). Grid cells where the scenario comparison differs by more than the absolute tolerance (in that variable's units defined in this dictionary) AND the percent tolerance are flagged.
 TREND_VARIABLE_SETTINGS = {
@@ -51,7 +43,9 @@ def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = 
     """
     accepted_timescales = {"dayofyear", "annual"}
     if timescale not in accepted_timescales:
-    	raise ValueError(f"unsupported timescale value: {timescale}. Valid values include: {accepted_timescales}")
+        raise ValueError(
+            f"unsupported timescale value: {timescale}. Valid values include: {accepted_timescales}"
+        )
     if timescale == "dayofyear":
         doy = da["time"].dt.dayofyear
         high_outlier = da > outlier_thresh_high.sel(dayofyear=doy)
@@ -75,14 +69,14 @@ def flag_rsds_above_max(da, zonal_doy_max_rsds):
     return exceeds_max
 
 
-def flag_global_exceedances(da, var: str, var_ranges: dict = PLAUSIBLE_RANGES):
+def flag_global_exceedances(da, var: str, var_ranges: dict = VAR_SPATIAL_RANGES):
     """
     Flags days when a variable is outside the globally-defined range of what is plausible.
     """
 
     var_range = var_ranges[var]
-    var_min = var_range[0]
-    var_max = var_range[1]
+    var_min = var_range["min"][0]
+    var_max = var_range["max"][1]
 
     too_high = da > var_max
     too_low = da < var_min
