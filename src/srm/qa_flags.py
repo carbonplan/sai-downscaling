@@ -60,7 +60,7 @@ def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = 
         high_outlier = da > outlier_thresh_high
         low_outlier = da < outlier_thresh_low
 
-    any_outlier = (low_outlier + high_outlier) > 0
+    any_outlier = (low_outlier | high_outlier) > 0
 
     return any_outlier
 
