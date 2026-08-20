@@ -49,6 +49,9 @@ def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = 
     """
     Flags outliers based on the observational record
     """
+    accepted_timescales = {"dayofyear", "annual"}
+    if timescale not in accepted_timescales:
+    	raise ValueError(f"unsupported timescale value: {timescale}. Valid values include: {accepted_timescales}")
     if timescale == "dayofyear":
         doy = da["time"].dt.dayofyear
         high_outlier = da > outlier_thresh_high.sel(dayofyear=doy)
