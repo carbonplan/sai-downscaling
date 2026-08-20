@@ -128,12 +128,25 @@ def write_individual_flags(
         flag_data = flag_data.chunk({"lat": 100, "lon": 100})
 
     tag = f"{gcm}_{var}_{scenario}_{ens}"
+    store_path = flag_dir + tag + ".zarr"
+
+    # encoding is only valid the first time flag_name is written to this store;
+    # xarray errors if encoding is passed for a variable that already exists there
+    variable_exists = False
+    if write_mode != "w":
+        try:
+            variable_exists = flag_name in xr.open_zarr(store_path, consolidated=False).variables
+        except Exception:
+            variable_exists = False  # store or group doesn't exist yet
+
+    encoding = {} if variable_exists else {flag_name: {"_FillValue": None}}
+
     flag_data.to_zarr(
-        flag_dir + tag + ".zarr",
+        store_path,
         mode=write_mode,
         consolidated=False,
         align_chunks=True,
-        encoding={flag_name: {"_FillValue": None}},
+        encoding=encoding,
     )
 
 
