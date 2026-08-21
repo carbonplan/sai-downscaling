@@ -621,6 +621,17 @@ def calculate_doy_means(
     if clim_method == "simple":
         return da_xr_doy_mean
 
+    elif clim_method == "simple_rolling":
+        rolling_window = 30
+        clim_rolling_window = (
+            da_xr_doy_mean.pad(dayofyear=rolling_window, mode="wrap")
+            .rolling(dayofyear=rolling_window, center=True)
+            .mean()
+            .isel(dayofyear=slice(rolling_window, -rolling_window))
+            .assign_coords(dayofyear=da_xr_doy_mean.dayofyear)
+        )
+        return clim_rolling_window
+
     elif clim_method == "fft":
         # Apply FFT smoothing along the time dimension
         obs_fine_doy_means_smoothed = xr.apply_ufunc(
@@ -724,7 +735,7 @@ def downscale_from_coarse(
         if use_tiny_threshold:
             replacement_residual = 1.0
 
-            tiny_clim = obs_coarse_doy_means <= tiny_threshold
+            tiny_clim = obs_coarse_doy_means < tiny_threshold
             safe_clim = obs_coarse_doy_means.where(
                 ~tiny_clim
             )  # less than tiny threshold becomes NaN
@@ -777,7 +788,7 @@ def downscale_from_coarse(
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
         if use_tiny_threshold:
             # find whenever the obs doy means are less than the variable-specific tiny threshold
-            tiny_fine_clim_on_time = (obs_fine_doy_means <= tiny_threshold).sel(
+            tiny_fine_clim_on_time = (obs_fine_doy_means < tiny_threshold).sel(
                 dayofyear=residuals_fine["time"].dt.dayofyear
             )
             obs_fine_doy_means_simple = calculate_doy_means(
