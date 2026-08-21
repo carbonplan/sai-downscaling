@@ -805,12 +805,16 @@ class BCSDPipeline:
         # 91 days, stepped every 31 days, instead of the narrower window the other
         # approaches use here. This keeps the historical fit consistent with the
         # windowing quantile delta mapping applies to the scenario itself.
-        if debias_approach == "qdm":
-            running_window_length = 91
-            running_window_step_length = 31
-        else:
-            running_window_length = self.config.variable_config.running_window_length
-            running_window_step_length = 1
+        # Note: this means that _apply_bias_correction_scenario and _apply_bias_correction
+        # will not give the same answer for the QDM pathway. That is intentional: the
+        # 31-year running mean operating on the historical timeseries would mean that the
+        # CDFs were only ever full at the center of the historical period, and toward the 
+        # beginning/end of the historical period the CDFs would only have ~15 years of data, 
+        # breaking our clean ability to use non-parametric quantile mapping. Further, the 
+        # "delta" part doesn't make sense for the historical and, given the rolling behavior, 
+        # would instead introduce artifacts.
+        running_window_length = self.config.variable_config.running_window_length
+        running_window_step_length = self.config.variable_config.running_window_step_length
         debiaser = _make_debiaser(
             variable=self.config.variable,
             mapping_type=mapping_type,
@@ -1440,8 +1444,8 @@ class BCSDPipeline:
         obs_coarse: xr.DataArray,
         model_hist: xr.DataArray,
         scenario_detrended: xr.DataArray,
-        model_scenario: xr.DataArray | None = None,
-        ssp_timeseries: xr.DataArray | None = None,
+        model_scenario_for_qdm: xr.DataArray | None = None,
+        ssp_timeseries_for_qdm: xr.DataArray | None = None,
     ) -> xr.DataArray:
         """Apply quantile mapping to the (optionally detrended) scenario.
 
@@ -1449,7 +1453,7 @@ class BCSDPipeline:
         blends them — parametric where the scenario falls outside the historical range,
         nonparametric everywhere else.
 
-        ``model_scenario`` and ``ssp_timeseries`` are the pre-detrend scenario data and
+        ``model_scenario_for_qdm`` and ``ssp_timeseries_for_qdm`` are the pre-detrend scenario data and
         (for SAI scenarios) SSP245/parent bridge. They are required for the ``qdm``
         branch, which uses them to rebuild the correctly-sourced lead-in context for its
         padding — see the comment there — and unused otherwise.
@@ -1578,10 +1582,10 @@ class BCSDPipeline:
             pad_years = debiaser.running_window_over_years_of_cm_future_length // 2
             stitched_for_pad = stitch_historical_scenario(
                 model_hist=model_hist,
-                model_scenario=model_scenario,
+                model_scenario=model_scenario_for_qdm,
                 train_period_end=self.config.train_period_end,
                 predict_period_start=self.config.predict_period_start,
-                ssp_timeseries=ssp_timeseries if self.config.is_sai_scenario else None,
+                ssp_timeseries=ssp_timeseries_for_qdm if self.config.is_sai_scenario else None,
             )
             # Find the years you want to pad
             pad_start_year = self.config.predict_period_start - pad_years

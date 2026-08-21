@@ -34,11 +34,12 @@ class VariableConfig(BaseModel):
 
     detrend_data: bool
     do_windowing: bool
-    running_window_length: int = 31
+    running_window_length: int
     downscaling_method: DownscalingMethod
     downscaling_clim_method: DownscalingClimMethod
-    detrend_method: DetrendMethod = "additive"
-    debias_approach: DebiasApproach = "nonparametric_hybrid_2sided"
+    detrend_method: DetrendMethod
+    debias_approach: DebiasApproach
+    running_window_step_length: int
 
     @classmethod
     def for_variable(
@@ -64,6 +65,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 31,
+                "running_window_step_length": 1
             },
             "tas": {
                 "detrend_data": True,
@@ -71,6 +74,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 31,
+                "running_window_step_length": 1
             },
             "tasmax": {
                 "detrend_data": True,
@@ -78,6 +83,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 31,
+                "running_window_step_length": 1
             },
             "tasmin": {
                 "detrend_data": True,
@@ -85,6 +92,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 31,
+                "running_window_step_length": 1
             },
             "rsds": {
                 "detrend_data": False,
@@ -92,6 +101,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 31,
+                "running_window_step_length": 1
             },
             "dtr": {
                 "detrend_data": False,
@@ -99,6 +110,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 31,
+                "running_window_step_length": 1
             },
             "hurs": {
                 "detrend_data": False,
@@ -106,6 +119,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 31,
+                "running_window_step_length": 1
             },
         }
 
@@ -116,6 +131,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 91,
+                "running_window_step_length": 31
             },
             "tas": {
                 "detrend_data": False,
@@ -123,6 +140,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 91,
+                "running_window_step_length": 31
             },
             "tasmax": {
                 "detrend_data": False,
@@ -130,6 +149,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 91,
+                "running_window_step_length": 31
             },
             "tasmin": {
                 "detrend_data": False,
@@ -137,6 +158,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "additive",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 91,
+                "running_window_step_length": 31
             },
             "rsds": {
                 "detrend_data": False,
@@ -144,6 +167,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 91,
+                "running_window_step_length": 31
             },
             "dtr": {
                 "detrend_data": False,
@@ -151,6 +176,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 91,
+                "running_window_step_length": 31
             },
             "hurs": {
                 "detrend_data": False,
@@ -158,6 +185,8 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "running_window_length": 91,
+                "running_window_step_length": 31
             },
         }
 
