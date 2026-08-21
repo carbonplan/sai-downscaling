@@ -83,7 +83,7 @@ class ArtifactCache:
 
     def __init__(
         self,
-        scratch_dir: str = "s3://carbonplan-scratch/srm/cache/",
+        scratch_dir: str = "s3://carbonplan-srm/scratch/cache/",
         environment: str = "qa",
         branch: str = "main",
         output_dir: str | None = None,
@@ -98,8 +98,10 @@ class ArtifactCache:
         environment : str
             Environment name (qa, production) for cache namespace isolation.
         branch : str
-            icechunk branch for output writes (e.g. ``"v2"``). Scratch intermediate
-            artifacts always write to ``"main"`` regardless of this value.
+            icechunk branch for reads and writes (e.g. ``"v2"``). Applies to the scratch
+            store as well as the output store; see :meth:`_branch_for`. ``main`` is kept
+            as an empty anchor that every versioned branch forks from, so it never holds
+            run output.
         output_dir : str, optional
             Directory for final scenario outputs. If None, scenarios go to scratch.
         """

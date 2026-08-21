@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import cf_xarray  # noqa: F401  # registers CF accessor
@@ -50,6 +51,110 @@ VAR_SPATIAL_RANGES: dict[str, dict[str, tuple[float, float]]] = {
     "hurs": {"min": (0, 40), "max": (40, 900)},
     "dtr": {"min": (0, 10), "max": (10, 150)},
 }
+
+# --- Check-table highlighting -------------------------------------------------------------------
+# Per-column definition of what counts as a problem in a QA check table, applied by `highlight`.
+# Column names are shared across the QA notebooks because they name the same checks. A column in
+# neither registry is left unstyled, so adding a column to a check without registering it here gets
+# no color rather than the wrong one.
+
+_STYLE_FAIL = "background-color: #f8d7da; color: #842029"
+_STYLE_WARN = "background-color: #fff3cd; color: #664d03"
+_STYLE_OK = "background-color: #d1e7dd; color: #0f5132"
+
+
+def _is_false(col: pd.Series) -> pd.Series:
+    return ~col.astype(bool)
+
+
+def _is_true(col: pd.Series) -> pd.Series:
+    return col.astype(bool)
+
+
+def _is_nonzero(col: pd.Series) -> pd.Series:
+    return col != 0
+
+
+def _is_nonempty(col: pd.Series) -> pd.Series:
+    return col.str.len() > 0
+
+
+def _is_not_one(col: pd.Series) -> pd.Series:
+    return col != 1
+
+
+#: Check columns whose failure condition is a defect to act on.
+CHECK_RED: dict[str, Callable[[pd.Series], pd.Series]] = {
+    "pass": _is_false,
+    "no_nans": _is_false,
+    "no_interior_nans": _is_false,
+    "no_duplicate_timesteps": _is_false,
+    "no_all_zero_days": _is_false,
+    "reasonable_range": _is_false,
+    "within_input_time_bounds": _is_false,
+    "regular_time_axis": _is_false,
+    "bridged_pre_sai": _is_true,
+    "stale_end_tail": _is_true,
+    "missing": _is_nonempty,
+    "unexpected": _is_nonempty,
+    "unchecked": _is_nonempty,
+    "duplicate_pairs": _is_nonempty,
+    "all_zero_days": _is_nonempty,
+    "n_distinct_grids": _is_not_one,
+    "days_max<min": _is_nonzero,
+    "neg_cell_days": _is_nonzero,
+    "cells_with_neg": _is_nonzero,
+    "frac_cells_neg": _is_nonzero,
+    "high_cell_days": _is_nonzero,
+    "cells_with_high": _is_nonzero,
+}
+
+#: Check columns reported for inspection rather than failed, so they color amber rather than red.
+CHECK_AMBER: dict[str, Callable[[pd.Series], pd.Series]] = {
+    "n_irregular_days": _is_nonzero,
+}
+
+
+def highlight(df: pd.DataFrame, *, demote: Iterable[str] = ()) -> pd.io.formats.style.Styler:
+    """Color a QA check table so failing cells stand out.
+
+    Every column in :data:`CHECK_RED` or :data:`CHECK_AMBER` is colored green where its condition
+    holds and red (or amber) where it does not. Unregistered columns are left alone.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        A check table. Its index and columns must both be unique, which ``Styler.apply`` requires.
+    demote : iterable of str, optional
+        Registered red columns to color amber instead, for a notebook where that column's failure
+        is structural rather than a defect. On a regional subset, for instance, every fine-grid leaf
+        fails ``no_nans`` on the interpolation border left by downscaling.
+
+    Returns
+    -------
+    pandas.io.formats.style.Styler
+        Styler over ``df``, ready to ``display``.
+
+    Raises
+    ------
+    KeyError
+        If ``demote`` names a column absent from :data:`CHECK_RED`, so a typo cannot silently leave
+        that column red.
+    """
+    demoted = set(demote)
+    if unknown := demoted - set(CHECK_RED):
+        raise KeyError(f"cannot demote unregistered columns: {sorted(unknown)}")
+    red = {name: rule for name, rule in CHECK_RED.items() if name not in demoted}
+    amber = CHECK_AMBER | {name: CHECK_RED[name] for name in demoted}
+
+    def paint(col: pd.Series) -> list[str]:
+        name = str(col.name)  # Series.name is Hashable; check-table columns are always strings
+        for rules, style in ((red, _STYLE_FAIL), (amber, _STYLE_WARN)):
+            if name in rules:
+                return np.where(rules[name](col), style, _STYLE_OK).tolist()
+        return [""] * len(col)
+
+    return df.style.apply(paint)
 
 
 class ValidationResult:
@@ -538,31 +643,195 @@ def check_units_and_range(
     return rows
 
 
-def check_ensemble_spread(ds: xr.Dataset, label: str, var: str = "tas", day_index: int = 0) -> dict:
-    """Return an ensemble-spread summary dict for DataFrame/plot display.
+# ---------------------------------------------------------------------------
+# Ensemble-spread check (#316)
+# ---------------------------------------------------------------------------
+#
+# Stitched groups put the gap-filled block at the front of the time axis, so day
+# 0 lands in it. MIROC-ES2H `ssp245` fills 2015-2019 from ESGF through a 10 -> 3
+# member map, making r01/r04/r07/r10 identical there by construction.
+#
+# Mid-record sampling would dodge that silently and never check 2015-2019, which
+# feeds the training period. So split on the gap-fill attrs instead: check the
+# native window for distinctness, the bridge window for the duplication
+# `gap_fill_member_map` predicts.
 
-    Computes the global spatial mean of `var` for each ensemble member on `day_index`.
-    Returns spread_ok=True when all member means are distinct (no exact duplicates).
-    Returns empty members/means lists when the dataset has no ensemble_member dimension
-    or the variable is absent.
+# Stores written before the ETL switched glyphs still carry "→"; matching one
+# glyph alone would find no pairs and report a vacuous pass.
+_GAP_FILL_ARROWS = ("→", "->")
 
-    Keys: source, variable, members, means, spread_ok.
+
+def _parse_gap_fill_member_map(raw: str) -> dict[str, str]:
+    """Parse a ``gap_fill_member_map`` attr into ``{member: source_member}``.
+
+    Parameters
+    ----------
+    raw : str
+        Comma-separated ``member->source`` pairs. Either arrow glyph is accepted.
+
+    Returns
+    -------
+    dict of str to str
+
+    Raises
+    ------
+    ValueError
+        If an entry has no recognized arrow, or nothing parses. Raising keeps an
+        unreadable map from passing as a validated one.
     """
-    if var not in ds or "ensemble_member" not in ds.dims:
-        return {"source": label, "variable": var, "members": [], "means": [], "spread_ok": True}
+    mapping: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        for arrow in _GAP_FILL_ARROWS:
+            if arrow in entry:
+                member, source = entry.split(arrow, 1)
+                mapping[member.strip()] = source.strip()
+                break
+        else:
+            raise ValueError(
+                f"gap_fill_member_map entry {entry!r} has no recognized arrow "
+                f"(expected one of {_GAP_FILL_ARROWS})"
+            )
+    if not mapping:
+        raise ValueError(f"gap_fill_member_map {raw!r} parsed to no member pairs")
+    return mapping
 
-    da = ds[var].isel(time=day_index)
-    means_da = da.mean(dim=["lat", "lon"]).compute()
+
+def _gap_fill_boundary(ds: xr.Dataset, gap_fill_period: str) -> int | None:
+    """Return the first time index after the gap-filled block.
+
+    ``gap_fill_period`` is the ETL's ``"<start>-<end>"`` year range (e.g.
+    ``"2015-2019"``). None when nothing follows the bridge.
+    """
+    end_year = int(gap_fill_period.split("-")[-1])
+    native = np.asarray(ds.time.dt.year.values) > end_year
+    return int(np.argmax(native)) if native.any() else None
+
+
+def _spread_row(
+    ds: xr.Dataset,
+    label: str,
+    var: str,
+    day_index: int,
+    window: str,
+    check: str,
+    expected_map: dict[str, str] | None = None,
+) -> dict:
+    """Compute one ensemble-spread row from the per-member global mean on a day."""
+    means_da = ds[var].isel(time=day_index).mean(dim=["lat", "lon"]).compute()
     members = [str(m) for m in means_da.ensemble_member.values]
     means = [float(v) for v in means_da.values]
-    spread_ok = len(set(means)) == len(means)
+
+    observed = _group_members_by_mean(members, means)
+    if expected_map is None:
+        ok = len(set(means)) == len(means)
+        expected_groups = None
+    else:
+        # Compare the whole partition, not just the duplicate count: that is what
+        # catches a mis-wired map.
+        expected: dict[str, list[str]] = {}
+        for member in members:
+            expected.setdefault(expected_map.get(member, member), []).append(member)
+        expected_groups = _format_groups(expected.values())
+        ok = {frozenset(g) for g in expected.values()} == {frozenset(g) for g in observed.values()}
+
     return {
         "source": label,
         "variable": var,
+        "window": window,
+        "check": check,
+        "day": str(ds.time.values[day_index])[:10],
+        "n_members": len(members),
+        "n_distinct": len(set(means)),
+        "ok": ok,
         "members": members,
         "means": means,
-        "spread_ok": spread_ok,
+        "groups": _format_groups(observed.values()),
+        "expected_groups": expected_groups,
     }
+
+
+def _group_members_by_mean(members: list[str], means: list[float]) -> dict[float, list[str]]:
+    """Group member labels by their exact global-mean value."""
+    groups: dict[float, list[str]] = {}
+    for member, mean in zip(members, means, strict=True):
+        groups.setdefault(mean, []).append(member)
+    return groups
+
+
+def _format_groups(groups) -> str:
+    """Render member groupings as a stable string for table display."""
+    return " | ".join("+".join(sorted(g)) for g in sorted(groups, key=lambda g: sorted(g)[0]))
+
+
+def check_ensemble_spread(
+    ds: xr.Dataset, label: str, var: str = "tas", day_index: int = 0
+) -> list[dict]:
+    """Return ensemble-spread summary rows for DataFrame/plot display (#316).
+
+    Takes the global spatial mean of `var` per ensemble member on one day. Groups
+    carrying the ETL's ``gap_fill_period``/``gap_fill_member_map`` attrs return two
+    rows, ``bridge`` and ``native``; all others return a single ``full`` row.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        Group dataset, with `ensemble_member`, `time`, `lat` and `lon` dims.
+    label : str
+        Row label, e.g. ``"MIROC-ES2H ssp245"``.
+    var : str, default "tas"
+        Variable to take the global mean of.
+    day_index : int, default 0
+        Offset into each window, reported back in the ``day`` column.
+
+    Returns
+    -------
+    list of dict
+        Keys ``source``, ``variable``, ``window``, ``check``, ``day``,
+        ``n_members``, ``n_distinct``, ``ok``, ``members``, ``means``, ``groups``,
+        ``expected_groups``. ``ok`` means all members distinct on ``full``/``native``
+        rows, and duplicates matching ``gap_fill_member_map`` on ``bridge`` rows.
+        A single row with empty members/means when the dataset has no
+        `ensemble_member` dim or lacks `var`.
+    """
+    if var not in ds or "ensemble_member" not in ds.dims:
+        return [
+            {
+                "source": label,
+                "variable": var,
+                "window": "full",
+                "check": "not applicable",
+                "day": None,
+                "n_members": 0,
+                "n_distinct": 0,
+                "ok": True,
+                "members": [],
+                "means": [],
+                "groups": "",
+                "expected_groups": None,
+            }
+        ]
+
+    gap_fill_period = ds.attrs.get("gap_fill_period")
+    boundary = _gap_fill_boundary(ds, gap_fill_period) if gap_fill_period else None
+    if boundary is None:
+        return [_spread_row(ds, label, var, day_index, "full", "all members distinct")]
+
+    expected_map = _parse_gap_fill_member_map(ds.attrs["gap_fill_member_map"])
+    return [
+        _spread_row(
+            ds,
+            label,
+            var,
+            day_index,
+            "bridge",
+            f"duplicates match gap_fill_member_map ({gap_fill_period})",
+            expected_map=expected_map,
+        ),
+        _spread_row(ds, label, var, boundary + day_index, "native", "all members distinct"),
+    ]
 
 
 def disagg_test_calculate_metrics(x, y, time_dim="time"):

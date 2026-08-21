@@ -552,3 +552,70 @@ class TestRunMatrixOverrideFlag:
             ],
         )
         assert result.exit_code != 0
+
+
+class TestReleaseCommand:
+    """`bcsd release` freezes the stores a config set writes to under an icechunk tag."""
+
+    _CONFIG_YAML = """
+gcm: "CESM2-WACCM"
+variables: ["tas", "pr"]
+ensemble_members: ["001"]
+scenarios: ["SSP245"]
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2100
+output_dir: "s3://bucket/output"
+environment: "qa"
+branch: "v9"
+"""
+
+    def _write_config(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(self._CONFIG_YAML)
+        return config_file
+
+    def test_tags_each_distinct_store_once(self, tmp_path):
+        # Two configs (tas, pr) share one gcm/obs/subset triple, so they resolve to a
+        # single store. Tagging it twice would fail on the second create_tag call.
+        config_file = self._write_config(tmp_path)
+        with patch("srm.cache.ArtifactCache.release") as mock_release:
+            result = CliRunner().invoke(
+                app, ["release", "--config-path", str(config_file), "--tag", "snapshot-v1.0.0"]
+            )
+        assert result.exit_code == 0, result.output
+        mock_release.assert_called_once_with("snapshot-v1.0.0")
+
+    def test_branch_option_overrides_the_config_branch(self, tmp_path):
+        config_file = self._write_config(tmp_path)
+        seen = {}
+        with patch(
+            "srm.cache.ArtifactCache.release",
+            autospec=True,
+            side_effect=lambda self, tag: seen.update(branch=self.branch, tag=tag),
+        ):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "release",
+                    "--config-path",
+                    str(config_file),
+                    "--tag",
+                    "snapshot-v1.0.0",
+                    "--branch",
+                    "v0.12.0",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        assert seen == {"branch": "v0.12.0", "tag": "snapshot-v1.0.0"}
+
+    def test_exits_nonzero_when_the_tag_already_exists(self, tmp_path):
+        # icechunk refuses to move an existing tag. Swallowing that would leave the
+        # release green while the baseline still points at the previous run.
+        config_file = self._write_config(tmp_path)
+        with patch("srm.cache.ArtifactCache.release", side_effect=ValueError("tag exists")):
+            result = CliRunner().invoke(
+                app, ["release", "--config-path", str(config_file), "--tag", "snapshot-v1.0.0"]
+            )
+        assert result.exit_code == 1, result.output

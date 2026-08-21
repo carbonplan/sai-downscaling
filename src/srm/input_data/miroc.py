@@ -26,6 +26,7 @@ from srm.input_data.etl_utils import (
     get_aws_creds,
     group_paths_by_member,
     open_netcdf_from_s3,
+    raw_netcdf_prefix,
     setup_logging,
     trim_negative_precipitation,
     update_variable_attrs,
@@ -51,11 +52,13 @@ BUCKET = "carbonplan-srm"
 UNIFIED_PREFIX = "input/processed/miroc-es2h.icechunk"
 
 
+# "ssp245" reads the GeoMIP baseline drop; the ETL scenario key and the source
+# directory name differ here by design.
 NETCDF_PREFIX: dict[str, str] = {
-    "historical": "input/tensor/MIROC-ES2H/historical/netcdf",
-    "esgf-ssp245": "input/tensor/MIROC-ES2H/ssp245/netcdf",
-    "ssp245": "input/tensor/MIROC-ES2H/baseline/netcdf",
-    "G6-1.5K": "input/tensor/MIROC-ES2H/G6-1.5K/netcdf",
+    "historical": raw_netcdf_prefix("MIROC-ES2H", "historical"),
+    "esgf-ssp245": raw_netcdf_prefix("MIROC-ES2H", "esgf-ssp245"),
+    "ssp245": raw_netcdf_prefix("MIROC-ES2H", "baseline"),
+    "G6-1.5K": raw_netcdf_prefix("MIROC-ES2H", "g6-1p5k"),
 }
 
 ENSEMBLE_MEMBERS: dict[str, list[str]] = {

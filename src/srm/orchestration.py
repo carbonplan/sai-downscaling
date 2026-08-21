@@ -43,13 +43,73 @@ class BCSDOrchestrator:
     >>> output_paths = orchestrator.run_full_workflow(configs, use_coiled=True)
     """
 
-    # VM sizes per pipeline stage. fit_historical is memory-intensive (QM fitting),
-    # so it runs on a larger instance; the other two stages are fine on the base size.
+    # VM sizes per pipeline stage for a global run. fit_historical is memory-intensive
+    # (QM fitting) and transform_scenario carries the spatial disaggregation rechunk, so
+    # both run on larger instances than the obs regrid.
     _STAGE_VM_TYPES: dict[str, list[str]] = {
         "prepare_observations": ["r8g.4xlarge"],
         "fit_historical": ["r8g.12xlarge"],
         "transform_scenario": ["r8g.24xlarge"],
     }
+
+    # VM sizes for a spatially subset run. Every stage applies subset_space before any
+    # heavy compute, so the box size, not the source grid, sets the working set: the
+    # South Africa QA box is roughly 150x fewer fine cells than global, under 1 GB per
+    # variable-member. Sizing those runs off the global table left transform_scenario
+    # holding 768 GiB of RAM for well under a gigabyte of data.
+    _REGIONAL_STAGE_VM_TYPES: dict[str, list[str]] = {
+        "prepare_observations": ["r8g.2xlarge"],
+        "fit_historical": ["r8g.2xlarge"],
+        "transform_scenario": ["r8g.4xlarge"],
+    }
+
+    _DEFAULT_VM_TYPE: list[str] = ["c8g.12xlarge"]
+
+    @staticmethod
+    def _is_regional(configs: list[BCSDConfig]) -> bool:
+        """
+        Report whether every config in a batch is spatially subset.
+
+        A batch that mixes global and subset configs is treated as global, because one
+        instance type covers the whole batch and it has to hold the largest task in it.
+
+        Parameters
+        ----------
+        configs : list[BCSDConfig]
+            Configurations making up a single batch submission.
+
+        Returns
+        -------
+        bool
+            True when the batch is non-empty and every config sets ``subset_bounds``.
+        """
+        return bool(configs) and all(config.subset_bounds is not None for config in configs)
+
+    @classmethod
+    def _vm_types_for(cls, stage: str, configs: list[BCSDConfig]) -> list[str]:
+        """
+        Select the instance types for a stage, scaled to the batch's spatial extent.
+
+        Parameters
+        ----------
+        stage : str
+            Pipeline stage name.
+        configs : list[BCSDConfig]
+            Configurations making up a single batch submission.
+
+        Returns
+        -------
+        list[str]
+            Candidate instance types to pass to ``coiled.batch.run``.
+        """
+        table = cls._REGIONAL_STAGE_VM_TYPES if cls._is_regional(configs) else cls._STAGE_VM_TYPES
+        return table.get(stage, cls._DEFAULT_VM_TYPE)
+
+    # Every batch runs on-demand regardless of spatial extent. Regional runs were briefly
+    # placed on spot to cut cost, but reclamation was frequent enough that jobs failed
+    # outright rather than being absorbed by the retry loop in `_submit_to_coiled`, and a
+    # regional batch is cheap enough that the savings do not pay for the lost runs.
+    _SPOT_POLICY: str = "on-demand"
 
     def __init__(self, options: PipelineOptions):
         """
@@ -229,9 +289,10 @@ class BCSDOrchestrator:
         srm.batch_runner module. Each task receives its configuration as a
         JSON-serialized environment variable (CONFIG_JSON).
 
-        The batch job consists of N tasks (one per config), all running in
-        parallel on r8g.2xlarge VMs (64GB RAM, 8 vCPUs). Tasks write their
-        outputs to the cache, which are then verified and collected.
+        The batch job consists of N tasks (one per config) running in parallel. Instance
+        type comes from ``_vm_types_for``, which sizes the batch by stage and by whether it
+        is global or spatially subset; every batch is purchased on-demand. Tasks write
+        their outputs to the cache, which are then verified and collected.
 
         Parameters
         ----------
@@ -263,6 +324,14 @@ class BCSDOrchestrator:
         cache = self._get_cache()
         command = ["python", "-m", "srm.batch_runner", stage]
 
+        # Sized from the full config list rather than `remaining` so a retry batch that
+        # happens to be all-regional cannot silently shrink a global run mid-flight.
+        vm_type = self._vm_types_for(stage, configs)
+        logger.info(
+            f"→ {stage}: {len(configs)} tasks on {vm_type[0]} ({self._SPOT_POLICY}), "
+            f"extent={'regional' if self._is_regional(configs) else 'global'}"
+        )
+
         remaining = list(configs)
         attempt = 0
 
@@ -291,7 +360,6 @@ class BCSDOrchestrator:
             batch_hash = hashlib.sha256("".join(sorted(config_hashes)).encode()).hexdigest()[:8]
             job_name = f"bcsd-{stage}-{gcms}-{variables}-{batch_hash}"
 
-            vm_type = self._STAGE_VM_TYPES.get(stage, ["c8g.12xlarge"])
             job_result = coiled.batch.run(
                 command=command,
                 name=job_name,
@@ -300,7 +368,7 @@ class BCSDOrchestrator:
                 region="us-west-2",
                 map_over_task_var_dicts=task_var_dicts,
                 forward_aws_credentials=False,
-                spot_policy="on-demand",
+                spot_policy=self._SPOT_POLICY,
                 logger=logger,
                 tag={"Project": "SRM"},
                 disk_size="100GB",

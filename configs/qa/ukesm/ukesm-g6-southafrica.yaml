@@ -14,11 +14,17 @@ predict_period_start: 2035
 predict_period_end: 2084
 
 # === Spatial Subsetting ===
-subset_bounds: [-31, -26, 23, 30]
+# All of South Africa ([-35, -22, 16, 33]) plus a ~3 deg halo. subset_space applies a hard
+# slice with no padding, so the regrid and spatial disaggregation edge effects land on the
+# box boundary; the halo keeps them outside the region of interest. Matches the bounds used
+# by configs/snapshot/cesm2-waccm/.
+subset_bounds: [-38, -19, 13, 36]
 
 # === Storage ===
-scratch_dir: "s3://carbonplan-scratch/srm/bcsd-cache"
-output_dir: "s3://carbonplan-scratch/srm/output"
+# Same scratch prefix as every other QA and production config, so the obs and
+# fit_historical artifacts shared with the SSP245 config are reused from cache.
+scratch_dir: "s3://carbonplan-srm/scratch/cache"
+output_dir: "s3://carbonplan-srm/scratch/output"
 environment: "qa"
 
 # === Additional Options ===
