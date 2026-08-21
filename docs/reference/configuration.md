@@ -73,10 +73,11 @@ variable_config:
   detrend_data: true                   # Whether to detrend (auto-set based on variable)
   detrend_method: "additive"           # "additive" or "multiplicative" trend model
   do_windowing: true                   # Use a running window for quantile mapping
-  running_window_length: 31            # Running-window length in days (default: 31)
-  downscaling_method: "additive"       # "additive" for temperature-like vars, "multiplicative" for pr/rsds
-  downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
-  debias_approach: "nonparametric_hybrid_2sided"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided
+  running_window_length: 31            # Running-window length in days
+  running_window_step_length: 1        # Days the running window advances per step
+  disaggregation_method: "additive"    # "additive" for temperature-like vars, "multiplicative" for pr/rsds
+  disaggregation_clim_method: "fft"    # "fft" or "simple" climatology smoothing
+  debias_approach: "nonparametric_hybrid_2sided"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided, qdm
 
 # Per-variable overrides, keyed by variable name (matrix configs only)
 variable_overrides:
@@ -217,9 +218,13 @@ This is useful for:
 
 ## Variable-Specific Auto-Configuration
 
-The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/srm/bcsd_config.py`). All variables use a `running_window_length` of `31` days.
+The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/srm/bcsd_config.py`). Which table it reads is set by the required top-level `downscaling_method` key, described in [Downscaling method](#downscaling-method) below.
 
-| Variable | detrend_data | detrend_method | do_windowing | downscaling_method | downscaling_clim_method |
+### BCSD defaults
+
+All variables use a `running_window_length` of `31` days and a `running_window_step_length` of `1` day, with `debias_approach: nonparametric_hybrid_2sided`.
+
+| Variable | detrend_data | detrend_method | do_windowing | disaggregation_method | disaggregation_clim_method |
 | --- | --- | --- | --- | --- | --- |
 | `tas` | `true` | `additive` | `true` | `additive` | `fft` |
 | `tasmax` | `true` | `additive` | `true` | `additive` | `fft` |
@@ -229,7 +234,26 @@ The pipeline automatically sets variable-specific parameters from the per-variab
 | `dtr` | `false` | `multiplicative` | `true` | `multiplicative` | `fft` |
 | `hurs` | `false` | `additive` | `true` | `multiplicative` | `fft` |
 
-You can override these per run through the nested `variable_config` block in the config file, or with the `bcsd run-matrix` override flags (`--downscaling-method`, `--detrend-data/--no-detrend-data`, etc.).
+### QDMSD defaults
+
+All variables use a `running_window_length` of `91` days and a `running_window_step_length` of `31` days, with `debias_approach: qdm`. Quantile delta mapping carries the climate trend through its own quantile mapping, so `detrend_data` is `false` for every variable. The `detrend_method`, `disaggregation_method`, and `disaggregation_clim_method` columns match the BCSD table above.
+
+You can override these per run through the nested `variable_config` block in the config file, or with the `bcsd run-matrix` override flags (`--disaggregation-method`, `--detrend-data/--no-detrend-data`, etc.).
+
+## Downscaling method
+
+Every config must set a top-level `downscaling_method`. There is deliberately no default, so each run records which method produced its output.
+
+| Value | Meaning |
+| --- | --- |
+| `BCSD` | Detrend, quantile-map, retrend, then spatially disaggregate. |
+| `QDMSD` | Quantile delta mapping, then spatially disaggregate. No separate detrend/retrend step. |
+
+```yaml
+downscaling_method: "BCSD"
+```
+
+The key selects which per-variable defaults table `VariableConfig.for_variable` reads. It is recorded in the store metadata as `srm_downscaling:downscaling_method`, and because the resolved `variable_config` differs between the two tables, BCSD and QDMSD runs get distinct `config_hash` values and distinct cache entries.
 
 ## Validation Examples
 

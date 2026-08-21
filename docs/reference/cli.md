@@ -90,8 +90,9 @@ uv run bcsd run-matrix [OPTIONS]
 - `--detrend-data / --no-detrend-data`: override `detrend_data`
 - `--do-windowing / --no-do-windowing`: override `do_windowing`
 - `--running-window-length INTEGER`: override `running_window_length`
-- `--downscaling-method TEXT`: override `downscaling_method` (`additive`, `multiplicative`)
-- `--downscaling-clim-method TEXT`: override `downscaling_clim_method` (`simple`, `fft`)
+- `--running-window-step-length INTEGER`: override `running_window_step_length`
+- `--disaggregation-method TEXT`: override `disaggregation_method` (`additive`, `multiplicative`)
+- `--disaggregation-clim-method TEXT`: override `disaggregation_clim_method` (`simple`, `fft`)
 - `--detrend-method TEXT`: override `detrend_method` (`additive`, `multiplicative`)
 
 **Per-variable overrides:**

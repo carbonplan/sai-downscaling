@@ -194,7 +194,8 @@ accessed.
 | `srm_downscaling:ssp245_ensemble_member` | Resolved SSP2-4.5 bridge member |
 | `srm_downscaling:observation_dataset` | Observation dataset used (e.g. `ERA5`) |
 | `srm_downscaling:bias_correction_method` | Quantile-mapping method |
-| `srm_downscaling:downscaling_method` | Spatial disaggregation method |
+| `srm_downscaling:downscaling_method` | Downscaling method (`BCSD` or `QDMSD`) |
+| `srm_downscaling:disaggregation_method` | Spatial disaggregation method (`additive` or `multiplicative`) |
 | `srm_downscaling:train_period` | Training period as `"{start}-{end}"` |
 | `srm_downscaling:creation_date` | UTC date the artifact was written |
 
