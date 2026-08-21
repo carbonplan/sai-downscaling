@@ -1440,12 +1440,19 @@ class BCSDPipeline:
         obs_coarse: xr.DataArray,
         model_hist: xr.DataArray,
         scenario_detrended: xr.DataArray,
+        model_scenario: xr.DataArray | None = None,
+        ssp_timeseries: xr.DataArray | None = None,
     ) -> xr.DataArray:
         """Apply quantile mapping to the (optionally detrended) scenario.
 
         For nonparametric_hybrid: runs both parametric and nonparametric debiasers and
         blends them — parametric where the scenario falls outside the historical range,
         nonparametric everywhere else.
+
+        ``model_scenario`` and ``ssp_timeseries`` are the pre-detrend scenario data and
+        (for SAI scenarios) SSP245/parent bridge. They are required for the ``qdm``
+        branch, which uses them to rebuild the correctly-sourced lead-in context for its
+        padding — see the comment there — and unused otherwise.
         """
         debias_approach = self.config.variable_config.debias_approach
         obs_coarse = obs_coarse.as_numpy()
@@ -1559,17 +1566,30 @@ class BCSDPipeline:
 
             # Each future year's correction is estimated from a moving window
             # centered on that year (31 years by default), so the method needs 15
-            # years of context on either side. At the start of the prediction period
-            # there isn't 15 years of future data yet to fill that window, so the
-            # last 15 years of the historical run are prepended here as stand-in
-            # context. Those padded years are then dropped from the result below,
-            # once they've served their purpose, leaving only the requested period.
+            # years of context immediately before the prediction period to fill
+            # that window. What precedes the prediction period depends on the
+            # scenario: plain historical for an SSP245 run, SSP245 for an SAI
+            # run whose predict_period_start lands inside the SSP245 bridge (e.g.
+            # G6-1.5K, predict_period_start=2035), or the parent SAI run for a
+            # termination run continuing it (e.g. G6-1.5K-END, predict_period_start
+            # =2085, padded with G6-1.5K). The padded years
+            # are then dropped from the result below, once they've served their
+            # purpose, leaving only the requested period.
             pad_years = debiaser.running_window_over_years_of_cm_future_length // 2
-            pad_start_year = self.config.train_period_end - pad_years + 1
-            historical_pad = model_hist.sel(
-                time=slice(f"{pad_start_year}", f"{self.config.train_period_end}")
+            stitched_for_pad = stitch_historical_scenario(
+                model_hist=model_hist,
+                model_scenario=model_scenario,
+                train_period_end=self.config.train_period_end,
+                predict_period_start=self.config.predict_period_start,
+                ssp_timeseries=ssp_timeseries if self.config.is_sai_scenario else None,
             )
-            padded_future = xr.concat([historical_pad, scenario_detrended], dim="time")
+            # Find the years you want to pad
+            pad_start_year = self.config.predict_period_start - pad_years
+            pad_end_year = self.config.predict_period_start - 1
+            scenario_pad = stitched_for_pad.sel(
+                time=slice(f"{pad_start_year}", f"{pad_end_year}")
+            ).as_numpy()
+            padded_future = xr.concat([scenario_pad, scenario_detrended], dim="time")
 
             qdm_apply_kwargs = {
                 **apply_kwargs,
@@ -1578,8 +1598,8 @@ class BCSDPipeline:
             }
             print(f"[_apply_bias_correction_scenario] {debiaser}")
             debiased_padded_np = debiaser.apply(**qdm_apply_kwargs)
-            # remove the padding and take only the part of debiased_padded_np that is from the scenario
-            debiased_np = debiased_padded_np[historical_pad.sizes["time"] :]
+            # remove the padding and take only the part of debiased_padded_np that is from the scenario you're running
+            debiased_np = debiased_padded_np[scenario_pad.sizes["time"] :]
 
         else:
             raise ValueError(
@@ -1794,7 +1814,7 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         scenario_debiased = self._apply_bias_correction_scenario(
-            obs_coarse, model_hist, scenario_detrended
+            obs_coarse, model_hist, scenario_detrended, model_scenario, ssp_timeseries
         )
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 
