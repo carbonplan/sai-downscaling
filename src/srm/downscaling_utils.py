@@ -564,7 +564,7 @@ def interpolate_coarse_to_fine_grid(
     )
 
 
-def fft_smooth_3harmonics(data):
+def fft_smooth_nharmonics(data, num_harmonics=3):
     """Apply FFT and retain only mean + 3 harmonics"""
     # Handle NaN values
     if np.all(np.isnan(data)):
@@ -573,11 +573,16 @@ def fft_smooth_3harmonics(data):
     # Compute FFT
     Z = np.fft.fft(data)
 
-    # Create filtered version: keep mean (0) + first 3 harmonics (1,2,3 and -3,-2,-1)
+    # Create filtered version: keep mean (0) + first num_harmonics harmonics
+    # e.g. if num_harmonics is 3, keep first 3 harmonics (1,2,3 and -3,-2,-1)
     Z_filtered = np.zeros_like(Z)
     Z_filtered[0] = Z[0]  # mean (DC component)
-    Z_filtered[1:4] = Z[1:4]  # positive frequencies (harmonics 1-3)
-    Z_filtered[-3:] = Z[-3:]  # negative frequencies (harmonics 1-3)
+    Z_filtered[1 : (num_harmonics + 1)] = Z[
+        1 : (num_harmonics + 1)
+    ]  # positive frequencies (harmonics 1-3 if num_harmonics==3)
+    Z_filtered[-num_harmonics:] = Z[
+        -num_harmonics:
+    ]  # negative frequencies (harmonics 1-3 if num_harmonics==3)
 
     # Inverse FFT to get smoothed time series
     smoothed = np.real(np.fft.ifft(Z_filtered)).astype(data.dtype)
@@ -619,7 +624,7 @@ def calculate_doy_means(
     elif clim_method == "fft":
         # Apply FFT smoothing along the time dimension
         obs_fine_doy_means_smoothed = xr.apply_ufunc(
-            fft_smooth_3harmonics,
+            fft_smooth_nharmonics,
             da_xr_doy_mean.load(),
             input_core_dims=[["dayofyear"]],
             output_core_dims=[["dayofyear"]],
