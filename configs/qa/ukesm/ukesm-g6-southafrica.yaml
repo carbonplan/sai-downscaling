@@ -13,6 +13,11 @@ train_period_end: 2014
 predict_period_start: 2035
 predict_period_end: 2084
 
+# === Downscaling Method ===
+# "BCSD" (detrend + quantile mapping) or "QDMSD" (quantile delta mapping). Required:
+# there is no default, so every config states which method produced its output.
+downscaling_method: "BCSD"
+
 # === Spatial Subsetting ===
 # All of South Africa ([-35, -22, 16, 33]) plus a ~3 deg halo. subset_space applies a hard
 # slice with no padding, so the regrid and spatial disaggregation edge effects land on the

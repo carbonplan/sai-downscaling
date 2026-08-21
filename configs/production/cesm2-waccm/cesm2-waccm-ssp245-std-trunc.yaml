@@ -22,6 +22,11 @@ train_period_end: 2014
 predict_period_start: 2015
 predict_period_end: 2069
 
+# === Downscaling Method ===
+# "BCSD" (detrend + quantile mapping) or "QDMSD" (quantile delta mapping). Required:
+# there is no default, so every config states which method produced its output.
+downscaling_method: "BCSD"
+
 # === PipelineOptions: Operational Settings ===
 scratch_dir: "s3://carbonplan-srm/scratch/cache"
 output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
