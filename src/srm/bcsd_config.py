@@ -23,8 +23,8 @@ _cache_version = f"v{_Version(_pkg_version('srm')).public}"
 DebiasApproach = Literal[
     "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided", "qdm"
 ]
-DownscalingMethod = Literal["additive", "multiplicative"]
-DownscalingClimMethod = Literal["simple", "fft"]
+DisaggregationMethod = Literal["additive", "multiplicative"]
+DisaggregationClimMethod = Literal["simple", "fft"]
 DetrendMethod = Literal["additive", "multiplicative"]
 VariableName = Literal["tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"]
 
@@ -35,15 +35,15 @@ class VariableConfig(BaseModel):
     detrend_data: bool
     do_windowing: bool
     running_window_length: int
-    downscaling_method: DownscalingMethod
-    downscaling_clim_method: DownscalingClimMethod
+    disaggregation_method: DisaggregationMethod
+    disaggregation_clim_method: DisaggregationClimMethod
     detrend_method: DetrendMethod
     debias_approach: DebiasApproach
     running_window_step_length: int
 
     @classmethod
     def for_variable(
-        cls, variable: str, debias_approach: DebiasApproach = "nonparametric_hybrid_2sided"
+        cls, variable: str, downscaling_method: DownscalingMethod
     ) -> VariableConfig:
         """Load variable-specific config for the given ``debias_approach``.
 
@@ -63,64 +63,71 @@ class VariableConfig(BaseModel):
                 "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 31,
-                "running_window_step_length": 1
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided"
             },
             "tas": {
                 "detrend_data": True,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 31,
-                "running_window_step_length": 1
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided"
             },
             "tasmax": {
                 "detrend_data": True,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 31,
-                "running_window_step_length": 1
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided"
             },
             "tasmin": {
                 "detrend_data": True,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 31,
-                "running_window_step_length": 1
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided"
             },
             "rsds": {
                 "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 31,
-                "running_window_step_length": 1
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided"
             },
             "dtr": {
                 "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 31,
-                "running_window_step_length": 1
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided"
             },
             "hurs": {
                 "detrend_data": False,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 31,
-                "running_window_step_length": 1
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided"
             },
         }
 
@@ -129,73 +136,85 @@ class VariableConfig(BaseModel):
                 "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 91,
-                "running_window_step_length": 31
+                "running_window_step_length": 31,
+                "debias_approach": "qdm"
             },
             "tas": {
                 "detrend_data": False,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 91,
-                "running_window_step_length": 31
+                "running_window_step_length": 31,
+                "debias_approach": "qdm"
             },
             "tasmax": {
                 "detrend_data": False,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 91,
-                "running_window_step_length": 31
+                "running_window_step_length": 31,
+                "debias_approach": "qdm"
             },
             "tasmin": {
                 "detrend_data": False,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 91,
-                "running_window_step_length": 31
+                "running_window_step_length": 31,
+                "debias_approach": "qdm"
             },
             "rsds": {
                 "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 91,
-                "running_window_step_length": 31
+                "running_window_step_length": 31,
+                "debias_approach": "qdm"
             },
             "dtr": {
                 "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 91,
-                "running_window_step_length": 31
+                "running_window_step_length": 31,
+                "debias_approach": "qdm"
             },
             "hurs": {
                 "detrend_data": False,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
                 "running_window_length": 91,
-                "running_window_step_length": 31
+                "running_window_step_length": 31,
+                "debias_approach": "qdm"
             },
         }
 
-        table = QDMSD_CONFIG if debias_approach == "qdm" else BCSD_CONFIG
+        if downscaling_method == "BCSD:
+            table = BCSD_CONFIG
+        elif downscaling_method == "QDMSD":
+            table = QDMSD_CONFIG
+        else:
+            raise ValueError(f"Unknown downscaling_method: {downscaling_method}.")
 
         if variable not in table:
             raise ValueError(f"Unknown variable: {variable}. Must be one of {list(table.keys())}")
 
-        return cls(**table[variable], debias_approach=debias_approach)
+        return cls(**table[variable])
 
 
 class BCSDConfig(pydantic_settings.BaseSettings):
