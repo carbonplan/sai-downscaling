@@ -54,6 +54,7 @@ def _make_config(
 ) -> BCSDConfig:
     return BCSDConfig(
         gcm=gcm,
+        downscaling_method="BCSD",
         variable=variable,
         ensemble_member=ensemble_member,
         scenario=scenario,

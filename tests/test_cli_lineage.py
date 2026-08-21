@@ -21,6 +21,7 @@ from srm.lineage import resolve_member_lineage
 
 _G6_BASE = dict(
     gcm="CESM2-WACCM",
+    downscaling_method="BCSD",
     ensemble_member="001",
     scenario="G6-1.5K",
     predict_period_start=2015,
@@ -176,7 +177,9 @@ class TestValidateLineageMembers:
 
     def test_skips_configs_without_scenario(self):
         """Configs with scenario=None are skipped — no catalog lookup."""
-        cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        cfg = BCSDConfig(
+            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+        )
         with patch("srm.datasets.catalog") as cat:
             _validate_lineage_members([cfg])
         cat.get.assert_not_called()
@@ -185,6 +188,7 @@ class TestValidateLineageMembers:
         """Combos not in the lineage table raise KeyError internally — silently skipped."""
         cfg = BCSDConfig(
             gcm="UKESM1-0-LL",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="001",
             scenario="G6-1.5K",

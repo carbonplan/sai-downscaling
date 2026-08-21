@@ -115,7 +115,9 @@ def pipeline_options(tmp_path) -> PipelineOptions:
 
 @pytest.fixture
 def historical_pipeline(pipeline_options) -> BCSDPipeline:
-    config = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+    config = BCSDConfig(
+        downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+    )
     return BCSDPipeline(config, pipeline_options)
 
 
@@ -123,6 +125,7 @@ def historical_pipeline(pipeline_options) -> BCSDPipeline:
 def scenario_pipeline(pipeline_options) -> BCSDPipeline:
     config = BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="001",
         scenario="G6-1.5K",

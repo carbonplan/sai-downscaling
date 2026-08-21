@@ -124,6 +124,7 @@ def config() -> BCSDConfig:
     """Standard SSP245 config."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r1i1p1f1",
         scenario="SSP245",
@@ -137,6 +138,7 @@ def pr_config() -> BCSDConfig:
     """Precipitation config (no detrending, divide downscaling method)."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="pr",
         ensemble_member="r1i1p1f1",
         scenario="SSP245",
@@ -256,6 +258,7 @@ class TestPrepareObservationsCompute:
     def test_subset_space_called_twice_for_regional_run(self, tmp_path):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
             subset_bounds=(-35.0, -22.0, 16.0, 33.0),
@@ -281,6 +284,7 @@ class TestPrepareObservationsCompute:
     def test_rechunk_called_when_enabled(self, tmp_path):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
         )
@@ -408,6 +412,7 @@ class TestTransformScenarioBehavior:
     def test_raises_when_scenario_is_none(self, tmp_path):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
         )
@@ -522,6 +527,7 @@ class TestTransformScenarioBehavior:
         """_build_ocean_mask is not called when apply_ocean_mask=False."""
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="pr",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
@@ -661,6 +667,7 @@ class TestTasminStageDispatch:
     def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tasmin",
             ensemble_member="001",
             scenario="G6-1.5K",
@@ -723,6 +730,7 @@ class TestTasminEagerDisaggInput:
     def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tasmin",
             ensemble_member="001",
             scenario="G6-1.5K",
@@ -1150,6 +1158,7 @@ class TestWeibullZeroBounded:
         tail and gumbel_r to the high tail for pr/rsds/hurs/dtr."""
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="rsds",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
@@ -1372,6 +1381,7 @@ class TestTransformScenarioCoarseOutput:
 def tasmin_config() -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tasmin",
         ensemble_member="r1i1p1f1",
         scenario="SSP245",
@@ -2089,6 +2099,7 @@ class TestDetrendScenarioBridge:
         # SSP245 bridge so the output spans the full predict window (issue #363).
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="dtr",
             ensemble_member="003",
             scenario="G6-1.5K",
@@ -2114,6 +2125,7 @@ class TestDetrendScenarioBridge:
         # the scenario is returned unchanged (regression: no behavior change).
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="pr",
             ensemble_member="003",
             scenario="SSP245",
@@ -2191,6 +2203,7 @@ class TestScenarioHistoricalSlice:
     def test_sai_scenario_stops_at_train_period_end(self, pipeline_options):
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="001",
             scenario="G6-1.5K",
@@ -2209,6 +2222,7 @@ class TestScenarioHistoricalSlice:
         # the old slice leaked six extra years into the reference pool.
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
@@ -2224,6 +2238,7 @@ class TestScenarioHistoricalSlice:
         """_load_gcm_obs already slices correctly; the two loaders must agree."""
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="001",
             scenario="G6-1.5K",

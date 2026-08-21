@@ -42,6 +42,7 @@ def base_config() -> BCSDConfig:
     """Standard SSP245 scenario config."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r1i1p1f1",
         scenario="SSP245",
@@ -55,6 +56,7 @@ def sai_config() -> BCSDConfig:
     """SAI G6 scenario config."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="pr",
         ensemble_member="r2i1p1f1",
         scenario="G6-1.5K",
@@ -68,6 +70,7 @@ def regional_config() -> BCSDConfig:
     """Config with a spatial subset (South Africa region)."""
     return BCSDConfig(
         gcm="MIROC-ES2H",
+        downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="01",
         scenario="SSP245",
@@ -562,6 +565,7 @@ class TestCheckDependencies:
     def _tasmin_cache(self, tmp_path, scenario="SSP245"):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tasmin",
             ensemble_member="r1i1p1f1",
             scenario=scenario,
@@ -659,7 +663,9 @@ class TestGetOutputPath:
         assert path == bound_cache.scenario_loc.store_path
 
     def test_transform_scenario_without_scenario_field_raises(self, tmp_path):
-        config = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        config = BCSDConfig(
+            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+        )
         cache = ArtifactCache.from_config(config, PipelineOptions(scratch_dir=str(tmp_path)))
         with pytest.raises(ValueError, match="scenario must be specified"):
             cache.get_output_path("transform_scenario", config)

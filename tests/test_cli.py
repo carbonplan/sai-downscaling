@@ -26,6 +26,7 @@ class TestConfigsFromMatrix:
     def test_single_combination_returns_one_config(self):
         configs, _ = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tas"],
             members=["r1i1p1f1"],
             scenarios=[None],
@@ -35,6 +36,7 @@ class TestConfigsFromMatrix:
     def test_cartesian_product_count(self):
         configs, options = configs_from_matrix(
             gcms=["CESM2-WACCM", "MIROC"],
+            downscaling_method="BCSD",
             variables=["tas", "pr"],
             members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
             scenarios=["ssp245", "G6-1pt5k"],
@@ -46,6 +48,7 @@ class TestConfigsFromMatrix:
     def test_returns_bcsd_config_instances(self):
         configs, options = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tas"],
             members=["r1i1p1f1"],
             scenarios=[None],
@@ -55,6 +58,7 @@ class TestConfigsFromMatrix:
     def test_historical_only_scenario_is_none(self):
         configs, options = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tas"],
             members=["r1i1p1f1", "r2i1p1f1"],
             scenarios=[None],
@@ -69,6 +73,7 @@ class TestConfigsFromMatrix:
         scenarios = ["ssp245"]
         configs, options = configs_from_matrix(
             gcms=gcms,
+            downscaling_method="BCSD",
             variables=variables,
             members=members,
             scenarios=scenarios,
@@ -82,6 +87,7 @@ class TestConfigsFromMatrix:
     def test_shared_params_applied_to_all_configs(self):
         configs, options = configs_from_matrix(
             gcms=["CESM2-WACCM", "MIROC"],
+            downscaling_method="BCSD",
             variables=["tas"],
             members=["r1i1p1f1"],
             scenarios=[None],
@@ -99,6 +105,7 @@ class TestConfigsFromMatrix:
         bounds = (-35.0, -22.0, 16.0, 33.0)
         configs, options = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tas"],
             members=["r1i1p1f1"],
             scenarios=[None],
@@ -111,6 +118,7 @@ class TestConfigsFromMatrix:
         with pytest.raises(ValidationError):
             configs_from_matrix(
                 gcms=["CESM2-WACCM"],
+                downscaling_method="BCSD",
                 variables=["tas"],
                 members=["r1i1p1f1"],
                 scenarios=["ssp245"],
@@ -121,6 +129,7 @@ class TestConfigsFromMatrix:
         scenarios = ["ssp245", "G6-1pt5k", "G6-termination"]
         configs, options = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tas"],
             members=["r1i1p1f1"],
             scenarios=scenarios,
@@ -133,6 +142,7 @@ class TestConfigsFromMatrix:
     def test_empty_members_returns_empty_list(self):
         configs, options = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tas"],
             members=[],
             scenarios=[None],
@@ -142,6 +152,7 @@ class TestConfigsFromMatrix:
     def test_fields_assigned_correctly(self):
         configs, options = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["pr"],
             members=["r3i1p1f1"],
             scenarios=["ssp245"],
@@ -164,6 +175,7 @@ class TestValidatePredictPeriods:
     def test_truncated_member_overrun_raises(self):
         configs, _ = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tasmax"],
             members=["007"],
             scenarios=["ssp245"],
@@ -176,6 +188,7 @@ class TestValidatePredictPeriods:
     def test_truncated_member_within_extent_does_not_raise(self):
         configs, _ = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tasmax"],
             members=["007"],
             scenarios=["ssp245"],
@@ -197,6 +210,7 @@ train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
 predict_period_end: 2100
+downscaling_method: "BCSD"
 output_dir: "s3://bucket/output"
 environment: "qa"
 branch: "v9"
@@ -275,37 +289,42 @@ class TestResolveVariableConfig:
     """Three-tier precedence: table default < run-wide < per-variable override."""
 
     def test_table_default_when_nothing_supplied(self):
-        vc = _resolve_variable_config("dtr", None, None)
+        vc = _resolve_variable_config("dtr", "BCSD", None, None)
         assert vc.debias_approach == "nonparametric_hybrid_2sided"
-        assert vc.downscaling_method == "multiplicative"
+        assert vc.disaggregation_method == "multiplicative"
 
     def test_run_wide_beats_table_default(self):
-        vc = _resolve_variable_config("dtr", {"debias_approach": "parametric"}, None)
+        vc = _resolve_variable_config("dtr", "BCSD", {"debias_approach": "parametric"}, None)
         assert vc.debias_approach == "parametric"
 
     def test_override_beats_run_wide(self):
         vc = _resolve_variable_config(
             "dtr",
+            "BCSD",
             {"debias_approach": "parametric"},
             {"dtr": {"debias_approach": "nonparametric"}},
         )
         assert vc.debias_approach == "nonparametric"
 
     def test_override_for_another_variable_is_ignored(self):
-        vc = _resolve_variable_config("tas", None, {"dtr": {"debias_approach": "nonparametric"}})
+        vc = _resolve_variable_config(
+            "tas", "BCSD", None, {"dtr": {"debias_approach": "nonparametric"}}
+        )
         assert vc.debias_approach == "nonparametric_hybrid_2sided"
 
     def test_none_values_in_run_wide_do_not_override(self):
-        vc = _resolve_variable_config("tas", {"debias_approach": None}, None)
+        vc = _resolve_variable_config("tas", "BCSD", {"debias_approach": None}, None)
         assert vc.debias_approach == "nonparametric_hybrid_2sided"
 
     def test_string_values_are_coerced_and_validated(self):
-        vc = _resolve_variable_config("pr", None, {"pr": {"do_windowing": "false"}})
+        vc = _resolve_variable_config("pr", "BCSD", None, {"pr": {"do_windowing": "false"}})
         assert vc.do_windowing is False
 
     def test_invalid_value_raises(self):
         with pytest.raises(ValidationError):
-            _resolve_variable_config("tas", None, {"tas": {"downscaling_method": "bogus"}})
+            _resolve_variable_config(
+                "tas", "BCSD", None, {"tas": {"disaggregation_method": "bogus"}}
+            )
 
 
 class TestValidateVariableOverrides:
@@ -335,6 +354,7 @@ class TestExpandMatrixConfigOverrides:
                 "scenario": "ssp245",
                 "predict_period_start": 2015,
                 "predict_period_end": 2100,
+                "downscaling_method": "BCSD",
                 "variable_overrides": {"dtr": {"debias_approach": "nonparametric"}},
             }
         )
@@ -351,6 +371,7 @@ class TestExpandMatrixConfigOverrides:
                     "gcm": "CESM2-WACCM",
                     "variables": ["tas", "pr"],
                     "ensemble_member": "007",
+                    "downscaling_method": "BCSD",
                     "variable_config": {"detrend_data": False},
                 }
             )
@@ -361,7 +382,8 @@ class TestExpandMatrixConfigOverrides:
                 "gcm": "CESM2-WACCM",
                 "variables": ["tas"],
                 "ensemble_members": ["007", "008"],
-                "variable_config": VariableConfig.for_variable("tas").model_dump(),
+                "downscaling_method": "BCSD",
+                "variable_config": VariableConfig.for_variable("tas", "BCSD").model_dump(),
             }
         )
         assert len(configs) == 2
@@ -374,7 +396,8 @@ class TestExpandMatrixConfigOverrides:
                     "gcm": "CESM2-WACCM",
                     "variables": ["tas"],
                     "ensemble_member": "007",
-                    "variable_config": VariableConfig.for_variable("tas").model_dump(),
+                    "downscaling_method": "BCSD",
+                    "variable_config": VariableConfig.for_variable("tas", "BCSD").model_dump(),
                     "variable_overrides": {"tas": {"debias_approach": "parametric"}},
                 }
             )
@@ -388,6 +411,7 @@ class TestExpandMatrixConfigOverrides:
         with pytest.raises(ValidationError, match="variable_overrides"):
             BCSDConfig(
                 gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="007",
                 variable_overrides={"tas": {"debias_approach": "parametric"}},
@@ -435,6 +459,7 @@ class TestConfigsFromMatrixOverrides:
     def test_per_variable_debias_approach(self):
         configs, _ = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tasmax", "dtr"],
             members=["007"],
             scenarios=["ssp245"],
@@ -448,6 +473,7 @@ class TestConfigsFromMatrixOverrides:
     def test_run_wide_flag_still_applies_to_all(self):
         configs, _ = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tasmax", "dtr"],
             members=["007"],
             scenarios=[None],
@@ -458,6 +484,7 @@ class TestConfigsFromMatrixOverrides:
     def test_override_beats_run_wide_flag(self):
         configs, _ = configs_from_matrix(
             gcms=["CESM2-WACCM"],
+            downscaling_method="BCSD",
             variables=["tasmax", "dtr"],
             members=["007"],
             scenarios=[None],
@@ -471,10 +498,11 @@ class TestConfigsFromMatrixOverrides:
         with pytest.raises(ValidationError):
             configs_from_matrix(
                 gcms=["CESM2-WACCM"],
+                downscaling_method="BCSD",
                 variables=["tas"],
                 members=["007"],
                 scenarios=[None],
-                variable_overrides={"tas": {"downscaling_method": "bogus"}},
+                variable_overrides={"tas": {"disaggregation_method": "bogus"}},
             )
 
     def test_existing_run_wide_override_is_now_validated(self):
@@ -485,7 +513,8 @@ class TestConfigsFromMatrixOverrides:
                 variables=["tas"],
                 members=["007"],
                 scenarios=[None],
-                downscaling_method="bogus",
+                downscaling_method="BCSD",
+                disaggregation_method="bogus",
             )
 
 
@@ -498,6 +527,8 @@ class TestRunMatrixOverrideFlag:
                 app,
                 [
                     "run-matrix",
+                    "--downscaling-method",
+                    "BCSD",
                     "--gcm",
                     "CESM2-WACCM",
                     "--variable",
@@ -528,6 +559,8 @@ class TestRunMatrixOverrideFlag:
             app,
             [
                 "run-matrix",
+                "--downscaling-method",
+                "BCSD",
                 "--gcm",
                 "CESM2-WACCM",
                 "--variable",
@@ -554,6 +587,7 @@ train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
 predict_period_end: 2100
+downscaling_method: "BCSD"
 output_dir: "s3://bucket/output"
 environment: "qa"
 branch: "v9"

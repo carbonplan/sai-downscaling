@@ -29,6 +29,7 @@ from srm.bcsd_config import BCSDConfig
 
 _MINIMAL_CONFIG = {
     "gcm": "CESM2-WACCM",
+    "downscaling_method": "BCSD",
     "variable": "tas",
     "ensemble_member": "r1i1p1f1",
     "scenario": "ssp245",

@@ -522,6 +522,7 @@ class TestCheckConfigTimeDomain:
 
         return BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member=member,
             scenario=scenario,
@@ -624,7 +625,11 @@ class TestCheckConfigTimeDomain:
         from srm.validation import check_config_time_domain
 
         cfg = BCSDConfig(
-            gcm="MIROC-ES2H", variable="tas", ensemble_member="r1i1p4f2", scenario=None
+            gcm="MIROC-ES2H",
+            variable="tas",
+            ensemble_member="r1i1p4f2",
+            scenario=None,
+            downscaling_method="BCSD",
         )
         assert check_config_time_domain(cfg).status == CheckStatus.SKIP
 
