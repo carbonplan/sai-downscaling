@@ -93,7 +93,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
-                "downscaling_tiny_threshold": 0.0,  # exact-zero guard only
+                "downscaling_tiny_threshold": 0.0,
             },
             "hurs": {
                 "detrend_data": False,
@@ -101,7 +101,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
-                "downscaling_tiny_threshold": 1.0e-2,  # percent, see note below
+                "downscaling_tiny_threshold": 1.0e-2,  # percent
             },
         }
 
