@@ -11,6 +11,10 @@ DIR_QA_FLAG_CONSTANT_INPUTS = "s3://carbonplan-srm/output/qa_flag_inputs/"
 # DIR_QA_FLAG_OUTPUTS = "s3://carbonplan-scratch/srm/qaqc/" #previous location for step 1, some outputs still there until rerunning step 1
 
 # Variable-specific tolerances for differences in scenario comparisons (i.e. trends) between the raw GCM and  debiased, downscaled output (re-coarsened to native GCM grid). Grid cells where the scenario comparison differs by more than the absolute tolerance (in that variable's units defined in this dictionary) AND the percent tolerance are flagged.
+# the sign flip flag occurs when the GCM scenario comparison is above the sign_flip threshold and the downscaled scenario comparison is below the negative of that threshold (or vice versa)
+# E.g. if the raw GCM G6-1.5K-SAI scenario is 0.3 degrees cooler than the SSP245 scenario, but the downscaled G6-1.5K-SAI scenario is 0.4 degrees warmer than the SSP245 scenario in a grid cell, that would trigger a sign flip flag for that grid cell because the GCM and downscaled scenario comparisons have opposite signs of change and the absolute magnitude of those changes are both greater than the sign_flip threshold of 0.25 degrees.
+# We use a sign_flip threshold to avoid flagging grid cells where scenario comparisons are different signs but essentially zero. As an example, we wouldn't want to flag a grid cell where the raw GCM G6-1.5K-SAI -> SSP245 precipitation change is -0.00001 mm/day and the downscaled G6-1.5K-SAI -> SSP245 change is +0.00001 mm/day, even though they are different signs, because the absolute magnitude of those changes is extremely close to zero.
+
 TREND_VARIABLE_SETTINGS = {
     "tas": {
         "units": "K",
@@ -23,7 +27,7 @@ TREND_VARIABLE_SETTINGS = {
     "tasmin": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.25},
     "pr": {
         "units": "mm/yr",
-        "scale": 31536000.0,
+        "scale": 31536000.0,  # factor to convert from kg/m2/sec to mm/year
         "abs_tol": 10.0,
         "pct_tol": 2.0,
         "sign_flip": 5.0,
