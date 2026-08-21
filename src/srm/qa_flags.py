@@ -21,10 +21,10 @@ TREND_VARIABLE_SETTINGS = {
         "scale": 1.0,
         "abs_tol": 0.25,
         "pct_tol": 0.0,
-        "sign_flip": 0.25,
+        "sign_flip": 0.1,
     },
-    "tasmax": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.25},
-    "tasmin": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.25},
+    "tasmax": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.1},
+    "tasmin": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.1},
     "pr": {
         "units": "mm/yr",
         "scale": 31536000.0,  # factor to convert from kg/m2/sec to mm/year
