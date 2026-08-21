@@ -651,12 +651,13 @@ def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    var: str,
     method: DownscalingMethod = "additive",
     clim_method: DownscalingClimMethod = "simple",
     allow_negative_values: bool = True,
     max_residual: float = 100,
+    tiny_threshold: float = 0.0,
     enforce_conservation: bool = False,
+    use_tiny_threshold: bool = True,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
@@ -715,21 +716,33 @@ def downscale_from_coarse(
     if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
     elif method == "multiplicative":
-        tiny_threshold_dict = {"rsds": 1.0, "pr": 1.0e-6, "hurs": 1.0e-2, "dtr": 0.0}
-        replacement_residual = 1.0
-        # Guard the denominator: where coarse climatology is zero (dry cells/days),
-        # the NCL reference forces the ratio to 0 rather than producing inf/NaN.
-        # Replace exact zeros with NaN so the division yields NaN, then fill those
-        # specific locations with 0 after dividing.
-        tiny_clim = obs_coarse_doy_means <= tiny_threshold_dict[var]
-        safe_clim = obs_coarse_doy_means.where(~tiny_clim)  # less than tiny threshold becomes NaN
+        if use_tiny_threshold:
+            replacement_residual = 1.0
+
+            tiny_clim = obs_coarse_doy_means <= tiny_threshold
+            safe_clim = obs_coarse_doy_means.where(
+                ~tiny_clim
+            )  # less than tiny threshold becomes NaN
+        else:
+            # Guard the denominator: where coarse climatology is zero (dry cells/days),
+            # the NCL reference forces the ratio to 0 rather than producing inf/NaN.
+            # Replace exact zeros with NaN so the division yields NaN, then fill those
+            # specific locations with 0 after dividing.
+            zero_clim = obs_coarse_doy_means == 0
+            safe_clim = obs_coarse_doy_means.where(~zero_clim)  # zeros -> NaN
 
         residuals = da.groupby("time.dayofyear") / safe_clim
 
         # Force ratio to 0 exactly where the coarse climatology was zero.
         # Broadcast the per-DOY zero mask back onto the time axis.
-        tiny_clim_on_time = tiny_clim.sel(dayofyear=da["time"].dt.dayofyear)
-        residuals = residuals.where(~tiny_clim_on_time, replacement_residual).clip(max=max_residual)
+        if use_tiny_threshold:
+            tiny_clim_on_time = tiny_clim.sel(dayofyear=da["time"].dt.dayofyear)
+            residuals = residuals.where(~tiny_clim_on_time, replacement_residual).clip(
+                max=max_residual
+            )
+        else:
+            zero_clim_on_time = zero_clim.sel(dayofyear=da["time"].dt.dayofyear)
+            residuals = residuals.where(~zero_clim_on_time, 0.0).clip(max=max_residual)
 
     assert_no_nans(residuals, name="residuals")
 
@@ -757,19 +770,20 @@ def downscale_from_coarse(
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
     elif method == "multiplicative":
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
-        # find whenever the obs doy means are less than the variable-specific tiny threshold
-        tiny_fine_clim_on_time = (obs_fine_doy_means <= tiny_threshold_dict[var]).sel(
-            dayofyear=residuals_fine["time"].dt.dayofyear
-        )
-        obs_fine_doy_means_simple = calculate_doy_means(
-            obs_fine, clim_method="simple", allow_negative_values=allow_negative_values
-        )
-        obs_fine_doy_means_on_time = obs_fine_doy_means_simple.sel(
-            dayofyear=downscaled["time"].dt.dayofyear
-        )
-        # replace all days of year when the doy mean is tiny (or smaller) with the
-        # mean obs climatology. This will be daily means - so will likely be a drizzle.
-        downscaled = downscaled.where(~tiny_fine_clim_on_time, obs_fine_doy_means_on_time)
+        if use_tiny_threshold:
+            # find whenever the obs doy means are less than the variable-specific tiny threshold
+            tiny_fine_clim_on_time = (obs_fine_doy_means <= tiny_threshold).sel(
+                dayofyear=residuals_fine["time"].dt.dayofyear
+            )
+            obs_fine_doy_means_simple = calculate_doy_means(
+                obs_fine, clim_method="simple", allow_negative_values=allow_negative_values
+            )
+            obs_fine_doy_means_on_time = obs_fine_doy_means_simple.sel(
+                dayofyear=downscaled["time"].dt.dayofyear
+            )
+            # replace all days of year when the doy mean is tiny (or smaller) with the
+            # mean obs climatology. This will be daily means - so will likely be a drizzle.
+            downscaled = downscaled.where(~tiny_fine_clim_on_time, obs_fine_doy_means_on_time)
 
     # Optional Step 6: Enforce conservation of the coarse-scale mean after downscaling
     if enforce_conservation:

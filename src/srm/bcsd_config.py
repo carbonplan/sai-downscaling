@@ -39,6 +39,7 @@ class VariableConfig(BaseModel):
     downscaling_clim_method: DownscalingClimMethod
     detrend_method: DetrendMethod = "additive"
     debias_approach: DebiasApproach = "nonparametric_hybrid_2sided"
+    downscaling_tiny_threshold: float = 0.0
 
     @classmethod
     def for_variable(cls, variable: str) -> VariableConfig:
@@ -55,6 +56,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "downscaling_tiny_threshold": 1.0e-6,  # kg m-2 s-1, ~0.086 mm/day
             },
             "tas": {
                 "detrend_data": True,
@@ -83,6 +85,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "downscaling_tiny_threshold": 1.0,  # W m-2
             },
             "dtr": {
                 "detrend_data": False,
@@ -90,6 +93,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "downscaling_tiny_threshold": 0.0,  # exact-zero guard only
             },
             "hurs": {
                 "detrend_data": False,
@@ -97,6 +101,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "downscaling_method": "multiplicative",
                 "downscaling_clim_method": "fft",
+                "downscaling_tiny_threshold": 1.0e-2,  # percent, see note below
             },
         }
 
