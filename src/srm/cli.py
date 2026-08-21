@@ -483,13 +483,6 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
                 "value would be silently discarded. Fold 'debias_approach' into "
                 "'variable_config', or drop 'variable_config' and use the top-level key alone."
             )
-        if "downscaling_method" in d:
-            raise ValueError(
-                "Cannot combine 'variable_config' with a top-level 'downscaling_method'. An "
-                "explicit 'variable_config' is passed through verbatim, so the method would "
-                "still be recorded in the config hash and store metadata while the run used "
-                "the supplied settings instead. Drop one of the two."
-            )
 
     configs = []
     for gcm, variable, member, scenario in itertools.product(

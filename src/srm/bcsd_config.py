@@ -399,6 +399,28 @@ class BCSDConfig(pydantic_settings.BaseSettings):
                 data["variable_config"] = VariableConfig.for_variable(variable, method)
         return data
 
+    @model_validator(mode="after")
+    def _check_method_matches_debias_approach(self):
+        """Reject a debias_approach that contradicts the declared downscaling_method.
+
+        The two are set independently: ``downscaling_method`` picks the defaults table,
+        but ``debias_approach`` can still be overridden run-wide or per variable. A
+        mismatch is silently wrong rather than loud, because the rest of the row still
+        comes from the other table. ``BCSD`` with ``qdm`` would detrend and retrend
+        around a method that carries the trend itself, and ``QDMSD`` without ``qdm``
+        would not be quantile delta mapping at all.
+        """
+        is_qdm = self.variable_config.debias_approach == "qdm"
+        if is_qdm != (self.downscaling_method == "QDMSD"):
+            raise ValueError(
+                f"downscaling_method={self.downscaling_method!r} is incompatible with "
+                f"debias_approach={self.variable_config.debias_approach!r}. "
+                "'qdm' requires downscaling_method='QDMSD', and 'QDMSD' requires "
+                "debias_approach='qdm'. Set both consistently, or drop the "
+                "debias_approach override and let the method's table supply it."
+            )
+        return self
+
     @field_validator("predict_period_start", "predict_period_end")
     @classmethod
     def validate_scenario_periods(cls, v, info):
