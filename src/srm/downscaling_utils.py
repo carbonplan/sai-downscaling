@@ -758,7 +758,7 @@ def downscale_from_coarse(
     elif method == "multiplicative":
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
         # find whenever the obs doy means are less than the variable-specific tiny threshold
-        tiny_fine_clim_on_time = (obs_fine_doy_means < tiny_threshold_dict[var]).sel(
+        tiny_fine_clim_on_time = (obs_fine_doy_means <= tiny_threshold_dict[var]).sel(
             dayofyear=residuals_fine["time"].dt.dayofyear
         )
         obs_fine_doy_means_simple = calculate_doy_means(
