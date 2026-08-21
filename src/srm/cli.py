@@ -24,7 +24,7 @@ from rich.logging import RichHandler
 from rich.table import Table
 from rich.tree import Tree
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
+from srm.bcsd_config import BCSDConfig, DownscalingMethod, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
 from srm.validation import CheckResult, CheckStatus
@@ -348,6 +348,7 @@ def _validate_variable_overrides(overrides: dict, variables: list[str]) -> None:
 
 def _resolve_variable_config(
     variable: str,
+    downscaling_method: DownscalingMethod,
     run_wide: dict | None = None,
     overrides: dict[str, dict] | None = None,
 ) -> VariableConfig:
@@ -360,14 +361,16 @@ def _resolve_variable_config(
     rather than ``model_copy(update=...)`` because ``model_copy`` does not validate,
     which previously let bad values through to the pipeline.
 
-    ``debias_approach`` is resolved first (from an override, then run-wide, then the
-    default) and used to pick the per-variable table itself, since it determines
-    things like whether the variable is detrended before quantile mapping.
+    ``downscaling_method`` selects which defaults table the first tier comes from,
+    since BCSD and QDMSD disagree on more than one field (detrending, window length,
+    window step, and debias_approach all differ).
 
     Parameters
     ----------
     variable : str
         Variable name, used to look up the table defaults.
+    downscaling_method : DownscalingMethod
+        Which defaults table to start from, ``"BCSD"`` or ``"QDMSD"``.
     run_wide : dict or None
         Values applied to every variable in the run.
     overrides : dict[str, dict] or None
@@ -380,12 +383,7 @@ def _resolve_variable_config(
     """
     run_wide = run_wide or {}
     var_overrides = (overrides or {}).get(variable, {})
-    debias_approach = (
-        var_overrides.get("debias_approach")
-        or run_wide.get("debias_approach")
-        or "nonparametric_hybrid_2sided"
-    )
-    merged = VariableConfig.for_variable(variable, debias_approach=debias_approach).model_dump()
+    merged = VariableConfig.for_variable(variable, downscaling_method).model_dump()
     for source in (run_wide, var_overrides):
         merged.update({k: v for k, v in source.items() if v is not None})
     return VariableConfig(**merged)
@@ -458,6 +456,12 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
     run_wide_debias_approach = d.pop("debias_approach", None)
     run_wide = {"debias_approach": run_wide_debias_approach} if run_wide_debias_approach else {}
 
+    # 'downscaling_method' is a real BCSDConfig field, so unlike the key above it stays
+    # in `d` and reaches the constructor. It is read rather than popped because it is
+    # needed in both places: on the config for identity and metadata, and here to pick
+    # which per-variable defaults table _resolve_variable_config starts from.
+    downscaling_method = d.get("downscaling_method")
+
     if "variable_config" in d:
         if len(axes["variable"]) > 1:
             raise ValueError(
@@ -479,14 +483,25 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
                 "value would be silently discarded. Fold 'debias_approach' into "
                 "'variable_config', or drop 'variable_config' and use the top-level key alone."
             )
+        if "downscaling_method" in d:
+            raise ValueError(
+                "Cannot combine 'variable_config' with a top-level 'downscaling_method'. An "
+                "explicit 'variable_config' is passed through verbatim, so the method would "
+                "still be recorded in the config hash and store metadata while the run used "
+                "the supplied settings instead. Drop one of the two."
+            )
 
     configs = []
     for gcm, variable, member, scenario in itertools.product(
         axes["gcm"], axes["variable"], axes["ensemble_member"], axes["scenario"]
     ):
         kwargs = dict(d)
-        if "variable_config" not in kwargs:
-            kwargs["variable_config"] = _resolve_variable_config(variable, run_wide, overrides)
+        # When the key is missing, leave variable_config unset so BCSDConfig raises the
+        # single "downscaling_method is required" error rather than a table lookup failure.
+        if "variable_config" not in kwargs and downscaling_method is not None:
+            kwargs["variable_config"] = _resolve_variable_config(
+                variable, downscaling_method, run_wide, overrides
+            )
         configs.append(
             BCSDConfig(
                 gcm=gcm,
@@ -566,14 +581,16 @@ def configs_from_matrix(
     branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
+    downscaling_method: DownscalingMethod,
     debias_approach: str | None = None,
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
     do_windowing: bool | None = None,
     running_window_length: int | None = None,
-    downscaling_method: str | None = None,
-    downscaling_clim_method: str | None = None,
+    running_window_step_length: int | None = None,
+    disaggregation_method: str | None = None,
+    disaggregation_clim_method: str | None = None,
     detrend_method: str | None = None,
     variable_overrides: dict[str, dict] | None = None,
 ) -> tuple[list[BCSDConfig], PipelineOptions]:
@@ -611,6 +628,10 @@ def configs_from_matrix(
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
+    downscaling_method : DownscalingMethod
+        Downscaling method for every config: "BCSD" (detrend + quantile mapping) or
+        "QDMSD" (quantile delta mapping). Selects the per-variable defaults table.
+        Required, with no default.
     debias_approach : str | None
         Override VariableConfig.debias_approach for every variable (parametric,
         nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided, qdm). None
@@ -623,10 +644,12 @@ def configs_from_matrix(
         Override VariableConfig.do_windowing
     running_window_length : int | None
         Override VariableConfig.running_window_length
-    downscaling_method : str | None
-        Override VariableConfig.downscaling_method (additive, multiplicative)
-    downscaling_clim_method : str | None
-        Override VariableConfig.downscaling_clim_method (simple, fft)
+    running_window_step_length : int | None
+        Override VariableConfig.running_window_step_length
+    disaggregation_method : str | None
+        Override VariableConfig.disaggregation_method (additive, multiplicative)
+    disaggregation_clim_method : str | None
+        Override VariableConfig.disaggregation_clim_method (simple, fft)
     detrend_method : str | None
         Override VariableConfig.detrend_method (additive, multiplicative)
     variable_overrides : dict[str, dict] | None
@@ -656,8 +679,9 @@ def configs_from_matrix(
         "detrend_data": detrend_data,
         "do_windowing": do_windowing,
         "running_window_length": running_window_length,
-        "downscaling_method": downscaling_method,
-        "downscaling_clim_method": downscaling_clim_method,
+        "running_window_step_length": running_window_step_length,
+        "disaggregation_method": disaggregation_method,
+        "disaggregation_clim_method": disaggregation_clim_method,
         "detrend_method": detrend_method,
     }
 
@@ -674,7 +698,10 @@ def configs_from_matrix(
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
                 subset_bounds=subset_bounds,
-                variable_config=_resolve_variable_config(variable, run_wide, variable_overrides),
+                downscaling_method=downscaling_method,
+                variable_config=_resolve_variable_config(
+                    variable, downscaling_method, run_wide, variable_overrides
+                ),
             )
         )
     return configs, options
@@ -909,6 +936,15 @@ def run_matrix(
         "--save-intermediate",
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
+    downscaling_method: str = typer.Option(
+        ...,
+        "--downscaling-method",
+        help=(
+            "Downscaling method for every config: BCSD (detrend + quantile mapping) or "
+            "QDMSD (quantile delta mapping). Selects the per-variable defaults table. "
+            "Required."
+        ),
+    ),
     debias_approach: str | None = typer.Option(
         None,
         "--debias-approach",
@@ -930,13 +966,20 @@ def run_matrix(
     running_window_length: int | None = typer.Option(
         None, "--running-window-length", help="Override running_window_length for all variables"
     ),
-    downscaling_method: str | None = typer.Option(
-        None, "--downscaling-method", help="Override downscaling_method (additive, multiplicative)"
-    ),
-    downscaling_clim_method: str | None = typer.Option(
+    running_window_step_length: int | None = typer.Option(
         None,
-        "--downscaling-clim-method",
-        help="Override downscaling_clim_method (simple, fft)",
+        "--running-window-step-length",
+        help="Override running_window_step_length for all variables",
+    ),
+    disaggregation_method: str | None = typer.Option(
+        None,
+        "--disaggregation-method",
+        help="Override disaggregation_method (additive, multiplicative)",
+    ),
+    disaggregation_clim_method: str | None = typer.Option(
+        None,
+        "--disaggregation-clim-method",
+        help="Override disaggregation_clim_method (simple, fft)",
     ),
     detrend_method: str | None = typer.Option(
         None, "--detrend-method", help="Override detrend_method (additive, multiplicative)"
@@ -1025,13 +1068,15 @@ def run_matrix(
             branch=branch,
             subset_bounds=parsed_bounds,
             save_intermediate=save_intermediate,
+            downscaling_method=downscaling_method,
             debias_approach=debias_approach,
             verbose=verbose,
             detrend_data=detrend_data,
             do_windowing=do_windowing,
             running_window_length=running_window_length,
-            downscaling_method=downscaling_method,
-            downscaling_clim_method=downscaling_clim_method,
+            running_window_step_length=running_window_step_length,
+            disaggregation_method=disaggregation_method,
+            disaggregation_clim_method=disaggregation_clim_method,
             detrend_method=detrend_method,
             variable_overrides=parsed_overrides,
         )

@@ -427,7 +427,10 @@ class BCSDPipeline:
             "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
             "srm_downscaling:observation_dataset": self.config.obs_dataset,
             "srm_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
-            "srm_downscaling:downscaling_method": self.config.variable_config.downscaling_method,
+            "srm_downscaling:downscaling_method": self.config.downscaling_method,
+            "srm_downscaling:disaggregation_method": (
+                self.config.variable_config.disaggregation_method
+            ),
             "srm_downscaling:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
             ),
@@ -808,10 +811,10 @@ class BCSDPipeline:
         # Note: this means that _apply_bias_correction_scenario and _apply_bias_correction
         # will not give the same answer for the QDM pathway. That is intentional: the
         # 31-year running mean operating on the historical timeseries would mean that the
-        # CDFs were only ever full at the center of the historical period, and toward the 
-        # beginning/end of the historical period the CDFs would only have ~15 years of data, 
-        # breaking our clean ability to use non-parametric quantile mapping. Further, the 
-        # "delta" part doesn't make sense for the historical and, given the rolling behavior, 
+        # CDFs were only ever full at the center of the historical period, and toward the
+        # beginning/end of the historical period the CDFs would only have ~15 years of data,
+        # breaking our clean ability to use non-parametric quantile mapping. Further, the
+        # "delta" part doesn't make sense for the historical and, given the rolling behavior,
         # would instead introduce artifacts.
         running_window_length = self.config.variable_config.running_window_length
         running_window_step_length = self.config.variable_config.running_window_step_length
@@ -834,7 +837,7 @@ class BCSDPipeline:
         obs_np = obs_coarse.values
         cm_hist_np = model_hist.values
 
-        print(f"[_apply_bias_correction] {debiaser}")
+        logger.debug("[_apply_bias_correction] %s", debiaser)
         debiased_np = debiaser.apply(
             obs=obs_np,
             cm_hist=cm_hist_np,
@@ -873,8 +876,8 @@ class BCSDPipeline:
             da=debiased,
             obs_coarse=obs_coarse.as_numpy(),
             obs_fine=obs_fine.as_numpy(),
-            method=self.config.variable_config.downscaling_method,
-            clim_method=self.config.variable_config.downscaling_clim_method,
+            method=self.config.variable_config.disaggregation_method,
+            clim_method=self.config.variable_config.disaggregation_clim_method,
             allow_negative_values=False,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
@@ -1498,16 +1501,16 @@ class BCSDPipeline:
 
         if debias_approach in ["parametric", "nonparametric"]:
             debiaser = _make_debiaser(mapping_type=debias_approach, **common_kwargs)
-            print(f"[_apply_bias_correction_scenario] {debiaser}")
+            logger.debug("[_apply_bias_correction_scenario] %s", debiaser)
             debiased_np = debiaser.apply(**apply_kwargs)
 
         elif debias_approach == "nonparametric_hybrid":
             parametric_debiaser = _make_debiaser(mapping_type="parametric", **common_kwargs)
-            print(f"[_apply_bias_correction_scenario] {parametric_debiaser}")
+            logger.debug("[_apply_bias_correction_scenario] %s", parametric_debiaser)
             parametric_np = parametric_debiaser.apply(**apply_kwargs)
 
             nonparametric_debiaser = _make_debiaser(mapping_type="nonparametric", **common_kwargs)
-            print(f"[_apply_bias_correction_scenario] {nonparametric_debiaser}")
+            logger.debug("[_apply_bias_correction_scenario] %s", nonparametric_debiaser)
             nonparametric_np = nonparametric_debiaser.apply(**apply_kwargs)
 
             out_of_range, _, _ = calculate_out_of_range_mask(
@@ -1529,24 +1532,24 @@ class BCSDPipeline:
                 parametric_low_debiaser = _make_debiaser(
                     distribution=low_dist, mapping_type="parametric", **common_kwargs
                 )
-                print(f"[_apply_bias_correction_scenario] {parametric_low_debiaser}")
+                logger.debug("[_apply_bias_correction_scenario] %s", parametric_low_debiaser)
                 parametric_low_np = parametric_low_debiaser.apply(**apply_kwargs)
 
                 parametric_high_debiaser = _make_debiaser(
                     distribution=high_dist, mapping_type="parametric", **common_kwargs
                 )
-                print(f"[_apply_bias_correction_scenario] {parametric_high_debiaser}")
+                logger.debug("[_apply_bias_correction_scenario] %s", parametric_high_debiaser)
                 parametric_high_np = parametric_high_debiaser.apply(**apply_kwargs)
             else:
                 # Unless explicitly specified, use the same parametric debiaser for both tails even if calling "nonparametric_hybrid_2sided"
                 parametric_low_debiaser = _make_debiaser(mapping_type="parametric", **common_kwargs)
-                print(f"[_apply_bias_correction_scenario] {parametric_low_debiaser}")
+                logger.debug("[_apply_bias_correction_scenario] %s", parametric_low_debiaser)
                 parametric_low_np = parametric_low_debiaser.apply(**apply_kwargs)
 
                 parametric_high_np = parametric_low_np
 
             nonparametric_debiaser = _make_debiaser(mapping_type="nonparametric", **common_kwargs)
-            print(f"[_apply_bias_correction_scenario] {nonparametric_debiaser}")
+            logger.debug("[_apply_bias_correction_scenario] %s", nonparametric_debiaser)
             nonparametric_np = nonparametric_debiaser.apply(**apply_kwargs)
 
             _, out_of_range_low, out_of_range_high = calculate_out_of_range_mask(
@@ -1600,7 +1603,7 @@ class BCSDPipeline:
                 "cm_future": padded_future.values,
                 "time_cm_future": padded_future["time"].values,
             }
-            print(f"[_apply_bias_correction_scenario] {debiaser}")
+            logger.debug("[_apply_bias_correction_scenario] %s", debiaser)
             debiased_padded_np = debiaser.apply(**qdm_apply_kwargs)
             # remove the padding and take only the part of debiased_padded_np that is from the scenario you're running
             debiased_np = debiased_padded_np[scenario_pad.sizes["time"] :]
