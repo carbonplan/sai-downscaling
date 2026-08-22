@@ -33,7 +33,7 @@ graph TB
         S2D[Apply spatial subset if specified]
         S2E[Time subset to training period<br/>1978-2014]
         S2F[Quantile mapping bias correction<br/>GCM historical → observations]
-        S2FC[Write debiased_coarse/historical<br/>to output store]
+        S2FC[Write method/debiased_coarse/historical<br/>to output store]
         S2G[Spatial disaggregation<br/>coarse → fine resolution]
         S2H[Output: historical<br/>Deliverable + scenario gate]
         
@@ -62,7 +62,7 @@ graph TB
         
         S3N{Re-trend needed?}
         S3O[Add saved trend back]
-        S3OC[Write debiased_coarse/scenario<br/>to output store]
+        S3OC[Write method/debiased_coarse/scenario<br/>to output store]
         
         S3P[Spatial disaggregation<br/>coarse → fine resolution]
         S3Q[Add variable name and metadata]

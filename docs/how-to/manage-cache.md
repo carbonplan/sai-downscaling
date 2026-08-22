@@ -36,10 +36,15 @@ Within each store the zarr groups are:
 | Store | Group pattern | Stage | Always written |
 |-------|---------------|-------|----------------|
 | scratch | `obs/{variable}` | Stage 1 | yes |
-| output | `historical/{variable}/{hist_member}` | Stage 2 | yes |
-| output | `{scenario_group}/{variable}/{member}` | Stage 3 | yes |
-| output | `debiased_coarse/historical/{variable}/{hist_member}` | Stage 2 | yes |
-| output | `debiased_coarse/{scenario_group}/{variable}/{member}` | Stage 3 | yes |
+| output | `{method}/historical/{variable}/{hist_member}` | Stage 2 | yes |
+| output | `{method}/{scenario_group}/{variable}/{member}` | Stage 3 | yes |
+| output | `{method}/debiased_coarse/historical/{variable}/{hist_member}` | Stage 2 | yes |
+| output | `{method}/debiased_coarse/{scenario_group}/{variable}/{member}` | Stage 3 | yes |
+
+`{method}` is `bcsd` or `qdmsd`, the lowercase `downscaling_method`. Every group above except
+`obs/{variable}` is namespaced under it, so both methods can write to the same store and share
+one observation regrid. Stores written before this change have no such segment; their groups
+begin directly with `historical/`, the scenario group, or `debiased_coarse/`.
 
 These five are the primary artifacts — written unconditionally on every run. The `debiased_coarse`
 groups expose the GCM data after bias correction but before spatial disaggregation, at the native
@@ -55,9 +60,9 @@ debugging detrending behavior without re-running the full stage.
 
 | Group pattern | Written by | Contents |
 |---------------|------------|----------|
-| `detrended_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | Scenario data after detrending (9-year running mean removed) |
-| `trend_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | The trend signal extracted during detrending (added back after bias correction) |
-| `debiased_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | Scenario after bias correction, before re-trending |
+| `{method}/detrended_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | Scenario data after detrending (9-year running mean removed) |
+| `{method}/trend_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | The trend signal extracted during detrending (added back after bias correction) |
+| `{method}/debiased_scenario/{scenario_group}/{variable}/{member}` | `transform_scenario` | Scenario after bias correction, before re-trending |
 
 **Which intermediates are written per variable** (all require `save_intermediate: true`):
 
@@ -83,8 +88,8 @@ store (written unconditionally by the `dtr` and `tasmax` stages):
 
 | Stage | Reads from output store |
 |-------|-------------------------|
-| `fit_historical_tasmin` | `debiased_coarse/historical/dtr/{hist_member}`, `debiased_coarse/historical/tasmax/{hist_member}` |
-| `transform_scenario_tasmin` | `debiased_coarse/{group}/dtr/{member}`, `debiased_coarse/{group}/tasmax/{member}` |
+| `fit_historical_tasmin` | `{method}/debiased_coarse/historical/dtr/{hist_member}`, `{method}/debiased_coarse/historical/tasmax/{hist_member}` |
+| `transform_scenario_tasmin` | `{method}/debiased_coarse/{group}/dtr/{member}`, `{method}/debiased_coarse/{group}/tasmax/{member}` |
 
 Run `dtr` and `tasmax` before `tasmin` — no `save_intermediate` flag required:
 
@@ -210,6 +215,11 @@ for store_path, group_list in intermediates.items():
     for g in group_list:
         print(f"  {g}")
 ```
+
+`list_intermediate_groups` classifies each group by stripping its leading `{method}` segment
+before matching against the intermediate-prefix list. It recognizes both the namespaced
+(`{method}/detrended_scenario/...`) and pre-namespace (`detrended_scenario/...`) forms, so the
+summary above works unchanged against branches written before and after this change.
 
 ## See Also
 
