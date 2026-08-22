@@ -735,7 +735,7 @@ def downscale_from_coarse(
         if use_tiny_threshold:
             replacement_residual = 1.0
 
-            tiny_clim = obs_coarse_doy_means < tiny_threshold
+            tiny_clim = obs_coarse_doy_means <= tiny_threshold
             safe_clim = obs_coarse_doy_means.where(
                 ~tiny_clim
             )  # less than tiny threshold becomes NaN
