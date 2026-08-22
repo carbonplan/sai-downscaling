@@ -418,6 +418,85 @@ class TestExpandMatrixConfigOverrides:
             )
 
 
+class TestExpandMatrixConfigRunWideDebiasApproach:
+    """A top-level ``debias_approach`` in a matrix config applies to the whole run.
+
+    ``debias_approach`` is a ``VariableConfig`` field, so ``BCSDConfig`` rejects it at the
+    top level. ``_expand_matrix_config`` pops it first and feeds it to
+    ``_resolve_variable_config`` as the run-wide tier, which is how a whole run is switched
+    between standard quantile mapping and quantile delta mapping. ``TestResolveVariableConfig``
+    covers that resolver directly; these drive the matrix expansion that supplies it.
+    """
+
+    @staticmethod
+    def _matrix(**extra):
+        base = {
+            "gcm": "CESM2-WACCM",
+            "downscaling_method": "BCSD",
+            "variables": ["tasmax", "dtr"],
+            "ensemble_member": "007",
+            "scenario": "ssp245",
+            "predict_period_start": 2015,
+            "predict_period_end": 2100,
+        }
+        base.update(extra)
+        return base
+
+    def test_top_level_debias_approach_applies_to_every_variable(self):
+        configs = _expand_matrix_config(self._matrix(debias_approach="parametric"))
+        by_var = {c.variable: c.variable_config.debias_approach for c in configs}
+        assert by_var == {"tasmax": "parametric", "dtr": "parametric"}
+
+    def test_top_level_debias_approach_leaves_other_fields_on_the_table_default(self):
+        """Only the one field moves: the rest of the row still comes from the table."""
+        configs = _expand_matrix_config(self._matrix(debias_approach="parametric"))
+        dtr = next(c for c in configs if c.variable == "dtr")
+        table = VariableConfig.for_variable("dtr", "BCSD")
+        assert dtr.variable_config.model_dump() == table.model_dump() | {
+            "debias_approach": "parametric"
+        }
+
+    def test_variable_override_beats_top_level(self):
+        configs = _expand_matrix_config(
+            self._matrix(
+                debias_approach="parametric",
+                variable_overrides={"dtr": {"debias_approach": "nonparametric"}},
+            )
+        )
+        by_var = {c.variable: c.variable_config.debias_approach for c in configs}
+        assert by_var == {"tasmax": "parametric", "dtr": "nonparametric"}
+
+    def test_variable_config_combined_with_top_level_debias_approach_raises(self):
+        """An explicit variable_config is used verbatim, so the top-level key would vanish."""
+        with pytest.raises(ValueError, match="Cannot combine 'variable_config' with a top-level"):
+            _expand_matrix_config(
+                self._matrix(
+                    variables=["tas"],
+                    debias_approach="parametric",
+                    variable_config=VariableConfig.for_variable("tas", "BCSD").model_dump(),
+                )
+            )
+
+    def test_top_level_qdm_without_qdmsd_raises(self):
+        """The cross-field invariant fires through matrix expansion, not just direct construction."""
+        with pytest.raises(ValidationError, match="incompatible"):
+            _expand_matrix_config(self._matrix(debias_approach="qdm"))
+
+    def test_top_level_qdm_with_qdmsd_expands(self):
+        configs = _expand_matrix_config(
+            self._matrix(downscaling_method="QDMSD", debias_approach="qdm")
+        )
+        assert {c.variable_config.debias_approach for c in configs} == {"qdm"}
+        assert {c.downscaling_method for c in configs} == {"QDMSD"}
+
+    def test_qdmsd_with_a_non_qdm_top_level_debias_approach_raises(self):
+        """The invariant is symmetric: QDMSD overridden away from qdm is rejected too."""
+        with pytest.raises(ValidationError, match="incompatible"):
+            _expand_matrix_config(
+                self._matrix(downscaling_method="QDMSD", debias_approach="nonparametric")
+            )
+
+
 class TestParseVariableOverrides:
     def test_single_override(self):
         assert _parse_variable_overrides(["dtr:debias_approach=nonparametric"]) == {
