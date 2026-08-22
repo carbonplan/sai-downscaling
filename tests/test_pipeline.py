@@ -2271,3 +2271,63 @@ class TestScenarioHistoricalSlice:
         np.testing.assert_array_equal(
             scenario_hist["time"].values, historical_stage_hist["time"].values
         )
+
+
+class TestObservationAttrs:
+    """Regridded obs is shared, so its provenance must not record run-specific values."""
+
+    _RUN_SPECIFIC = (
+        "srm_downscaling:downscaling_method",
+        "srm_downscaling:bias_correction_method",
+        "srm_downscaling:disaggregation_method",
+        "srm_downscaling:config_json",
+        "srm_downscaling:config_hash",
+        "srm_downscaling:scenario",
+        "srm_downscaling:ensemble_member",
+        "srm_downscaling:historical_ensemble_member",
+        "srm_downscaling:ssp245_ensemble_member",
+        "srm_downscaling:train_period",
+    )
+
+    @staticmethod
+    def _pipeline(method: str, member: str, scenario: str):
+        return BCSDPipeline(
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                downscaling_method=method,
+                variable="tas",
+                ensemble_member=member,
+                scenario=scenario,
+                predict_period_start=2015,
+                predict_period_end=2100,
+            ),
+            PipelineOptions(),
+        )
+
+    def test_obs_attrs_omit_run_specific_provenance(self, subtests):
+        attrs = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_obs_attrs()
+        for key in self._RUN_SPECIFIC:
+            with subtests.test(attr=key):
+                assert key not in attrs
+
+    def test_obs_attrs_keep_what_the_artifact_is_keyed_on(self):
+        attrs = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_obs_attrs()
+        assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM"
+        assert attrs["srm_downscaling:variable"] == "tas"
+        assert "srm_downscaling:observation_dataset" in attrs
+        assert "srm_downscaling:version" in attrs
+        assert "srm_downscaling:creation_date" in attrs
+
+    def test_obs_attrs_match_across_methods_and_members(self):
+        """Two runs that share the obs artifact must write identical obs provenance."""
+        a = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_obs_attrs()
+        b = self._pipeline("QDMSD", "r2i1p1f1", "G6-1.5K")._build_obs_attrs()
+        volatile = {"history", "srm_downscaling:creation_date"}
+        assert {k: v for k, v in a.items() if k not in volatile} == {
+            k: v for k, v in b.items() if k not in volatile
+        }
+
+    def test_output_attrs_still_carry_the_method(self):
+        """The invariant: a method attr means the group depends on the method."""
+        attrs = self._pipeline("QDMSD", "r1i1p1f1", "SSP245")._build_output_attrs()
+        assert attrs["srm_downscaling:downscaling_method"] == "QDMSD"

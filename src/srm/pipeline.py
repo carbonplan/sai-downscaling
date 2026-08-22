@@ -445,6 +445,43 @@ class BCSDPipeline:
             attrs["srm_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
         return attrs
 
+    def _build_obs_attrs(self) -> dict:
+        """Build dataset-level attributes for the regridded observation artifact.
+
+        Regridded observations are keyed on ``(gcm, obs_dataset, subset, variable)``
+        and are shared across every ensemble member, scenario, and downscaling method
+        for that combination. They are also independent of ``VariableConfig`` and of
+        both time periods.
+
+        The full :meth:`_build_output_attrs` set is therefore wrong here: it records a
+        method, a scenario, a member, a train period, and a config hash, each fixed to
+        whatever run happened to write the artifact first. Only the fields the artifact
+        is actually keyed on are recorded, which makes the presence of
+        ``srm_downscaling:downscaling_method`` a reliable signal that a group depends
+        on the method.
+
+        Returns
+        -------
+        dict
+            Dataset-level attributes for the ``obs/{variable}`` group.
+        """
+        version = importlib.metadata.version("srm")
+        return {
+            # CF-standard — flat
+            "Conventions": "CF-1.8",
+            "institution": "CarbonPlan",
+            "history": (
+                f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}: "
+                f"observations regridded to the model grid by srm v{version}"
+            ),
+            # Pipeline provenance — namespaced. Only what this artifact is keyed on.
+            "srm_downscaling:version": version,
+            "srm_downscaling:gcm": self.config.gcm,
+            "srm_downscaling:variable": self.config.variable,
+            "srm_downscaling:observation_dataset": self.config.obs_dataset,
+            "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        }
+
     def _write_to_icechunk(
         self,
         da: xr.DataArray,
@@ -745,9 +782,7 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         obs_coarse.name = self.config.variable
-        self._write_to_icechunk(
-            obs_coarse, loc, dataset_attrs=self._build_output_attrs(), force=force
-        )
+        self._write_to_icechunk(obs_coarse, loc, dataset_attrs=self._build_obs_attrs(), force=force)
         logger.info(
             "✓ Cached observations: %s/%s (%.2fs)",
             loc.store_path,
