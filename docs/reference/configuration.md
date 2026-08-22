@@ -253,7 +253,11 @@ Every config must set a top-level `downscaling_method`. There is deliberately no
 downscaling_method: "BCSD"
 ```
 
-The key selects which per-variable defaults table `VariableConfig.for_variable` reads. It is recorded in the store metadata as `srm_downscaling:downscaling_method`, and because the resolved `variable_config` differs between the two tables, BCSD and QDMSD runs get distinct `config_hash` values and distinct cache entries.
+The key selects which per-variable defaults table `VariableConfig.for_variable` reads. It
+is recorded in the store metadata as `srm_downscaling:downscaling_method`, and it also
+namespaces the store layout: every group except the shared `obs/{variable}` lives under a
+`bcsd/` or `qdmsd/` segment. Both methods can therefore write to one store and share a
+single observation regrid.
 
 ## Validation Examples
 

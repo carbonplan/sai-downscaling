@@ -36,18 +36,26 @@ s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production
 Within each store, data is organized in zarr groups:
 
 ```text
-historical/{variable}/{hist_member}
-{scenario_group}/{variable}/{ensemble_member}
-debiased_coarse/historical/{variable}/{hist_member}
-debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
+{method}/historical/{variable}/{hist_member}
+{method}/{scenario_group}/{variable}/{ensemble_member}
+{method}/debiased_coarse/historical/{variable}/{hist_member}
+{method}/debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 ```
 
 | Component | Values | Example |
 | --- | --- | --- |
+| `method` | `bcsd`, `qdmsd` | `bcsd` |
 | `scenario_group` | `ssp245`, `g6_1p5k`, `esgf_ssp245` | `ssp245` |
 | `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `dtr`, `hurs` | `tas` |
 | `ensemble_member` | e.g. `003`, `008`, `r3i1p1f1` | `003` |
 | `hist_member` | resolved historical parent member | `r3i1p1f1` |
+
+The `{method}` segment names the downscaling method that produced the group. Releases up
+to and including `v0.12.0` predate it and have no such segment, so a group path there
+begins directly with `historical/`, the scenario group, or `debiased_coarse/`. The code
+examples below read `v0.12.0` and use that older layout. Regridded observations live in
+the scratch store at `obs/{variable}` with no method segment, because a single regrid is
+shared by both methods.
 
 Which variables and members are actually present depends on the release, and members differ between
 variables within a single release. See [What the current release
@@ -199,6 +207,12 @@ accessed.
 | `srm_downscaling:train_period` | Training period as `"{start}-{end}"` |
 | `srm_downscaling:creation_date` | UTC date the artifact was written |
 
+Regridded observations carry a reduced set. That artifact is shared across every ensemble
+member, scenario, and downscaling method for a given GCM, so it records only `version`,
+`gcm`, `variable`, `observation_dataset`, and `creation_date`. The presence of
+`srm_downscaling:downscaling_method` on a group therefore means that group depends on the
+downscaling method.
+
 ### Comparing a YAML config to a stored dataset
 
 `srm_downscaling:config_json` lets you round-trip a YAML config file directly against the attrs
@@ -229,10 +243,12 @@ Use `model_dump()` equality when you need an exact match across all fields.
 
 ## Accessing debiased coarse data
 
-The `debiased_coarse` groups use the same store and branch as the fine-res outputs but live under
-a `debiased_coarse/` prefix. Historical coarse data is stored under
-`debiased_coarse/historical/{variable}/{hist_member}`; scenario coarse data under
-`debiased_coarse/{scenario_group}/{variable}/{ensemble_member}`.
+The `debiased_coarse` groups use the same store and branch as the fine-res outputs but live
+under a `debiased_coarse/` prefix, nested inside the method segment. Historical coarse data
+is stored under `{method}/debiased_coarse/historical/{variable}/{hist_member}`; scenario
+coarse data under `{method}/debiased_coarse/{scenario_group}/{variable}/{ensemble_member}`.
+On `v0.12.0` and earlier, both paths omit the leading `{method}/`, which is why the example
+below opens `debiased_coarse/historical/tas/r3i1p1f1`.
 
 ```{code-cell} python
 

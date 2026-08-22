@@ -125,23 +125,24 @@ zarr group paths on a named branch (defaulting to the installed package version)
 # Scratch store — obs regridded + optional intermediates
 s3://carbonplan-srm/scratch/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3        ← installed package version (BCSD_BRANCH to override)
-    obs/{variable}
-    detrended_scenario/{scenario_group}/{variable}/{ensemble_member}  # only if save_intermediate=True
-    trend_scenario/{scenario_group}/{variable}/{ensemble_member}      # only if save_intermediate=True
-    debiased_scenario/{scenario_group}/{variable}/{ensemble_member}   # only if save_intermediate=True
+    obs/{variable}                                                   # shared by both methods
+    {method}/detrended_scenario/{scenario_group}/{variable}/{ensemble_member}  # only if save_intermediate=True
+    {method}/trend_scenario/{scenario_group}/{variable}/{ensemble_member}      # only if save_intermediate=True
+    {method}/debiased_scenario/{scenario_group}/{variable}/{ensemble_member}   # only if save_intermediate=True
 
 # Output store — fine-res historical + scenario results + debiased coarse data
 s3://carbonplan-srm/scratch/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
-    historical/{variable}/{hist_member}
-    {scenario_group}/{variable}/{ensemble_member}
-    debiased_coarse/historical/{variable}/{hist_member}
-    debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
+    {method}/historical/{variable}/{hist_member}
+    {method}/{scenario_group}/{variable}/{ensemble_member}
+    {method}/debiased_coarse/historical/{variable}/{hist_member}
+    {method}/debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 ```
 
 Where:
 
 - `{environment}`: `qa` or `production`
+- `{method}`: `bcsd` or `qdmsd`, the lowercase `downscaling_method`. Stage 1 output is method-independent so `obs/` sits outside it, which lets both methods share a single regrid. Stages 2 and 3 differ between methods, so their artifacts are namespaced.
 - `{obs_dataset}`: `ERA5` or `GDEX-GMF`
 - `{subset_id}`: `global` or `lat{min}to{max}_lon{min}to{max}` (e.g., `lat-35.0to-22.0_lon16.0to33.0`)
 - `{scenario_group}`: `ssp245`, `g6_1p5k`, or `esgf_ssp245`
