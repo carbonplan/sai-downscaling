@@ -25,7 +25,7 @@ import pytest
 import scipy.stats
 import xarray as xr
 from conftest import make_icechunk_group as _make_icechunk_group
-from ibicus.debias import QuantileMapping
+from ibicus.debias import QuantileDeltaMapping, QuantileMapping
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
@@ -2331,3 +2331,115 @@ class TestObservationAttrs:
         """The invariant: a method attr means the group depends on the method."""
         attrs = self._pipeline("QDMSD", "r1i1p1f1", "SSP245")._build_output_attrs()
         assert attrs["srm_downscaling:downscaling_method"] == "QDMSD"
+
+
+# ---------------------------------------------------------------------------
+# QDM scenario branch: seasonal window wiring and lead-in pad completeness
+# ---------------------------------------------------------------------------
+
+
+def _qdm_da(start: str, end: str, value: float = 280.0) -> xr.DataArray:
+    """Daily (time, lat, lon) series on a tiny grid, NaN-free."""
+    times = pd.date_range(start, end, freq="D")
+    return xr.DataArray(
+        np.full((len(times), 2, 2), float(value)),
+        dims=["time", "lat", "lon"],
+        coords={"time": times, "lat": [0.0, 1.0], "lon": [10.0, 11.0]},
+        name="tas",
+    )
+
+
+class TestQDMScenarioWindow:
+    """The QDM scenario debiaser must take its seasonal window from ``variable_config``.
+
+    Without the wiring, ``QuantileDeltaMapping`` is built with no arguments, so editing
+    ``running_window_length`` / ``running_window_step_length`` in ``QDMSD_CONFIG`` moves
+    the historical fit and the ``config_hash`` while leaving the scenario mapping on the
+    ibicus defaults. The two happen to agree today, so these tests use deliberately
+    non-default values rather than asserting 91/31.
+    """
+
+    @staticmethod
+    def _pipeline(pipeline_options, variable="tas", **window):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            downscaling_method="QDMSD",
+            variable=variable,
+            ensemble_member="r1i1p1f1",
+            scenario="SSP245",
+            predict_period_start=2015,
+            predict_period_end=2016,
+        )
+        assert cfg.variable_config.debias_approach == "qdm"
+        for key, value in window.items():
+            setattr(cfg.variable_config, key, value)
+        return BCSDPipeline(cfg, pipeline_options)
+
+    @staticmethod
+    @contextmanager
+    def _run(pipe, stitched, scenario_detrended):
+        """Drive the qdm branch, capturing the debiaser ibicus was asked to apply."""
+        captured: dict = {}
+
+        def _fake_apply(self, **kwargs):
+            captured["debiaser"] = self
+            captured["cm_future"] = kwargs["cm_future"]
+            return np.zeros(kwargs["cm_future"].shape)
+
+        hist = _qdm_da("2010-01-01", "2014-12-31")
+        with (
+            patch("srm.pipeline.stitch_historical_scenario", return_value=stitched),
+            patch.object(QuantileDeltaMapping, "apply", _fake_apply),
+        ):
+            pipe._apply_bias_correction_scenario(
+                hist,
+                hist,
+                scenario_detrended,
+                model_scenario_for_qdm=scenario_detrended,
+            )
+        yield captured
+
+    def test_seasonal_window_comes_from_variable_config(self, pipeline_options):
+        pipe = self._pipeline(
+            pipeline_options, running_window_length=45, running_window_step_length=7
+        )
+        stitched = _qdm_da("1990-01-01", "2014-12-31")
+        with self._run(pipe, stitched, _qdm_da("2015-01-01", "2016-12-31")) as captured:
+            pass
+        debiaser = captured["debiaser"]
+        assert debiaser.running_window_length == 45
+        assert debiaser.running_window_step_length == 7
+        assert debiaser.running_window_mode is True
+
+    def test_precipitation_seasonal_window_comes_from_variable_config(self, pipeline_options):
+        """pr takes the ``for_precipitation`` constructor, which must be wired too."""
+        pipe = self._pipeline(
+            pipeline_options,
+            variable="pr",
+            running_window_length=45,
+            running_window_step_length=7,
+        )
+        stitched = _qdm_da("1990-01-01", "2014-12-31", value=1e-5)
+        scenario = _qdm_da("2015-01-01", "2016-12-31", value=1e-5)
+        with self._run(pipe, stitched, scenario) as captured:
+            pass
+        debiaser = captured["debiaser"]
+        assert debiaser.running_window_length == 45
+        assert debiaser.running_window_step_length == 7
+
+    def test_years_window_stays_at_the_ibicus_default(self, pipeline_options):
+        """``common_kwargs`` must not be reused here: QDM depends on the years window.
+
+        ``common_kwargs`` pins ``running_window_step_length=1`` and sets
+        ``running_window_mode_over_years_of_cm_future=False``, which would disable the
+        window ``pad_years`` is derived from and break the method.
+        """
+        pipe = self._pipeline(
+            pipeline_options, running_window_length=45, running_window_step_length=7
+        )
+        stitched = _qdm_da("1990-01-01", "2014-12-31")
+        with self._run(pipe, stitched, _qdm_da("2015-01-01", "2016-12-31")) as captured:
+            pass
+        debiaser = captured["debiaser"]
+        assert debiaser.running_window_mode_over_years_of_cm_future is True
+        assert debiaser.running_window_over_years_of_cm_future_length == 31

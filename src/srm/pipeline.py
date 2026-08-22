@@ -1600,15 +1600,30 @@ class BCSDPipeline:
             # Quantile delta mapping maps quantile changes between the historical and
             # future model runs directly onto observations, which is what keeps the
             # projected trend without a separate detrend/retrend step.
+            #
+            # The seasonal (day-of-year) window comes from variable_config, exactly as it
+            # does for the historical fit in _apply_bias_correction, so the scenario
+            # mapping and the fit stay on the same window and editing QDMSD_CONFIG moves
+            # both. Only those three settings are passed: common_kwargs is deliberately
+            # not reused here because it pins running_window_step_length to 1 and turns
+            # running_window_mode_over_years_of_cm_future off, and quantile delta mapping
+            # depends on that years-window (pad_years below is derived from its length).
+            # Every years-window setting therefore stays at the ibicus default.
+            qdm_window_kwargs = dict(
+                running_window_mode=self.config.variable_config.do_windowing,
+                running_window_length=self.config.variable_config.running_window_length,
+                running_window_step_length=self.config.variable_config.running_window_step_length,
+            )
             debiaser = (
-                QuantileDeltaMapping.for_precipitation()
+                QuantileDeltaMapping.for_precipitation(**qdm_window_kwargs)
                 if self.config.variable == "pr"
-                else QuantileDeltaMapping.from_variable(self.config.variable)
+                else QuantileDeltaMapping.from_variable(self.config.variable, **qdm_window_kwargs)
             )
 
-            # Each future year's correction is estimated from a moving window
-            # centered on that year (31 years by default), so the method needs 15
-            # years of context immediately before the prediction period to fill
+            # Each future year's correction is estimated from a moving window over years
+            # of cm_future centered on that year (31 years by default, left at the ibicus
+            # default above), so the method needs 15 years of context immediately before
+            # the prediction period to fill
             # that window. What precedes the prediction period depends on the
             # scenario: plain historical for an SSP245 run, SSP245 for an SAI
             # run whose predict_period_start lands inside the SSP245 bridge (e.g.
