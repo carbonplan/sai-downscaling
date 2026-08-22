@@ -8,9 +8,10 @@ There is no coordinate alignment: trees are compared as-is.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import xarray as xr
 
-from srm.snapshot.runs import _compare_datatrees
+from srm.snapshot.runs import _check_tasmax_ge_tasmin, _compare_datatrees
 
 
 def _leaf(lats, lons, val, name="tas"):
@@ -83,11 +84,13 @@ def test_scenario_filter():
     assert {lf.path.split("/")[0] for lf in report.leaves} == {"g6_1p5k"}
 
 
-def _temp_pair(tasmax_val, tasmin_val):
+def _temp_pair(tasmax_val, tasmin_val, method=None):
+    """A tasmax/tasmin pair, under the method-namespaced layout when ``method`` is set."""
+    prefix = f"/{method}" if method else ""
     return xr.DataTree.from_dict(
         {
-            "/ssp245/tasmax/008": _leaf([1, 2], [1, 2], tasmax_val, name="tasmax"),
-            "/ssp245/tasmin/008": _leaf([1, 2], [1, 2], tasmin_val, name="tasmin"),
+            f"{prefix}/ssp245/tasmax/008": _leaf([1, 2], [1, 2], tasmax_val, name="tasmax"),
+            f"{prefix}/ssp245/tasmin/008": _leaf([1, 2], [1, 2], tasmin_val, name="tasmin"),
         }
     )
 
@@ -135,3 +138,65 @@ def test_invariant_check_skipped_when_filtering_to_unrelated_variable():
     assert {lf.variable for lf in report.leaves} == {"pr"}
     assert report.invariant_checks == []
     assert report.passed  # only pr under review, which matches; invariant not gated
+
+
+class TestInvariantAcrossStoreLayouts:
+    """The tasmax >= tasmin gate must fire on both store layouts.
+
+    Method-dependent groups are namespaced under a leading downscaling-method segment,
+    so a depth-blind walk finds only method segments at the top level, reads their
+    children as variables, and returns no checks at all: a silent pass on the one gate
+    that exists to stop a reconcile-skip shipping (issue #331).
+    """
+
+    @pytest.mark.parametrize("method", [None, "bcsd", "qdmsd"])
+    def test_gate_fires_and_holds(self, method):
+        cand = _temp_pair(tasmax_val=300.0, tasmin_val=290.0, method=method)
+        checks = _check_tasmax_ge_tasmin(cand)
+        assert [c.path for c in checks] == ["ssp245/tasmax_ge_tasmin/008"]
+        assert all(c.holds for c in checks)
+
+    @pytest.mark.parametrize("method", [None, "bcsd"])
+    def test_gate_catches_inversion(self, method):
+        cand = _temp_pair(tasmax_val=290.0, tasmin_val=300.0, method=method)
+        report = _compare_datatrees(cand, cand)
+        assert report.within_tolerance is True
+        assert report.invariants_hold is False
+        assert report.passed is False
+        viol = next(c for c in report.invariant_checks if not c.holds)
+        assert viol.path == "ssp245/tasmax_ge_tasmin/008"
+
+    def test_debiased_coarse_subtree_still_skipped(self):
+        """debiased_coarse is pre-reconcile, and sits beside the scenario groups."""
+        cand = xr.DataTree.from_dict(
+            {
+                "/bcsd/ssp245/tasmax/008": _leaf([1, 2], [1, 2], 300.0, name="tasmax"),
+                "/bcsd/ssp245/tasmin/008": _leaf([1, 2], [1, 2], 290.0, name="tasmin"),
+                # Inverted on purpose: pre-reconcile coarse output may hold tasmin > tasmax.
+                "/bcsd/debiased_coarse/ssp245/tasmax/008": _leaf(
+                    [1, 2], [1, 2], 290.0, name="tasmax"
+                ),
+                "/bcsd/debiased_coarse/ssp245/tasmin/008": _leaf(
+                    [1, 2], [1, 2], 300.0, name="tasmin"
+                ),
+            }
+        )
+        checks = _check_tasmax_ge_tasmin(cand)
+        assert [c.path for c in checks] == ["ssp245/tasmax_ge_tasmin/008"]
+        assert all(c.holds for c in checks)
+
+    def test_mixed_layout_store_checks_both(self):
+        """A store holding a method segment beside pre-namespace groups checks both."""
+        cand = xr.DataTree.from_dict(
+            {
+                "/bcsd/ssp245/tasmax/008": _leaf([1, 2], [1, 2], 300.0, name="tasmax"),
+                "/bcsd/ssp245/tasmin/008": _leaf([1, 2], [1, 2], 290.0, name="tasmin"),
+                "/g6_1p5k/tasmax/003": _leaf([1, 2], [1, 2], 290.0, name="tasmax"),
+                "/g6_1p5k/tasmin/003": _leaf([1, 2], [1, 2], 300.0, name="tasmin"),
+            }
+        )
+        checks = {c.path: c.holds for c in _check_tasmax_ge_tasmin(cand)}
+        assert checks == {
+            "ssp245/tasmax_ge_tasmin/008": True,
+            "g6_1p5k/tasmax_ge_tasmin/003": False,
+        }

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import xarray as xr
 
+from srm.bcsd_config import METHOD_SEGMENTS
 from srm.qaqc import DatasetChecker
 from srm.snapshot.compare import (
     DiffReport,
@@ -40,12 +41,27 @@ def _check_tasmax_ge_tasmin(candidate) -> list[InvariantCheck]:
     physical constraint that the whole derive-and-reconcile path must preserve. Only the
     final products are checked: the ``debiased_coarse`` subtree is pre-reconcile (its
     ``tasmin = tasmax - dtr`` is not swapped), and it is skipped naturally because its
-    children are scenario groups, not the ``tasmax``/``tasmin`` variable nodes.
+    children are scenario groups, not the ``tasmax``/``tasmin`` variable nodes. That
+    holds under either store layout, since ``debiased_coarse`` sits at the same depth as
+    the scenario groups it is compared against.
+
+    Both layouts are walked. Method-dependent groups are namespaced under a leading
+    downscaling-method segment (``{method}/{group}/{variable}/{member}``), so a top-level
+    method segment is unwrapped to reach the scenario groups; stores written before the
+    namespacing already start at the scenario group. A store may hold both forms, so each
+    top-level child is classified on its own. The reported path names the scenario group
+    only, so it stays comparable with the ``scenarios`` filter in either layout.
     """
     if not isinstance(candidate, xr.DataTree):
         return []
     checks: list[InvariantCheck] = []
-    for group, node in candidate.children.items():
+    scenario_nodes = [
+        sn
+        for top in candidate.children.values()
+        for sn in (top.children.values() if top.name in METHOD_SEGMENTS else [top])
+    ]
+    for node in scenario_nodes:
+        group = node.name
         svars = node.children
         if "tasmax" not in svars or "tasmin" not in svars:
             continue
