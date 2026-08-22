@@ -272,13 +272,13 @@ class TestObsLoc:
 class TestHistoricalLoc:
     def test_group_encodes_historical_variable_member(self, bound_cache):
         loc = bound_cache.historical_loc("r1i1p1f1")
-        assert loc.group == "historical/tas/r1i1p1f1"
+        assert loc.group == "bcsd/historical/tas/r1i1p1f1"
 
     def test_group_changes_with_member(self, bound_cache, subtests):
         for member in ("r1i1p1f1", "r12i1p1f2", "001"):
             with subtests.test(member=member):
                 loc = bound_cache.historical_loc(member)
-                assert loc.group == f"historical/tas/{member}"
+                assert loc.group == f"bcsd/historical/tas/{member}"
 
     def test_uses_output_store_when_set(self, bound_cache_with_output):
         loc = bound_cache_with_output.historical_loc("r1i1p1f1")
@@ -296,11 +296,11 @@ class TestHistoricalLoc:
     def test_variable_override_targets_sibling_group(self, bound_cache):
         # tasmin's swap step reads the sibling fine tasmax output (issue #331).
         loc = bound_cache.historical_loc("r1i1p1f1", variable="tasmax")
-        assert loc.group == "historical/tasmax/r1i1p1f1"
+        assert loc.group == "bcsd/historical/tasmax/r1i1p1f1"
 
     def test_no_variable_override_uses_config_variable(self, bound_cache):
         loc = bound_cache.historical_loc("r1i1p1f1")
-        assert loc.group == "historical/tas/r1i1p1f1"
+        assert loc.group == "bcsd/historical/tas/r1i1p1f1"
 
 
 # ---------------------------------------------------------------------------
@@ -310,11 +310,11 @@ class TestHistoricalLoc:
 
 class TestScenarioLoc:
     def test_group_encodes_scenario_variable_member(self, bound_cache):
-        assert bound_cache.scenario_loc.group == "ssp245/tas/r1i1p1f1"
+        assert bound_cache.scenario_loc.group == "bcsd/ssp245/tas/r1i1p1f1"
 
     def test_sai_scenario_group(self, tmp_path, sai_config):
         cache = ArtifactCache.from_config(sai_config, PipelineOptions(scratch_dir=str(tmp_path)))
-        assert cache.scenario_loc.group == "g6_1p5k/pr/r2i1p1f1"
+        assert cache.scenario_loc.group == "bcsd/g6_1p5k/pr/r2i1p1f1"
 
     def test_uses_output_store_when_set(self, bound_cache_with_output):
         loc = bound_cache_with_output.scenario_loc
@@ -327,7 +327,7 @@ class TestScenarioLoc:
     def test_output_loc_variable_override_targets_sibling_group(self, bound_cache):
         # tasmin's swap step reads the sibling fine tasmax scenario output (issue #331).
         loc = bound_cache.scenario_output_loc(variable="tasmax")
-        assert loc.group == "ssp245/tasmax/r1i1p1f1"
+        assert loc.group == "bcsd/ssp245/tasmax/r1i1p1f1"
 
     def test_output_loc_without_override_matches_scenario_loc(self, bound_cache):
         assert bound_cache.scenario_output_loc().group == bound_cache.scenario_loc.group
@@ -341,15 +341,15 @@ class TestScenarioLoc:
 class TestIntermediateLocs:
     def test_detrended_scenario_group(self, bound_cache):
         loc = bound_cache.detrended_scenario_loc()
-        assert loc.group == "detrended_scenario/ssp245/tas/r1i1p1f1"
+        assert loc.group == "bcsd/detrended_scenario/ssp245/tas/r1i1p1f1"
 
     def test_trend_scenario_group(self, bound_cache):
         loc = bound_cache.trend_scenario_loc()
-        assert loc.group == "trend_scenario/ssp245/tas/r1i1p1f1"
+        assert loc.group == "bcsd/trend_scenario/ssp245/tas/r1i1p1f1"
 
     def test_debiased_scenario_group(self, bound_cache):
         loc = bound_cache.debiased_scenario_loc()
-        assert loc.group == "debiased_scenario/ssp245/tas/r1i1p1f1"
+        assert loc.group == "bcsd/debiased_scenario/ssp245/tas/r1i1p1f1"
 
     def test_all_intermediate_use_scratch_store(self, bound_cache):
         locs = [
@@ -362,7 +362,7 @@ class TestIntermediateLocs:
 
     def test_sai_scenario_intermediate_group(self, tmp_path, sai_config):
         cache = ArtifactCache.from_config(sai_config, PipelineOptions(scratch_dir=str(tmp_path)))
-        assert cache.detrended_scenario_loc().group == "detrended_scenario/g6_1p5k/pr/r2i1p1f1"
+        assert cache.detrended_scenario_loc().group == "bcsd/detrended_scenario/g6_1p5k/pr/r2i1p1f1"
 
     def test_intermediate_groups_all_differ(self, bound_cache):
         groups = [
@@ -387,17 +387,17 @@ class TestIntermediateLocs:
 class TestDebiasedCoarseLocs:
     def test_historical_group(self, bound_cache):
         loc = bound_cache.debiased_coarse_historical_loc("r1i1p1f1")
-        assert loc.group == "debiased_coarse/historical/tas/r1i1p1f1"
+        assert loc.group == "bcsd/debiased_coarse/historical/tas/r1i1p1f1"
 
     def test_historical_group_changes_with_member(self, bound_cache, subtests):
         for member in ("r1i1p1f1", "r12i1p1f2", "001"):
             with subtests.test(member=member):
                 loc = bound_cache.debiased_coarse_historical_loc(member)
-                assert loc.group == f"debiased_coarse/historical/tas/{member}"
+                assert loc.group == f"bcsd/debiased_coarse/historical/tas/{member}"
 
     def test_historical_variable_override(self, bound_cache):
         loc = bound_cache.debiased_coarse_historical_loc("r1i1p1f1", variable="dtr")
-        assert loc.group == "debiased_coarse/historical/dtr/r1i1p1f1"
+        assert loc.group == "bcsd/debiased_coarse/historical/dtr/r1i1p1f1"
 
     def test_historical_uses_output_store(self, bound_cache_with_output):
         loc = bound_cache_with_output.debiased_coarse_historical_loc("r1i1p1f1")
@@ -410,16 +410,16 @@ class TestDebiasedCoarseLocs:
 
     def test_scenario_group(self, bound_cache):
         loc = bound_cache.debiased_coarse_scenario_loc()
-        assert loc.group == "debiased_coarse/ssp245/tas/r1i1p1f1"
+        assert loc.group == "bcsd/debiased_coarse/ssp245/tas/r1i1p1f1"
 
     def test_scenario_sai_group(self, tmp_path, sai_config):
         cache = ArtifactCache.from_config(sai_config, PipelineOptions(scratch_dir=str(tmp_path)))
         loc = cache.debiased_coarse_scenario_loc()
-        assert loc.group == "debiased_coarse/g6_1p5k/pr/r2i1p1f1"
+        assert loc.group == "bcsd/debiased_coarse/g6_1p5k/pr/r2i1p1f1"
 
     def test_scenario_variable_override(self, bound_cache):
         loc = bound_cache.debiased_coarse_scenario_loc(variable="dtr")
-        assert loc.group == "debiased_coarse/ssp245/dtr/r1i1p1f1"
+        assert loc.group == "bcsd/debiased_coarse/ssp245/dtr/r1i1p1f1"
 
     def test_scenario_uses_output_store(self, bound_cache_with_output):
         loc = bound_cache_with_output.debiased_coarse_scenario_loc()
@@ -587,17 +587,22 @@ class TestCheckDependencies:
         deps = cache.check_dependencies("transform_scenario", cfg)
         assert "debiased_coarse_dtr" in deps
         assert "debiased_coarse_tasmax" in deps
-        assert deps["debiased_coarse_dtr"][1].group == "debiased_coarse/ssp245/dtr/r1i1p1f1"
-        assert deps["debiased_coarse_tasmax"][1].group == "debiased_coarse/ssp245/tasmax/r1i1p1f1"
+        assert deps["debiased_coarse_dtr"][1].group == "bcsd/debiased_coarse/ssp245/dtr/r1i1p1f1"
+        assert (
+            deps["debiased_coarse_tasmax"][1].group == "bcsd/debiased_coarse/ssp245/tasmax/r1i1p1f1"
+        )
 
     def test_fit_historical_tasmin_requires_debiased_coarse_dtr_and_tasmax(self, tmp_path):
         cache, cfg = self._tasmin_cache(tmp_path)
         deps = cache.check_dependencies("fit_historical", cfg)
         assert "debiased_coarse_dtr" in deps
         assert "debiased_coarse_tasmax" in deps
-        assert deps["debiased_coarse_dtr"][1].group == "debiased_coarse/historical/dtr/r1i1p1f1"
         assert (
-            deps["debiased_coarse_tasmax"][1].group == "debiased_coarse/historical/tasmax/r1i1p1f1"
+            deps["debiased_coarse_dtr"][1].group == "bcsd/debiased_coarse/historical/dtr/r1i1p1f1"
+        )
+        assert (
+            deps["debiased_coarse_tasmax"][1].group
+            == "bcsd/debiased_coarse/historical/tasmax/r1i1p1f1"
         )
 
     def test_non_tasmin_scenario_deps_unchanged(self, bound_cache, base_config):
@@ -611,13 +616,13 @@ class TestCheckDependencies:
         cache, cfg = self._tasmin_cache(tmp_path)
         deps = cache.check_dependencies("transform_scenario", cfg)
         assert "fine_tasmax" in deps
-        assert deps["fine_tasmax"][1].group == "ssp245/tasmax/r1i1p1f1"
+        assert deps["fine_tasmax"][1].group == "bcsd/ssp245/tasmax/r1i1p1f1"
 
     def test_fit_historical_tasmin_requires_fine_tasmax(self, tmp_path):
         cache, cfg = self._tasmin_cache(tmp_path)
         deps = cache.check_dependencies("fit_historical", cfg)
         assert "fine_tasmax" in deps
-        assert deps["fine_tasmax"][1].group == "historical/tasmax/r1i1p1f1"
+        assert deps["fine_tasmax"][1].group == "bcsd/historical/tasmax/r1i1p1f1"
 
 
 class TestValidateDependencies:
@@ -786,3 +791,86 @@ class TestVariableConfigVerification:
     def test_cache_miss_skips_verification(self, bound_cache, tmp_path):
         loc = StoreLocation(str(tmp_path / "missing.icechunk"), "obs/tas", config_variable="tas")
         assert bound_cache.exists(loc) is False
+
+
+# ---------------------------------------------------------------------------
+# downscaling_method namespacing
+# ---------------------------------------------------------------------------
+
+
+class TestDownscalingMethodNamespacing:
+    """Method-dependent groups are namespaced; regridded obs is shared."""
+
+    @staticmethod
+    def _cache_for(method: str, tmp_path) -> ArtifactCache:
+        return ArtifactCache.from_config(
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                downscaling_method=method,
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                scenario="SSP245",
+                predict_period_start=2015,
+                predict_period_end=2100,
+            ),
+            PipelineOptions(
+                scratch_dir=str(tmp_path / "cache"),
+                environment="qa",
+                output_dir=str(tmp_path / "outputs"),
+            ),
+        )
+
+    @staticmethod
+    def _method_dependent_groups(cache: ArtifactCache) -> dict[str, str]:
+        return {
+            "historical": cache.historical_loc("r1i1p1f1").group,
+            "scenario": cache.scenario_output_loc().group,
+            "debiased_coarse_historical": cache.debiased_coarse_historical_loc("r1i1p1f1").group,
+            "debiased_coarse_scenario": cache.debiased_coarse_scenario_loc().group,
+            "detrended_scenario": cache.detrended_scenario_loc().group,
+            "trend_scenario": cache.trend_scenario_loc().group,
+            "debiased_scenario": cache.debiased_scenario_loc().group,
+        }
+
+    def test_bcsd_groups_are_namespaced(self, tmp_path):
+        groups = self._method_dependent_groups(self._cache_for("BCSD", tmp_path))
+        assert groups == {
+            "historical": "bcsd/historical/tas/r1i1p1f1",
+            "scenario": "bcsd/ssp245/tas/r1i1p1f1",
+            "debiased_coarse_historical": "bcsd/debiased_coarse/historical/tas/r1i1p1f1",
+            "debiased_coarse_scenario": "bcsd/debiased_coarse/ssp245/tas/r1i1p1f1",
+            "detrended_scenario": "bcsd/detrended_scenario/ssp245/tas/r1i1p1f1",
+            "trend_scenario": "bcsd/trend_scenario/ssp245/tas/r1i1p1f1",
+            "debiased_scenario": "bcsd/debiased_scenario/ssp245/tas/r1i1p1f1",
+        }
+
+    def test_qdmsd_groups_are_namespaced(self, tmp_path):
+        groups = self._method_dependent_groups(self._cache_for("QDMSD", tmp_path))
+        assert groups == {
+            "historical": "qdmsd/historical/tas/r1i1p1f1",
+            "scenario": "qdmsd/ssp245/tas/r1i1p1f1",
+            "debiased_coarse_historical": "qdmsd/debiased_coarse/historical/tas/r1i1p1f1",
+            "debiased_coarse_scenario": "qdmsd/debiased_coarse/ssp245/tas/r1i1p1f1",
+            "detrended_scenario": "qdmsd/detrended_scenario/ssp245/tas/r1i1p1f1",
+            "trend_scenario": "qdmsd/trend_scenario/ssp245/tas/r1i1p1f1",
+            "debiased_scenario": "qdmsd/debiased_scenario/ssp245/tas/r1i1p1f1",
+        }
+
+    def test_no_group_is_shared_between_methods(self, tmp_path, subtests):
+        bcsd = self._method_dependent_groups(self._cache_for("BCSD", tmp_path))
+        qdmsd = self._method_dependent_groups(self._cache_for("QDMSD", tmp_path))
+        for name in bcsd:
+            with subtests.test(artifact=name):
+                assert bcsd[name] != qdmsd[name]
+
+    def test_obs_is_shared_between_methods(self, tmp_path):
+        bcsd = self._cache_for("BCSD", tmp_path).obs_loc
+        qdmsd = self._cache_for("QDMSD", tmp_path).obs_loc
+        assert bcsd.group == "obs/tas"
+        assert bcsd.group == qdmsd.group
+        assert bcsd.store_path == qdmsd.store_path
+
+    def test_method_segment_precedes_debiased_coarse(self, tmp_path):
+        """The segment is outermost, so there is one rule rather than a per-group one."""
+        cache = self._cache_for("QDMSD", tmp_path)
+        assert cache.debiased_coarse_scenario_loc().group.startswith("qdmsd/debiased_coarse/")

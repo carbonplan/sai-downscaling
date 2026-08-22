@@ -183,6 +183,23 @@ class ArtifactCache:
         base = self.output_dir if self.output_dir else self.scratch_dir
         return f"{base}/{self.environment}/{config.gcm}-{config.obs_dataset}-{subset_id}.icechunk"
 
+    @property
+    def _method_prefix(self) -> str:
+        """Return the leading group-path segment naming the downscaling method.
+
+        Every artifact except regridded observations is produced by one downscaling
+        method and differs between them, so its group path is namespaced under this
+        segment. Observations are method-independent and stay at the store root, which
+        lets both methods share one regrid.
+
+        Returns
+        -------
+        str
+            ``"bcsd"`` or ``"qdmsd"``, matching the lowercase of the other group-path
+            segments (``obs``, ``historical``, ``ssp245``, ``g6_1p5k``).
+        """
+        return self._require_config().downscaling_method.lower()
+
     # ── artifact location properties ─────────────────────────────────────────
 
     @property
@@ -209,7 +226,7 @@ class ArtifactCache:
         var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"historical/{var}/{hist_member}",
+            f"{self._method_prefix}/historical/{var}/{hist_member}",
             config_variable=None if variable is not None else config.variable,
         )
 
@@ -230,7 +247,7 @@ class ArtifactCache:
         var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"{self._scenario_group()}/{var}/{config.ensemble_member}",
+            f"{self._method_prefix}/{self._scenario_group()}/{var}/{config.ensemble_member}",
             config_variable=None if variable is not None else config.variable,
         )
 
@@ -255,7 +272,7 @@ class ArtifactCache:
         var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"debiased_coarse/historical/{var}/{hist_member}",
+            f"{self._method_prefix}/debiased_coarse/historical/{var}/{hist_member}",
             config_variable=None if variable is not None else config.variable,
         )
 
@@ -271,7 +288,8 @@ class ArtifactCache:
         var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"debiased_coarse/{self._scenario_group()}/{var}/{config.ensemble_member}",
+            f"{self._method_prefix}/debiased_coarse/{self._scenario_group()}"
+            f"/{var}/{config.ensemble_member}",
             config_variable=None if variable is not None else config.variable,
         )
 
@@ -280,7 +298,8 @@ class ArtifactCache:
         config = self._require_config()
         return StoreLocation(
             self._scratch_store,
-            f"detrended_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
+            f"{self._method_prefix}/detrended_scenario/{self._scenario_group()}"
+            f"/{config.variable}/{config.ensemble_member}",
             config_variable=config.variable,
         )
 
@@ -289,7 +308,8 @@ class ArtifactCache:
         config = self._require_config()
         return StoreLocation(
             self._scratch_store,
-            f"trend_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
+            f"{self._method_prefix}/trend_scenario/{self._scenario_group()}"
+            f"/{config.variable}/{config.ensemble_member}",
             config_variable=config.variable,
         )
 
@@ -298,7 +318,8 @@ class ArtifactCache:
         config = self._require_config()
         return StoreLocation(
             self._scratch_store,
-            f"debiased_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
+            f"{self._method_prefix}/debiased_scenario/{self._scenario_group()}"
+            f"/{config.variable}/{config.ensemble_member}",
             config_variable=config.variable,
         )
 
@@ -468,10 +489,10 @@ class ArtifactCache:
         )
         raise CacheConfigMismatchError(
             f"{loc.store_path} / {loc.group} on branch {branch!r} was computed with a "
-            f"different VariableConfig ({detail}). Store paths do not encode "
-            "VariableConfig, so reusing this artifact would mix bias-correction "
-            "settings. Run on a separate branch (--branch / BCSD_BRANCH), or force a "
-            "recompute to overwrite it."
+            f"different VariableConfig ({detail}). Group paths encode the downscaling "
+            "method but not the rest of VariableConfig, so two runs of the same method "
+            "differing by a variable_overrides entry land here. Reconcile the override, "
+            "or force a recompute to overwrite it."
         )
 
     def list_groups_on_branch(self, store_path: str) -> list[str]:
