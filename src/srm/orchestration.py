@@ -565,6 +565,10 @@ class BCSDOrchestrator:
         separate historical tasks. obs_dataset is part of the key because the
         historical artifact store path embeds it and fit_historical bias-corrects
         against obs; different obs_datasets require separate historical fits.
+        downscaling_method is part of the key because fit_historical writes its
+        output under a leading method segment (``{method}/historical/...`` and
+        ``{method}/debiased_coarse/historical/...``); two configs differing only in
+        method write different artifacts, so each one has to run.
 
         Parameters
         ----------
@@ -583,6 +587,7 @@ class BCSDOrchestrator:
                 config.gcm,
                 config.obs_dataset,
                 config.variable,
+                config.downscaling_method,
                 self._resolve_hist_member(config),
             )
             if key not in seen:

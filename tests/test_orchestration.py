@@ -51,10 +51,11 @@ def _make_config(
     ensemble_member="r1i1p1f1",
     scenario="SSP245",
     subset_bounds=None,
+    downscaling_method="BCSD",
 ) -> BCSDConfig:
     return BCSDConfig(
         gcm=gcm,
-        downscaling_method="BCSD",
+        downscaling_method=downscaling_method,
         variable=variable,
         ensemble_member=ensemble_member,
         scenario=scenario,
@@ -172,6 +173,35 @@ class TestDeduplicateHistorical:
 
     def test_empty_configs_returns_empty(self, orchestrator):
         assert orchestrator._deduplicate_historical_configs([]) == []
+
+    def test_different_downscaling_method_not_deduplicated(self, orchestrator):
+        """fit_historical writes under a leading method segment, so each method must run.
+
+        The two configs are identical apart from ``downscaling_method``. A method-blind
+        key collapses them into one task, and the method that loses the race never gets
+        its ``{method}/historical/...`` artifact written.
+        """
+        bcsd = _make_config(downscaling_method="BCSD")
+        qdmsd = _make_config(downscaling_method="QDMSD")
+        result = orchestrator._deduplicate_historical_configs([bcsd, qdmsd])
+        assert [c.downscaling_method for c in result] == ["BCSD", "QDMSD"]
+
+    def test_same_method_still_deduplicates(self, orchestrator):
+        """Adding the method to the key must not stop same-method configs collapsing."""
+        result = orchestrator._deduplicate_historical_configs(
+            [_make_config(downscaling_method="QDMSD"), _make_config(downscaling_method="QDMSD")]
+        )
+        assert len(result) == 1
+
+
+class TestDeduplicateObsIsMethodBlind:
+    """obs/{variable} is shared across methods, so the obs key must stay method-blind."""
+
+    def test_different_downscaling_method_deduplicates(self, orchestrator):
+        result = orchestrator._deduplicate_obs_configs(
+            [_make_config(downscaling_method="BCSD"), _make_config(downscaling_method="QDMSD")]
+        )
+        assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------
