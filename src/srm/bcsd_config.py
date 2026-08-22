@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import os
 from importlib.metadata import version as _pkg_version
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, get_args
 
 import pydantic_settings
 from packaging.version import Version as _Version
@@ -28,6 +28,12 @@ DisaggregationMethod = Literal["additive", "multiplicative"]
 DisaggregationClimMethod = Literal["simple", "fft"]
 DetrendMethod = Literal["additive", "multiplicative"]
 VariableName = Literal["tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"]
+
+# Lowercase leading group-path segments that namespace method-dependent icechunk
+# artifacts (see ``ArtifactCache._method_prefix``). Read-side tools use this to tell a
+# method segment from a scenario group when descending a store, because stores written
+# before the namespacing carry no such segment and must still be readable.
+METHOD_SEGMENTS: frozenset[str] = frozenset(m.lower() for m in get_args(DownscalingMethod))
 
 
 class VariableConfig(BaseModel):
@@ -652,6 +658,7 @@ config = BCSDConfig(
     variable="tas",
     ensemble_member=0,
     scenario="ssp245",
+    downscaling_method="BCSD",
     predict_period_start=2015,
     predict_period_end=2100
 )
@@ -666,6 +673,7 @@ sai_config = BCSDConfig(
     variable="pr",
     ensemble_member=1,
     scenario="G6-1.5K",
+    downscaling_method="BCSD",
     predict_period_start=2015,
     predict_period_end=2100,
 )
@@ -679,6 +687,7 @@ subset_config = BCSDConfig(
     variable="tasmax",
     ensemble_member=0,
     scenario="ssp245",
+    downscaling_method="BCSD",
     predict_period_start=2015,
     predict_period_end=2100,
     subset_bounds=(-35, -20, 15, 35)  # South Africa
@@ -690,6 +699,7 @@ custom_config = BCSDConfig(
     variable="tas",
     ensemble_member=2,
     scenario="ssp245",
+    downscaling_method="BCSD",
     predict_period_start=2015,
     predict_period_end=2100,
     variable_config=VariableConfig(
@@ -711,6 +721,7 @@ gcm: CESM2-WACCM
 variable: tas
 ensemble_member: 0
 scenario: ssp245
+downscaling_method: BCSD
 predict_period_start: 2015
 predict_period_end: 2100
 environment: qa

@@ -759,3 +759,41 @@ class TestRuntimeConfig:
     def test_max_parallel_tasks_can_be_set(self):
         cfg = RuntimeConfig(max_parallel_tasks=4)
         assert cfg.max_parallel_tasks == 4
+
+
+# ---------------------------------------------------------------------------
+# Module-level usage examples
+# ---------------------------------------------------------------------------
+
+
+class TestUsageExamples:
+    """The usage-example block at the foot of bcsd_config.py must stay copy-pasteable.
+
+    ``downscaling_method`` is required and has no default, so an example that omits it
+    raises a ValidationError the moment anyone copies it.
+    """
+
+    @staticmethod
+    def _example_block() -> str:
+        import inspect
+
+        import srm.bcsd_config
+
+        source = inspect.getsource(srm.bcsd_config)
+        _, _, block = source.partition("Usage Examples:")
+        assert block, "usage-example block not found in srm/bcsd_config.py"
+        return block
+
+    def test_every_constructor_call_sets_downscaling_method(self, subtests):
+        import re
+
+        calls = re.findall(r"BCSDConfig\((.*?)\n\)", self._example_block(), flags=re.DOTALL)
+        assert len(calls) == 4  # examples 1-4; example 5 builds from the YAML block
+        for i, call in enumerate(calls, start=1):
+            with subtests.test(example=i):
+                assert "downscaling_method=" in call
+
+    def test_yaml_example_sets_downscaling_method(self):
+        block = self._example_block()
+        _, _, yaml_example = block.partition("# Config file: configs/cesm_tas.yaml")
+        assert "downscaling_method:" in yaml_example.split('"""')[1]
