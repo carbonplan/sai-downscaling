@@ -27,6 +27,28 @@ from srm.snapshot.tolerances import Tolerance
 from srm.validation import _open_output_datatree
 
 
+def _scenario_segment(path: str) -> str:
+    """Scenario group of a report path, under either store layout.
+
+    Leaf paths come from :func:`~srm.snapshot.compare._iter_leaf_datasets`, which yields
+    full relative node paths, so segment 0 is the scenario group on a pre-namespace store
+    but the downscaling method on a method-namespaced one
+    (``{method}/{group}/{variable}/{member}/{variable}``). Dropping a leading method
+    segment normalizes both, in the same way the walks in
+    :func:`_check_tasmax_ge_tasmin` and :func:`~srm.validation.validate_output_store`
+    unwrap it, and each path is classified on its own so a store mixing the two layouts
+    filters correctly.
+
+    Invariant paths are already unprefixed by design (see :func:`_check_tasmax_ge_tasmin`),
+    and no scenario group shares a name with a downscaling method, so passing them through
+    here is a no-op that keeps one filter for both kinds of path.
+    """
+    segments = path.split("/")
+    if segments and segments[0] in METHOD_SEGMENTS:
+        segments = segments[1:]
+    return segments[0] if segments else ""
+
+
 def _check_tasmax_ge_tasmin(candidate) -> list[InvariantCheck]:
     """Verify ``tasmax >= tasmin`` per (scenario group, member) on the candidate tree.
 
@@ -96,7 +118,9 @@ def _compare_datatrees(
 
     Runs :func:`~srm.snapshot.compare.compare` (which flags candidate leaves absent
     from the snapshot), then appends leaves present only in the snapshot so nothing is
-    silently skipped. ``scenarios`` / ``variables`` restrict the reported leaves.
+    silently skipped. ``scenarios`` / ``variables`` restrict the reported leaves;
+    ``scenarios`` matches the scenario group under either store layout, via
+    :func:`_scenario_segment`.
     ``tolerances`` is passed straight through to :func:`~srm.snapshot.compare.compare`
     (default: exact equality).
     """
@@ -122,8 +146,8 @@ def _compare_datatrees(
 
     if scenarios:
         scen = set(scenarios)
-        leaves = [lf for lf in leaves if lf.path.split("/")[0] in scen]
-        invariant_checks = [c for c in invariant_checks if c.path.split("/")[0] in scen]
+        leaves = [lf for lf in leaves if _scenario_segment(lf.path) in scen]
+        invariant_checks = [c for c in invariant_checks if _scenario_segment(c.path) in scen]
     if variables:
         var = set(variables)
         leaves = [lf for lf in leaves if lf.variable in var]

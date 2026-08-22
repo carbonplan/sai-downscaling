@@ -200,3 +200,84 @@ class TestInvariantAcrossStoreLayouts:
             "ssp245/tasmax_ge_tasmin/008": True,
             "g6_1p5k/tasmax_ge_tasmin/003": False,
         }
+
+
+class TestScenarioFilterAcrossStoreLayouts:
+    """``scenarios=`` must select the scenario group under either store layout.
+
+    Leaf paths are full node paths, so on a method-namespaced store segment 0 is the
+    downscaling method and a filter written against scenario groups matches nothing. The
+    requested comparison is then silently skipped: the report holds no leaves at all
+    rather than the leaves that were asked for.
+    """
+
+    @staticmethod
+    def _tree(prefix="", **leaves):
+        return xr.DataTree.from_dict(
+            {f"{prefix}/{path}": ds for path, ds in leaves.items()},
+        )
+
+    @pytest.mark.parametrize("prefix", ["", "/bcsd", "/qdmsd"])
+    def test_filter_selects_the_requested_scenario(self, prefix):
+        tree = self._tree(
+            prefix,
+            **{
+                "ssp245/tas/008": _leaf([1, 2], [1, 2], 5.0),
+                "g6_1p5k/tas/003": _leaf([1, 2], [1, 2], 5.0),
+            },
+        )
+        report = _compare_datatrees(tree, tree, scenarios=["g6_1p5k"])
+        assert [lf.path for lf in report.leaves] == [
+            f"{prefix.lstrip('/')}/g6_1p5k/tas/003/tas".lstrip("/")
+        ]
+
+    @pytest.mark.parametrize("prefix", ["", "/bcsd"])
+    def test_filter_still_catches_a_mismatch(self, prefix):
+        """The end-to-end failure: a filtered comparison must not skip its own leaves."""
+        snap = self._tree(prefix, **{"ssp245/tas/008": _leaf([1, 2], [1, 2], 5.0)})
+        cand = self._tree(prefix, **{"ssp245/tas/008": _leaf([1, 2], [1, 2], 9.0)})
+        report = _compare_datatrees(cand, snap, scenarios=["ssp245"])
+        assert report.leaves  # something was actually compared
+        assert not report.within_tolerance
+
+    def test_filter_on_mixed_layout_store(self):
+        """One store holding both layouts filters on the scenario group in either."""
+        tree = xr.DataTree.from_dict(
+            {
+                "/bcsd/ssp245/tas/008": _leaf([1, 2], [1, 2], 5.0),
+                "/g6_1p5k/tas/003": _leaf([1, 2], [1, 2], 5.0),
+            }
+        )
+        assert [lf.path for lf in _compare_datatrees(tree, tree, scenarios=["ssp245"]).leaves] == [
+            "bcsd/ssp245/tas/008/tas"
+        ]
+        assert [lf.path for lf in _compare_datatrees(tree, tree, scenarios=["g6_1p5k"]).leaves] == [
+            "g6_1p5k/tas/003/tas"
+        ]
+
+    @pytest.mark.parametrize("prefix", ["", "/bcsd"])
+    def test_filter_keeps_the_invariant_check(self, prefix):
+        """Invariant paths stay unprefixed, so the same filter must keep matching them.
+
+        This is the reason ``InvariantCheck.path`` names the scenario group only. The
+        filter tolerates both, so the issue #331 gate still fires under a scenario filter
+        on a namespaced store.
+        """
+        cand = _temp_pair(tasmax_val=290.0, tasmin_val=300.0, method=prefix.lstrip("/") or None)
+        report = _compare_datatrees(cand, cand, scenarios=["ssp245"])
+        assert [c.path for c in report.invariant_checks] == ["ssp245/tasmax_ge_tasmin/008"]
+        assert report.passed is False
+
+    @pytest.mark.parametrize("prefix", ["", "/bcsd"])
+    def test_unrequested_scenario_is_still_excluded(self, prefix):
+        """Widening the filter must not turn it into a no-op."""
+        tree = self._tree(
+            prefix,
+            **{
+                "ssp245/tas/008": _leaf([1, 2], [1, 2], 5.0),
+                "g6_1p5k/tas/003": _leaf([1, 2], [1, 2], 5.0),
+            },
+        )
+        report = _compare_datatrees(tree, tree, scenarios=["ssp245"])
+        assert all("g6_1p5k" not in lf.path for lf in report.leaves)
+        assert len(report.leaves) == 1
