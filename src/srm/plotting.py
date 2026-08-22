@@ -18,6 +18,8 @@ import seaborn as sns
 import xarray as xr
 from xclim.indices import dry_days, growing_degree_days, hot_days, tx_max
 
+from srm.bcsd_config import METHOD_SEGMENTS
+
 
 def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_name=None, title=""):
     fig, axarr = plt.subplots(figsize=(20, 8), nrows=2, ncols=4)
@@ -613,6 +615,62 @@ def plot_region_zoom(
     plt.show()
 
 
+def _debiased_coarse_node(tree, scenario: str, method: str | None = None):
+    """Return the ``debiased_coarse`` node for ``scenario``, for either store layout.
+
+    Method-dependent groups are namespaced under a leading downscaling-method segment,
+    so the coarse debiased artifact lives at ``{method}/debiased_coarse/{scenario}``.
+    Stores written before the namespacing hold it at ``debiased_coarse/{scenario}``.
+    Both are resolved here so a drill-down works against either store.
+
+    Parameters
+    ----------
+    tree : xr.DataTree
+        Open output store.
+    scenario : str
+        On-disk scenario group name, e.g. ``"ssp245"``.
+    method : str, optional
+        Downscaling method whose segment to read, case-insensitive (``"BCSD"`` or
+        ``"QDMSD"``). ``None`` (the default) auto-detects the single layout present.
+
+    Returns
+    -------
+    xr.DataTree
+        The ``debiased_coarse/{scenario}`` node.
+
+    Raises
+    ------
+    KeyError
+        If no candidate group holds ``scenario``, or if ``method`` is ``None`` and the
+        store holds the scenario under more than one method segment. A store carrying
+        both methods is genuinely ambiguous, so it must be disambiguated rather than
+        silently paired against whichever segment happens to sort first.
+    """
+    # Roots to look under, keyed by the method segment ("" for the pre-namespace root).
+    # A store can hold both forms, so every candidate is probed and the ambiguity is
+    # reported rather than resolved arbitrarily.
+    roots = {"": tree} | {n: c for n, c in tree.children.items() if n in METHOD_SEGMENTS}
+    if method is not None:
+        segment = method.lower()
+        roots = {segment: tree.children[segment]} if segment in tree.children else {}
+    found = {
+        segment: root.children["debiased_coarse"].children[scenario]
+        for segment, root in sorted(roots.items())
+        if "debiased_coarse" in root.children
+        and scenario in root.children["debiased_coarse"].children
+    }
+    if not found:
+        raise KeyError(
+            f"no debiased_coarse/{scenario} group in this store; looked under "
+            f"{[segment or '<root>' for segment in sorted(roots)]}"
+        )
+    if len(found) > 1:
+        raise KeyError(
+            f"debiased_coarse/{scenario} exists under {sorted(found)}; pass method= to choose one"
+        )
+    return next(iter(found.values()))
+
+
 def point_series(
     key: tuple[str, str, str],
     lat: float,
@@ -635,7 +693,7 @@ def point_series(
     """
     scenario, var, member = key
     at_point = {"lat": lat, "lon": lon, "method": "nearest"}
-    coarse = tree[f"debiased_coarse/{scenario}"][f"{var}/{member}"].dataset[var]
+    coarse = _debiased_coarse_node(tree, scenario)[f"{var}/{member}"].dataset[var]
     return {
         "downscaled": leaves[key].sel(**at_point),
         "bound_low": low_bound.sel(**at_point),
