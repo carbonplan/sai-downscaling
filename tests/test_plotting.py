@@ -68,6 +68,29 @@ class TestDebiasedCoarseNode:
         node = _debiased_coarse_node(tree, "ssp245", method="QDMSD")
         assert float(node["tas/001"].dataset["tas"].max()) == 9.0
 
+    @pytest.mark.parametrize("method", ["BCSD", "QDMSD", "bcsd", "qdmsd"])
+    def test_method_against_pre_namespace_store_resolves_to_root(self, method):
+        """A pre-namespace store predates the split, so any method request is satisfied."""
+        tree = _tree({"/debiased_coarse/ssp245/tas/001": 7.0})
+        node = _debiased_coarse_node(tree, "ssp245", method=method)
+        assert node.path == "/debiased_coarse/ssp245"
+        assert float(node["tas/001"].dataset["tas"].max()) == 7.0
+
+    def test_method_absent_from_namespaced_store_raises_naming_present_segments(self):
+        """A store that does have method segments, but not the requested one, is a genuine miss."""
+        tree = _tree({"/bcsd/debiased_coarse/ssp245/tas/001": 7.0})
+        with pytest.raises(KeyError) as excinfo:
+            _debiased_coarse_node(tree, "ssp245", method="qdmsd")
+        message = str(excinfo.value)
+        assert "qdmsd" in message
+        assert "bcsd" in message
+
+    def test_method_lookup_is_case_insensitive(self):
+        tree = _tree({"/bcsd/debiased_coarse/ssp245/tas/001": 7.0})
+        lower = _debiased_coarse_node(tree, "ssp245", method="bcsd")
+        upper = _debiased_coarse_node(tree, "ssp245", method="BCSD")
+        assert lower.path == upper.path == "/bcsd/debiased_coarse/ssp245"
+
 
 def _point_da(value: float) -> xr.DataArray:
     """A lat/lon field the drill-down can select a single point from."""

@@ -623,6 +623,12 @@ def _debiased_coarse_node(tree, scenario: str, method: str | None = None):
     Stores written before the namespacing hold it at ``debiased_coarse/{scenario}``.
     Both are resolved here so a drill-down works against either store.
 
+    When ``method`` is given and the store has no method segments at all, the store
+    predates the split and holds exactly one method's output at the root, so the
+    request resolves to the root regardless of which method was asked for. When the
+    store does have method segments, ``method`` must name one that is actually present;
+    otherwise the lookup fails and says which segments the store does have.
+
     Parameters
     ----------
     tree : xr.DataTree
@@ -641,18 +647,32 @@ def _debiased_coarse_node(tree, scenario: str, method: str | None = None):
     Raises
     ------
     KeyError
-        If no candidate group holds ``scenario``, or if ``method`` is ``None`` and the
-        store holds the scenario under more than one method segment. A store carrying
-        both methods is genuinely ambiguous, so it must be disambiguated rather than
-        silently paired against whichever segment happens to sort first.
+        If ``method`` names a segment the store does not have (and the store does have
+        other method segments, so it postdates the split and a miss is genuine); if no
+        candidate group holds ``scenario``; or if ``method`` is ``None`` and the store
+        holds the scenario under more than one method segment. A store carrying both
+        methods is genuinely ambiguous, so it must be disambiguated rather than silently
+        paired against whichever segment happens to sort first.
     """
     # Roots to look under, keyed by the method segment ("" for the pre-namespace root).
     # A store can hold both forms, so every candidate is probed and the ambiguity is
     # reported rather than resolved arbitrarily.
-    roots = {"": tree} | {n: c for n, c in tree.children.items() if n in METHOD_SEGMENTS}
+    present_segments = {n: c for n, c in tree.children.items() if n in METHOD_SEGMENTS}
+    roots = {"": tree} | present_segments
     if method is not None:
         segment = method.lower()
-        roots = {segment: tree.children[segment]} if segment in tree.children else {}
+        if segment in tree.children:
+            roots = {segment: tree.children[segment]}
+        elif not present_segments:
+            # Pre-namespace store: no method segments exist, so it predates the split
+            # and holds exactly one method's output at the root. Any method request is
+            # trivially satisfied there.
+            roots = {"": tree}
+        else:
+            raise KeyError(
+                f"store has no {segment!r} method segment; present segments: "
+                f"{sorted(present_segments)}"
+            )
     found = {
         segment: root.children["debiased_coarse"].children[scenario]
         for segment, root in sorted(roots.items())
