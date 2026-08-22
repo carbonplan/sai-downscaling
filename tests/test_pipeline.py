@@ -2443,3 +2443,48 @@ class TestQDMScenarioWindow:
         debiaser = captured["debiaser"]
         assert debiaser.running_window_mode_over_years_of_cm_future is True
         assert debiaser.running_window_over_years_of_cm_future_length == 31
+
+
+class TestQDMPadCompleteness:
+    """A short lead-in pad must fail loudly instead of under-filling the moving window.
+
+    ``.sel`` on a time slice returns whatever it finds, and the trailing de-padding is
+    computed from the pad that was actually selected, so a stitched series that does not
+    reach back far enough produces a quietly under-conditioned first few future years.
+    """
+
+    def _run(self, pipeline_options, stitched):
+        pipe = TestQDMScenarioWindow._pipeline(pipeline_options)
+        scenario = _qdm_da("2015-01-01", "2016-12-31")
+        hist = _qdm_da("2010-01-01", "2014-12-31")
+
+        def _fake_apply(self, **kwargs):
+            return np.zeros(kwargs["cm_future"].shape)
+
+        with (
+            patch("srm.pipeline.stitch_historical_scenario", return_value=stitched),
+            patch.object(QuantileDeltaMapping, "apply", _fake_apply),
+        ):
+            return pipe._apply_bias_correction_scenario(
+                hist, hist, scenario, model_scenario_for_qdm=scenario
+            )
+
+    def test_full_pad_is_accepted(self, pipeline_options):
+        """pad_years=15 before predict_period_start=2015, so 2000-2014 must be enough."""
+        out = self._run(pipeline_options, _qdm_da("2000-01-01", "2014-12-31"))
+        assert out.sizes["time"] == 731  # only the requested period survives
+
+    def test_short_pad_raises(self, pipeline_options):
+        stitched = _qdm_da("2010-01-01", "2014-12-31")
+        with pytest.raises(ValueError) as excinfo:
+            self._run(pipeline_options, stitched)
+        message = str(excinfo.value)
+        assert "2000 to 2014" in message  # the range that was required
+        assert "2010 to 2014" in message  # what was actually available
+        assert "2000" in message and "2009" in message  # the missing years
+        assert "2010-01-01" in message  # earliest time in the stitched series
+
+    def test_empty_pad_raises(self, pipeline_options):
+        """Nothing before the prediction period at all is the degenerate case."""
+        with pytest.raises(ValueError, match="no years"):
+            self._run(pipeline_options, _qdm_da("2015-01-01", "2016-12-31"))

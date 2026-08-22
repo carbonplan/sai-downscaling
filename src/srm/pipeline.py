@@ -191,6 +191,61 @@ def _assert_stitched_continuity(result: xr.DataArray) -> None:
         raise ValueError(f"Stitched timeseries has year-level gap(s): {gaps}")
 
 
+def _assert_qdm_pad_complete(
+    scenario_pad: xr.DataArray,
+    stitched: xr.DataArray,
+    *,
+    pad_start_year: int,
+    pad_end_year: int,
+    predict_period_start: int,
+) -> None:
+    """Raise ValueError if the quantile delta mapping lead-in pad is short.
+
+    Quantile delta mapping estimates each future year's correction from a moving window
+    over years of ``cm_future`` centered on that year, so the years immediately before
+    ``predict_period_start`` have to be prepended to fill the window. ``.sel`` on a time
+    slice returns whatever it finds, so a stitched series that does not reach back to
+    ``pad_start_year`` yields a short or empty pad; the window is then under-filled for
+    the first future years and the shortfall never surfaces, because dropping the pad
+    afterwards still lines up with whatever was prepended.
+
+    Coverage is checked per year, matching :func:`_assert_stitched_continuity`, which
+    tolerates day-level gaps inside a year but no year-level ones.
+
+    Parameters
+    ----------
+    scenario_pad : xr.DataArray
+        The lead-in context actually selected out of ``stitched``.
+    stitched : xr.DataArray
+        The continuous historical/scenario series the pad was selected from.
+    pad_start_year, pad_end_year : int
+        First and last year (both inclusive) the pad has to cover.
+    predict_period_start : int
+        First year of the prediction period, quoted in the error message.
+
+    Raises
+    ------
+    ValueError
+        If any year in ``[pad_start_year, pad_end_year]`` is absent from the pad.
+    """
+    present = {int(y) for y in np.unique(scenario_pad["time.year"].values)}
+    missing = [y for y in range(pad_start_year, pad_end_year + 1) if y not in present]
+    if not missing:
+        return
+
+    available = (
+        f"{min(present)} to {max(present)} ({len(present)} year(s))" if present else "no years"
+    )
+    earliest = stitched["time"].values[0] if stitched.sizes.get("time", 0) else "nothing"
+    raise ValueError(
+        f"Quantile delta mapping needs lead-in context covering {pad_start_year} to "
+        f"{pad_end_year} before predict_period_start={predict_period_start}, but the "
+        f"stitched historical/scenario series supplies {available}; missing {missing}. "
+        f"The earliest time present in the stitched series is {earliest}. Extend the "
+        f"upstream series back to {pad_start_year} or start the prediction period later."
+    )
+
+
 def stitch_historical_scenario(
     model_hist: xr.DataArray,
     model_scenario: xr.DataArray,
@@ -1646,6 +1701,18 @@ class BCSDPipeline:
             scenario_pad = stitched_for_pad.sel(
                 time=slice(f"{pad_start_year}", f"{pad_end_year}")
             ).as_numpy()
+            # A short pad is silent otherwise: .sel on a slice happily returns fewer years
+            # than asked for, the moving window is then under-filled for the first future
+            # years, and the trailing de-padding below still lines up, so the shortfall
+            # never reaches the output. Fail loudly instead, at the same year granularity
+            # _assert_stitched_continuity uses.
+            _assert_qdm_pad_complete(
+                scenario_pad,
+                stitched_for_pad,
+                pad_start_year=pad_start_year,
+                pad_end_year=pad_end_year,
+                predict_period_start=self.config.predict_period_start,
+            )
             padded_future = xr.concat([scenario_pad, scenario_detrended], dim="time")
 
             qdm_apply_kwargs = {
