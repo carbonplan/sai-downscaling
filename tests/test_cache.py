@@ -874,3 +874,46 @@ class TestDownscalingMethodNamespacing:
         """The segment is outermost, so there is one rule rather than a per-group one."""
         cache = self._cache_for("QDMSD", tmp_path)
         assert cache.debiased_coarse_scenario_loc().group.startswith("qdmsd/debiased_coarse/")
+
+
+class TestIntermediateClassificationAcrossMethods:
+    """Intermediate classification must not depend on the bound config's method."""
+
+    def test_strips_the_method_segment(self):
+        assert ArtifactCache._strip_method_segment("bcsd/detrended_scenario/ssp245/tas/001") == (
+            "detrended_scenario/ssp245/tas/001"
+        )
+        assert ArtifactCache._strip_method_segment("obs/tas") == "tas"
+
+    def test_classifies_both_methods_in_one_store(self, bound_cache, monkeypatch):
+        groups = [
+            "obs/tas",
+            "bcsd/detrended_scenario/ssp245/tas/001",
+            "bcsd/trend_scenario/ssp245/tas/001",
+            "bcsd/debiased_scenario/ssp245/tas/001",
+            "qdmsd/debiased_scenario/ssp245/tas/001",
+            "bcsd/historical/tas/001",
+            "qdmsd/ssp245/tas/001",
+            "bcsd/debiased_coarse/ssp245/tas/001",
+        ]
+        monkeypatch.setattr(ArtifactCache, "list_groups_on_branch", lambda self, store: groups)
+
+        result = bound_cache.list_intermediate_groups()
+        found = sorted({g for groups_ in result.values() for g in groups_})
+
+        assert found == [
+            "bcsd/debiased_scenario/ssp245/tas/001",
+            "bcsd/detrended_scenario/ssp245/tas/001",
+            "bcsd/trend_scenario/ssp245/tas/001",
+            "qdmsd/debiased_scenario/ssp245/tas/001",
+        ]
+
+    def test_still_classifies_pre_namespace_paths(self, bound_cache, monkeypatch):
+        """Old branches hold unprefixed intermediates; listing them is read-only."""
+        groups = ["detrended_scenario/ssp245/tas/001", "historical/tas/001"]
+        monkeypatch.setattr(ArtifactCache, "list_groups_on_branch", lambda self, store: groups)
+
+        result = bound_cache.list_intermediate_groups()
+        found = sorted({g for groups_ in result.values() for g in groups_})
+
+        assert found == ["detrended_scenario/ssp245/tas/001"]

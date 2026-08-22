@@ -75,6 +75,9 @@ class ArtifactCache:
     the icechunk repository path and the zarr group within it.
     """
 
+    # Group-path prefixes that mark an artifact as an intermediate rather than a
+    # deliverable. Matched against the path with its leading method segment removed,
+    # so these stay method-agnostic. See _strip_method_segment.
     INTERMEDIATE_PREFIXES: tuple[str, ...] = (
         "detrended_scenario/",
         "trend_scenario/",
@@ -524,6 +527,25 @@ class ArtifactCache:
         except Exception:
             return []
 
+    @staticmethod
+    def _strip_method_segment(group: str) -> str:
+        """Return ``group`` with its leading downscaling-method segment removed.
+
+        Parameters
+        ----------
+        group : str
+            Zarr group path, e.g. ``"bcsd/detrended_scenario/ssp245/tas/001"``.
+
+        Returns
+        -------
+        str
+            The path after the first segment, e.g.
+            ``"detrended_scenario/ssp245/tas/001"``. A single-segment path returns
+            the empty string.
+        """
+        _, _, rest = group.partition("/")
+        return rest
+
     def list_intermediate_groups(self) -> dict[str, list[str]]:
         """Return intermediate artifact groups on the current branch, keyed by store path.
 
@@ -541,7 +563,14 @@ class ArtifactCache:
             groups = [
                 g
                 for g in self.list_groups_on_branch(store_path)
-                if any(g.startswith(p) for p in self.INTERMEDIATE_PREFIXES)
+                # Both forms are matched. A store can hold groups from more than one
+                # method, so the bound config's own method cannot be used, and branches
+                # written before groups were namespaced still hold unprefixed paths.
+                # This is a read-only summary, so tolerating both costs nothing.
+                if any(
+                    g.startswith(p) or self._strip_method_segment(g).startswith(p)
+                    for p in self.INTERMEDIATE_PREFIXES
+                )
             ]
             if groups:
                 result[store_path] = groups
