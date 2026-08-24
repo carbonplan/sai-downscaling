@@ -23,10 +23,13 @@ predict_period_start: 2015
 # predict_period_end is year-granularity only, so 2069 pulls in a NaN-padded last day for 006, triggering the NaN check/assert failure.
 predict_period_end: 2068
 
-# === Downscaling Method ===
-# "BCSD" (detrend + quantile mapping) or "QDMSD" (quantile delta mapping). Required:
-# there is no default, so every config states which method produced its output.
-downscaling_method: "BCSD"
+# === Downscaling Methods ===
+# "BCSD" (detrend + quantile mapping) and "QDMSD" (quantile delta mapping). Required:
+# there is no default, so every config states which methods produced its output.
+# Listing both expands the matrix over the pair, so QA exercises each method on
+# identical inputs. They share one regridded observation artifact and write under
+# separate bcsd/ and qdmsd/ group prefixes, so nothing collides.
+downscaling_methods: ["BCSD", "QDMSD"]
 
 # === Spatial Subsetting ===
 # All of South Africa ([-35, -22, 16, 33]) plus a ~3 deg halo. subset_space applies a hard
