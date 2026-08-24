@@ -4,6 +4,7 @@ import icechunk
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from icechunk.xarray import to_icechunk
 
 from srm.qaqc import VAR_SPATIAL_RANGES
 
@@ -169,7 +170,7 @@ def write_individual_flags(
 
     tag = f"{gcm}_{var}_{scenario}_{ens}"
     storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
-    repo = icechunk.Repository.create_or_open(storage)  # one repo per gcm/var/scenario/ens tag
+    repo = icechunk.Repository.open_or_create(storage)  # one repo per gcm/var/scenario/ens tag
     session = repo.writable_session("main")
 
     # encoding is only valid the first time flag_name is written to this store;
@@ -183,8 +184,9 @@ def write_individual_flags(
 
     encoding = {} if variable_exists else {flag_name: {"_FillValue": None}}
 
-    flag_data.to_zarr(
-        session.store,
+    to_icechunk(
+        flag_data,
+        session,
         mode=write_mode,
         align_chunks=True,
         encoding=encoding,
