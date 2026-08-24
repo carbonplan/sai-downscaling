@@ -1,5 +1,6 @@
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import icechunk
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
@@ -148,7 +149,8 @@ def write_individual_flags(
     var: str,
     scenario: str,
     ens: str,
-    flag_dir: str,
+    bucket: str = "carbonplan-srm",
+    prefix: str = "output/qa-intermediate-flags",
     write_mode: str = "w",
     time_varying: bool = True,
 ):
@@ -166,25 +168,31 @@ def write_individual_flags(
         flag_data = flag_data.chunk({"lat": 100, "lon": 100})
 
     tag = f"{gcm}_{var}_{scenario}_{ens}"
-    store_path = flag_dir + tag + ".zarr"
+    storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
+    repo = icechunk.Repository.create_or_open(storage)  # one repo per gcm/var/scenario/ens tag
+    session = repo.writable_session("main")
 
     # encoding is only valid the first time flag_name is written to this store;
     # xarray errors if encoding is passed for a variable that already exists there
     variable_exists = False
     if write_mode != "w":
         try:
-            variable_exists = flag_name in xr.open_zarr(store_path, consolidated=False).variables
+            variable_exists = flag_name in xr.open_zarr(session.store, consolidated=False).variables
         except Exception:
-            variable_exists = False  # store or group doesn't exist yet
+            variable_exists = False  # store doesn't exist yet
 
     encoding = {} if variable_exists else {flag_name: {"_FillValue": None}}
 
     flag_data.to_zarr(
-        store_path,
+        session.store,
         mode=write_mode,
-        consolidated=False,
         align_chunks=True,
         encoding=encoding,
+    )
+
+    session.commit(
+        f"write {flag_name} for {tag}",
+        rebase_with=icechunk.ConflictDetector(),
     )
 
 
@@ -256,10 +264,11 @@ def run_flag_loop(
     trees,
     flag_name,
     compute_flag,
-    flag_dir,
     var_filter=None,
     write_mode: str = "a",
     plot: bool = True,
+    bucket: str = "carbonplan-srm",
+    prefix: str = "output/qa-intermediate-flags",
 ):
     """Loop over tags, compute one flag per leaf, write it, optionally plot it.
 
@@ -285,7 +294,8 @@ def run_flag_loop(
             scenario=scenario,
             ens=ens,
             write_mode=write_mode,
-            flag_dir=flag_dir,
+            bucket=bucket,
+            prefix=prefix,
         )
 
         if plot:
@@ -294,23 +304,31 @@ def run_flag_loop(
             plt.close()
 
 
-def get_intermediate_flags(flag_dir: str, tag: str):
-    flag_data = xr.open_zarr(flag_dir + tag + ".zarr", consolidated=False)
+def get_intermediate_flags(
+    tag: str,
+    bucket: str = "carbonplan-srm",
+    prefix: str = "output/qa-intermediate-flags",
+):
+    storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
+    repo = icechunk.Repository.open(storage)
+    session = repo.readonly_session("main")
+    flag_data = xr.open_zarr(session.store, consolidated=False)
     return flag_data
 
 
 def combine_intermediate_flags(
     tag: str,
-    flag_dir: str,
     flag_list_time_varying: list,
     flag_list_time_invariant: list,
+    bucket: str = "carbonplan-srm",
+    prefix: str = "output/qa-intermediate-flags",
 ):
     """
     This calculates two single binary flags from multiple intermediate flags. The intermediate flags
 
     """
 
-    flags = get_intermediate_flags(flag_dir=flag_dir, tag=tag)
+    flags = get_intermediate_flags(tag=tag, bucket=bucket, prefix=prefix)
 
     ind = 0
     for flag_time_varying in flag_list_time_varying:
