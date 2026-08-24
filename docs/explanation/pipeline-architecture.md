@@ -100,8 +100,8 @@ graph TB
 
 **Key points:**
 
-- **stage 1 (prepare_observations)**: runs once per (GCM, variable, spatial_subset) combination
-- **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store
+- **stage 1 (prepare_observations)**: runs once per (GCM, obs_dataset, variable, spatial_subset) combination. The key deliberately omits `downscaling_method`, because regridding observations to the coarse grid does not consult `variable_config`, so `BCSD` and `QDMSD` share one artifact.
+- **stage 2 (fit_historical)**: runs once per (GCM, obs_dataset, variable, downscaling_method, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store. The method belongs in the key because each one writes its own `{method}/historical/…` group.
 - **stage 3 (transform_scenario)**: runs for each scenario configuration; writes fine-res scenario and debiased coarse scenario to the output store
 - **green boxes**: cached intermediate artifacts (obs regridded) in the scratch icechunk store, on the active branch
 - **gold boxes**: deliverables in the output icechunk store, on the active branch (fine-res historical + fine-res scenario + debiased coarse data)

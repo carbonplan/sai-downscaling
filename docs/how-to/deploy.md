@@ -29,7 +29,7 @@ configs/
     cesm2-waccm/
 ```
 
-Pointing `--config-path` at a directory (e.g. `configs/qa/`) loads every YAML beneath it. Each file is a [BCSD config](../reference/configuration.md) and supports the matrix format — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination. For example, `ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]` in a single file produces three runs without any extra files.
+Pointing `--config-path` at a directory (e.g. `configs/qa/`) loads every YAML beneath it. Each file is a [BCSD config](../reference/configuration.md) and supports the matrix format: list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods` are expanded into one run per cartesian-product combination. For example, `ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]` in a single file produces three runs without any extra files.
 
 The key difference between environments is `environment: "qa"` vs `environment: "production"` and the presence of `subset_bounds` in QA configs. The `branch` field is intentionally left unset in all deploy configs — it defaults to the installed package version at runtime, so the cache namespace automatically tracks the released version.
 

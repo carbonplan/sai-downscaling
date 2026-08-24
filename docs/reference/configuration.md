@@ -13,20 +13,32 @@ Both classes use `extra="ignore"`, so a single flat YAML file is accepted by bot
 
 ## Matrix config format
 
-Any of the four dimension fields can be a list. `load_configs` expands them into one `BCSDConfig` per cartesian-product combination:
+Any of the five dimension fields can be a list. `load_configs` expands them into one `BCSDConfig` per cartesian-product combination:
 
 ```yaml
-gcm: "CESM2-WACCM"                              # singular — still works
-variables: ["tas", "pr"]                         # list — expands
+gcm: "CESM2-WACCM"                              # singular, still works
+variables: ["tas", "pr"]                         # list, expands
 ensemble_members: ["001", "002", "003"]
 scenarios: ["SSP245"]
+downscaling_methods: ["BCSD", "QDMSD"]           # see Downscaling method below
 predict_period_start: 2015
 predict_period_end: 2099                         # must fit every member's data extent (see below)
 ```
 
-Both singular (`variable`) and plural (`variables`) key names are accepted. All other fields are shared across every combination.
+Both singular (`variable`) and plural (`variables`) key names are accepted, but not both at once for the same axis. All other fields are shared across every combination.
 
-**Restriction:** `variable_config` may not be set when `variables` contains more than one entry — it would silently apply to every variable, including those with incompatible settings (e.g. additive `tas` settings applied to `pr`). Remove it and rely on per-variable defaults (see [Variable-Specific Auto-Configuration](#variable-specific-auto-configuration)), or split into separate files.
+`downscaling_methods` differs in kind from the other four axes. Those select a slice of input data, while this one selects an algorithm, so each entry re-derives `variable_config` from its own defaults table rather than reusing one. The two methods share a single regridded observation artifact and write under separate group prefixes, which is what lets a comparison run live in one config file.
+
+**Restrictions:**
+
+| Combination | Why it is rejected |
+| --- | --- |
+| `variable_config` with more than one entry in `variables` | It would silently apply to every variable, including those with incompatible settings, such as additive `tas` settings applied to `pr`. |
+| `variable_config` with more than one entry in `downscaling_methods` | It is passed through verbatim, and its `debias_approach` can only agree with one method. |
+| `debias_approach` (top level or in `variable_overrides`) with more than one entry in `downscaling_methods` | `qdm` requires `QDMSD` and `QDMSD` requires `qdm`, so one arm of the product always contradicts the value. |
+| Both `variables` and `variable`, or any other plural/singular pair for one axis | The two spellings name the same axis, and keeping both is ambiguous. |
+
+For the first case, remove `variable_config` and rely on per-variable defaults (see [Variable-Specific Auto-Configuration](#variable-specific-auto-configuration)), or split into separate files. For the `debias_approach` cases, drop the override and let each method's defaults table supply it, or list one method at a time.
 
 ## Prediction period and per-member data extents
 
@@ -258,6 +270,23 @@ is recorded in the store metadata as `srm_downscaling:downscaling_method`, and i
 namespaces the store layout: every group except the shared `obs/{variable}` lives under a
 `bcsd/` or `qdmsd/` segment. Both methods can therefore write to one store and share a
 single observation regrid.
+
+To run both methods over identical inputs, use the plural key as a
+[matrix axis](#matrix-config-format):
+
+```yaml
+downscaling_methods: ["BCSD", "QDMSD"]
+```
+
+The pair regrids observations once and fits each method separately, which is cheaper than
+two runs because obs deduplication is deliberately method-blind. On the command line the
+equivalent is a repeated flag:
+
+```bash
+uv run bcsd run-matrix --gcm CESM2-WACCM --variable pr --member 003 --scenario SSP245 \
+  --downscaling-method BCSD --downscaling-method QDMSD \
+  --predict-period-start 2015 --predict-period-end 2099
+```
 
 ## Validation Examples
 
