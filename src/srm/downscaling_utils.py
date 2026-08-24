@@ -673,7 +673,7 @@ def downscale_from_coarse(
     max_residual: float = 100,
     tiny_threshold: float = 0.0,
     enforce_conservation: bool = False,
-    use_tiny_threshold: bool = True,
+    use_tiny_threshold: bool = False,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
