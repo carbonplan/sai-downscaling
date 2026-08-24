@@ -1669,11 +1669,30 @@ class BCSDPipeline:
                 running_window_length=self.config.variable_config.running_window_length,
                 running_window_step_length=self.config.variable_config.running_window_step_length,
             )
-            debiaser = (
-                QuantileDeltaMapping.for_precipitation(**qdm_window_kwargs)
-                if self.config.variable == "pr"
-                else QuantileDeltaMapping.from_variable(self.config.variable, **qdm_window_kwargs)
-            )
+            if self.config.variable == "pr":
+                debiaser = QuantileDeltaMapping.for_precipitation(**qdm_window_kwargs)
+            elif self.config.variable == "rsds":
+                # ibicus has no built-in QDM defaults for rsds: "standard" defaults
+                # only cover tas/pr, and "experimental" defaults cover
+                # hurs/psl/rlds/sfcwind/tasmin/tasmax -- rsds is missing from both,
+                # so .from_variable("rsds") raises ValueError. Built directly
+                # instead: nonparametric mapping with "relative" trend preservation, 
+                # the most appropriate ibicus option that respects rsds's zero lower 
+                # bound (it also mirrors the multiplicative disaggregation used for rsds).
+                # censor_values_to_zero guards against a 0/0 divide in polar-night
+                # windows, where obs/cm_hist/cm_future can all be genuinlely zero.
+                debiaser = QuantileDeltaMapping(
+                    variable="rsds",
+                    reasonable_physical_range=[0, 1000],
+                    distribution=None,
+                    mapping_type="nonparametric",
+                    trend_preservation="relative",
+                    censor_values_to_zero=True,
+                    censoring_threshold=1.0,
+                    **qdm_window_kwargs
+                )
+            else:
+                debiaser = QuantileDeltaMapping.from_variable(self.config.variable, **qdm_window_kwargs)
 
             # Each future year's correction is estimated from a moving window over years
             # of cm_future centered on that year (31 years by default, left at the ibicus
@@ -1724,6 +1743,9 @@ class BCSDPipeline:
             debiased_padded_np = debiaser.apply(**qdm_apply_kwargs)
             # remove the padding and take only the part of debiased_padded_np that is from the scenario you're running
             debiased_np = debiased_padded_np[scenario_pad.sizes["time"] :]
+            if self.config.variable == "rsds":
+                # zero out any near-zero/near-zero divide blow-up left over from censor_values_to_zero
+                debiased_np[cm_future_np < debiaser.censoring_threshold] = 0.0
 
         else:
             raise ValueError(
