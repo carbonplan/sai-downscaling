@@ -42,12 +42,12 @@ def _sample_time_window(n: int, k: int = _N_TIME_SAMPLES) -> slice:
     return slice(start, start + k)
 
 
-VAR_SPATIAL_RANGES: dict[str, dict[str, tuple[float, float]]] = {
-    "tas": {"min": (100, 400), "max": (100, 400)},
-    "tasmin": {"min": (100, 400), "max": (100, 400)},
-    "tasmax": {"min": (100, 400), "max": (100, 400)},
+VAR_SPATIAL_RANGES = {
+    "tas": {"min": (150, 400), "max": (150, 400)},
+    "tasmin": {"min": (150, 400), "max": (150, 400)},
+    "tasmax": {"min": (150, 400), "max": (150, 400)},
     "pr": {"min": (0, 1e-7), "max": (0.0001, 0.03)},
-    "rsds": {"min": (-1, 100), "max": (100, 1200)},
+    "rsds": {"min": (0, 100), "max": (100, 1200)},
     "hurs": {"min": (0, 40), "max": (40, 900)},
     "dtr": {"min": (0, 10), "max": (10, 150)},
 }
