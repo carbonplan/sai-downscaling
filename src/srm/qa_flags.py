@@ -42,6 +42,38 @@ TREND_VARIABLE_SETTINGS = {
     },
 }
 
+FLAG_LIST_TIME_VARYING = [
+    "annual_outlier_flag",
+    "rsds_max_exceeded",
+    "outside_global_plausible_range",
+    "temperature_inconsistency",
+]
+
+FLAG_LIST_TIME_INVARIANT = [
+    "flipped_signssp245_g6_1p5k",
+    "flipped_signhistorical_ssp245",
+    "flipped_signhistorical_g6_1p5k",
+    "trend_distortion_historical_ssp245",
+    "trend_distortion_ssp245_g6_1p5k",
+    "trend_distortion_historical_g6_1p5k",
+    "flipped_signg6_1p5k_g6_1p5k_end",
+    "trend_distortion_g6_1p5k_g6_1p5k_end",
+]
+
+ATTRS_TIME_INVARIANT = {
+    "long_name": "Quality flag (time-invariant)",
+    "description": "This quality flag flags specific locations where debiasing/downscaling meaningfully changes how scenarios compare to each other in the annual mean, compared to the raw GCM input.",
+    "possible_values": "This is a binary flag: 0=no known issue; 1=known issue",
+    "short_name": "qa_flag_time_invariant",
+}
+
+ATTRS_TIME_VARYING = {
+    "long_name": "Quality flag (time-varying)",
+    "description": "This quality flag flags specific days where results are highly sensitive to debiasing/downscaling method choice (e.g. treatment of outliers) and/or where output is physically unrealistic (e.g. tasmax < tas) or unlikely.",
+    "possible_values": "This is a binary flag: 0=no known issue; 1=known issue",
+    "short_name": "qa_flag_time_varying",
+}
+
 
 def calculate_thresholds(obs_max, obs_min, obs_max_std, obs_min_std):
     outlier_thresh_high = obs_max + (5 * obs_max_std)
@@ -260,3 +292,89 @@ def run_flag_loop(
             plot_flags(flags=flag_data, time_varying=True, separate_low_high=False)
             plt.show()
             plt.close()
+
+
+def get_intermediate_flags(flag_dir: str, tag: str):
+    flag_data = xr.open_zarr(flag_dir + tag + ".zarr", consolidated=False)
+    return flag_data
+
+
+def combine_intermediate_flags(
+    tag: str,
+    flag_dir: str,
+    flag_list_time_varying: list,
+    flag_list_time_invariant: list,
+):
+    """
+    This calculates two single binary flags from multiple intermediate flags. The intermediate flags
+
+    """
+
+    flags = get_intermediate_flags(flag_dir=flag_dir, tag=tag)
+
+    ind = 0
+    for flag_time_varying in flag_list_time_varying:
+        if flag_time_varying in flags.variables:
+            flag = flags[flag_time_varying]
+            if ind == 0:
+                overall_flag_time_varying = flag
+            else:
+                overall_flag_time_varying = overall_flag_time_varying + flag
+            ind = ind + 1
+    overall_flag_time_varying = overall_flag_time_varying > 0
+
+    ind = 0
+    for flag_time_invariant in flag_list_time_invariant:
+        if flag_time_invariant in flags.variables:
+            flag = flags[flag_time_invariant]
+            if ind == 0:
+                overall_flag_time_invariant = flag
+            else:
+                overall_flag_time_invariant = overall_flag_time_invariant + flag
+            ind = ind + 1
+    overall_flag_time_invariant = overall_flag_time_invariant > 0
+
+    return overall_flag_time_varying, overall_flag_time_invariant
+
+
+def write_final_qa_flags(
+    dataset_path: str,
+    flag_data: xr.DataArray,
+    flag_name: str,
+    attrs: dict,
+    write_mode: str = "a",
+    time_varying: bool = True,
+):
+    flag_data = flag_data.rename(flag_name)
+    flag_data = flag_data.fillna(0).astype(np.uint8)
+    flag_data.attrs = attrs
+
+    if time_varying:
+        flag_data = flag_data.chunk({"lat": 100, "lon": 100, "time": 8000})
+    else:
+        flag_data = flag_data.chunk({"lat": 100, "lon": 100})
+
+    # encoding is only valid the first time flag_name is written to this store;
+    # xarray errors if encoding is passed for a variable that already exists there
+    variable_exists = False
+    if write_mode != "w":
+        try:
+            variable_exists = flag_name in xr.open_zarr(dataset_path, consolidated=False).variables
+        except Exception:
+            variable_exists = False  # store or group doesn't exist yet
+
+    encoding = {} if variable_exists else {flag_name: {"_FillValue": None}}
+
+    # TO DO: change this to write to icechunk
+    flag_data.to_zarr(
+        dataset_path,
+        mode=write_mode,
+        consolidated=False,
+        align_chunks=True,
+        # zarr defaults to skipping the on-disk write for all-fill-value chunks, which
+        # leaves stale flagged data from a prior run in place when a chunk is
+        # recomputed as all-unflagged; force every chunk to be written so overwrites
+        # are complete.
+        write_empty_chunks=True,
+        encoding=encoding,
+    )
