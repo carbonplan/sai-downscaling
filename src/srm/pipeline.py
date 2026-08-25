@@ -1691,6 +1691,16 @@ class BCSDPipeline:
                     censoring_threshold=1.0,
                     **qdm_window_kwargs
                 )
+            elif self.config.variable == "dtr":
+	            debiaser = QuantileDeltaMapping(
+                    variable="dtr", 
+                    reasonable_physical_range=[0, 100], 
+                    distribution=None, 
+                    mapping_type="nonparametric", 
+                    trend_preservation="relative",
+                    censor_values_to_zero=True,
+                    censoring_threshold=0.01,
+                    **qdm_window_kwargs)
             else:
                 debiaser = QuantileDeltaMapping.from_variable(self.config.variable, **qdm_window_kwargs)
 
@@ -1743,7 +1753,7 @@ class BCSDPipeline:
             debiased_padded_np = debiaser.apply(**qdm_apply_kwargs)
             # remove the padding and take only the part of debiased_padded_np that is from the scenario you're running
             debiased_np = debiased_padded_np[scenario_pad.sizes["time"] :]
-            if self.config.variable == "rsds":
+            if self.config.variable in ["rsds", "dtr"]:
                 # zero out any near-zero/near-zero divide blow-up left over from censor_values_to_zero
                 debiased_np[cm_future_np < debiaser.censoring_threshold] = 0.0
 
