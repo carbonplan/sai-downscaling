@@ -205,10 +205,7 @@ def flag_tasmin_tas_inconsistency(tas, tasmin):
 def write_individual_flags(
     flag_data: xr.DataArray,
     flag_name: str,
-    gcm: str,
-    var: str,
-    scenario: str,
-    ens: str,
+    tag: str,
     bucket: str = "carbonplan-srm",
     prefix: str = "output/qa-intermediate-flags",
     write_mode: str = "w",
@@ -227,7 +224,6 @@ def write_individual_flags(
     else:
         flag_data = flag_data.chunk({"lat": 100, "lon": 100})
 
-    tag = f"{gcm}_{var}_{scenario}_{ens}"
     storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
     repo = icechunk.Repository.open_or_create(storage)  # one repo per gcm/var/scenario/ens tag
     session = repo.writable_session("main")
@@ -307,14 +303,18 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True):
 
 def parse_tag(tag):
     parts = tag.split("_")
-    gcm, var, ens = parts[0], parts[1], parts[-1]
-    scenario = "_".join(parts[2:-1])
-    return gcm, var, scenario, ens
+    gcm, var, ens, method = parts[0], parts[1], parts[-2], parts[-1]
+    scenario = "_".join(parts[2:-2])
+    return gcm, var, scenario, ens, method
 
 
 def get_data(tag, trees):
-    [gcm, var, scenario, ens] = parse_tag(tag)
-    comparison_ds = trees[gcm][scenario][var][ens]
+    [gcm, var, scenario, ens, method] = parse_tag(tag)
+    if method == "no-method-specified":
+        group_path = f"{scenario}/{var}/{ens}"
+    else:
+        group_path = f"{method}/{scenario}/{var}/{ens}"
+    comparison_ds = trees[gcm][group_path]
     da = comparison_ds[var]
 
     return da
@@ -339,7 +339,7 @@ def run_flag_loop(
     """
     print(len(tags))
     for tag in tags:
-        gcm, var, scenario, ens = parse_tag(tag)
+        [gcm, var, scenario, ens, method] = parse_tag(tag)
         if var_filter is not None and var != var_filter:
             continue
         print(tag)
@@ -350,10 +350,7 @@ def run_flag_loop(
         write_individual_flags(
             flag_data=flag_data,
             flag_name=flag_name,
-            gcm=gcm,
-            var=var,
-            scenario=scenario,
-            ens=ens,
+            tag=tag,
             write_mode=write_mode,
             bucket=bucket,
             prefix=prefix,
@@ -381,7 +378,7 @@ def calculate_ensemble_mean_deltas(
     ens_scenario1 = []
     for tag in tags_scenario1:
         da = get_data(tag=tag, trees=trees)
-        thisgcm, thisvar, thisscenario, thisens = parse_tag(tag)
+        [thisgcm, thisvar, thisscenario, thisens, thismethod] = parse_tag(tag)
         das_scenario1.append(da)
         ens_scenario1.append(thisens)
 
@@ -391,7 +388,7 @@ def calculate_ensemble_mean_deltas(
     ens_scenario2 = []
     for tag in tags_scenario2:
         da = get_data(tag=tag, trees=trees)
-        thisgcm, thisvar, thisscenario, thisens = parse_tag(tag)
+        [thisgcm, thisvar, thisscenario, thisens, thismethod] = parse_tag(tag)
         das_scenario2.append(da)
         ens_scenario2.append(thisens)
 
@@ -675,9 +672,9 @@ def discover_leaves(gcms: list[str], branch: str, root_dir: str, store_subset_id
         # This if statement is to accommodate different data tree structures.
         # Data generated when we only had one method does not have a method tier of the data tree
         if method == "":
-            tags.append(f"{gcm}_{var}_{scenario}_{ens}")
+            tags.append(f"{gcm}_{var}_{scenario}_{ens}_no-method-specified")
         else:
-            tags.append(f"{method}_{gcm}_{var}_{scenario}_{ens}")
+            tags.append(f"{gcm}_{var}_{scenario}_{ens}_{method}")
 
     gcms_np = np.array(leaf_gcms)
     scenarios_np = np.array(leaf_scenarios)
