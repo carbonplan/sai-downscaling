@@ -969,6 +969,8 @@ class BCSDPipeline:
             method=self.config.variable_config.disaggregation_method,
             clim_method=self.config.variable_config.disaggregation_clim_method,
             allow_negative_values=False,
+            tiny_threshold=self.config.variable_config.disaggregation_tiny_threshold,
+            use_tiny_threshold=False,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
@@ -1676,8 +1678,8 @@ class BCSDPipeline:
                 # only cover tas/pr, and "experimental" defaults cover
                 # hurs/psl/rlds/sfcwind/tasmin/tasmax -- rsds is missing from both,
                 # so .from_variable("rsds") raises ValueError. Built directly
-                # instead: nonparametric mapping with "relative" trend preservation, 
-                # the most appropriate ibicus option that respects rsds's zero lower 
+                # instead: nonparametric mapping with "relative" trend preservation,
+                # the most appropriate ibicus option that respects rsds's zero lower
                 # bound (it also mirrors the multiplicative disaggregation used for rsds).
                 # censor_values_to_zero guards against a 0/0 divide in polar-night
                 # windows, where obs/cm_hist/cm_future can all be genuinlely zero.
@@ -1689,20 +1691,23 @@ class BCSDPipeline:
                     trend_preservation="relative",
                     censor_values_to_zero=True,
                     censoring_threshold=1.0,
-                    **qdm_window_kwargs
+                    **qdm_window_kwargs,
                 )
             elif self.config.variable == "dtr":
-	            debiaser = QuantileDeltaMapping(
-                    variable="dtr", 
-                    reasonable_physical_range=[0, 100], 
-                    distribution=None, 
-                    mapping_type="nonparametric", 
+                debiaser = QuantileDeltaMapping(
+                    variable="dtr",
+                    reasonable_physical_range=[0, 100],
+                    distribution=None,
+                    mapping_type="nonparametric",
                     trend_preservation="relative",
                     censor_values_to_zero=True,
                     censoring_threshold=0.01,
-                    **qdm_window_kwargs)
+                    **qdm_window_kwargs,
+                )
             else:
-                debiaser = QuantileDeltaMapping.from_variable(self.config.variable, **qdm_window_kwargs)
+                debiaser = QuantileDeltaMapping.from_variable(
+                    self.config.variable, **qdm_window_kwargs
+                )
 
             # Each future year's correction is estimated from a moving window over years
             # of cm_future centered on that year (31 years by default, left at the ibicus

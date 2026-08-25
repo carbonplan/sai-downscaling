@@ -25,7 +25,7 @@ DebiasApproach = Literal[
 ]
 DownscalingMethod = Literal["BCSD", "QDMSD"]
 DisaggregationMethod = Literal["additive", "multiplicative"]
-DisaggregationClimMethod = Literal["simple", "fft"]
+DisaggregationClimMethod = Literal["simple", "fft", "simple_rolling"]
 DetrendMethod = Literal["additive", "multiplicative"]
 VariableName = Literal["tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"]
 
@@ -44,16 +44,19 @@ class VariableConfig(BaseModel):
     running_window_length: int
     disaggregation_method: DisaggregationMethod
     disaggregation_clim_method: DisaggregationClimMethod
+    disaggregation_tiny_threshold: float
     detrend_method: DetrendMethod
     debias_approach: DebiasApproach
     running_window_step_length: int
 
-    # Keys renamed when 'downscaling_method' was repurposed as the top-level BCSD/QDMSD
-    # selector. extra="ignore" would drop these silently, and the old name now means
+    # Spatial-disaggregation keys renamed to a 'disaggregation_' prefix when
+    # 'downscaling_method' was repurposed as the top-level BCSD/QDMSD selector.
+    # extra="ignore" would drop the old spellings silently, and one of them now means
     # something different at the top level, so a stale config has to fail loudly.
     _RENAMED_KEYS: ClassVar[dict[str, str]] = {
         "downscaling_method": "disaggregation_method",
         "downscaling_clim_method": "disaggregation_clim_method",
+        "downscaling_tiny_threshold": "disaggregation_tiny_threshold",
     }
 
     @model_validator(mode="before")
@@ -64,10 +67,11 @@ class VariableConfig(BaseModel):
             for old, new in cls._RENAMED_KEYS.items():
                 if old in data:
                     raise ValueError(
-                        f"'{old}' was renamed to '{new}' on VariableConfig. The name "
-                        f"'downscaling_method' is now the top-level BCSD/QDMSD selector "
-                        f"on BCSDConfig, so leaving '{old}' here would silently apply "
-                        f"the wrong setting. Rename it to '{new}'."
+                        f"'{old}' was renamed to '{new}' on VariableConfig. "
+                        f"Spatial-disaggregation settings now carry a 'disaggregation_' "
+                        f"prefix, because 'downscaling_method' is the top-level "
+                        f"BCSD/QDMSD selector on BCSDConfig. Leaving '{old}' here would "
+                        f"be dropped silently, so rename it to '{new}'."
                     )
         return data
 
@@ -104,6 +108,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "multiplicative",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0e-6,  # kg m-2 s-1, ~0.086 mm/day
                 "running_window_length": 31,
                 "running_window_step_length": 1,
                 "debias_approach": "nonparametric_hybrid_2sided",
@@ -114,6 +119,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "additive",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
                 "running_window_length": 31,
                 "running_window_step_length": 1,
                 "debias_approach": "nonparametric_hybrid_2sided",
@@ -124,6 +130,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "additive",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
                 "running_window_length": 31,
                 "running_window_step_length": 1,
                 "debias_approach": "nonparametric_hybrid_2sided",
@@ -134,6 +141,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "additive",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
                 "running_window_length": 31,
                 "running_window_step_length": 1,
                 "debias_approach": "nonparametric_hybrid_2sided",
@@ -144,6 +152,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "multiplicative",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0,  # W m-2
                 "running_window_length": 31,
                 "running_window_step_length": 1,
                 "debias_approach": "nonparametric_hybrid_2sided",
@@ -154,6 +163,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "multiplicative",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
                 "running_window_length": 31,
                 "running_window_step_length": 1,
                 "debias_approach": "nonparametric_hybrid_2sided",
@@ -164,6 +174,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "multiplicative",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0e-2,  # percent
                 "running_window_length": 31,
                 "running_window_step_length": 1,
                 "debias_approach": "nonparametric_hybrid_2sided",
@@ -177,6 +188,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "multiplicative",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0e-6,  # kg m-2 s-1, ~0.086 mm/day
                 "running_window_length": 91,
                 "running_window_step_length": 31,
                 "debias_approach": "qdm",
@@ -187,6 +199,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "additive",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
                 "running_window_length": 91,
                 "running_window_step_length": 31,
                 "debias_approach": "qdm",
@@ -197,6 +210,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "additive",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
                 "running_window_length": 91,
                 "running_window_step_length": 31,
                 "debias_approach": "qdm",
@@ -207,6 +221,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "additive",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
                 "running_window_length": 91,
                 "running_window_step_length": 31,
                 "debias_approach": "qdm",
@@ -217,6 +232,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "multiplicative",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0,  # W m-2
                 "running_window_length": 91,
                 "running_window_step_length": 31,
                 "debias_approach": "qdm",
@@ -227,6 +243,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "multiplicative",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
                 "running_window_length": 91,
                 "running_window_step_length": 31,
                 "debias_approach": "qdm",
@@ -237,6 +254,7 @@ class VariableConfig(BaseModel):
                 "do_windowing": True,
                 "disaggregation_method": "multiplicative",
                 "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0e-2,  # percent
                 "running_window_length": 91,
                 "running_window_step_length": 31,
                 "debias_approach": "qdm",
@@ -709,6 +727,7 @@ custom_config = BCSDConfig(
         running_window_step_length=1,
         disaggregation_method="additive",
         disaggregation_clim_method="simple",
+        disaggregation_tiny_threshold=0.0,
         detrend_method="additive",
         debias_approach="nonparametric_hybrid_2sided",
     )

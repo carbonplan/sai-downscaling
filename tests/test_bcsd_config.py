@@ -140,6 +140,7 @@ class TestVariableConfig:
             running_window_step_length=1,
             disaggregation_method="multiplicative",
             disaggregation_clim_method="simple",
+            disaggregation_tiny_threshold=0.0,
             detrend_method="additive",
             debias_approach="nonparametric",
         )
@@ -155,6 +156,7 @@ class TestVariableConfig:
                 running_window_step_length=1,
                 disaggregation_method="multiply",  # not a valid Literal
                 disaggregation_clim_method="fft",
+                disaggregation_tiny_threshold=0.0,
                 detrend_method="additive",
                 debias_approach="nonparametric",
             )
@@ -169,6 +171,22 @@ class TestVariableConfig:
                 running_window_step_length=1,
                 downscaling_method="additive",  # pre-rename name
                 disaggregation_clim_method="fft",
+                disaggregation_tiny_threshold=0.0,
+                detrend_method="additive",
+                debias_approach="nonparametric",
+            )
+
+    def test_renamed_tiny_threshold_key_raises(self):
+        """The #556 spelling of the clipping threshold must be rejected, not dropped."""
+        with pytest.raises(ValidationError, match="renamed to 'disaggregation_tiny_threshold'"):
+            VariableConfig(
+                detrend_data=True,
+                do_windowing=True,
+                running_window_length=31,
+                running_window_step_length=1,
+                disaggregation_method="multiplicative",
+                disaggregation_clim_method="fft",
+                downscaling_tiny_threshold=1.0e-6,  # pre-rename name
                 detrend_method="additive",
                 debias_approach="nonparametric",
             )
@@ -386,6 +404,7 @@ class TestBCSDConfigConstruction:
             running_window_step_length=1,
             disaggregation_method="additive",
             disaggregation_clim_method="simple",
+            disaggregation_tiny_threshold=0.0,
             detrend_method="additive",
             debias_approach="nonparametric_hybrid_2sided",
         )
