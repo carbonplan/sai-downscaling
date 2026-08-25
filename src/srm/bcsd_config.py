@@ -24,7 +24,7 @@ DebiasApproach = Literal[
     "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided"
 ]
 DownscalingMethod = Literal["additive", "multiplicative"]
-DownscalingClimMethod = Literal["simple", "fft"]
+DownscalingClimMethod = Literal["simple", "fft", "simple_rolling"]
 DetrendMethod = Literal["additive", "multiplicative"]
 VariableName = Literal["tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"]
 
