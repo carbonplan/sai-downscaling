@@ -628,7 +628,10 @@ def calculate_doy_means(
         return da_xr_doy_mean
 
     elif clim_method == "simple_rolling":
-        rolling_window = 30
+        # Note that this rolling mean is used for smoothing the day-of-year climatology in the spatial disaggregation step,
+        # and is allowed to be different from the running_window_length used for the bias correction step. running_window_length is
+        # a parameter defined in bcsd_config.py, while rolling_window is hard-coded here to 31 days
+        rolling_window = 31
         clim_rolling_window = (
             da_xr_doy_mean.pad(dayofyear=rolling_window, mode="wrap")
             .rolling(dayofyear=rolling_window, center=True)
