@@ -3,9 +3,12 @@ import cartopy.feature as cfeature
 import icechunk
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import xarray as xr
 from icechunk.xarray import to_icechunk
 
+from srm import catalog
+from srm.downscaling_utils import interpolate_fine_to_coarse_grid
 from srm.qaqc import VAR_SPATIAL_RANGES
 
 # directory where outputs from step 1 are saved for use in calculating flags in step 2
@@ -41,6 +44,44 @@ TREND_VARIABLE_SETTINGS = {
         "abs_tol": 5.0,
         "pct_tol": 1.0,
         "sign_flip": 0.5,
+    },
+}
+
+SCENARIO_COMPARISONS = {
+    # When comparing the SAI and counterfactual SSP scenario, compare the same time period in both scenarios, towards the end of the SAI run when the differences
+    # between the two scenarios should be the largest
+    # Note that several CESM ensemble members did not run beyond 2070 in the SSP245 scenario, so the CESM ensemble mean is drawing from a different number of
+    # ensemble members for different years
+    "g6_1p5k_ssp245": {
+        "scenario1": "ssp245",
+        "scenario1_time_slice": slice("2065-01-01", "2084-12-31"),
+        "scenario2": "g6_1p5k",
+        "scenario2_time_slice": slice("2065-01-01", "2084-12-31"),
+    },
+    # When comparing a future SSP scenario to the historical, compare the full historical baseline used in this dataset (1978-2014) to a future time slice for the SSP245 scenario
+    # Here, we use the same time slice as the SAI scenario for consistency, but this could be changed to a different future time slice if desired, e.g. later in the SSP245 scenario (2080-2100)
+    # or to an earlier time slice that all ensemble members completed (e.g. 2050-2070). The fact that several CESM ensemble members did not run beyond 2070 in the SSP245 scenario is a limitation
+    # of the existing time slice comparison
+    "ssp245_hist": {
+        "scenario1": "historical",
+        "scenario1_time_slice": slice("1978-01-01", "2014-12-31"),
+        "scenario2": "ssp245",
+        "scenario2_time_slice": slice("2065-01-01", "2084-12-31"),
+    },
+    # When comparing a future SAI scenario to the historical, compare the full historical baseline used in this dataset (1978-2014) to the end of the SAI simulation (last 20 years)
+    "g6_1p5k_hist": {
+        "scenario1": "historical",
+        "scenario1_time_slice": slice("1978-01-01", "2014-12-31"),
+        "scenario2": "g6_1p5k",
+        "scenario2_time_slice": slice("2065-01-01", "2084-12-31"),
+    },
+    # When comparing a termination shock simulation to the preceding SAI simulation, compare the end of the SAI simulation (using 20 years here)
+    # to the full termination shock scenario, run to 2100 (so 15 years after termination are available)
+    "g6_1p5k_end_g6_1p5k": {
+        "scenario1": "g6_1p5k",
+        "scenario1_time_slice": slice("2065-01-01", "2084-12-31"),
+        "scenario2": "g6_1p5k_end",
+        "scenario2_time_slice": slice("2085-01-01", "2099-12-31"),
     },
 }
 
@@ -304,6 +345,79 @@ def run_flag_loop(
             plot_flags(flags=flag_data, time_varying=True, separate_low_high=False)
             plt.show()
             plt.close()
+
+
+def calculate_ensemble_mean_deltas(
+    variable,
+    tags_scenario1,
+    tags_scenario2,
+    gcm,
+    scenario1,
+    scenario2,
+    scenario1_time_slice,
+    scenario2_time_slice,
+    trees,
+):
+    # Construct data arrays including all relevant ensemble members
+    das_scenario1 = []
+    ens_scenario1 = []
+    for tag in tags_scenario1:
+        da = get_data(tag=tag, trees=trees)
+        thisgcm, thisvar, thisscenario, thisens = parse_tag(tag)
+        das_scenario1.append(da)
+        ens_scenario1.append(thisens)
+
+    var_scenario1 = xr.concat(das_scenario1, dim=pd.Index(ens_scenario1, name="ensemble_member"))
+
+    das_scenario2 = []
+    ens_scenario2 = []
+    for tag in tags_scenario2:
+        da = get_data(tag=tag, trees=trees)
+        thisgcm, thisvar, thisscenario, thisens = parse_tag(tag)
+        das_scenario2.append(da)
+        ens_scenario2.append(thisens)
+
+    var_scenario2 = xr.concat(das_scenario2, dim=pd.Index(ens_scenario2, name="ensemble_member"))
+
+    # Take ensemble mean across comparison time periods
+    ens_mean_var_scenario1 = var_scenario1.sel(time=scenario1_time_slice).mean(
+        dim=["time", "ensemble_member"]
+    )
+    ens_mean_var_scenario2 = var_scenario2.sel(time=scenario2_time_slice).mean(
+        dim=["time", "ensemble_member"]
+    )
+
+    # Take ensemble mean across comparison time periods in raw data
+    raw_ds = catalog.get(gcm).to_xarray()
+    raw_scenario1_mean = (
+        raw_ds[scenario1][variable]
+        .sel(time=scenario1_time_slice, ensemble_member=ens_scenario1)
+        .mean(dim=["time", "ensemble_member"])
+    )
+    raw_scenario2_mean = (
+        raw_ds[scenario2][variable]
+        .sel(time=scenario2_time_slice, ensemble_member=ens_scenario2)
+        .mean(dim=["time", "ensemble_member"])
+    )
+
+    # Coarsen the downscaled ensemble means
+    ens_mean_var_scenario1_coarsened = interpolate_fine_to_coarse_grid(
+        da_fine_to_coarsen=ens_mean_var_scenario1, da_coarse_grid=raw_scenario1_mean
+    ).compute()
+    ens_mean_var_scenario2_coarsened = interpolate_fine_to_coarse_grid(
+        da_fine_to_coarsen=ens_mean_var_scenario2, da_coarse_grid=raw_scenario1_mean
+    ).compute()
+
+    # Calculate scenario comparison (annual mean) in downscaled and raw
+    delta_raw = raw_scenario2_mean - raw_scenario1_mean
+    delta_raw_pct = delta_raw * 100 / raw_scenario1_mean
+
+    delta_ds_coarse = ens_mean_var_scenario2_coarsened - ens_mean_var_scenario1_coarsened
+    delta_ds_coarse_pct = delta_ds_coarse * 100 / ens_mean_var_scenario1_coarsened
+
+    delta_ds = ens_mean_var_scenario2 - ens_mean_var_scenario1
+
+    return delta_raw, delta_raw_pct, delta_ds_coarse, delta_ds_coarse_pct, delta_ds
 
 
 def get_intermediate_flags(
