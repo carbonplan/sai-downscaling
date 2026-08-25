@@ -21,6 +21,7 @@ from srm.snapshot.compare import (
     InvariantCheck,
     LeafDiff,
     _iter_leaf_datasets,
+    _select_matching_branch,
     compare,
 )
 from srm.snapshot.tolerances import Tolerance
@@ -127,7 +128,14 @@ def _compare_datatrees(
     report = compare(candidate, snapshot, tolerances=tolerances)
     leaves = list(report.leaves)
 
-    cand_pairs = {(p, str(v)) for p, ds in _iter_leaf_datasets(candidate) for v in ds.data_vars}
+    # compare() diffs the candidate's bcsd branch against a pre-namespacing snapshot
+    # when the layouts don't already match (see _select_matching_branch); the
+    # snapshot-only leaves added below must be detected against those same paths, or
+    # every snapshot leaf would look candidate-missing on top of what compare() reported.
+    matched_candidate = _select_matching_branch(candidate, snapshot)
+    cand_pairs = {
+        (p, str(v)) for p, ds in _iter_leaf_datasets(matched_candidate) for v in ds.data_vars
+    }
     for path, ds in _iter_leaf_datasets(snapshot):
         for v in ds.data_vars:
             if (path, str(v)) not in cand_pairs:
