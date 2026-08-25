@@ -565,7 +565,7 @@ def interpolate_coarse_to_fine_grid(
 
 
 def fft_smooth_nharmonics(data, num_harmonics=3):
-    """Apply FFT and retain only mean + 3 harmonics"""
+    """Smooth a day-of-year cycle by keeping the mean plus the first N harmonics"""
     # Handle NaN values
     if np.all(np.isnan(data)):
         return data
