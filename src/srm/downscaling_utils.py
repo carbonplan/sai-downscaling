@@ -567,8 +567,10 @@ def interpolate_coarse_to_fine_grid(
 def fft_smooth_nharmonics(data: np.ndarray, num_harmonics: int = 3) -> np.ndarray:
     """Smooth a day-of-year cycle by keeping the mean plus the first N harmonics"""
     n = data.shape[-1]
-    if not 0 <= num_harmonics <= n // 2:
-        raise ValueError(f"num_harmonics must be between 0 and {n // 2} for a series of length {n}, got (num_harmonics}")
+    if not 1 <= num_harmonics <= n // 2:
+        raise ValueError(
+            f"num_harmonics must be between 1 and {n // 2} for a series of length {n}, got {num_harmonics}"
+        )
     # Handle NaN values
     if np.all(np.isnan(data)):
         return data
