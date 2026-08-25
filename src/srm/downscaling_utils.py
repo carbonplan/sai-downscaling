@@ -577,12 +577,13 @@ def fft_smooth_nharmonics(data: np.ndarray, num_harmonics: int = 3) -> np.ndarra
     # e.g. if num_harmonics is 3, keep first 3 harmonics (1,2,3 and -3,-2,-1)
     Z_filtered = np.zeros_like(Z)
     Z_filtered[0] = Z[0]  # mean (DC component)
-    Z_filtered[1 : (num_harmonics + 1)] = Z[
-        1 : (num_harmonics + 1)
-    ]  # positive frequencies (harmonics 1-3 if num_harmonics==3)
-    Z_filtered[-num_harmonics:] = Z[
-        -num_harmonics:
-    ]  # negative frequencies (harmonics 1-3 if num_harmonics==3)
+    if num_harmonics:
+    	Z_filtered[1 : (num_harmonics + 1)] = Z[
+        	1 : (num_harmonics + 1)
+    	]  # positive frequencies (harmonics 1-3 if num_harmonics==3)
+    	Z_filtered[-num_harmonics:] = Z[
+        	-num_harmonics:
+    	]  # negative frequencies (harmonics 1-3 if num_harmonics==3)
 
     # Inverse FFT to get smoothed time series
     smoothed = np.real(np.fft.ifft(Z_filtered)).astype(data.dtype)
