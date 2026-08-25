@@ -572,48 +572,87 @@ def discover_leaves(gcms: list[str], branch: str, root_dir: str, store_subset_id
         f"opened {len(open_gcms)}/{len(gcms)} stores on branch {branch!r}: {', '.join(open_gcms)}"
     )
 
-    leaf_gcms, leaf_scenarios, leaf_variables, leaf_ensembles = [], [], [], []
+    leaf_gcms, leaf_methods, leaf_debiased_coarse_flags = [], [], []
+    leaf_scenarios, leaf_variables, leaf_ensembles = [], [], []
 
     for gcm in open_gcms:
         tree = trees[gcm]
-        for scenario_name, scenario_node in tree.children.items():
-            for var_name, var_node in scenario_node.children.items():
-                for ens_name, ens_node in var_node.children.items():
-                    leaf_gcms.append(gcm)
-                    leaf_scenarios.append(scenario_name)
-                    leaf_variables.append(var_name)
-                    leaf_ensembles.append(ens_name)
+        for node in tree.subtree:
+            if node.children:
+                continue  # not a leaf
+            parts = node.path.strip("/").split("/")
+            if len(parts) < 3:
+                continue  # malformed/incomplete path, skip defensively
+
+            scenario, variable, ensemble = parts[-3], parts[-2], parts[-1]
+            prefix = parts[:-3]  # everything above scenario/variable/ensemble
+
+            debiased_coarse_flag = "debiased_coarse" if "debiased_coarse" in prefix else ""
+            method_parts = [p for p in prefix if p != "debiased_coarse"]
+            method = "/".join(
+                method_parts
+            )  # "" if no method wrapper (old tree, no debiased_coarse)
+
+            leaf_gcms.append(gcm)
+            leaf_methods.append(method)
+            leaf_debiased_coarse_flags.append(debiased_coarse_flag)
+            leaf_scenarios.append(scenario)
+            leaf_variables.append(variable)
+            leaf_ensembles.append(ensemble)
 
     print(f"{len(leaf_gcms)} leaves across {len(open_gcms)} GCMs")
 
-    keep_idx = [i for i, s in enumerate(leaf_scenarios) if s != "debiased_coarse"]
+    keep_idx = [i for i, s in enumerate(leaf_debiased_coarse_flags) if s != "debiased_coarse"]
     leaf_gcms = [leaf_gcms[i] for i in keep_idx]
     leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
     leaf_variables = [leaf_variables[i] for i in keep_idx]
     leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+    leaf_methods = [leaf_methods[i] for i in keep_idx]
+    leaf_debiased_coarse_flags = [leaf_debiased_coarse_flags[i] for i in keep_idx]
 
     keep_idx = [i for i, v in enumerate(leaf_variables) if v != "dtr"]
     leaf_gcms = [leaf_gcms[i] for i in keep_idx]
     leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
     leaf_variables = [leaf_variables[i] for i in keep_idx]
     leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+    leaf_methods = [leaf_methods[i] for i in keep_idx]
+    leaf_debiased_coarse_flags = [leaf_debiased_coarse_flags[i] for i in keep_idx]
 
     keep_idx = [i for i, v in enumerate(leaf_variables) if v != "hurs"]
     leaf_gcms = [leaf_gcms[i] for i in keep_idx]
     leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
     leaf_variables = [leaf_variables[i] for i in keep_idx]
     leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+    leaf_methods = [leaf_methods[i] for i in keep_idx]
+    leaf_debiased_coarse_flags = [leaf_debiased_coarse_flags[i] for i in keep_idx]
 
     tags = []
     for i, gcm in enumerate(leaf_gcms):
+        method = leaf_methods[i]
         var = leaf_variables[i]
         scenario = leaf_scenarios[i]
         ens = leaf_ensembles[i]
-        tags.append(f"{gcm}_{var}_{scenario}_{ens}")
+        # This if statement is to accommodate different data tree structures.
+        # Data generated when we only had one method does not have a method tier of the data tree
+        if method == "":
+            tags.append(f"{gcm}_{var}_{scenario}_{ens}")
+        else:
+            tags.append(f"{method}_{gcm}_{var}_{scenario}_{ens}")
 
     gcms_np = np.array(leaf_gcms)
     scenarios_np = np.array(leaf_scenarios)
     variables_np = np.array(leaf_variables)
     tags_np = np.array(tags)
+    methods_np = np.array(leaf_methods)
+    debiased_coarse_flags_np = np.array(leaf_debiased_coarse_flags)
 
-    return trees, tags, gcms_np, scenarios_np, variables_np, tags_np
+    return (
+        trees,
+        tags,
+        gcms_np,
+        scenarios_np,
+        variables_np,
+        tags_np,
+        methods_np,
+        debiased_coarse_flags_np,
+    )
