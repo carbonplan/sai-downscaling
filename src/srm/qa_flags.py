@@ -8,12 +8,12 @@ import xarray as xr
 from icechunk.xarray import to_icechunk
 
 from srm import catalog
+from srm.config import _icechunk_storage_for_path
 from srm.downscaling_utils import interpolate_fine_to_coarse_grid
 from srm.qaqc import VAR_SPATIAL_RANGES
 
 # directory where outputs from step 1 are saved for use in calculating flags in step 2
 DIR_QA_FLAG_CONSTANT_INPUTS = "s3://carbonplan-srm/output/qa_flag_inputs/"
-# DIR_QA_FLAG_OUTPUTS = "s3://carbonplan-scratch/srm/qaqc/" #previous location for step 1, some outputs still there until rerunning step 1
 
 # Variable-specific tolerances for differences in scenario comparisons (i.e. trends) between the raw GCM and  debiased, downscaled output (re-coarsened to native GCM grid). Grid cells where the scenario comparison differs by more than the absolute tolerance (in that variable's units defined in this dictionary) AND the percent tolerance are flagged.
 # the sign flip flag occurs when the GCM scenario comparison is above the sign_flip threshold and the downscaled scenario comparison is below the negative of that threshold (or vice versa)
@@ -512,3 +512,80 @@ def write_final_qa_flags(
         write_empty_chunks=True,
         encoding=encoding,
     )
+
+
+def discover_leaves(gcms: list[str], branch: str, root_dir: str, store_subset_id: str):
+    """Open each GCM's icechunk store and enumerate its (scenario, variable, ensemble) leaves.
+
+    Returns (trees, tags, gcms_np, scenarios_np, variables_np, tags_np).
+    """
+
+    def store_uri(gcm: str) -> str:
+        return f"{root_dir}{gcm}-ERA5-{store_subset_id}.icechunk"
+
+    trees: dict[str, xr.DataTree] = {}
+    open_errors: dict[str, str] = {}
+
+    for gcm in gcms:
+        try:
+            repo = icechunk.Repository.open(_icechunk_storage_for_path(store_uri(gcm)))
+            session = repo.readonly_session(branch) if branch else repo.readonly_session()
+            trees[gcm] = xr.open_datatree(session.store, engine="zarr", chunks={})
+        except Exception as exc:  # noqa: BLE001  # report every failure, do not stop at the first
+            open_errors[gcm] = f"{type(exc).__name__}: {exc}"
+
+    for gcm, err in open_errors.items():
+        print(f"FAILED to open {gcm}: {err}")
+
+    # GCMs whose store actually opened. A GCM whose run is still in flight is skipped here rather
+    # than failing the whole notebook, so this check can be run against a partially-landed run.
+    open_gcms = tuple(gcm for gcm in gcms if gcm in trees)
+    print(
+        f"opened {len(open_gcms)}/{len(gcms)} stores on branch {branch!r}: {', '.join(open_gcms)}"
+    )
+
+    leaf_gcms, leaf_scenarios, leaf_variables, leaf_ensembles = [], [], [], []
+
+    for gcm in open_gcms:
+        tree = trees[gcm]
+        for scenario_name, scenario_node in tree.children.items():
+            for var_name, var_node in scenario_node.children.items():
+                for ens_name, ens_node in var_node.children.items():
+                    leaf_gcms.append(gcm)
+                    leaf_scenarios.append(scenario_name)
+                    leaf_variables.append(var_name)
+                    leaf_ensembles.append(ens_name)
+
+    print(f"{len(leaf_gcms)} leaves across {len(open_gcms)} GCMs")
+
+    keep_idx = [i for i, s in enumerate(leaf_scenarios) if s != "debiased_coarse"]
+    leaf_gcms = [leaf_gcms[i] for i in keep_idx]
+    leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
+    leaf_variables = [leaf_variables[i] for i in keep_idx]
+    leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+
+    keep_idx = [i for i, v in enumerate(leaf_variables) if v != "dtr"]
+    leaf_gcms = [leaf_gcms[i] for i in keep_idx]
+    leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
+    leaf_variables = [leaf_variables[i] for i in keep_idx]
+    leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+
+    keep_idx = [i for i, v in enumerate(leaf_variables) if v != "hurs"]
+    leaf_gcms = [leaf_gcms[i] for i in keep_idx]
+    leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
+    leaf_variables = [leaf_variables[i] for i in keep_idx]
+    leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+
+    tags = []
+    for i, gcm in enumerate(leaf_gcms):
+        var = leaf_variables[i]
+        scenario = leaf_scenarios[i]
+        ens = leaf_ensembles[i]
+        tags.append(f"{gcm}_{var}_{scenario}_{ens}")
+
+    gcms_np = np.array(leaf_gcms)
+    scenarios_np = np.array(leaf_scenarios)
+    variables_np = np.array(leaf_variables)
+    tags_np = np.array(tags)
+
+    return trees, tags, gcms_np, scenarios_np, variables_np, tags_np
