@@ -3,9 +3,13 @@ import cartopy.feature as cfeature
 import icechunk
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import xarray as xr
 from icechunk.xarray import to_icechunk
 
+from srm import catalog
+from srm.config import _icechunk_storage_for_path
+from srm.downscaling_utils import interpolate_fine_to_coarse_grid
 from srm.encoding import (
     CHUNK_LAT,
     CHUNK_LON,
@@ -25,7 +29,6 @@ FLAG_SHARDS = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
 
 # directory where outputs from step 1 are saved for use in calculating flags in step 2
 DIR_QA_FLAG_CONSTANT_INPUTS = "s3://carbonplan-srm/output/qa_flag_inputs/"
-# DIR_QA_FLAG_OUTPUTS = "s3://carbonplan-scratch/srm/qaqc/" #previous location for step 1, some outputs still there until rerunning step 1
 
 # Variable-specific tolerances for differences in scenario comparisons (i.e. trends) between the raw GCM and  debiased, downscaled output (re-coarsened to native GCM grid). Grid cells where the scenario comparison differs by more than the absolute tolerance (in that variable's units defined in this dictionary) AND the percent tolerance are flagged.
 # the sign flip flag occurs when the GCM scenario comparison is above the sign_flip threshold and the downscaled scenario comparison is below the negative of that threshold (or vice versa)
@@ -56,6 +59,44 @@ TREND_VARIABLE_SETTINGS = {
         "abs_tol": 5.0,
         "pct_tol": 1.0,
         "sign_flip": 0.5,
+    },
+}
+
+SCENARIO_COMPARISONS = {
+    # When comparing the SAI and counterfactual SSP scenario, compare the same time period in both scenarios, towards the end of the SAI run when the differences
+    # between the two scenarios should be the largest
+    # Note that several CESM ensemble members did not run beyond 2070 in the SSP245 scenario, so the CESM ensemble mean is drawing from a different number of
+    # ensemble members for different years
+    "g6_1p5k_ssp245": {
+        "scenario1": "ssp245",
+        "scenario1_time_slice": slice("2065-01-01", "2084-12-31"),
+        "scenario2": "g6_1p5k",
+        "scenario2_time_slice": slice("2065-01-01", "2084-12-31"),
+    },
+    # When comparing a future SSP scenario to the historical, compare the full historical baseline used in this dataset (1978-2014) to a future time slice for the SSP245 scenario
+    # Here, we use the same time slice as the SAI scenario for consistency, but this could be changed to a different future time slice if desired, e.g. later in the SSP245 scenario (2080-2100)
+    # or to an earlier time slice that all ensemble members completed (e.g. 2050-2070). The fact that several CESM ensemble members did not run beyond 2070 in the SSP245 scenario is a limitation
+    # of the existing time slice comparison
+    "ssp245_hist": {
+        "scenario1": "historical",
+        "scenario1_time_slice": slice("1978-01-01", "2014-12-31"),
+        "scenario2": "ssp245",
+        "scenario2_time_slice": slice("2065-01-01", "2084-12-31"),
+    },
+    # When comparing a future SAI scenario to the historical, compare the full historical baseline used in this dataset (1978-2014) to the end of the SAI simulation (last 20 years)
+    "g6_1p5k_hist": {
+        "scenario1": "historical",
+        "scenario1_time_slice": slice("1978-01-01", "2014-12-31"),
+        "scenario2": "g6_1p5k",
+        "scenario2_time_slice": slice("2065-01-01", "2084-12-31"),
+    },
+    # When comparing a termination shock simulation to the preceding SAI simulation, compare the end of the SAI simulation (using 20 years here)
+    # to the full termination shock scenario, run to 2100 (so 15 years after termination are available)
+    "g6_1p5k_end_g6_1p5k": {
+        "scenario1": "g6_1p5k",
+        "scenario1_time_slice": slice("2065-01-01", "2084-12-31"),
+        "scenario2": "g6_1p5k_end",
+        "scenario2_time_slice": slice("2085-01-01", "2099-12-31"),
     },
 }
 
@@ -165,7 +206,8 @@ def write_individual_flags(
     var: str,
     scenario: str,
     ens: str,
-    flag_dir: str,
+    bucket: str = "carbonplan-srm",
+    prefix: str = "output/qa-intermediate-flags",
     write_mode: str = "w",
     time_varying: bool = True,
 ):
@@ -183,25 +225,32 @@ def write_individual_flags(
         flag_data = flag_data.chunk({"lat": 100, "lon": 100})
 
     tag = f"{gcm}_{var}_{scenario}_{ens}"
-    store_path = flag_dir + tag + ".zarr"
+    storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
+    repo = icechunk.Repository.open_or_create(storage)  # one repo per gcm/var/scenario/ens tag
+    session = repo.writable_session("main")
 
     # encoding is only valid the first time flag_name is written to this store;
     # xarray errors if encoding is passed for a variable that already exists there
     variable_exists = False
     if write_mode != "w":
         try:
-            variable_exists = flag_name in xr.open_zarr(store_path, consolidated=False).variables
+            variable_exists = flag_name in xr.open_zarr(session.store, consolidated=False).variables
         except Exception:
-            variable_exists = False  # store or group doesn't exist yet
+            variable_exists = False  # store doesn't exist yet
 
     encoding = {} if variable_exists else {flag_name: {"_FillValue": None}}
 
-    flag_data.to_zarr(
-        store_path,
+    to_icechunk(
+        flag_data,
+        session,
         mode=write_mode,
-        consolidated=False,
         align_chunks=True,
         encoding=encoding,
+    )
+
+    session.commit(
+        f"write {flag_name} for {tag}",
+        rebase_with=icechunk.ConflictDetector(),
     )
 
 
@@ -273,10 +322,11 @@ def run_flag_loop(
     trees,
     flag_name,
     compute_flag,
-    flag_dir,
     var_filter=None,
     write_mode: str = "a",
     plot: bool = True,
+    bucket: str = "carbonplan-srm",
+    prefix: str = "output/qa-intermediate-flags",
 ):
     """Loop over tags, compute one flag per leaf, write it, optionally plot it.
 
@@ -302,7 +352,8 @@ def run_flag_loop(
             scenario=scenario,
             ens=ens,
             write_mode=write_mode,
-            flag_dir=flag_dir,
+            bucket=bucket,
+            prefix=prefix,
         )
 
         if plot:
@@ -311,23 +362,104 @@ def run_flag_loop(
             plt.close()
 
 
-def get_intermediate_flags(flag_dir: str, tag: str):
-    flag_data = xr.open_zarr(flag_dir + tag + ".zarr", consolidated=False)
+def calculate_ensemble_mean_deltas(
+    variable,
+    tags_scenario1,
+    tags_scenario2,
+    gcm,
+    scenario1,
+    scenario2,
+    scenario1_time_slice,
+    scenario2_time_slice,
+    trees,
+):
+    # Construct data arrays including all relevant ensemble members
+    das_scenario1 = []
+    ens_scenario1 = []
+    for tag in tags_scenario1:
+        da = get_data(tag=tag, trees=trees)
+        thisgcm, thisvar, thisscenario, thisens = parse_tag(tag)
+        das_scenario1.append(da)
+        ens_scenario1.append(thisens)
+
+    var_scenario1 = xr.concat(das_scenario1, dim=pd.Index(ens_scenario1, name="ensemble_member"))
+
+    das_scenario2 = []
+    ens_scenario2 = []
+    for tag in tags_scenario2:
+        da = get_data(tag=tag, trees=trees)
+        thisgcm, thisvar, thisscenario, thisens = parse_tag(tag)
+        das_scenario2.append(da)
+        ens_scenario2.append(thisens)
+
+    var_scenario2 = xr.concat(das_scenario2, dim=pd.Index(ens_scenario2, name="ensemble_member"))
+
+    # Take ensemble mean across comparison time periods
+    ens_mean_var_scenario1 = var_scenario1.sel(time=scenario1_time_slice).mean(
+        dim=["time", "ensemble_member"]
+    )
+    ens_mean_var_scenario2 = var_scenario2.sel(time=scenario2_time_slice).mean(
+        dim=["time", "ensemble_member"]
+    )
+
+    # Take ensemble mean across comparison time periods in raw data
+    raw_ds = catalog.get(gcm).to_xarray()
+    raw_scenario1_mean = (
+        raw_ds[scenario1][variable]
+        .sel(time=scenario1_time_slice, ensemble_member=ens_scenario1)
+        .mean(dim=["time", "ensemble_member"])
+    )
+    raw_scenario2_mean = (
+        raw_ds[scenario2][variable]
+        .sel(time=scenario2_time_slice, ensemble_member=ens_scenario2)
+        .mean(dim=["time", "ensemble_member"])
+    )
+
+    # Coarsen the downscaled ensemble means
+    ens_mean_var_scenario1_coarsened = interpolate_fine_to_coarse_grid(
+        da_fine_to_coarsen=ens_mean_var_scenario1, da_coarse_grid=raw_scenario1_mean
+    ).compute()
+    ens_mean_var_scenario2_coarsened = interpolate_fine_to_coarse_grid(
+        da_fine_to_coarsen=ens_mean_var_scenario2, da_coarse_grid=raw_scenario1_mean
+    ).compute()
+
+    # Calculate scenario comparison (annual mean) in downscaled and raw
+    delta_raw = raw_scenario2_mean - raw_scenario1_mean
+    delta_raw_pct = delta_raw * 100 / raw_scenario1_mean
+
+    delta_ds_coarse = ens_mean_var_scenario2_coarsened - ens_mean_var_scenario1_coarsened
+    delta_ds_coarse_pct = delta_ds_coarse * 100 / ens_mean_var_scenario1_coarsened
+
+    delta_ds = ens_mean_var_scenario2 - ens_mean_var_scenario1
+
+    return delta_raw, delta_raw_pct, delta_ds_coarse, delta_ds_coarse_pct, delta_ds
+
+
+def get_intermediate_flags(
+    tag: str,
+    bucket: str = "carbonplan-srm",
+    prefix: str = "output/qa-intermediate-flags",
+):
+    storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
+    repo = icechunk.Repository.open(storage)
+    session = repo.readonly_session("main")
+    flag_data = xr.open_zarr(session.store, consolidated=False)
     return flag_data
 
 
 def combine_intermediate_flags(
     tag: str,
-    flag_dir: str,
     flag_list_time_varying: list,
     flag_list_time_invariant: list,
+    bucket: str = "carbonplan-srm",
+    prefix: str = "output/qa-intermediate-flags",
 ):
     """
     This calculates two single binary flags from multiple intermediate flags. The intermediate flags
 
     """
 
-    flags = get_intermediate_flags(flag_dir=flag_dir, tag=tag)
+    flags = get_intermediate_flags(tag=tag, bucket=bucket, prefix=prefix)
 
     ind = 0
     for flag_time_varying in flag_list_time_varying:
@@ -408,3 +540,80 @@ def write_final_qa_flags(
         mode="a",
         encoding=encoding,
     )
+
+
+def discover_leaves(gcms: list[str], branch: str, root_dir: str, store_subset_id: str):
+    """Open each GCM's icechunk store and enumerate its (scenario, variable, ensemble) leaves.
+
+    Returns (trees, tags, gcms_np, scenarios_np, variables_np, tags_np).
+    """
+
+    def store_uri(gcm: str) -> str:
+        return f"{root_dir}{gcm}-ERA5-{store_subset_id}.icechunk"
+
+    trees: dict[str, xr.DataTree] = {}
+    open_errors: dict[str, str] = {}
+
+    for gcm in gcms:
+        try:
+            repo = icechunk.Repository.open(_icechunk_storage_for_path(store_uri(gcm)))
+            session = repo.readonly_session(branch) if branch else repo.readonly_session()
+            trees[gcm] = xr.open_datatree(session.store, engine="zarr", chunks={})
+        except Exception as exc:  # noqa: BLE001  # report every failure, do not stop at the first
+            open_errors[gcm] = f"{type(exc).__name__}: {exc}"
+
+    for gcm, err in open_errors.items():
+        print(f"FAILED to open {gcm}: {err}")
+
+    # GCMs whose store actually opened. A GCM whose run is still in flight is skipped here rather
+    # than failing the whole notebook, so this check can be run against a partially-landed run.
+    open_gcms = tuple(gcm for gcm in gcms if gcm in trees)
+    print(
+        f"opened {len(open_gcms)}/{len(gcms)} stores on branch {branch!r}: {', '.join(open_gcms)}"
+    )
+
+    leaf_gcms, leaf_scenarios, leaf_variables, leaf_ensembles = [], [], [], []
+
+    for gcm in open_gcms:
+        tree = trees[gcm]
+        for scenario_name, scenario_node in tree.children.items():
+            for var_name, var_node in scenario_node.children.items():
+                for ens_name, ens_node in var_node.children.items():
+                    leaf_gcms.append(gcm)
+                    leaf_scenarios.append(scenario_name)
+                    leaf_variables.append(var_name)
+                    leaf_ensembles.append(ens_name)
+
+    print(f"{len(leaf_gcms)} leaves across {len(open_gcms)} GCMs")
+
+    keep_idx = [i for i, s in enumerate(leaf_scenarios) if s != "debiased_coarse"]
+    leaf_gcms = [leaf_gcms[i] for i in keep_idx]
+    leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
+    leaf_variables = [leaf_variables[i] for i in keep_idx]
+    leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+
+    keep_idx = [i for i, v in enumerate(leaf_variables) if v != "dtr"]
+    leaf_gcms = [leaf_gcms[i] for i in keep_idx]
+    leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
+    leaf_variables = [leaf_variables[i] for i in keep_idx]
+    leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+
+    keep_idx = [i for i, v in enumerate(leaf_variables) if v != "hurs"]
+    leaf_gcms = [leaf_gcms[i] for i in keep_idx]
+    leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
+    leaf_variables = [leaf_variables[i] for i in keep_idx]
+    leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+
+    tags = []
+    for i, gcm in enumerate(leaf_gcms):
+        var = leaf_variables[i]
+        scenario = leaf_scenarios[i]
+        ens = leaf_ensembles[i]
+        tags.append(f"{gcm}_{var}_{scenario}_{ens}")
+
+    gcms_np = np.array(leaf_gcms)
+    scenarios_np = np.array(leaf_scenarios)
+    variables_np = np.array(leaf_variables)
+    tags_np = np.array(tags)
+
+    return trees, tags, gcms_np, scenarios_np, variables_np, tags_np
