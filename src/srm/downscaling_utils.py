@@ -686,8 +686,6 @@ def downscale_from_coarse(
         Observations remapped to the same coarse grid as ``da``.
     obs_fine : xr.DataArray
         Native fine-resolution observations used to define high-res climatology.
-    var : str
-        Variable name. One of {"tas", "tasmax", "tasmin", "pr", "hurs", "rsds"}
     method : {"additive", "multiplicative"}, default: "additive"
         Residual formulation:
         - ``"additive"`` uses anomalies from coarse climatology.
