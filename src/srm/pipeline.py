@@ -1654,6 +1654,26 @@ class BCSDPipeline:
             debiased_np = np.where(out_of_range_high.values, parametric_high_np, debiased_np)
 
         elif debias_approach == "qdm":
+            # Both lead-in sources are optional in the signature because no other debias
+            # approach reads them, so the qdm branch checks them itself. Left unchecked, a
+            # missing model_scenario_for_qdm fails inside the stitch on a None it cannot
+            # explain, and a missing SAI bridge sends the stitch down its non-SAI path,
+            # which surfaces later as a pad-completeness error blaming the length of the
+            # input series rather than the absent bridge.
+            if model_scenario_for_qdm is None:
+                raise ValueError(
+                    "debias_approach='qdm' requires model_scenario_for_qdm, the "
+                    "pre-detrend scenario data used to build the lead-in pad for the "
+                    "moving window over years of cm_future."
+                )
+            if self.config.is_sai_scenario and ssp_timeseries_for_qdm is None:
+                raise ValueError(
+                    f"debias_approach='qdm' on SAI scenario {self.config.scenario!r} "
+                    "requires ssp_timeseries_for_qdm, the SSP245/parent bridge covering "
+                    "the years between train_period_end and the first scenario year. "
+                    "Without it the lead-in pad is built from the non-SAI stitch path."
+                )
+
             # Quantile delta mapping maps quantile changes between the historical and
             # future model runs directly onto observations, which is what keeps the
             # projected trend without a separate detrend/retrend step.
