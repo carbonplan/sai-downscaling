@@ -33,7 +33,7 @@ jobs:
                   RELEVANT="$(echo "$FILES" \
                     | grep -E '^src/saidownscale/' \
                     | grep -vE '^src/saidownscale/(snapshot|input_data)/' \
-                    | grep -vE '^src/saidownscale/(analysis|batch_runner|cache|cli|encoding|plotting|validation|qaqc)\.py$' \
+                    | grep -vE '^src/saidownscale/(analysis|batch_runner|cache|cli|encoding|plotting|validation|qaqc|qa_flags)\.py$' \
                     || true)"
                   echo "modeling-relevant files:"; echo "$RELEVANT"
                   if [[ -z "$RELEVANT" ]]; then

@@ -14,7 +14,7 @@ from saidownscale.downscaling_utils import (
     derive_tasmin,
     detrend,
     downscale_from_coarse,
-    fft_smooth_3harmonics,
+    fft_smooth_nharmonics,
     get_historical_experiment,
     interpolate_coarse_to_fine_grid,
     is_global_grid,
@@ -408,7 +408,7 @@ def test_detrend_additive_matches_manual_grouped_rolling_for_january():
 
 
 # ---------------------------------------------------------------------------
-# fft_smooth_3harmonics
+# fft_smooth_nharmonics
 # ---------------------------------------------------------------------------
 
 N_DOY = 365  # standard year length used across fft tests
@@ -427,14 +427,14 @@ def _make_3harmonic_signal(n: int = N_DOY) -> np.ndarray:
 
 def test_fft_smooth_3harmonics_all_nan_returns_input_unchanged():
     data = np.full(N_DOY, np.nan)
-    result = fft_smooth_3harmonics(data)
+    result = fft_smooth_nharmonics(data)
     np.testing.assert_array_equal(result, data)
 
 
 def test_fft_smooth_3harmonics_preserves_constant_signal():
     # A constant (DC-only) signal has no harmonics; the filter must reproduce it exactly.
     data = np.full(N_DOY, 7.5)
-    result = fft_smooth_3harmonics(data)
+    result = fft_smooth_nharmonics(data)
     np.testing.assert_allclose(result, data, atol=1e-10)
 
 
@@ -442,25 +442,25 @@ def test_fft_smooth_3harmonics_exact_3harmonic_signal_is_lossless():
     # A signal built from exactly DC + 3 harmonics must survive the filter unchanged
     # (up to floating-point rounding, ~machine epsilon).
     data = _make_3harmonic_signal()
-    result = fft_smooth_3harmonics(data)
+    result = fft_smooth_nharmonics(data)
     np.testing.assert_allclose(result, data, atol=1e-10)
 
 
 def test_fft_smooth_3harmonics_preserves_output_shape():
     data = _make_3harmonic_signal()
-    result = fft_smooth_3harmonics(data)
+    result = fft_smooth_nharmonics(data)
     assert result.shape == data.shape
 
 
 def test_fft_smooth_3harmonics_preserves_dtype_float32():
     data = _make_3harmonic_signal().astype(np.float32)
-    result = fft_smooth_3harmonics(data)
+    result = fft_smooth_nharmonics(data)
     assert result.dtype == np.float32
 
 
 def test_fft_smooth_3harmonics_preserves_dtype_float64():
     data = _make_3harmonic_signal().astype(np.float64)
-    result = fft_smooth_3harmonics(data)
+    result = fft_smooth_nharmonics(data)
     assert result.dtype == np.float64
 
 
@@ -469,7 +469,7 @@ def test_fft_smooth_3harmonics_preserves_seasonal_peak_position():
     # invert or shift the day-of-year axis.
     t = np.arange(N_DOY)
     seasonal = np.cos(2 * np.pi * t / N_DOY)  # peak at index 0
-    result = fft_smooth_3harmonics(seasonal)
+    result = fft_smooth_nharmonics(seasonal)
     assert np.argmax(result) == np.argmax(seasonal)
 
 
@@ -479,7 +479,7 @@ def test_fft_smooth_3harmonics_attenuates_high_frequency_content():
     # must be substantially smaller than that of the original spike signal.
     data = np.zeros(N_DOY)
     data[0] = 1.0
-    result = fft_smooth_3harmonics(data)
+    result = fft_smooth_nharmonics(data)
     assert np.sqrt(np.mean(result**2)) < np.sqrt(np.mean(data**2))
 
 

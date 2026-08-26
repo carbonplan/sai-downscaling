@@ -861,6 +861,8 @@ class BCSDPipeline:
             method=self.config.variable_config.downscaling_method,
             clim_method=self.config.variable_config.downscaling_clim_method,
             allow_negative_values=False,
+            tiny_threshold=self.config.variable_config.downscaling_tiny_threshold,
+            use_tiny_threshold=False,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
