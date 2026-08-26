@@ -47,7 +47,7 @@ There are two baselines in `saidownscale.snapshot.baselines`, each a store URI a
 | pointer | mode | run | verdict |
 |---|---|---|---|
 | `CESM2_WACCM_SOUTH_AFRICA` | `southafrica` (default) | regional, same `subset_bounds` as the candidate | exact |
-| `CESM2_WACCM_GLOBAL` | `global` | the blessed global run on [Source Cooperative](https://source.coop/carbonplan/sai-downscale) | tolerance band |
+| `CESM2_WACCM_GLOBAL` | `global` | the blessed global run on [Source Cooperative](https://source.coop/carbonplan/srm-downscaling) | tolerance band |
 
 The regional baseline is produced automatically by the `snapshot` job in `.github/workflows/deploy.yml` on every published release, then frozen under an icechunk tag. Repointing `CESM2_WACCM_SOUTH_AFRICA` at the new release is the one manual step, and the job's summary prints both fields to paste, the store URI as well as the branch.
 

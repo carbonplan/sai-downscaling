@@ -113,14 +113,14 @@ bcsd run-matrix --gcm CESM2-WACCM \
 ```
 
 :::{note}
-`dtr` overrides propagate into `tasmin`, which the pipeline reconstructs as `tasmax - dtr`. The `tasmin` output's `saidownscale_downscaling:bias_correction_method` attribute reports only `tasmin`'s own approach.
+`dtr` overrides propagate into `tasmin`, which the pipeline reconstructs as `tasmax - dtr`. The `tasmin` output's `saidownscale:bias_correction_method` attribute reports only `tasmin`'s own approach.
 :::
 
 ## Overrides and the artifact cache
 
 Store paths key on `(gcm, obs_dataset, subset)` and group paths on `(stage, variable, ensemble_member)`. Neither encodes `VariableConfig`, so two runs that differ only in a `variable_overrides` entry resolve to exactly the same location on the same branch.
 
-The pipeline detects this rather than preventing it. On a cache hit, it compares the artifact's `saidownscale_downscaling:config_json` provenance attribute against the current run's `variable_config` and raises `CacheConfigMismatchError` when they differ, naming both values. Without the check, the second run would report a hit, skip the stage, and feed artifacts built under different bias-correction settings to every downstream stage.
+The pipeline detects this rather than preventing it. On a cache hit, it compares the artifact's `saidownscale:config_json` provenance attribute against the current run's `variable_config` and raises `CacheConfigMismatchError` when they differ, naming both values. Artifacts cached before the `srm` to `saidownscale` rename store the same attribute under `srm_downscaling:config_json`, which the check also reads. Without the check, the second run would report a hit, skip the stage, and feed artifacts built under different bias-correction settings to every downstream stage.
 
 To run two configurations side by side, give each its own branch:
 

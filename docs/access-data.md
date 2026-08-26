@@ -20,7 +20,7 @@ right branch, and load data.
 ## Anatomy of an output store
 
 Published production output lives in CarbonPlan's
-[Source Cooperative repository](https://source.coop/carbonplan/sai-downscale), which is
+[Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling), which is
 world-readable and needs no AWS credentials. Store paths follow this pattern:
 
 ```text
@@ -176,31 +176,35 @@ print(dt)
 
 ## Inspecting dataset provenance
 
-Every dataset written by the pipeline carries a set of `saidownscale_downscaling:*` attributes that record
+Every dataset written by the pipeline carries a set of `saidownscale:*` attributes that record
 the exact configuration used to produce it. These live on `ds.attrs` and are written at the time
 the icechunk commit is made, so they travel with the data regardless of how or where it is
 accessed.
 
 | Attribute | Contents |
 | --- | --- |
-| `saidownscale_downscaling:config_json` | Full `BCSDConfig` serialized as a JSON string |
-| `saidownscale_downscaling:config_hash` | 12-character SHA-256 of computation-affecting fields only |
-| `saidownscale_downscaling:version` | `saidownscale` package version that produced the data |
-| `saidownscale_downscaling:gcm` | GCM name |
-| `saidownscale_downscaling:scenario` | Scenario (or `"historical"`) |
-| `saidownscale_downscaling:variable` | Variable name |
-| `saidownscale_downscaling:ensemble_member` | Ensemble member label |
-| `saidownscale_downscaling:historical_ensemble_member` | Resolved historical lineage member |
-| `saidownscale_downscaling:ssp245_ensemble_member` | Resolved SSP2-4.5 bridge member |
-| `saidownscale_downscaling:observation_dataset` | Observation dataset used (e.g. `ERA5`) |
-| `saidownscale_downscaling:bias_correction_method` | Quantile-mapping method |
-| `saidownscale_downscaling:downscaling_method` | Spatial disaggregation method |
-| `saidownscale_downscaling:train_period` | Training period as `"{start}-{end}"` |
-| `saidownscale_downscaling:creation_date` | UTC date the artifact was written |
+| `saidownscale:config_json` | Full `BCSDConfig` serialized as a JSON string |
+| `saidownscale:config_hash` | 12-character SHA-256 of computation-affecting fields only |
+| `saidownscale:version` | `saidownscale` package version that produced the data |
+| `saidownscale:gcm` | GCM name |
+| `saidownscale:scenario` | Scenario (or `"historical"`) |
+| `saidownscale:variable` | Variable name |
+| `saidownscale:ensemble_member` | Ensemble member label |
+| `saidownscale:historical_ensemble_member` | Resolved historical lineage member |
+| `saidownscale:ssp245_ensemble_member` | Resolved SSP2-4.5 bridge member |
+| `saidownscale:observation_dataset` | Observation dataset used (e.g. `ERA5`) |
+| `saidownscale:bias_correction_method` | Quantile-mapping method |
+| `saidownscale:downscaling_method` | Spatial disaggregation method |
+| `saidownscale:train_period` | Training period as `"{start}-{end}"` |
+| `saidownscale:creation_date` | UTC date the artifact was written |
+
+Stores written before the package was renamed from `srm` to `saidownscale` carry the same
+attributes under the `srm_downscaling:` prefix. The published production stores are in that
+older namespace, so read whichever prefix is present.
 
 ### Comparing a YAML config to a stored dataset
 
-`saidownscale_downscaling:config_json` lets you round-trip a YAML config file directly against the attrs
+`saidownscale:config_json` lets you round-trip a YAML config file directly against the attrs
 stored in a dataset — no field-by-field comparison needed.
 
 ```python
@@ -212,7 +216,7 @@ with open("configs/production/cesm2-waccm/cesm2-waccm-ssp245-std.yaml") as f:
     yaml_config = BCSDConfig(**yaml.safe_load(f))
 
 # Reconstruct BCSDConfig from what was actually written
-stored_config = BCSDConfig.model_validate_json(ds.attrs["saidownscale_downscaling:config_json"])
+stored_config = BCSDConfig.model_validate_json(ds.attrs["saidownscale:config_json"])
 
 # Quick equality check (computation-affecting fields only)
 yaml_config.config_hash == stored_config.config_hash

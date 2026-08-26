@@ -7,7 +7,7 @@
 </a>
 </p>
 
-# SRM
+# SAI Downscale
 
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 
@@ -39,7 +39,7 @@ print(dt)
 ```
 
 ## Documentation
-Project documentation: https://carbonplan.github.io/srm-downscaling/
+Project documentation: https://carbonplan.github.io/sai-downscale/
 
 - [Data access](docs/access-data.md) — how to list and open input datasets
 - [CLI usage](docs/reference/cli.md) — running the downscaling pipeline from the command line
@@ -51,8 +51,8 @@ Project documentation: https://carbonplan.github.io/srm-downscaling/
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone https://github.com/carbonplan/srm-downscaling.git
-cd srm-downscaling
+git clone https://github.com/carbonplan/sai-downscale.git
+cd sai-downscale
 uv sync --all-groups
 ```
 
@@ -62,17 +62,17 @@ MIT — see the LICENSE file for details.
 
 ## About Us
 
-CarbonPlan is a nonprofit organization that uses data and science for climate action. We aim to improve the transparency and scientific integrity of climate solutions through open data and tools. Find out more at [carbonplan.org](https://carbonplan.org/) or get in touch by [opening an issue](https://github.com/carbonplan/srm-downscaling/issues/new) or [sending us an email](mailto:hello@carbonplan.org)
+CarbonPlan is a nonprofit organization that uses data and science for climate action. We aim to improve the transparency and scientific integrity of climate solutions through open data and tools. Find out more at [carbonplan.org](https://carbonplan.org/) or get in touch by [opening an issue](https://github.com/carbonplan/sai-downscale/issues/new) or [sending us an email](mailto:hello@carbonplan.org)
 
-[github-ci-badge]: https://github.com/carbonplan/srm-downscaling/actions/workflows/test.yml/badge.svg
-[github-ci-link]: https://github.com/carbonplan/srm-downscaling/actions/workflows/test.yml
-[deploy-badge]: https://github.com/carbonplan/srm-downscaling/actions/workflows/deploy.yml/badge.svg
-[deploy-link]: https://github.com/carbonplan/srm-downscaling/actions/workflows/deploy.yml
-[codecov-badge]: https://img.shields.io/codecov/c/github/carbonplan/srm-downscaling.svg?logo=codecov
-[codecov-link]: https://codecov.io/gh/carbonplan/srm-downscaling
-[license-badge]: https://img.shields.io/github/license/carbonplan/srm-downscaling
-[repo-link]: https://github.com/carbonplan/srm-downscaling
-[pre-commit.ci-badge]: https://results.pre-commit.ci/badge/github/carbonplan/srm-downscaling/main.svg
-[pre-commit.ci-link]: https://results.pre-commit.ci/latest/github/carbonplan/srm-downscaling/main
-[rtd-badge]: https://readthedocs.org/projects/srm-downscaling/badge/?version=latest
-[rtd-link]: https://srm-downscaling.readthedocs.io/en/latest/?badge=latest
+[github-ci-badge]: https://github.com/carbonplan/sai-downscale/actions/workflows/test.yml/badge.svg
+[github-ci-link]: https://github.com/carbonplan/sai-downscale/actions/workflows/test.yml
+[deploy-badge]: https://github.com/carbonplan/sai-downscale/actions/workflows/deploy.yml/badge.svg
+[deploy-link]: https://github.com/carbonplan/sai-downscale/actions/workflows/deploy.yml
+[codecov-badge]: https://img.shields.io/codecov/c/github/carbonplan/sai-downscale.svg?logo=codecov
+[codecov-link]: https://codecov.io/gh/carbonplan/sai-downscale
+[license-badge]: https://img.shields.io/github/license/carbonplan/sai-downscale
+[repo-link]: https://github.com/carbonplan/sai-downscale
+[pre-commit.ci-badge]: https://results.pre-commit.ci/badge/github/carbonplan/sai-downscale/main.svg
+[pre-commit.ci-link]: https://results.pre-commit.ci/latest/github/carbonplan/sai-downscale/main
+[rtd-badge]: https://readthedocs.org/projects/sai-downscale/badge/?version=latest
+[rtd-link]: https://sai-downscale.readthedocs.io/en/latest/?badge=latest

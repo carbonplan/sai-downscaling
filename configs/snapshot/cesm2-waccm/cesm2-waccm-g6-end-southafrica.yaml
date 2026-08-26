@@ -5,7 +5,7 @@
 # proxy alongside this one carries 002 as well as 003: the terminated and continued legs
 # have to be the same realization to be worth diffing against each other.
 #
-# Until a production run writes g6_1p5k_end and srm/snapshot/baselines.py is repointed at
+# Until a production run writes g6_1p5k_end and saidownscale/snapshot/baselines.py is repointed at
 # it, these leaves have no counterpart in the baseline and the comparison reports them as
 # one-sided rather than in or out of tolerance. That is the expected reading, not a
 # failure; the leaf inventory still confirms the candidate wrote everything configured.

@@ -1,4 +1,4 @@
-# SRM Downscaling
+# SAI Downscale
 
 ## Quick links
 
@@ -8,7 +8,7 @@
 ## Getting Started
 
 ::::{tab-set}
-:::{tab-item} Using SRM Downscaled Data
+:::{tab-item} Using SAI Downscaled Data
 If you want to **access and analyze the downscaled data**:
 
 1. Visit [Access data](./access-data.md) for how to open downscaled output stores, navigate scenarios, and discover available groups.
@@ -33,7 +33,7 @@ If you want to **run the downscaling pipeline**:
 
 ## License
 
-SRM Downscaling code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/sai-downscale/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
+SAI Downscale code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/sai-downscale/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
 
 ```{toctree}
 :hidden:

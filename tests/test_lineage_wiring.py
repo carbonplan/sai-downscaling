@@ -343,12 +343,12 @@ class TestBuildOutputAttrs:
     def test_historical_ensemble_member_in_attrs(self, g6_001_tas_config, pipeline_options):
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
         attrs = pipeline._build_output_attrs()
-        assert attrs["saidownscale_downscaling:historical_ensemble_member"] == "r1i1p1f1"
+        assert attrs["saidownscale:historical_ensemble_member"] == "r1i1p1f1"
 
     def test_ssp245_ensemble_member_in_attrs(self, g6_001_tas_config, pipeline_options):
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
         attrs = pipeline._build_output_attrs()
-        assert attrs["saidownscale_downscaling:ssp245_ensemble_member"] == "001"
+        assert attrs["saidownscale:ssp245_ensemble_member"] == "001"
 
     def test_attrs_fall_back_to_ensemble_member_when_no_lineage(self, pipeline_options):
         config = BCSDConfig(
@@ -361,15 +361,15 @@ class TestBuildOutputAttrs:
         )
         pipeline = BCSDPipeline(config, pipeline_options)
         attrs = pipeline._build_output_attrs()
-        assert attrs["saidownscale_downscaling:historical_ensemble_member"] == "r1i1p1f1"
-        assert attrs["saidownscale_downscaling:ssp245_ensemble_member"] == "r1i1p1f1"
+        assert attrs["saidownscale:historical_ensemble_member"] == "r1i1p1f1"
+        assert attrs["saidownscale:ssp245_ensemble_member"] == "r1i1p1f1"
 
     def test_tasmax_g6_002_attrs(self, g6_002_tasmax_config, pipeline_options):
         """tasmax G6-002: historical=001, ssp245=007."""
         pipeline = BCSDPipeline(g6_002_tasmax_config, pipeline_options)
         attrs = pipeline._build_output_attrs()
-        assert attrs["saidownscale_downscaling:historical_ensemble_member"] == "001"
-        assert attrs["saidownscale_downscaling:ssp245_ensemble_member"] == "007"
+        assert attrs["saidownscale:historical_ensemble_member"] == "001"
+        assert attrs["saidownscale:ssp245_ensemble_member"] == "007"
 
 
 # ---------------------------------------------------------------------------

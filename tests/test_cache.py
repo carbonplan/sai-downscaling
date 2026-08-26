@@ -709,7 +709,12 @@ def _write_artifact_with_attrs(loc: StoreLocation, branch: str, attrs: dict | No
 
 def _provenance(config) -> dict:
     """The subset of pipeline provenance attrs that verification reads."""
-    return {"saidownscale_downscaling:config_json": config.model_dump_json()}
+    return {"saidownscale:config_json": config.model_dump_json()}
+
+
+def _legacy_provenance(config) -> dict:
+    """Same provenance under the pre-rename ``srm_downscaling:`` prefix."""
+    return {"srm_downscaling:config_json": config.model_dump_json()}
 
 
 class TestVariableConfigVerification:
@@ -747,6 +752,25 @@ class TestVariableConfigVerification:
             bound_cache.exists(loc)
         assert "cached=False" in str(excinfo.value)
         assert "current=True" in str(excinfo.value)
+
+    def test_legacy_prefix_provenance_still_verifies(self, bound_cache):
+        """Pre-rename artifacts use ``srm_downscaling:``; the check must not skip them."""
+        loc = bound_cache.detrended_scenario_loc()
+        written_by = bound_cache.config.model_copy(
+            update={
+                "variable_config": bound_cache.config.variable_config.model_copy(
+                    update={"debias_approach": "parametric"}
+                )
+            }
+        )
+        _write_artifact_with_attrs(loc, bound_cache.branch, _legacy_provenance(written_by))
+        with pytest.raises(CacheConfigMismatchError, match="debias_approach"):
+            bound_cache.exists(loc)
+
+    def test_legacy_prefix_matching_config_is_a_hit(self, bound_cache):
+        loc = bound_cache.detrended_scenario_loc()
+        _write_artifact_with_attrs(loc, bound_cache.branch, _legacy_provenance(bound_cache.config))
+        assert bound_cache.exists(loc) is True
 
     def test_artifact_without_provenance_is_allowed(self, bound_cache):
         """Artifacts predating config provenance are unverifiable, not mismatched."""

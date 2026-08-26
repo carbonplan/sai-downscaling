@@ -418,28 +418,28 @@ class BCSDPipeline:
                 f"BCSD downscaling by saidownscale v{version}"
             ),
             # Pipeline provenance — namespaced
-            "saidownscale_downscaling:version": version,
-            "saidownscale_downscaling:gcm": self.config.gcm,
-            "saidownscale_downscaling:scenario": self.config.scenario or "historical",
-            "saidownscale_downscaling:variable": self.config.variable,
-            "saidownscale_downscaling:ensemble_member": self.config.ensemble_member,
-            "saidownscale_downscaling:historical_ensemble_member": self._hist_member,
-            "saidownscale_downscaling:ssp245_ensemble_member": self._ssp245_member,
-            "saidownscale_downscaling:observation_dataset": self.config.obs_dataset,
-            "saidownscale_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
-            "saidownscale_downscaling:downscaling_method": self.config.variable_config.downscaling_method,
-            "saidownscale_downscaling:train_period": (
+            "saidownscale:version": version,
+            "saidownscale:gcm": self.config.gcm,
+            "saidownscale:scenario": self.config.scenario or "historical",
+            "saidownscale:variable": self.config.variable,
+            "saidownscale:ensemble_member": self.config.ensemble_member,
+            "saidownscale:historical_ensemble_member": self._hist_member,
+            "saidownscale:ssp245_ensemble_member": self._ssp245_member,
+            "saidownscale:observation_dataset": self.config.obs_dataset,
+            "saidownscale:bias_correction_method": self.config.variable_config.debias_approach,
+            "saidownscale:downscaling_method": self.config.variable_config.downscaling_method,
+            "saidownscale:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
             ),
-            "saidownscale_downscaling:config_hash": self.config.config_hash,
-            "saidownscale_downscaling:config_json": self.config.model_dump_json(),
-            "saidownscale_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+            "saidownscale:config_hash": self.config.config_hash,
+            "saidownscale:config_json": self.config.model_dump_json(),
+            "saidownscale:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
         # Only present on scenarios that continue an earlier SAI run, so readers can tell
         # which run supplied the pre-scenario years of the bridge.
         if self._sai_parent is not None:
-            attrs["saidownscale_downscaling:sai_parent_scenario"] = self._sai_parent.scenario
-            attrs["saidownscale_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
+            attrs["saidownscale:sai_parent_scenario"] = self._sai_parent.scenario
+            attrs["saidownscale:sai_parent_ensemble_member"] = self._sai_parent.member
         return attrs
 
     def _write_to_icechunk(

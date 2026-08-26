@@ -405,9 +405,11 @@ class ArtifactCache:
         the second run reports a hit, skips the stage, and every downstream stage
         silently consumes artifacts built with different bias-correction settings.
 
-        The comparison reads the ``saidownscale_downscaling:config_json`` provenance attribute
-        written by ``BCSDPipeline._build_attrs`` and compares only its nested
-        ``variable_config``. Other config differences are out of scope here: they
+        The comparison reads the ``saidownscale:config_json`` provenance attribute
+        written by ``BCSDPipeline._build_attrs``, falling back to the pre-rename
+        ``srm_downscaling:config_json`` so artifacts cached before the package rename
+        are still verified rather than silently waved through, and compares only its
+        nested ``variable_config``. Other config differences are out of scope here: they
         either already appear in the path or are legitimate (a wider predict period
         reusing a cached historical fit, for instance).
 
@@ -444,7 +446,9 @@ class ArtifactCache:
         try:
             session = repo.readonly_session(branch=branch)
             attrs = dict(zarr.open_group(session.store, path=loc.group, mode="r").attrs)
-            raw = attrs.get("saidownscale_downscaling:config_json")
+            # ``srm_downscaling:`` is the pre-rename prefix; without the fallback every
+            # artifact cached before the rename would read as "no provenance" and skip the check.
+            raw = attrs.get("saidownscale:config_json") or attrs.get("srm_downscaling:config_json")
             stored = json.loads(raw)["variable_config"] if raw else None
         except CacheConfigMismatchError:
             raise
