@@ -30,6 +30,9 @@ from srm.qaqc import VAR_SPATIAL_RANGES
 FLAG_CHUNKS = {"time": CHUNK_TIME, "lat": CHUNK_LAT, "lon": CHUNK_LON}
 FLAG_SHARDS = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
 
+# match the v0.13.0 chunk shape, modify if needed.
+INPUT_CHUNKS = {"time": 8000, "lat": 72, "lon": 144}
+
 # directory where outputs from step 1 are saved for use in calculating flags in step 2
 DIR_QA_FLAG_CONSTANT_INPUTS = "s3://carbonplan-srm/output/qa_flag_inputs/"
 
@@ -219,11 +222,6 @@ def write_individual_flags(
         "short_name": flag_name,
     }
 
-    if time_varying:
-        flag_data = flag_data.chunk({"lat": 100, "lon": 100, "time": 8000})
-    else:
-        flag_data = flag_data.chunk({"lat": 100, "lon": 100})
-
     storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
     repo = icechunk.Repository.open_or_create(storage)  # one repo per gcm/var/scenario/ens tag
     session = repo.writable_session("main")
@@ -294,11 +292,14 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True):
 
         contains_flags = np.nansum(count_flag)
 
-        if contains_flags:
-            plt.figure(figsize=(5, 3))
-            ax1 = plt.subplot(1, 1, 1, projection=ccrs.PlateCarree())
-            count_flag.where(count_flag > 0).plot(ax=ax1, transform=ccrs.PlateCarree())
-            ax1.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
+        # draw the map even when nothing is flagged, so a clean leaf is visibly clean
+        # rather than indistinguishable from a leaf that was skipped or errored
+        plt.figure(figsize=(5, 3))
+        ax1 = plt.subplot(1, 1, 1, projection=ccrs.PlateCarree())
+        limits = {} if contains_flags else {"vmin": 0, "vmax": 1}
+        count_flag.where(count_flag > 0).plot(ax=ax1, transform=ccrs.PlateCarree(), **limits)
+        ax1.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
+        ax1.set_title(f"{count_flag.name}: {float(contains_flags):,.0f} flagged cell-days")
 
 
 def parse_tag(tag):
@@ -595,7 +596,7 @@ def discover_leaves(gcms: list[str], branch: str, root_dir: str, store_subset_id
         try:
             repo = icechunk.Repository.open(_icechunk_storage_for_path(store_uri(gcm)))
             session = repo.readonly_session(branch) if branch else repo.readonly_session()
-            trees[gcm] = xr.open_datatree(session.store, engine="zarr", chunks={})
+            trees[gcm] = xr.open_datatree(session.store, engine="zarr", chunks=INPUT_CHUNKS)
         except Exception as exc:  # noqa: BLE001  # report every failure, do not stop at the first
             open_errors[gcm] = f"{type(exc).__name__}: {exc}"
 
