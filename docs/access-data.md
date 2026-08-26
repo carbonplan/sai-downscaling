@@ -44,7 +44,7 @@ debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 
 | Component | Values | Example |
 | --- | --- | --- |
-| `scenario_group` | `ssp245`, `g6_1p5k`, `esgf_ssp245` | `ssp245` |
+| `scenario_group` | `ssp245`, `g6_1p5k`, `g6_1p5k_end`, `esgf_ssp245` | `ssp245` |
 | `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `hurs`; `dtr` (under `debiased_coarse/` only) | — |
 | `ensemble_member` | e.g. `003`, `008`, `r3i1p1f1` | `003` |
 | `hist_member` | resolved historical parent member | `r3i1p1f1` |
@@ -71,12 +71,12 @@ for the full reasoning.
 ## Choosing the right branch
 
 Each pipeline run writes to an icechunk branch whose name matches the release tag that triggered
-it. The branch defaults to the installed `srm` package version (e.g. `v0.12.0`), so release tags
+it. The branch defaults to the installed `srm` package version (e.g. `v0.13.0`), so release tags
 follow semantic versioning rather than a date stamp. To read a specific run's output, use the
 corresponding release tag as the branch name. Production releases are listed at
 [github.com/carbonplan/srm-downscaling/releases](https://github.com/carbonplan/srm-downscaling/releases).
 
-The **current production release is branch `v0.12.0`** of the global CESM2-WACCM store at
+The **current production release is branch `v0.13.0`** of the global CESM2-WACCM store at
 `s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk`.
 The examples below read it anonymously, since a Source Cooperative repository needs no AWS
 credentials.
@@ -86,21 +86,22 @@ it returns no data, so always name a release branch explicitly.
 
 ## What the current release contains
 
-Branch `v0.12.0` of the global CESM2-WACCM store holds the groups below. Member labels are not
+Branch `v0.13.0` of the global CESM2-WACCM store holds the groups below. Member labels are not
 uniform across variables within a release, so check this table rather than assuming one member
 covers every variable.
 
 | Scenario group | Variables | Members |
 | --- | --- | --- |
-| `historical` | `tas`, `pr`, `rsds`, `hurs` | `r3i1p1f1` |
+| `historical` | `tas`, `pr`, `rsds`, `hurs` | `r2i1p1f1`, `r3i1p1f1` |
 | `historical` | `tasmax`, `tasmin`, `dtr` | `001` |
 | `ssp245` | `tas`, `pr`, `rsds`, `hurs` | `003`, `008` |
 | `ssp245` | `tasmax`, `tasmin`, `dtr` | `008` |
-| `g6_1p5k` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin`, `dtr` | `003` |
+| `g6_1p5k` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin`, `dtr` | `002`, `003` |
+| `g6_1p5k_end` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin`, `dtr` | `002` |
 
 The `debiased_coarse/` subtree mirrors this inventory exactly, with one coarse-grid group for every
-fine-grid group listed above. This release contains no `esgf_ssp245` group, and it predates the
-removal of fine-resolution `dtr`, so it still carries `historical/dtr` and `{scenario_group}/dtr`.
+fine-grid group listed above. This release contains no `esgf_ssp245` group, so every group in
+the table above has exactly one `debiased_coarse/` counterpart and nothing else is present.
 
 ## Opening a single variable/member/scenario
 
@@ -116,7 +117,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")  # current production release
+session = repo.readonly_session(branch="v0.13.0")  # current production release
 
 ds = xr.open_zarr(
     session.store,
@@ -145,7 +146,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")  # current production release
+session = repo.readonly_session(branch="v0.13.0")  # current production release
 
 dt = xr.open_datatree(
     session.store,
@@ -175,7 +176,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")
+session = repo.readonly_session(branch="v0.13.0")
 
 dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_format=3)
 print(dt)
@@ -252,7 +253,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")
+session = repo.readonly_session(branch="v0.13.0")
 
 # Debiased coarse historical (coarse GCM grid, ~1°)
 ds_hist_coarse = xr.open_zarr(
