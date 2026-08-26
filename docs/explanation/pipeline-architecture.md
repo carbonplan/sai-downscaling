@@ -101,7 +101,7 @@ graph TB
 **Key points:**
 
 - **stage 1 (prepare_observations)**: runs once per (GCM, variable, spatial_subset) combination
-- **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store (coarse only for `dtr`, see [Derived variables](#derived-variables-tasmin))
+- **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store (coarse only for `dtr`, see [`dtr` is bias-corrected but not published](#dtr-is-bias-corrected-but-not-published))
 - **stage 3 (transform_scenario)**: runs for each scenario configuration; writes fine-res scenario and debiased coarse scenario to the output store (coarse only for `dtr`)
 - **green boxes**: cached intermediate artifacts (obs regridded) in the scratch icechunk store, on the active branch
 - **gold boxes**: deliverables in the output icechunk store, on the active branch (fine-res historical + fine-res scenario + debiased coarse data)
@@ -115,7 +115,7 @@ Daily minimum temperature is **not** bias-corrected directly. Bias-correcting `t
 
 Both behaviors are keyed on the **variable**, not on which entry point runs the stage. `fit_historical` and `transform_scenario` route a `tasmin` config to their `_tasmin` variants at the top of the method, so the distributed `batch_runner`, the local `run_full_pipeline`, and the CLI all produce derived-and-reconciled `tasmin` identically. Because the derivation reads the `tasmax` and `dtr` outputs, `tasmin` must run after them; `BCSDOrchestrator` enforces this by scheduling `tasmin` in a later intra-stage dependency wave.
 
-### `dtr` is bias-corrected but not published
+## `dtr` is bias-corrected but not published
 
 `dtr` exists only to make the `tasmin` reconstruction possible. The reconcile step above adjusts the fine `tasmax`/`tasmin` pair without revisiting `dtr`, so a disaggregated `dtr` would no longer equal `tasmax − tasmin` and would mislead anyone reading it as the diurnal range. Both stages therefore return immediately after writing its `debiased_coarse` group (issue #461):
 

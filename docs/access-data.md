@@ -45,7 +45,7 @@ debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 | Component | Values | Example |
 | --- | --- | --- |
 | `scenario_group` | `ssp245`, `g6_1p5k`, `esgf_ssp245` | `ssp245` |
-| `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `hurs`; plus `dtr` under `debiased_coarse/` only | `tas` |
+| `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `hurs`; `dtr` (under `debiased_coarse/` only) | — |
 | `ensemble_member` | e.g. `003`, `008`, `r3i1p1f1` | `003` |
 | `hist_member` | resolved historical parent member | `r3i1p1f1` |
 
@@ -63,11 +63,10 @@ These are useful for research that needs to isolate the bias-correction step fro
 downscaling step.
 
 `dtr` is the one variable that appears under `debiased_coarse/` but not under the fine-resolution
-groups. The pipeline bias-corrects it only so that `tasmin = tasmax − dtr` can be reconstructed, and
-the published `tasmax`/`tasmin` pair is then adjusted to satisfy `tasmax >= tasmin` without
-revisiting `dtr`, so a disaggregated `dtr` would no longer equal `tasmax − tasmin`. Releases
-published before this change, including branch `v0.12.0` below, still carry the fine `dtr` groups;
-use `tasmax − tasmin` rather than a stored `dtr` if you need the diurnal range.
+groups, because the pipeline bias-corrects it only so that `tasmin = tasmax − dtr` can be
+reconstructed. Use `tasmax − tasmin` when you need the diurnal range at fine resolution, and see
+[`dtr` is bias-corrected but not published](explanation/pipeline-architecture.md#dtr-is-bias-corrected-but-not-published)
+for the full reasoning.
 
 ## Choosing the right branch
 
@@ -100,7 +99,8 @@ covers every variable.
 | `g6_1p5k` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin`, `dtr` | `003` |
 
 The `debiased_coarse/` subtree mirrors this inventory exactly, with one coarse-grid group for every
-fine-grid group listed above. This release contains no `esgf_ssp245` group.
+fine-grid group listed above. This release contains no `esgf_ssp245` group, and it predates the
+removal of fine-resolution `dtr`, so it still carries `historical/dtr` and `{scenario_group}/dtr`.
 
 ## Opening a single variable/member/scenario
 
