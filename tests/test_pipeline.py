@@ -2488,3 +2488,46 @@ class TestQDMPadCompleteness:
         """Nothing before the prediction period at all is the degenerate case."""
         with pytest.raises(ValueError, match="no years"):
             self._run(pipeline_options, _qdm_da("2015-01-01", "2016-12-31"))
+
+
+class TestQDMPreconditions:
+    """The qdm branch must reject a missing lead-in source before it reaches the stitch.
+
+    ``model_scenario_for_qdm`` and ``ssp_timeseries_for_qdm`` default to None because the
+    other debias approaches never read them. That makes it possible to reach the qdm
+    branch without them, where ``stitch_historical_scenario`` either fails on a None it
+    cannot explain or, for an SAI run, reads the missing bridge as "non-SAI" and stitches
+    historical straight onto the SAI scenario with the SSP245 years dropped. The pad
+    assertion does catch that second case, but it blames the length of the input series
+    rather than the absent bridge, which sends the reader after the wrong fix.
+    """
+
+    @staticmethod
+    def _pipeline(pipeline_options, scenario="SSP245", predict_period_start=2015):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            downscaling_method="QDMSD",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
+            scenario=scenario,
+            predict_period_start=predict_period_start,
+            predict_period_end=predict_period_start + 1,
+        )
+        assert cfg.variable_config.debias_approach == "qdm"
+        return BCSDPipeline(cfg, pipeline_options)
+
+    def test_missing_model_scenario_raises_before_the_stitch(self, pipeline_options):
+        pipe = self._pipeline(pipeline_options)
+        da = _qdm_da("2010-01-01", "2014-12-31")
+
+        with pytest.raises(ValueError, match="model_scenario_for_qdm"):
+            pipe._apply_bias_correction_scenario(da, da, da)
+
+    def test_sai_scenario_missing_ssp_bridge_raises(self, pipeline_options):
+        """Without this, the SSP245 bridge is silently dropped rather than reported."""
+        pipe = self._pipeline(pipeline_options, scenario="G6-1.5K", predict_period_start=2035)
+        assert pipe.config.is_sai_scenario
+        da = _qdm_da("2010-01-01", "2014-12-31")
+
+        with pytest.raises(ValueError, match="ssp_timeseries_for_qdm"):
+            pipe._apply_bias_correction_scenario(da, da, da, model_scenario_for_qdm=da)
