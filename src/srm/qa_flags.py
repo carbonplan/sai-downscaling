@@ -21,9 +21,12 @@ from srm.encoding import (
 )
 from srm.qaqc import VAR_SPATIAL_RANGES
 
-# Per-dim view of the pipeline's output chunk/shard shapes. srm.encoding.make_encoding
-# hardcodes the 3-D (time, lat, lon) tuple order, which can't encode the 2-D
-# time-invariant flag, so the flags index these by their own dims instead.
+# Per-dim view of the pipeline's *current* output chunk/shard shapes. srm.encoding.make_encoding
+# hardcodes the 3-D (time, lat, lon) tuple order, which can't encode the 2-D time-invariant flag,
+# so the flags index these by their own dims instead.
+#
+# These are only a fallback. An existing store was written with whatever these constants held at
+# the time (they last changed in PR #631), so _flag_encoding prefers the layout already on disk.
 FLAG_CHUNKS = {"time": CHUNK_TIME, "lat": CHUNK_LAT, "lon": CHUNK_LON}
 FLAG_SHARDS = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
 
@@ -486,6 +489,37 @@ def combine_intermediate_flags(
     return overall_flag_time_varying, overall_flag_time_invariant
 
 
+FLAG_SINGLE_CHUNK_MAX_BYTES = 16 * 1024**2
+
+
+def _flag_encoding(existing: xr.Dataset, group: str, flag_data: xr.DataArray) -> dict:
+    """Chunk/shard shape for ``flag_data``, copied from the group's data variable."""
+    dims = flag_data.dims
+
+    if flag_data.nbytes <= FLAG_SINGLE_CHUNK_MAX_BYTES:
+        return {"chunks": tuple(flag_data.shape), "shards": None}
+
+    var_name = group.strip("/").split("/")[-2]
+    candidates = [existing[var_name]] if var_name in existing.data_vars else []
+    candidates += [var for name, var in existing.data_vars.items() if not name.startswith("flag_")]
+
+    for var in candidates:
+        chunks = var.encoding.get("chunks")
+        if chunks is None or not set(dims) <= set(var.dims):
+            continue
+        idx = [var.dims.index(dim) for dim in dims]
+        shards = var.encoding.get("shards")
+        return {
+            "chunks": tuple(chunks[i] for i in idx),
+            "shards": tuple(shards[i] for i in idx) if shards else None,
+        }
+
+    return {
+        "chunks": tuple(FLAG_CHUNKS[dim] for dim in dims),
+        "shards": tuple(FLAG_SHARDS[dim] for dim in dims),
+    }
+
+
 def write_final_qa_flags(
     session: icechunk.Session,
     group: str,
@@ -518,23 +552,29 @@ def write_final_qa_flags(
     flag_data = flag_data.drop_vars(flag_data.coords)
 
     dims = flag_data.dims
+    layout = _flag_encoding(existing, group, flag_data)
+
     if flag_data.chunks is not None:
-        flag_data = flag_data.chunk({dim: FLAG_SHARDS[dim] for dim in dims})
+        dask_chunks = layout["shards"] or layout["chunks"]
+        flag_data = flag_data.chunk(dict(zip(dims, dask_chunks, strict=True)))
 
     if variable_exists:
-        # overwrite path should already have variable level encoding.
+        # overwrite path should already have variable level encoding. Note this means an
+        # overwrite cannot change the chunk shape -- reset the branch and rewrite for that.
         encoding = {}
     else:
         encoding = {
             flag_name: {
-                "chunks": tuple(FLAG_CHUNKS[dim] for dim in dims),
-                "shards": tuple(FLAG_SHARDS[dim] for dim in dims),
                 "compressors": [COMPRESSOR],
+                **{key: value for key, value in layout.items() if value is not None},
             }
         }
 
+    flags = flag_data.to_dataset()
+    flags.attrs = dict(existing.attrs)
+
     to_icechunk(
-        flag_data,
+        flags,
         session,
         group=group,
         mode="a",
