@@ -114,13 +114,13 @@ FLAG_LIST_TIME_VARYING = [
 ]
 
 FLAG_LIST_TIME_INVARIANT = [
-    "flipped_signssp245_g6_1p5k",
-    "flipped_signhistorical_ssp245",
-    "flipped_signhistorical_g6_1p5k",
+    "flipped_sign_ssp245_g6_1p5k",
+    "flipped_sign_historical_ssp245",
+    "flipped_sign_historical_g6_1p5k",
     "trend_distortion_historical_ssp245",
     "trend_distortion_ssp245_g6_1p5k",
     "trend_distortion_historical_g6_1p5k",
-    "flipped_signg6_1p5k_g6_1p5k_end",
+    "flipped_sign_g6_1p5k_g6_1p5k_end",
     "trend_distortion_g6_1p5k_g6_1p5k_end",
 ]
 
