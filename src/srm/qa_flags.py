@@ -225,6 +225,7 @@ def write_individual_flags(
     bucket: str = "carbonplan-srm",
     prefix: str = "output/qa-intermediate-flags",
     write_mode: str = "w",
+    branch: str = "main",
 ):
     flag_data = flag_data.rename(flag_name)
     if flag_data.dtype != bool:
