@@ -625,9 +625,6 @@ def discover_leaves(gcms: list[str], branch: str, root_dir: str, store_subset_id
     Returns (trees, tags, gcms_np, scenarios_np, variables_np, tags_np).
     """
 
-    def store_uri(gcm: str) -> str:
-        return f"{root_dir}{gcm}-ERA5-{store_subset_id}.icechunk"
-
     trees: dict[str, xr.DataTree] = {}
     open_errors: dict[str, str] = {}
 
