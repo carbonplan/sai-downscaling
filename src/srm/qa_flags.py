@@ -30,8 +30,7 @@ from srm.qaqc import VAR_SPATIAL_RANGES
 FLAG_CHUNKS = {"time": CHUNK_TIME, "lat": CHUNK_LAT, "lon": CHUNK_LON}
 FLAG_SHARDS = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
 
-# match the v0.13.0 chunk shape, modify if needed.
-INPUT_CHUNKS = {"time": 8000, "lat": 72, "lon": 144}
+INPUT_CHUNKS = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
 
 # directory where outputs from step 1 are saved for use in calculating flags in step 2
 DIR_QA_FLAG_CONSTANT_INPUTS = "s3://carbonplan-srm/output/qa_flag_inputs/"
