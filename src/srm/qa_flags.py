@@ -221,6 +221,13 @@ def write_individual_flags(
         "description": "0=no known issue; 1=known issue",
         "short_name": flag_name,
     }
+    dims, sizes = flag_data.dims, flag_data.sizes
+    chunks = tuple(min(FLAG_CHUNKS[dim], sizes[dim]) for dim in dims)
+    shards = tuple(
+    	chunk * max(1, min(FLAG_SHARDS[dim], sizes[dim]) // chunk)
+    	for dim, chunk in zip(dims, chunks, strict=True)
+    	)
+    flag_data = flag_data.chunk(dict(zip(dims, shards, strict=True)))
 
     storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
     repo = icechunk.Repository.open_or_create(storage)  # one repo per gcm/var/scenario/ens tag
