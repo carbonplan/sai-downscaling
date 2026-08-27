@@ -215,6 +215,8 @@ def write_individual_flags(
     time_varying: bool = True,
 ):
     flag_data = flag_data.rename(flag_name)
+    if flag_data.dtype != bool:
+        raise TypeError(f"flag_data must be boolean before casting to uint8, got {flag_data.dtype}")
     flag_data = flag_data.astype(np.uint8)
     flag_data.attrs = {
         "long_name": "Quality flag",
@@ -553,6 +555,8 @@ def write_final_qa_flags(
 
     Note: this doesn't commit the icechunk session, that is up to you.
     """
+    if flag_data.dtype != bool:
+        raise TypeError(f"flag_data must be boolean before casting to uint8, got {flag_data.dtype}")
     flag_data = flag_data.rename(flag_name).fillna(0).astype(np.uint8)
     flag_data.attrs = attrs
 
