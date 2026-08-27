@@ -309,14 +309,16 @@ def parse_tag(tag):
     return gcm, var, scenario, ens, method
 
 
-def get_data(tag, trees):
+def get_data(tag, trees, var_to_analyze=None):
     [gcm, var, scenario, ens, method] = parse_tag(tag)
     if method == "no-method-specified":
         group_path = f"{scenario}/{var}/{ens}"
     else:
         group_path = f"{method}/{scenario}/{var}/{ens}"
     comparison_ds = trees[gcm][group_path]
-    da = comparison_ds[var]
+    if var_to_analyze is None:
+        var_to_analyze = var
+    da = comparison_ds[var_to_analyze]
 
     return da
 
