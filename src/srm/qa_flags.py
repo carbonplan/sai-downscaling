@@ -572,7 +572,7 @@ def write_final_qa_flags(
     """
     if flag_data.dtype != bool:
         raise TypeError(f"flag_data must be boolean before casting to uint8, got {flag_data.dtype}")
-    flag_data = flag_data.rename(flag_name).fillna(0).astype(np.uint8)
+    flag_data = flag_data.rename(flag_name).astype(np.uint8)
     flag_data.attrs = attrs
 
     existing = xr.open_zarr(session.store, group=group, consolidated=False)
