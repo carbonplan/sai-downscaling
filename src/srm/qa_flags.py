@@ -475,6 +475,7 @@ def get_intermediate_flags(
     tag: str,
     bucket: str = "carbonplan-srm",
     prefix: str = "output/qa-intermediate-flags",
+    branch: str = "main",
 ):
     storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
     repo = icechunk.Repository.open(storage)
