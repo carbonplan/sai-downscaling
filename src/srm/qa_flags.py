@@ -477,7 +477,7 @@ def get_intermediate_flags(
 ):
     storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
     repo = icechunk.Repository.open(storage)
-    session = repo.readonly_session("main")
+    session = repo.readonly_session(branch)
     flag_data = xr.open_zarr(session.store, consolidated=False)
     return flag_data
 
