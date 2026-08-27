@@ -246,7 +246,7 @@ def write_individual_flags(
 
     storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
     repo = icechunk.Repository.open_or_create(storage)  # one repo per gcm/var/scenario/ens tag
-    session = repo.writable_session("main")
+    session = repo.writable_session(branch)
 
     # encoding is only valid the first time flag_name is written to this store;
     # xarray errors if encoding is passed for a variable that already exists there
