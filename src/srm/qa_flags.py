@@ -455,10 +455,10 @@ def calculate_ensemble_mean_deltas(
     # Coarsen the downscaled ensemble means
     ens_mean_var_scenario1_coarsened = interpolate_fine_to_coarse_grid(
         da_fine_to_coarsen=ens_mean_var_scenario1, da_coarse_grid=raw_scenario1_mean
-    ).compute()
+    )
     ens_mean_var_scenario2_coarsened = interpolate_fine_to_coarse_grid(
         da_fine_to_coarsen=ens_mean_var_scenario2, da_coarse_grid=raw_scenario1_mean
-    ).compute()
+    )
 
     # Calculate scenario comparison (annual mean) in downscaled and raw
     delta_raw = raw_scenario2_mean - raw_scenario1_mean
