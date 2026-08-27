@@ -235,7 +235,7 @@ def write_individual_flags(
         except Exception:
             variable_exists = False  # store doesn't exist yet
 
-    encoding = {} if variable_exists else {flag_name: {"_FillValue": None}}
+    encoding = {} if variable_exists else {flag_name: {"_FillValue": None, "chunks": chunks, "shards": shards, "compressors": [COMPRESSOR]}}
 
     to_icechunk(
         flag_data,
