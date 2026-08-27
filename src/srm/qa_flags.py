@@ -632,8 +632,9 @@ def discover_leaves(gcms: list[str], branch: str, root_dir: str, store_subset_id
     open_errors: dict[str, str] = {}
 
     for gcm in gcms:
+        uri = f"{root_dir}{gcm}-ERA5-{store_subset_id}.icechunk"
         try:
-            repo = icechunk.Repository.open(_icechunk_storage_for_path(store_uri(gcm)))
+            repo = icechunk.Repository.open(_icechunk_storage_for_path(uri))
             session = repo.readonly_session(branch) if branch else repo.readonly_session()
             trees[gcm] = xr.open_datatree(session.store, engine="zarr", chunks=INPUT_CHUNKS)
         except Exception as exc:  # noqa: BLE001  # report every failure, do not stop at the first
