@@ -125,15 +125,29 @@ FLAG_LIST_TIME_INVARIANT = [
 ]
 
 ATTRS_TIME_INVARIANT = {
-    "long_name": "Quality flag (time-invariant)",
-    "description": "This quality flag flags specific locations where debiasing/downscaling meaningfully changes how scenarios compare to each other in the annual mean, compared to the raw GCM input.",
+    "long_name": "Change distortion flag",
+    "description": (
+        "This flag identifies pixels where debiasing and/or downscaling meaningfully changes "
+        "common scenario intercomparisons. For each variable and ensemble member, it evaluates "
+        "future scenarios (G6-1.5k, G6-1.5k-end, and SSP2-4.5) and assesses whether the change "
+        "signals either (1) among them or (2) between them and the historical scenario are "
+        "distorted meaningfully in either magnitude or sign of change (using a 5% threshold "
+        "window). A distortion in any scenario-intercomparison flags the entire ensemble. This "
+        "flag is time-invariant. See repo for details about each distortion test."
+    ),
     "possible_values": "This is a binary flag: 0=no known issue; 1=known issue",
     "short_name": "qa_flag_time_invariant",
 }
 
 ATTRS_TIME_VARYING = {
-    "long_name": "Quality flag (time-varying)",
-    "description": "This quality flag flags specific days where results are highly sensitive to debiasing/downscaling method choice (e.g. treatment of outliers) and/or where output is physically unrealistic (e.g. tasmax < tas) or unlikely.",
+    "long_name": "Quality issues flag",
+    "description": (
+        "This quality flag flags pixel-days when a variable exceeds multiple quality checks "
+        "including screening for outliers, exceedances from variable-specific plausible ranges, "
+        "and physically impossible relationships (e.g. tasmax < tas). For variables with "
+        "multiple quality checks, failing any check flags that pixel-day for the variable. This "
+        "flag is time-variant. See repo for details about each quality test."
+    ),
     "possible_values": "This is a binary flag: 0=no known issue; 1=known issue",
     "short_name": "qa_flag_time_varying",
 }
