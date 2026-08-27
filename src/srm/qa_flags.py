@@ -224,9 +224,9 @@ def write_individual_flags(
     dims, sizes = flag_data.dims, flag_data.sizes
     chunks = tuple(min(FLAG_CHUNKS[dim], sizes[dim]) for dim in dims)
     shards = tuple(
-    	chunk * max(1, min(FLAG_SHARDS[dim], sizes[dim]) // chunk)
-    	for dim, chunk in zip(dims, chunks, strict=True)
-    	)
+        chunk * max(1, min(FLAG_SHARDS[dim], sizes[dim]) // chunk)
+        for dim, chunk in zip(dims, chunks, strict=True)
+    )
     flag_data = flag_data.chunk(dict(zip(dims, shards, strict=True)))
 
     storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
@@ -242,7 +242,18 @@ def write_individual_flags(
         except Exception:
             variable_exists = False  # store doesn't exist yet
 
-    encoding = {} if variable_exists else {flag_name: {"_FillValue": None, "chunks": chunks, "shards": shards, "compressors": [COMPRESSOR]}}
+    encoding = (
+        {}
+        if variable_exists
+        else {
+            flag_name: {
+                "_FillValue": None,
+                "chunks": chunks,
+                "shards": shards,
+                "compressors": [COMPRESSOR],
+            }
+        }
+    )
 
     to_icechunk(
         flag_data,
