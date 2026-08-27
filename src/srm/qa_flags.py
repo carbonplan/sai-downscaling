@@ -332,7 +332,8 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True):
         limits = {} if contains_flags else {"vmin": 0, "vmax": 1}
         count_flag.where(count_flag > 0).plot(ax=ax1, transform=ccrs.PlateCarree(), **limits)
         ax1.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
-        ax1.set_title(f"{count_flag.name}: {float(contains_flags):,.0f} flagged cell-days")
+        unit = "cell-days" if time_varying else "cells"
+        ax1.set_title(f"{count_flag.name}: {float(contains_flags):,.0f} flagged {unit}")
 
 
 def parse_tag(tag):
