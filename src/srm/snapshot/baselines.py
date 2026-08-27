@@ -54,8 +54,8 @@ CESM2_WACCM_GLOBAL = Baseline(
 # here, so a run with a matching ``BCSD_BRANCH`` could overwrite what this cites.
 CESM2_WACCM_SOUTH_AFRICA = Baseline(
     uri=(
-        "s3://carbonplan-scratch/srm"
+        "s3://carbonplan-srm/scratch/snapshot"
         "/output/qa/CESM2-WACCM-ERA5-lat-38.0to-19.0_lon13.0to36.0.icechunk"
     ),
-    branch="regional-rerun-v0.12.0",
+    branch="main-51b4645-aug-24",
 )
