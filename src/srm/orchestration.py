@@ -624,10 +624,10 @@ class BCSDOrchestrator:
         Run a stage's tasks on AWS Batch.
 
         Retries are delegated to the service through ``retryStrategy``, so unlike
-        ``_submit_to_coiled`` there is no resubmission loop here. Success needs both
-        signals: cache presence, because a task can exit zero without producing output,
-        and a job status that is not ``FAILED``, because under ``force`` the cache may
-        still hold the previous run's artifacts.
+        ``_submit_to_coiled`` there is no resubmission loop here. Cache presence decides
+        success, because a task can exit zero without producing output. That is proof only
+        for artifacts this run created, so any that already existed beforehand, which
+        ``force`` makes possible, additionally require the job to report ``SUCCEEDED``.
 
         Parameters
         ----------
@@ -644,7 +644,8 @@ class BCSDOrchestrator:
         Raises
         ------
         RuntimeError
-            If any config has no artifact in the cache after the job finishes.
+            If any config has no artifact in the cache after the job finishes, or if the
+            job did not succeed and some artifacts predate it.
         """
         from srm.batch_manifest import write_manifest
 
@@ -664,6 +665,12 @@ class BCSDOrchestrator:
                 manifest_uri, stage, [json.loads(self._config_payload_json(c)) for c in configs]
             )
 
+        # Artifacts present before submission cannot testify about this run. Normally there
+        # are none, because submit_stage only queues uncached configs; under force it
+        # queues everything, and then a post-run sweep would happily accept the previous
+        # run's output as proof that a failed recompute succeeded.
+        preexisting = [config.run_id for config in configs if cache.exists(loc_for(config))]
+
         job_id = self._submit_batch_job(stage, configs, manifest_uri)
         status = self._await_batch_job(self._batch_client(), job_id)
 
@@ -674,15 +681,12 @@ class BCSDOrchestrator:
                 f"{len(failed)} task(s) did not produce output: {[c.run_id for c in failed]}"
             )
 
-        if status == "FAILED":
-            # Cache presence alone cannot clear a failed job. Under force=True every config
-            # is resubmitted whether or not it is cached, so the artifacts found above may
-            # be the previous run's, and reporting success would hide a failed recompute.
+        if preexisting and status != "SUCCEEDED":
             raise RuntimeError(
-                f"Stage '{stage}' AWS Batch job {job_id} reported FAILED even though every "
-                "artifact is present. The cache cannot distinguish this run's output from "
-                "an earlier one, so the result is not trusted; check the job's failed "
-                "children in CloudWatch."
+                f"Stage '{stage}' AWS Batch job {job_id} reported {status} and "
+                f"{len(preexisting)} artifact(s) already existed before it ran, so their "
+                f"presence now proves nothing: {preexisting}. Check the job's children in "
+                "CloudWatch before treating this run as complete."
             )
 
         logger.info(f"✓ All {len(configs)} {stage} tasks completed")

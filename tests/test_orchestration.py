@@ -1091,9 +1091,10 @@ class TestFailedJobIsNotMaskedByStaleCache:
     def test_succeeded_job_with_present_artifacts_is_fine(self, orchestrator, multi_configs):
         assert len(self._run(orchestrator, multi_configs, "SUCCEEDED")) == len(multi_configs)
 
-    def test_dropped_record_defers_to_the_cache(self, orchestrator, multi_configs):
-        # An aged-out record is not evidence of failure; artifacts present means success.
-        # describe_jobs returns no entry, which is the only way UNKNOWN is ever produced.
+    def test_unknown_status_also_raises_when_artifacts_predate_the_run(
+        self, orchestrator, multi_configs
+    ):
+        # A lost job record is no more able to clear stale artifacts than a FAILED one.
         client = MagicMock()
         client.submit_job.return_value = {"jobId": "abc-123"}
         client.describe_jobs.return_value = {"jobs": []}
@@ -1103,5 +1104,23 @@ class TestFailedJobIsNotMaskedByStaleCache:
             patch.object(ArtifactCache, "exists", return_value=True),
             patch("time.sleep"),
         ):
+            with pytest.raises(RuntimeError, match="UNKNOWN"):
+                orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
+
+    def test_unknown_status_is_fine_when_artifacts_appeared_during_the_run(
+        self, orchestrator, multi_configs
+    ):
+        # The normal path: submit_stage only queues uncached configs, so an artifact absent
+        # before and present after was necessarily written by this run.
+        n = len(multi_configs)
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": []}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", side_effect=[False] * n + [True] * (2 * n)),
+            patch("time.sleep"),
+        ):
             paths = orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
-        assert len(paths) == len(multi_configs)
+        assert len(paths) == n
