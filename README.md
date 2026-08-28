@@ -32,7 +32,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")  # current production release
+session = repo.readonly_session(branch="v0.13.0")  # current production release
 
 dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_format=3)
 print(dt)

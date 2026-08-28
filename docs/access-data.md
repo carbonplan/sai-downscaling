@@ -36,18 +36,26 @@ s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production
 Within each store, data is organized in zarr groups:
 
 ```text
-historical/{variable}/{hist_member}
-{scenario_group}/{variable}/{ensemble_member}
-debiased_coarse/historical/{variable}/{hist_member}
-debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
+{method}/historical/{variable}/{hist_member}
+{method}/{scenario_group}/{variable}/{ensemble_member}
+{method}/debiased_coarse/historical/{variable}/{hist_member}
+{method}/debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 ```
 
 | Component | Values | Example |
 | --- | --- | --- |
-| `scenario_group` | `ssp245`, `g6_1p5k`, `esgf_ssp245` | `ssp245` |
-| `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `dtr`, `hurs` | `tas` |
+| `method` | `bcsd`, `qdmsd` | `bcsd` |
+| `scenario_group` | `ssp245`, `g6_1p5k`, `g6_1p5k_end`, `esgf_ssp245` | `ssp245` |
+| `variable` | `tas`, `tasmax`, `tasmin`, `pr`, `rsds`, `hurs`; `dtr` (under `debiased_coarse/` only) | — |
 | `ensemble_member` | e.g. `003`, `008`, `r3i1p1f1` | `003` |
 | `hist_member` | resolved historical parent member | `r3i1p1f1` |
+
+The `{method}` segment names the downscaling method that produced the group. Releases up
+to and including `v0.13.0` predate it and have no such segment, so a group path there
+begins directly with `historical/`, the scenario group, or `debiased_coarse/`. The code
+examples below read `v0.13.0` and use that older layout. Regridded observations live in
+the scratch store at `obs/{variable}` with no method segment, because a single regrid is
+shared by both methods.
 
 Which variables and members are actually present depends on the release, and members differ between
 variables within a single release. See [What the current release
@@ -62,15 +70,21 @@ spatial disaggregation to ERA5 resolution — they remain at the native coarse G
 These are useful for research that needs to isolate the bias-correction step from the spatial
 downscaling step.
 
+`dtr` is the one variable that appears under `debiased_coarse/` but not under the fine-resolution
+groups, because the pipeline bias-corrects it only so that `tasmin = tasmax − dtr` can be
+reconstructed. Use `tasmax − tasmin` when you need the diurnal range at fine resolution, and see
+[`dtr` is bias-corrected but not published](explanation/pipeline-architecture.md#dtr-is-bias-corrected-but-not-published)
+for the full reasoning.
+
 ## Choosing the right branch
 
 Each pipeline run writes to an icechunk branch whose name matches the release tag that triggered
-it. The branch defaults to the installed `srm` package version (e.g. `v0.12.0`), so release tags
+it. The branch defaults to the installed `srm` package version (e.g. `v0.13.0`), so release tags
 follow semantic versioning rather than a date stamp. To read a specific run's output, use the
 corresponding release tag as the branch name. Production releases are listed at
 [github.com/carbonplan/srm-downscaling/releases](https://github.com/carbonplan/srm-downscaling/releases).
 
-The **current production release is branch `v0.12.0`** of the global CESM2-WACCM store at
+The **current production release is branch `v0.13.0`** of the global CESM2-WACCM store at
 `s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk`.
 The examples below read it anonymously, since a Source Cooperative repository needs no AWS
 credentials.
@@ -80,20 +94,23 @@ it returns no data, so always name a release branch explicitly.
 
 ## What the current release contains
 
-Branch `v0.12.0` of the global CESM2-WACCM store holds the groups below. Member labels are not
+Branch `v0.13.0` of the global CESM2-WACCM store holds the groups below. Member labels are not
 uniform across variables within a release, so check this table rather than assuming one member
 covers every variable.
 
 | Scenario group | Variables | Members |
 | --- | --- | --- |
-| `historical` | `tas`, `pr`, `rsds`, `hurs` | `r3i1p1f1` |
-| `historical` | `tasmax`, `tasmin`, `dtr` | `001` |
+| `historical` | `tas`, `pr`, `rsds`, `hurs` | `r2i1p1f1`, `r3i1p1f1` |
+| `historical` | `tasmax`, `tasmin` | `001` |
 | `ssp245` | `tas`, `pr`, `rsds`, `hurs` | `003`, `008` |
-| `ssp245` | `tasmax`, `tasmin`, `dtr` | `008` |
-| `g6_1p5k` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin`, `dtr` | `003` |
+| `ssp245` | `tasmax`, `tasmin` | `008` |
+| `g6_1p5k` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin` | `002`, `003` |
+| `g6_1p5k_end` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin` | `002` |
 
-The `debiased_coarse/` subtree mirrors this inventory exactly, with one coarse-grid group for every
-fine-grid group listed above. This release contains no `esgf_ssp245` group.
+The `debiased_coarse/` subtree holds one coarse-grid group for every fine-grid group listed
+above, plus a `dtr` group under each scenario group in the table. Those `dtr` groups are the
+only ones with no fine-grid counterpart. This release contains no `esgf_ssp245` group, so
+nothing beyond those two sets is present.
 
 ## Opening a single variable/member/scenario
 
@@ -109,7 +126,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")  # current production release
+session = repo.readonly_session(branch="v0.13.0")  # current production release
 
 ds = xr.open_zarr(
     session.store,
@@ -138,7 +155,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")  # current production release
+session = repo.readonly_session(branch="v0.13.0")  # current production release
 
 dt = xr.open_datatree(
     session.store,
@@ -168,7 +185,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")
+session = repo.readonly_session(branch="v0.13.0")
 
 dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_format=3)
 print(dt)
@@ -194,9 +211,16 @@ accessed.
 | `srm_downscaling:ssp245_ensemble_member` | Resolved SSP2-4.5 bridge member |
 | `srm_downscaling:observation_dataset` | Observation dataset used (e.g. `ERA5`) |
 | `srm_downscaling:bias_correction_method` | Quantile-mapping method |
-| `srm_downscaling:downscaling_method` | Spatial disaggregation method |
+| `srm_downscaling:downscaling_method` | Downscaling method (`BCSD` or `QDMSD`) |
+| `srm_downscaling:disaggregation_method` | Spatial disaggregation method (`additive` or `multiplicative`) |
 | `srm_downscaling:train_period` | Training period as `"{start}-{end}"` |
 | `srm_downscaling:creation_date` | UTC date the artifact was written |
+
+Regridded observations carry a reduced set. That artifact is shared across every ensemble
+member, scenario, and downscaling method for a given GCM, so it records only `version`,
+`gcm`, `variable`, `observation_dataset`, and `creation_date`. The presence of
+`srm_downscaling:downscaling_method` on a group therefore means that group depends on the
+downscaling method.
 
 ### Comparing a YAML config to a stored dataset
 
@@ -228,10 +252,12 @@ Use `model_dump()` equality when you need an exact match across all fields.
 
 ## Accessing debiased coarse data
 
-The `debiased_coarse` groups use the same store and branch as the fine-res outputs but live under
-a `debiased_coarse/` prefix. Historical coarse data is stored under
-`debiased_coarse/historical/{variable}/{hist_member}`; scenario coarse data under
-`debiased_coarse/{scenario_group}/{variable}/{ensemble_member}`.
+The `debiased_coarse` groups use the same store and branch as the fine-res outputs but live
+under a `debiased_coarse/` prefix, nested inside the method segment. Historical coarse data
+is stored under `{method}/debiased_coarse/historical/{variable}/{hist_member}`; scenario
+coarse data under `{method}/debiased_coarse/{scenario_group}/{variable}/{ensemble_member}`.
+On `v0.13.0` and earlier, both paths omit the leading `{method}/`, which is why the example
+below opens `debiased_coarse/historical/tas/r3i1p1f1`.
 
 ```{code-cell} python
 
@@ -245,7 +271,7 @@ storage = icechunk.s3_storage(
     region="us-west-2",
 )
 repo = icechunk.Repository.open(storage)
-session = repo.readonly_session(branch="v0.12.0")
+session = repo.readonly_session(branch="v0.13.0")
 
 # Debiased coarse historical (coarse GCM grid, ~1°)
 ds_hist_coarse = xr.open_zarr(

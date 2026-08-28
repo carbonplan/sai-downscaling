@@ -22,6 +22,14 @@ from srm.config import _ROOT_MESSAGES, SCENARIO_TO_GROUP, _icechunk_storage_for_
 
 logger = logging.getLogger(__name__)
 
+# Variables published on the coarse grid only. ``dtr`` is bias corrected solely so that
+# ``tasmin = tasmax - dtr`` can be reconstructed (see
+# :func:`srm.downscaling_utils.derive_tasmin`). Once the fine ``tasmax``/``tasmin`` pair has
+# been reconciled to satisfy ``tasmax >= tasmin`` (issue #331), a disaggregated ``dtr`` no
+# longer equals ``tasmax - tasmin``, so it is not published; the ``debiased_coarse`` groups
+# are kept for provenance and because the derivation reads them (issue #461).
+COARSE_ONLY_VARIABLES: frozenset[str] = frozenset({"dtr"})
+
 
 @dataclass(frozen=True)
 class StoreLocation:
@@ -75,6 +83,9 @@ class ArtifactCache:
     the icechunk repository path and the zarr group within it.
     """
 
+    # Group-path prefixes that mark an artifact as an intermediate rather than a
+    # deliverable. Matched against the path with its leading method segment removed,
+    # so these stay method-agnostic. See _strip_method_segment.
     INTERMEDIATE_PREFIXES: tuple[str, ...] = (
         "detrended_scenario/",
         "trend_scenario/",
@@ -165,6 +176,59 @@ class ArtifactCache:
             )
         return self.config
 
+    # Fields that select which artifact a location points at: the first three fix the
+    # store path, the last three the group within it.
+    _LOCATION_FIELDS: tuple[str, ...] = (
+        "gcm",
+        "obs_dataset",
+        "subset_bounds",
+        "variable",
+        "scenario",
+        "ensemble_member",
+    )
+
+    def _require_bound(self, config: BCSDConfig) -> BCSDConfig:
+        """Return the bound config, rejecting a ``config`` that points somewhere else.
+
+        The location properties are all built from the bound config, while the stage
+        methods that take a ``config`` argument dispatch on that argument. Mixing the two
+        would silently yield a path for the wrong variable or scenario, so a disagreement
+        on any location-selecting field is an error rather than a guess.
+
+        Parameters
+        ----------
+        config : BCSDConfig
+            Config supplied by the caller.
+
+        Returns
+        -------
+        BCSDConfig
+            The config bound to this cache.
+
+        Raises
+        ------
+        RuntimeError
+            If no config is bound.
+        ValueError
+            If ``config`` disagrees with the bound config on a location-selecting field.
+        """
+        bound = self._require_config()
+        if config is bound:
+            return bound
+        mismatched = [
+            field
+            for field in self._LOCATION_FIELDS
+            if getattr(config, field) != getattr(bound, field)
+        ]
+        if mismatched:
+            raise ValueError(
+                f"config disagrees with the config bound to this cache on {mismatched}; "
+                f"locations are built from the bound config, so bind it first "
+                f"(cache.config = config) or build a cache with "
+                f"ArtifactCache.from_config(config, options)"
+            )
+        return bound
+
     # ── store-path helpers ────────────────────────────────────────────────────
 
     @property
@@ -182,6 +246,23 @@ class ArtifactCache:
         subset_id = self._get_subset_id(config.subset_bounds)
         base = self.output_dir if self.output_dir else self.scratch_dir
         return f"{base}/{self.environment}/{config.gcm}-{config.obs_dataset}-{subset_id}.icechunk"
+
+    @property
+    def _method_prefix(self) -> str:
+        """Return the leading group-path segment naming the downscaling method.
+
+        Every artifact except regridded observations is produced by one downscaling
+        method and differs between them, so its group path is namespaced under this
+        segment. Observations are method-independent and stay at the store root, which
+        lets both methods share one regrid.
+
+        Returns
+        -------
+        str
+            ``"bcsd"`` or ``"qdmsd"``, matching the lowercase of the other group-path
+            segments (``obs``, ``historical``, ``ssp245``, ``g6_1p5k``).
+        """
+        return self._require_config().downscaling_method.lower()
 
     # ── artifact location properties ─────────────────────────────────────────
 
@@ -209,7 +290,7 @@ class ArtifactCache:
         var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"historical/{var}/{hist_member}",
+            f"{self._method_prefix}/historical/{var}/{hist_member}",
             config_variable=None if variable is not None else config.variable,
         )
 
@@ -230,7 +311,7 @@ class ArtifactCache:
         var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"{self._scenario_group()}/{var}/{config.ensemble_member}",
+            f"{self._method_prefix}/{self._scenario_group()}/{var}/{config.ensemble_member}",
             config_variable=None if variable is not None else config.variable,
         )
 
@@ -255,7 +336,7 @@ class ArtifactCache:
         var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"debiased_coarse/historical/{var}/{hist_member}",
+            f"{self._method_prefix}/debiased_coarse/historical/{var}/{hist_member}",
             config_variable=None if variable is not None else config.variable,
         )
 
@@ -271,7 +352,8 @@ class ArtifactCache:
         var = variable or config.variable
         return StoreLocation(
             self._output_store,
-            f"debiased_coarse/{self._scenario_group()}/{var}/{config.ensemble_member}",
+            f"{self._method_prefix}/debiased_coarse/{self._scenario_group()}"
+            f"/{var}/{config.ensemble_member}",
             config_variable=None if variable is not None else config.variable,
         )
 
@@ -280,7 +362,8 @@ class ArtifactCache:
         config = self._require_config()
         return StoreLocation(
             self._scratch_store,
-            f"detrended_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
+            f"{self._method_prefix}/detrended_scenario/{self._scenario_group()}"
+            f"/{config.variable}/{config.ensemble_member}",
             config_variable=config.variable,
         )
 
@@ -289,7 +372,8 @@ class ArtifactCache:
         config = self._require_config()
         return StoreLocation(
             self._scratch_store,
-            f"trend_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
+            f"{self._method_prefix}/trend_scenario/{self._scenario_group()}"
+            f"/{config.variable}/{config.ensemble_member}",
             config_variable=config.variable,
         )
 
@@ -298,7 +382,8 @@ class ArtifactCache:
         config = self._require_config()
         return StoreLocation(
             self._scratch_store,
-            f"debiased_scenario/{self._scenario_group()}/{config.variable}/{config.ensemble_member}",
+            f"{self._method_prefix}/debiased_scenario/{self._scenario_group()}"
+            f"/{config.variable}/{config.ensemble_member}",
             config_variable=config.variable,
         )
 
@@ -468,10 +553,10 @@ class ArtifactCache:
         )
         raise CacheConfigMismatchError(
             f"{loc.store_path} / {loc.group} on branch {branch!r} was computed with a "
-            f"different VariableConfig ({detail}). Store paths do not encode "
-            "VariableConfig, so reusing this artifact would mix bias-correction "
-            "settings. Run on a separate branch (--branch / BCSD_BRANCH), or force a "
-            "recompute to overwrite it."
+            f"different VariableConfig ({detail}). Group paths encode the downscaling "
+            "method but not the rest of VariableConfig, so two runs of the same method "
+            "differing by a variable_overrides entry land here. Reconcile the override, "
+            "or force a recompute to overwrite it."
         )
 
     def list_groups_on_branch(self, store_path: str) -> list[str]:
@@ -503,6 +588,25 @@ class ArtifactCache:
         except Exception:
             return []
 
+    @staticmethod
+    def _strip_method_segment(group: str) -> str:
+        """Return ``group`` with its leading downscaling-method segment removed.
+
+        Parameters
+        ----------
+        group : str
+            Zarr group path, e.g. ``"bcsd/detrended_scenario/ssp245/tas/001"``.
+
+        Returns
+        -------
+        str
+            The path after the first segment, e.g.
+            ``"detrended_scenario/ssp245/tas/001"``. A single-segment path returns
+            the empty string.
+        """
+        _, _, rest = group.partition("/")
+        return rest
+
     def list_intermediate_groups(self) -> dict[str, list[str]]:
         """Return intermediate artifact groups on the current branch, keyed by store path.
 
@@ -520,7 +624,14 @@ class ArtifactCache:
             groups = [
                 g
                 for g in self.list_groups_on_branch(store_path)
-                if any(g.startswith(p) for p in self.INTERMEDIATE_PREFIXES)
+                # Both forms are matched. A store can hold groups from more than one
+                # method, so the bound config's own method cannot be used, and branches
+                # written before groups were namespaced still hold unprefixed paths.
+                # This is a read-only summary, so tolerating both costs nothing.
+                if any(
+                    g.startswith(p) or self._strip_method_segment(g).startswith(p)
+                    for p in self.INTERMEDIATE_PREFIXES
+                )
             ]
             if groups:
                 result[store_path] = groups
@@ -553,6 +664,70 @@ class ArtifactCache:
 
     # ── dependency helpers ────────────────────────────────────────────────────
 
+    # ── stage completion ──────────────────────────────────────────────────────
+
+    def stage_loc(
+        self, stage: str, config: BCSDConfig, hist_member: str | None = None
+    ) -> StoreLocation:
+        """
+        Return the artifact whose presence means ``stage`` is complete for ``config``.
+
+        For most variables that is the fine downscaled output. Variables in
+        :data:`COARSE_ONLY_VARIABLES` are never spatially disaggregated, so their terminal
+        artifact is the ``debiased_coarse`` group instead (issue #461). Every completion
+        check routes through here — the orchestrator's cache-skip, its post-run retry
+        partitioning, ``get_status``, :meth:`get_output_path`, and the downstream
+        dependency gate in :meth:`check_dependencies` — so the two cases cannot drift
+        apart.
+
+        Locations are built from the config bound to this cache, so ``config`` must be
+        that same config (see :meth:`_require_bound`); it supplies the ensemble-member
+        fallback.
+
+        Parameters
+        ----------
+        stage : str
+            Pipeline stage: 'prepare_observations', 'fit_historical', or 'transform_scenario'.
+        config : BCSDConfig
+            Configuration for the run. Must agree with the bound config.
+        hist_member : str, optional
+            Resolved historical ensemble member. Defaults to ``config.ensemble_member``.
+
+        Returns
+        -------
+        StoreLocation
+            Terminal artifact for the stage.
+
+        Raises
+        ------
+        RuntimeError
+            If no config is bound to this cache.
+        ValueError
+            If ``config`` points at a different artifact than the bound config, if
+            ``stage`` is unknown, or if ``transform_scenario`` is requested for a config
+            that has no scenario.
+        """
+        config = self._require_bound(config)
+
+        if stage == "prepare_observations":
+            return self.obs_loc
+
+        elif stage == "fit_historical":
+            member = hist_member or config.ensemble_member
+            if config.variable in COARSE_ONLY_VARIABLES:
+                return self.debiased_coarse_historical_loc(member)
+            return self.historical_loc(member)
+
+        elif stage == "transform_scenario":
+            if config.scenario is None:
+                raise ValueError("scenario must be specified for transform_scenario stage")
+            if config.variable in COARSE_ONLY_VARIABLES:
+                return self.debiased_coarse_scenario_loc()
+            return self.scenario_loc
+
+        else:
+            raise ValueError(f"Unknown stage: {stage}")
+
     def check_dependencies(
         self, stage: str, config: BCSDConfig, hist_member: str | None = None
     ) -> dict[str, tuple[bool, StoreLocation]]:
@@ -572,11 +747,23 @@ class ArtifactCache:
         -------
         dict[str, tuple[bool, StoreLocation]]
             Mapping of dependency name to (exists, StoreLocation) tuple.
+
+        Raises
+        ------
+        RuntimeError
+            If no config is bound to this cache.
+        ValueError
+            If ``config`` points at a different artifact than the bound config, or if
+            ``stage`` is unknown.
         """
         if stage == "prepare_observations":
             return {}
 
-        elif stage == "fit_historical":
+        # Dependency locations come from the bound config while the branches below
+        # dispatch on ``config``; reject the mismatch instead of mixing the two.
+        config = self._require_bound(config)
+
+        if stage == "fit_historical":
             loc = self.obs_loc
             deps = {"obs_regridded": (self.exists(loc), loc)}
             if config.variable == "tasmin":
@@ -594,7 +781,9 @@ class ArtifactCache:
 
         elif stage == "transform_scenario":
             obs_loc = self.obs_loc
-            hist_loc = self.historical_loc(hist_member or config.ensemble_member)
+            # Whatever ended fit_historical for this variable is what gates this stage —
+            # for coarse-only variables that is the debiased_coarse group (issue #461).
+            hist_loc = self.stage_loc("fit_historical", config, hist_member=hist_member)
             deps = {
                 "obs_regridded": (self.exists(obs_loc), obs_loc),
                 "historical": (self.exists(hist_loc), hist_loc),
@@ -665,20 +854,20 @@ class ArtifactCache:
         -------
         str
             Full path to the icechunk store.
+
+        Raises
+        ------
+        ValueError
+            If ``stage`` is unknown, or if ``transform_scenario`` is requested for a
+            config that has no scenario.
+
+        Notes
+        -----
+        A thin view on :meth:`stage_loc`, which owns the stage-to-artifact mapping. A
+        coarse-only variable's coarse and fine artifacts live in the same store, so the
+        two differ only in ``group``; use :meth:`stage_loc` when that matters.
         """
-        if stage == "prepare_observations":
-            return self.obs_loc.store_path
-
-        elif stage == "fit_historical":
-            return self.historical_loc(hist_member or config.ensemble_member).store_path
-
-        elif stage == "transform_scenario":
-            if config.scenario is None:
-                raise ValueError("scenario must be specified for transform_scenario stage")
-            return self.scenario_loc.store_path
-
-        else:
-            raise ValueError(f"Unknown stage: {stage}")
+        return self.stage_loc(stage, config, hist_member=hist_member).store_path
 
     def clear_cache(
         self,

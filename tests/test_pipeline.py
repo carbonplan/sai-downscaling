@@ -25,7 +25,7 @@ import pytest
 import scipy.stats
 import xarray as xr
 from conftest import make_icechunk_group as _make_icechunk_group
-from ibicus.debias import QuantileMapping
+from ibicus.debias import QuantileDeltaMapping, QuantileMapping
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
@@ -124,6 +124,7 @@ def config() -> BCSDConfig:
     """Standard SSP245 config."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r1i1p1f1",
         scenario="SSP245",
@@ -137,6 +138,7 @@ def pr_config() -> BCSDConfig:
     """Precipitation config (no detrending, divide downscaling method)."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="pr",
         ensemble_member="r1i1p1f1",
         scenario="SSP245",
@@ -256,6 +258,7 @@ class TestPrepareObservationsCompute:
     def test_subset_space_called_twice_for_regional_run(self, tmp_path):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
             subset_bounds=(-35.0, -22.0, 16.0, 33.0),
@@ -281,6 +284,7 @@ class TestPrepareObservationsCompute:
     def test_rechunk_called_when_enabled(self, tmp_path):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
         )
@@ -408,6 +412,7 @@ class TestTransformScenarioBehavior:
     def test_raises_when_scenario_is_none(self, tmp_path):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
         )
@@ -522,6 +527,7 @@ class TestTransformScenarioBehavior:
         """_build_ocean_mask is not called when apply_ocean_mask=False."""
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="pr",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
@@ -661,6 +667,7 @@ class TestTasminStageDispatch:
     def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tasmin",
             ensemble_member="001",
             scenario="G6-1.5K",
@@ -723,6 +730,7 @@ class TestTasminEagerDisaggInput:
     def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tasmin",
             ensemble_member="001",
             scenario="G6-1.5K",
@@ -1150,6 +1158,7 @@ class TestWeibullZeroBounded:
         tail and gumbel_r to the high tail for pr/rsds/hurs/dtr."""
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="rsds",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
@@ -1364,6 +1373,192 @@ class TestTransformScenarioCoarseOutput:
 
 
 # ---------------------------------------------------------------------------
+# Coarse-only variables — dtr is bias corrected but never published fine (issue #461)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dtr_config() -> BCSDConfig:
+    return BCSDConfig(
+        gcm="CESM2-WACCM",
+        variable="dtr",
+        ensemble_member="008",
+        scenario="SSP245",
+        downscaling_method="BCSD",
+        predict_period_start=2015,
+        predict_period_end=2100,
+    )
+
+
+@pytest.fixture
+def dtr_pipeline(dtr_config, pipeline_options) -> BCSDPipeline:
+    return BCSDPipeline(dtr_config, pipeline_options)
+
+
+def _write_recorder(calls: list):
+    """Stand-in for _write_to_icechunk that records the locations it was handed."""
+
+    def capture_write(da, loc, **kwargs):
+        calls.append(loc)
+        return "snapshot"
+
+    return capture_write
+
+
+class TestCoarseOnlyFitHistorical:
+    def test_writes_the_coarse_group_only(self, dtr_pipeline):
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        write_calls: list = []
+
+        with _mock_fit_historical_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+            ):
+                p.fit_historical()
+
+        groups = [loc.group for loc in write_calls]
+        assert groups == [p.cache.debiased_coarse_historical_loc(p._hist_member).group]
+        assert p.cache.historical_loc(p._hist_member).group not in groups
+
+    def test_does_not_disaggregate(self, dtr_pipeline):
+        """The fine write is the expensive step; skipping it must skip the interp too."""
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+
+        with _mock_fit_historical_compute():
+            with patch.object(BCSDPipeline, "_apply_spatial_downscaling") as mock_disagg:
+                p.fit_historical()
+
+        mock_disagg.assert_not_called()
+
+    def test_returns_the_store_holding_its_coarse_group(self, dtr_pipeline):
+        # The coarse and fine artifacts share one store, so only the group distinguishes
+        # them (that is stage_loc's job). This just pins the early return to a real path.
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+
+        with _mock_fit_historical_compute():
+            result = p.fit_historical()
+
+        assert result == p.cache.debiased_coarse_historical_loc(p._hist_member).store_path
+
+    def test_cache_hit_fires_on_the_coarse_group_alone(self, dtr_pipeline):
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(
+            p.cache.debiased_coarse_historical_loc(p._hist_member), branch=p.cache.branch
+        )
+
+        with patch("srm.pipeline.get_obs") as mock_get_obs:
+            p.fit_historical()
+
+        mock_get_obs.assert_not_called()
+
+    def test_stale_fine_group_alone_does_not_short_circuit(self, dtr_pipeline):
+        """A fine dtr group from a pre-#461 run must not read as a completed stage."""
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+
+        with _mock_fit_historical_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+            ) as mock_write:
+                p.fit_historical()
+
+        mock_write.assert_called()
+
+
+class TestCoarseOnlyTransformScenario:
+    @staticmethod
+    def _seed_deps(p: BCSDPipeline) -> None:
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(
+            p.cache.debiased_coarse_historical_loc(p._hist_member), branch=p.cache.branch
+        )
+
+    def test_writes_the_coarse_group_only(self, dtr_pipeline):
+        p = dtr_pipeline
+        self._seed_deps(p)
+        write_calls: list = []
+
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+            ):
+                p.transform_scenario()
+
+        groups = [loc.group for loc in write_calls]
+        assert p.cache.debiased_coarse_scenario_loc().group in groups
+        assert p.cache.scenario_loc.group not in groups
+
+    def test_does_not_disaggregate(self, dtr_pipeline):
+        p = dtr_pipeline
+        self._seed_deps(p)
+
+        with _mock_transform_scenario_compute():
+            with patch.object(BCSDPipeline, "_apply_spatial_downscaling") as mock_disagg:
+                p.transform_scenario()
+
+        mock_disagg.assert_not_called()
+
+    def test_returns_the_store_holding_its_coarse_group(self, dtr_pipeline):
+        # As above: coarse and fine share a store, so this pins the early return only.
+        p = dtr_pipeline
+        self._seed_deps(p)
+
+        with _mock_transform_scenario_compute():
+            result = p.transform_scenario()
+
+        assert result == p.cache.debiased_coarse_scenario_loc().store_path
+
+    def test_cache_hit_fires_on_the_coarse_group_alone(self, dtr_pipeline):
+        p = dtr_pipeline
+        self._seed_deps(p)
+        _make_icechunk_group(p.cache.debiased_coarse_scenario_loc(), branch=p.cache.branch)
+
+        with patch("srm.pipeline.get_obs") as mock_get_obs:
+            p.transform_scenario()
+
+        mock_get_obs.assert_not_called()
+
+
+class TestNormalVariableStillPublishesFine:
+    """Regression guard: only COARSE_ONLY_VARIABLES lose their fine artifact."""
+
+    def test_pr_scenario_still_writes_both_groups(self, pipeline_pr):
+        p = pipeline_pr
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        write_calls: list = []
+
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+            ):
+                p.transform_scenario()
+
+        groups = [loc.group for loc in write_calls]
+        assert p.cache.debiased_coarse_scenario_loc().group in groups
+        assert p.cache.scenario_loc.group in groups
+
+    def test_tas_historical_still_writes_both_groups(self, all_deps_present):
+        p = all_deps_present
+        write_calls: list = []
+
+        with _mock_fit_historical_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+            ):
+                p.fit_historical()
+
+        groups = [loc.group for loc in write_calls]
+        assert p.cache.debiased_coarse_historical_loc(p._hist_member).group in groups
+        assert p.cache.historical_loc(p._hist_member).group in groups
+
+
+# ---------------------------------------------------------------------------
 # Tasmin dependency read-path — coarse output locs
 # ---------------------------------------------------------------------------
 
@@ -1372,6 +1567,7 @@ class TestTransformScenarioCoarseOutput:
 def tasmin_config() -> BCSDConfig:
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tasmin",
         ensemble_member="r1i1p1f1",
         scenario="SSP245",
@@ -2089,6 +2285,7 @@ class TestDetrendScenarioBridge:
         # SSP245 bridge so the output spans the full predict window (issue #363).
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="dtr",
             ensemble_member="003",
             scenario="G6-1.5K",
@@ -2114,6 +2311,7 @@ class TestDetrendScenarioBridge:
         # the scenario is returned unchanged (regression: no behavior change).
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="pr",
             ensemble_member="003",
             scenario="SSP245",
@@ -2191,6 +2389,7 @@ class TestScenarioHistoricalSlice:
     def test_sai_scenario_stops_at_train_period_end(self, pipeline_options):
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="001",
             scenario="G6-1.5K",
@@ -2209,6 +2408,7 @@ class TestScenarioHistoricalSlice:
         # the old slice leaked six extra years into the reference pool.
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
@@ -2224,6 +2424,7 @@ class TestScenarioHistoricalSlice:
         """_load_gcm_obs already slices correctly; the two loaders must agree."""
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="001",
             scenario="G6-1.5K",
@@ -2256,3 +2457,263 @@ class TestScenarioHistoricalSlice:
         np.testing.assert_array_equal(
             scenario_hist["time"].values, historical_stage_hist["time"].values
         )
+
+
+class TestObservationAttrs:
+    """Regridded obs is shared, so its provenance must not record run-specific values."""
+
+    _RUN_SPECIFIC = (
+        "srm_downscaling:downscaling_method",
+        "srm_downscaling:bias_correction_method",
+        "srm_downscaling:disaggregation_method",
+        "srm_downscaling:config_json",
+        "srm_downscaling:config_hash",
+        "srm_downscaling:scenario",
+        "srm_downscaling:ensemble_member",
+        "srm_downscaling:historical_ensemble_member",
+        "srm_downscaling:ssp245_ensemble_member",
+        "srm_downscaling:train_period",
+    )
+
+    @staticmethod
+    def _pipeline(method: str, member: str, scenario: str):
+        return BCSDPipeline(
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                downscaling_method=method,
+                variable="tas",
+                ensemble_member=member,
+                scenario=scenario,
+                predict_period_start=2015,
+                predict_period_end=2100,
+            ),
+            PipelineOptions(),
+        )
+
+    def test_obs_attrs_omit_run_specific_provenance(self, subtests):
+        attrs = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_obs_attrs()
+        for key in self._RUN_SPECIFIC:
+            with subtests.test(attr=key):
+                assert key not in attrs
+
+    def test_obs_attrs_keep_what_the_artifact_is_keyed_on(self):
+        attrs = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_obs_attrs()
+        assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM"
+        assert attrs["srm_downscaling:variable"] == "tas"
+        assert "srm_downscaling:observation_dataset" in attrs
+        assert "srm_downscaling:version" in attrs
+        assert "srm_downscaling:creation_date" in attrs
+
+    def test_obs_attrs_match_across_methods_and_members(self):
+        """Two runs that share the obs artifact must write identical obs provenance."""
+        a = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_obs_attrs()
+        b = self._pipeline("QDMSD", "r2i1p1f1", "G6-1.5K")._build_obs_attrs()
+        volatile = {"history", "srm_downscaling:creation_date"}
+        assert {k: v for k, v in a.items() if k not in volatile} == {
+            k: v for k, v in b.items() if k not in volatile
+        }
+
+    def test_output_attrs_still_carry_the_method(self):
+        """The invariant: a method attr means the group depends on the method."""
+        attrs = self._pipeline("QDMSD", "r1i1p1f1", "SSP245")._build_output_attrs()
+        assert attrs["srm_downscaling:downscaling_method"] == "QDMSD"
+
+
+# ---------------------------------------------------------------------------
+# QDM scenario branch: seasonal window wiring and lead-in pad completeness
+# ---------------------------------------------------------------------------
+
+
+def _qdm_da(start: str, end: str, value: float = 280.0) -> xr.DataArray:
+    """Daily (time, lat, lon) series on a tiny grid, NaN-free."""
+    times = pd.date_range(start, end, freq="D")
+    return xr.DataArray(
+        np.full((len(times), 2, 2), float(value)),
+        dims=["time", "lat", "lon"],
+        coords={"time": times, "lat": [0.0, 1.0], "lon": [10.0, 11.0]},
+        name="tas",
+    )
+
+
+class TestQDMScenarioWindow:
+    """The QDM scenario debiaser must take its seasonal window from ``variable_config``.
+
+    Without the wiring, ``QuantileDeltaMapping`` is built with no arguments, so editing
+    ``running_window_length`` / ``running_window_step_length`` in ``QDMSD_CONFIG`` moves
+    the historical fit and the ``config_hash`` while leaving the scenario mapping on the
+    ibicus defaults. The two happen to agree today, so these tests use deliberately
+    non-default values rather than asserting 91/31.
+    """
+
+    @staticmethod
+    def _pipeline(pipeline_options, variable="tas", **window):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            downscaling_method="QDMSD",
+            variable=variable,
+            ensemble_member="r1i1p1f1",
+            scenario="SSP245",
+            predict_period_start=2015,
+            predict_period_end=2016,
+        )
+        assert cfg.variable_config.debias_approach == "qdm"
+        for key, value in window.items():
+            setattr(cfg.variable_config, key, value)
+        return BCSDPipeline(cfg, pipeline_options)
+
+    @staticmethod
+    @contextmanager
+    def _run(pipe, stitched, scenario_detrended):
+        """Drive the qdm branch, capturing the debiaser ibicus was asked to apply."""
+        captured: dict = {}
+
+        def _fake_apply(self, **kwargs):
+            captured["debiaser"] = self
+            captured["cm_future"] = kwargs["cm_future"]
+            return np.zeros(kwargs["cm_future"].shape)
+
+        hist = _qdm_da("2010-01-01", "2014-12-31")
+        with (
+            patch("srm.pipeline.stitch_historical_scenario", return_value=stitched),
+            patch.object(QuantileDeltaMapping, "apply", _fake_apply),
+        ):
+            pipe._apply_bias_correction_scenario(
+                hist,
+                hist,
+                scenario_detrended,
+                model_scenario_for_qdm=scenario_detrended,
+            )
+        yield captured
+
+    def test_seasonal_window_comes_from_variable_config(self, pipeline_options):
+        pipe = self._pipeline(
+            pipeline_options, running_window_length=45, running_window_step_length=7
+        )
+        stitched = _qdm_da("1990-01-01", "2014-12-31")
+        with self._run(pipe, stitched, _qdm_da("2015-01-01", "2016-12-31")) as captured:
+            pass
+        debiaser = captured["debiaser"]
+        assert debiaser.running_window_length == 45
+        assert debiaser.running_window_step_length == 7
+        assert debiaser.running_window_mode is True
+
+    def test_precipitation_seasonal_window_comes_from_variable_config(self, pipeline_options):
+        """pr takes the ``for_precipitation`` constructor, which must be wired too."""
+        pipe = self._pipeline(
+            pipeline_options,
+            variable="pr",
+            running_window_length=45,
+            running_window_step_length=7,
+        )
+        stitched = _qdm_da("1990-01-01", "2014-12-31", value=1e-5)
+        scenario = _qdm_da("2015-01-01", "2016-12-31", value=1e-5)
+        with self._run(pipe, stitched, scenario) as captured:
+            pass
+        debiaser = captured["debiaser"]
+        assert debiaser.running_window_length == 45
+        assert debiaser.running_window_step_length == 7
+
+    def test_years_window_stays_at_the_ibicus_default(self, pipeline_options):
+        """``common_kwargs`` must not be reused here: QDM depends on the years window.
+
+        ``common_kwargs`` pins ``running_window_step_length=1`` and sets
+        ``running_window_mode_over_years_of_cm_future=False``, which would disable the
+        window ``pad_years`` is derived from and break the method.
+        """
+        pipe = self._pipeline(
+            pipeline_options, running_window_length=45, running_window_step_length=7
+        )
+        stitched = _qdm_da("1990-01-01", "2014-12-31")
+        with self._run(pipe, stitched, _qdm_da("2015-01-01", "2016-12-31")) as captured:
+            pass
+        debiaser = captured["debiaser"]
+        assert debiaser.running_window_mode_over_years_of_cm_future is True
+        assert debiaser.running_window_over_years_of_cm_future_length == 31
+
+
+class TestQDMPadCompleteness:
+    """A short lead-in pad must fail loudly instead of under-filling the moving window.
+
+    ``.sel`` on a time slice returns whatever it finds, and the trailing de-padding is
+    computed from the pad that was actually selected, so a stitched series that does not
+    reach back far enough produces a quietly under-conditioned first few future years.
+    """
+
+    def _run(self, pipeline_options, stitched):
+        pipe = TestQDMScenarioWindow._pipeline(pipeline_options)
+        scenario = _qdm_da("2015-01-01", "2016-12-31")
+        hist = _qdm_da("2010-01-01", "2014-12-31")
+
+        def _fake_apply(self, **kwargs):
+            return np.zeros(kwargs["cm_future"].shape)
+
+        with (
+            patch("srm.pipeline.stitch_historical_scenario", return_value=stitched),
+            patch.object(QuantileDeltaMapping, "apply", _fake_apply),
+        ):
+            return pipe._apply_bias_correction_scenario(
+                hist, hist, scenario, model_scenario_for_qdm=scenario
+            )
+
+    def test_full_pad_is_accepted(self, pipeline_options):
+        """pad_years=15 before predict_period_start=2015, so 2000-2014 must be enough."""
+        out = self._run(pipeline_options, _qdm_da("2000-01-01", "2014-12-31"))
+        assert out.sizes["time"] == 731  # only the requested period survives
+
+    def test_short_pad_raises(self, pipeline_options):
+        stitched = _qdm_da("2010-01-01", "2014-12-31")
+        with pytest.raises(ValueError) as excinfo:
+            self._run(pipeline_options, stitched)
+        message = str(excinfo.value)
+        assert "2000 to 2014" in message  # the range that was required
+        assert "2010 to 2014" in message  # what was actually available
+        assert "2000" in message and "2009" in message  # the missing years
+        assert "2010-01-01" in message  # earliest time in the stitched series
+
+    def test_empty_pad_raises(self, pipeline_options):
+        """Nothing before the prediction period at all is the degenerate case."""
+        with pytest.raises(ValueError, match="no years"):
+            self._run(pipeline_options, _qdm_da("2015-01-01", "2016-12-31"))
+
+
+class TestQDMPreconditions:
+    """The qdm branch must reject a missing lead-in source before it reaches the stitch.
+
+    ``model_scenario_for_qdm`` and ``ssp_timeseries_for_qdm`` default to None because the
+    other debias approaches never read them. That makes it possible to reach the qdm
+    branch without them, where ``stitch_historical_scenario`` either fails on a None it
+    cannot explain or, for an SAI run, reads the missing bridge as "non-SAI" and stitches
+    historical straight onto the SAI scenario with the SSP245 years dropped. The pad
+    assertion does catch that second case, but it blames the length of the input series
+    rather than the absent bridge, which sends the reader after the wrong fix.
+    """
+
+    @staticmethod
+    def _pipeline(pipeline_options, scenario="SSP245", predict_period_start=2015):
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            downscaling_method="QDMSD",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
+            scenario=scenario,
+            predict_period_start=predict_period_start,
+            predict_period_end=predict_period_start + 1,
+        )
+        assert cfg.variable_config.debias_approach == "qdm"
+        return BCSDPipeline(cfg, pipeline_options)
+
+    def test_missing_model_scenario_raises_before_the_stitch(self, pipeline_options):
+        pipe = self._pipeline(pipeline_options)
+        da = _qdm_da("2010-01-01", "2014-12-31")
+
+        with pytest.raises(ValueError, match="model_scenario_for_qdm"):
+            pipe._apply_bias_correction_scenario(da, da, da)
+
+    def test_sai_scenario_missing_ssp_bridge_raises(self, pipeline_options):
+        """Without this, the SSP245 bridge is silently dropped rather than reported."""
+        pipe = self._pipeline(pipeline_options, scenario="G6-1.5K", predict_period_start=2035)
+        assert pipe.config.is_sai_scenario
+        da = _qdm_da("2010-01-01", "2014-12-31")
+
+        with pytest.raises(ValueError, match="ssp_timeseries_for_qdm"):
+            pipe._apply_bias_correction_scenario(da, da, da, model_scenario_for_qdm=da)

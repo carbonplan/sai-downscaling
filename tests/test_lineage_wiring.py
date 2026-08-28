@@ -36,6 +36,7 @@ def g6_001_tas_config() -> BCSDConfig:
     """G6-1.5K member 001, tas — lineage: historical=r1i1p1f1, SSP245 bridge=001."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="001",
         scenario="G6-1.5K",
@@ -49,6 +50,7 @@ def g6_002_tas_config() -> BCSDConfig:
     """G6-1.5K member 002, tas — lineage: historical=r2i1p1f1, SSP245 bridge=002."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="002",
         scenario="G6-1.5K",
@@ -62,6 +64,7 @@ def g6_001_tasmax_config() -> BCSDConfig:
     """G6-1.5K member 001, tasmax — lineage: historical=001, SSP245 bridge=009."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="001",
         scenario="G6-1.5K",
@@ -75,6 +78,7 @@ def g6_002_tasmax_config() -> BCSDConfig:
     """G6-1.5K member 002, tasmax — lineage: historical=001, SSP245 bridge=007."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="002",
         scenario="G6-1.5K",
@@ -88,6 +92,7 @@ def miroc_g6_r01_tas_config() -> BCSDConfig:
     """MIROC G6-1.5K member r01, tas — lineage: hist=r1i1p4f2, ssp245=r01, esgf=r1i1p4f2."""
     return BCSDConfig(
         gcm="MIROC-ES2H",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r01",
         scenario="G6-1.5K",
@@ -101,6 +106,7 @@ def miroc_g6_r04_tas_config() -> BCSDConfig:
     """MIROC G6-1.5K member r04, tas — shares hist=r1i1p4f2 with r01."""
     return BCSDConfig(
         gcm="MIROC-ES2H",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r04",
         scenario="G6-1.5K",
@@ -145,6 +151,7 @@ class TestLoadGcmObsMemberSelection:
         """For an unknown scenario, _hist_member falls back to ensemble_member."""
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
             scenario="ssp245",  # lowercase — not in lineage table
@@ -217,6 +224,7 @@ class TestLoadScenarioDataMemberSelection:
         """For unknown scenario, _hist_member falls back to ensemble_member."""
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
             scenario="ssp245",
@@ -322,6 +330,7 @@ class TestHistoricalPathSharedParent:
         """When no lineage is registered, ensemble_member fills the group."""
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
@@ -353,6 +362,7 @@ class TestBuildOutputAttrs:
     def test_attrs_fall_back_to_ensemble_member_when_no_lineage(self, pipeline_options):
         config = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",

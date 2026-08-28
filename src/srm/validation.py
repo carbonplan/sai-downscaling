@@ -14,7 +14,7 @@ from typing import get_args
 import pydantic
 import xarray as xr
 
-from srm.bcsd_config import BCSDConfig, VariableName
+from srm.bcsd_config import METHOD_SEGMENTS, BCSDConfig, VariableName
 from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
 from srm.qaqc import DatasetChecker, ValidationResult
@@ -820,7 +820,9 @@ def validate_output_store(
 
     ``scenarios`` and ``variables`` restrict validation to matching leaves of the
     ``/scenario/variable/member`` tree; they take the on-disk group names (e.g. ``"ssp245"``,
-    ``"tas"``). ``None`` means no filter.
+    ``"tas"``). ``None`` means no filter. Both store layouts are validated: a store whose
+    top-level groups are downscaling-method segments is descended one level deeper, and a
+    store written before the method namespacing is descended as-is.
     """
     if isinstance(store, str):
         from cloudpathlib import S3Path
@@ -837,9 +839,22 @@ def validate_output_store(
             return list(node.children.values())
         return [node[name] for name in names if name in node.children]
 
-    # Descend the /scenario/variable/member tree one level at a time; member nodes are
+    # Descend the scenario/variable/member tree one level at a time; member nodes are
     # the leaves we validate. Filtering uses the tree structure, not path parsing.
-    scenario_nodes = _select(tree, scenarios)
+    #
+    # Method-dependent groups are namespaced under a leading downscaling-method segment
+    # (/method/scenario/variable/member), so a store whose top level holds method
+    # segments needs one extra level. Stores written before the namespacing start at
+    # the scenario group. A store can mix the two, so method segments are unwrapped
+    # individually and anything else at the top level is treated as a scenario group.
+    scenario_nodes = [
+        sn
+        for top in tree.children.values()
+        for sn in (top.children.values() if top.name in METHOD_SEGMENTS else [top])
+    ]
+    if scenarios is not None:
+        wanted = set(scenarios)
+        scenario_nodes = [sn for sn in scenario_nodes if sn.name in wanted]
     variable_nodes = [vn for sn in scenario_nodes for vn in _select(sn, variables)]
 
     results: list[CheckResult] = []
