@@ -59,6 +59,20 @@ jobs:
                   echo "version=$VERSION" >> "$GITHUB_OUTPUT"
                   echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
+                  # Only a release moves :latest. Any dispatch can build this workflow, and
+                  # the job definition's default image is :latest, so tagging it every time
+                  # would silently repoint unpinned runs at feature-branch code.
+                  TAGS="$IMAGE"
+                  if [[ "${{ github.event_name }}" == "release" ]]; then
+                    TAGS="$TAGS
+                  ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:latest"
+                  fi
+                  {
+                    echo "tags<<__TAGS__"
+                    echo "$TAGS"
+                    echo "__TAGS__"
+                  } >> "$GITHUB_OUTPUT"
+
             - uses: docker/setup-buildx-action@v3
 
             - uses: docker/build-push-action@v6
@@ -67,9 +81,7 @@ jobs:
                   platforms: linux/arm64
                   push: true
                   build-args: SRM_VERSION=${{ steps.meta.outputs.version }}
-                  tags: |
-                      ${{ steps.meta.outputs.image }}
-                      ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+                  tags: ${{ steps.meta.outputs.tags }}
                   cache-from: type=gha
                   cache-to: type=gha,mode=max
 
@@ -87,6 +99,7 @@ jobs:
                     --propagate-tags \
                     --tags Project=SRM \
                     --retry-strategy '{"attempts":3}' \
+                    --timeout '{"attemptDurationSeconds":28800}' \
                     --container-properties "$(jq -n --arg image "${{ steps.meta.outputs.image }}" '{
                         image: $image,
                         jobRoleArn: "arn:aws:iam::631969445205:role/srm-batch-job-role",

@@ -1062,3 +1062,58 @@ class TestStageValidation:
         from srm.cli import _resolve_stage
 
         assert _resolve_stage(given) == expected
+
+
+class TestRunEnvironmentTable:
+    """The estimate names the image a run will execute, or says why it cannot."""
+
+    @pytest.fixture
+    def orchestrator(self, tmp_path):
+        from srm.orchestration import BCSDOrchestrator
+
+        return BCSDOrchestrator(
+            PipelineOptions(
+                scratch_dir=str(tmp_path / "cache"),
+                output_dir=str(tmp_path / "out"),
+                verbose=False,
+            )
+        )
+
+    def _render(self, orchestrator, executor):
+        from srm.cli import _render_run_environment, console
+
+        with console.capture() as cap:
+            _render_run_environment(orchestrator, executor)
+        return cap.get()
+
+    def test_aws_batch_names_the_queue_and_image(self, orchestrator):
+        with patch.object(
+            orchestrator,
+            "resolve_job_definition",
+            return_value={"job_definition": "srm-downscaling:7", "image": "ecr/img:abc123"},
+        ):
+            out = self._render(orchestrator, "aws-batch")
+        assert "srm-downscaling:7" in out
+        assert "abc123" in out
+        assert "srm-production" in out  # the default queue
+
+    def test_unresolvable_definition_is_reported_not_hidden(self, orchestrator):
+        with patch.object(
+            orchestrator, "resolve_job_definition", side_effect=RuntimeError("no creds")
+        ):
+            out = self._render(orchestrator, "aws-batch")
+        assert "unresolved" in out
+        assert "RuntimeError" in out
+
+    @pytest.mark.parametrize("executor", ["coiled", "local"])
+    def test_non_batch_executors_omit_batch_rows(self, orchestrator, executor):
+        with patch.object(orchestrator, "resolve_job_definition") as mock_resolve:
+            out = self._render(orchestrator, executor)
+        mock_resolve.assert_not_called()
+        assert "job definition" not in out
+        assert "job queue" not in out
+        assert executor in out
+
+    def test_always_names_the_output_branch(self, orchestrator):
+        out = self._render(orchestrator, "local")
+        assert "branch" in out and "environment" in out

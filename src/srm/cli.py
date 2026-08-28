@@ -841,6 +841,38 @@ def _confirm_cost(
     return typer.confirm("Submit these tasks?", default=False)
 
 
+def _render_run_environment(orchestrator: BCSDOrchestrator, executor_name: str) -> None:
+    """Print where a run will execute and, for AWS Batch, which image it will run.
+
+    The image answers "am I about to run the code I think I am", and the cost prompt is the
+    right moment to ask it. Resolving it costs one AWS call, so a failure is reported in the
+    table rather than silently omitted.
+    """
+    options = orchestrator.options
+    rows = [("executor", executor_name)]
+
+    if executor_name == "aws-batch":
+        rows.append(("job queue", options.batch_job_queue))
+        try:
+            resolved = orchestrator.resolve_job_definition()
+            rows.append(("job definition", resolved["job_definition"]))
+            rows.append(("image", resolved["image"]))
+        except Exception as exc:  # noqa: BLE001 - surfaced in the table, not swallowed
+            rows.append(("job definition", options.batch_job_definition))
+            rows.append(("image", f"[red]unresolved: {type(exc).__name__}[/red]"))
+
+    rows.append(("branch", options.branch))
+    rows.append(("environment", options.environment))
+    rows.append(("output", options.output_dir))
+
+    table = Table(title="Run environment", box=box.SIMPLE, title_justify="left", show_header=False)
+    table.add_column("", style="cyan", no_wrap=True)
+    table.add_column("", overflow="fold")
+    for key, value in rows:
+        table.add_row(key, str(value))
+    console.print(table)
+
+
 def _render_cost_plan(
     orchestrator: BCSDOrchestrator,
     configs: list[BCSDConfig],
@@ -868,6 +900,8 @@ def _render_cost_plan(
     estimate = estimate_workflow(
         [(p.stage, p.to_run, p.vm_type, p.regional) for p in plans], executor_name
     )
+
+    _render_run_environment(orchestrator, executor_name)
 
     table = Table(title=f"Cost estimate ({executor_name})", box=box.SIMPLE, title_justify="left")
     table.add_column("Stage", style="cyan", no_wrap=True)

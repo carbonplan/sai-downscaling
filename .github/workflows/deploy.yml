@@ -193,6 +193,9 @@ jobs:
             - id: resolve
               env:
                   MODEL: ${{ inputs.model }}
+                  # The allowlist itself. A dispatch is checked against it too, so the
+                  # comment below holds for every trigger rather than releases alone.
+                  ALLOWED: cesm2-waccm
               # The release list is explicit rather than derived from the directory listing,
               # so adding a folder under configs/production/ cannot silently start a global
               # run at the next release.
@@ -204,10 +207,18 @@ jobs:
               # longer load.
               run: |
                   if [[ -n "$MODEL" ]]; then
-                    echo "list=[\"$MODEL\"]" >> "$GITHUB_OUTPUT"
+                    # A model may name a folder or a single config file beneath it.
+                    ROOT="${MODEL%%/*}"
+                    if ! grep -qxF "$ROOT" <<<"$(tr ' ' '\n' <<<"$ALLOWED")"; then
+                      echo "::error::model '$MODEL' is not in the production allowlist ($ALLOWED)."
+                      exit 1
+                    fi
+                    LIST=$(jq -cn --arg m "$MODEL" '[$m]')
                   else
-                    echo 'list=["cesm2-waccm"]' >> "$GITHUB_OUTPUT"
+                    LIST=$(tr ' ' '\n' <<<"$ALLOWED" | jq -Rcn '[inputs | select(. != "")]')
                   fi
+                  echo "list=$LIST" >> "$GITHUB_OUTPUT"
+                  echo "Models to run: $LIST" >> "$GITHUB_STEP_SUMMARY"
 
     plan:
         # Renders the cost estimate into the job summary so the reviewer who releases the
@@ -215,6 +226,10 @@ jobs:
         # the gate itself under Settings > Environments > production > required reviewers;
         # without it this job is informational only.
         name: Cost plan (${{ matrix.model }})
+        # Informational only. Without this a transient S3 error while probing the cache
+        # would skip the production run entirely, because `needs` treats a failed
+        # dependency as a skip no matter what the dependent job's `if` says.
+        continue-on-error: true
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
             == 'production')
         needs: [image, models]

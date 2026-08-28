@@ -192,6 +192,41 @@ class BCSDOrchestrator:
             name = f"{head}-{batch_hash}"
         return name
 
+    def resolve_job_definition(self) -> dict[str, str]:
+        """
+        Resolve the configured job definition to the revision and image AWS will run.
+
+        A bare name resolves to the highest ACTIVE revision, which is what AWS Batch itself
+        picks at submit time. Reporting it lets a cost preview name the code a run will
+        execute, rather than only the definition it was asked for.
+
+        Returns
+        -------
+        dict[str, str]
+            ``job_definition`` as ``name:revision`` and the container ``image``.
+
+        Raises
+        ------
+        ValueError
+            If the job definition has no ACTIVE revision.
+        """
+        name = self.options.batch_job_definition
+        client = self._batch_client()
+        if ":" in name or name.startswith("arn:"):
+            response = client.describe_job_definitions(jobDefinitions=[name])
+        else:
+            response = client.describe_job_definitions(jobDefinitionName=name, status="ACTIVE")
+
+        definitions = response["jobDefinitions"]
+        if not definitions:
+            raise ValueError(f"No ACTIVE job definition found for {name!r}")
+
+        latest = max(definitions, key=lambda d: d["revision"])
+        return {
+            "job_definition": f"{name.split(':')[0]}:{latest['revision']}",
+            "image": latest["containerProperties"]["image"],
+        }
+
     def _submit_batch_job(
         self, stage: str, configs: list[BCSDConfig], manifest_uri: str | None
     ) -> str:

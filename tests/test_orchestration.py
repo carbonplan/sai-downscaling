@@ -1246,3 +1246,51 @@ class TestPlanStage:
         _make_icechunk_group(loc, branch=cache.branch)
         plan = orchestrator.plan_stage("transform_scenario", [config])
         assert (plan.to_run, plan.cached) == (0, 1)
+
+
+class TestResolveJobDefinition:
+    """The estimate names the image a run will actually execute."""
+
+    def test_pinned_revision_is_described_directly(self, pipeline_options):
+        pipeline_options.batch_job_definition = "srm-downscaling:7"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.return_value = {
+            "jobDefinitions": [
+                {"revision": 7, "containerProperties": {"image": "ecr/srm-downscaling:abc123"}}
+            ]
+        }
+        with patch("boto3.client", return_value=client):
+            assert orch.resolve_job_definition() == {
+                "job_definition": "srm-downscaling:7",
+                "image": "ecr/srm-downscaling:abc123",
+            }
+        assert client.describe_job_definitions.call_args.kwargs["jobDefinitions"] == [
+            "srm-downscaling:7"
+        ]
+
+    def test_bare_name_resolves_to_the_highest_active_revision(self, pipeline_options):
+        # AWS resolves a bare name to the highest ACTIVE revision at submit time, so the
+        # preview has to do the same or it would name the wrong image.
+        pipeline_options.batch_job_definition = "srm-downscaling"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.return_value = {
+            "jobDefinitions": [
+                {"revision": 2, "containerProperties": {"image": "ecr/img:old"}},
+                {"revision": 5, "containerProperties": {"image": "ecr/img:new"}},
+                {"revision": 3, "containerProperties": {"image": "ecr/img:mid"}},
+            ]
+        }
+        with patch("boto3.client", return_value=client):
+            resolved = orch.resolve_job_definition()
+        assert resolved == {"job_definition": "srm-downscaling:5", "image": "ecr/img:new"}
+        assert client.describe_job_definitions.call_args.kwargs["status"] == "ACTIVE"
+
+    def test_missing_definition_raises(self, pipeline_options):
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.return_value = {"jobDefinitions": []}
+        with patch("boto3.client", return_value=client):
+            with pytest.raises(ValueError, match="srm-downscaling"):
+                orch.resolve_job_definition()
