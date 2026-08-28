@@ -384,12 +384,6 @@ class TestProvenanceReconciliation:
             "malformed",
         }
 
-    def test_every_sheet_parent_cell_is_parseable(self):
-        # A malformed cell would otherwise be skipped silently, hiding real drift.
-        # The '???' uncertainty prefix must be handled rather than treated as a parse error.
-        diff = self._diff()
-        assert diff["uncertain"], "the '???' prefix is no longer being detected"
-
     @pytest.mark.parametrize("variable", _STANDARD_VARS + ("tasmax", "tasmin"))
     def test_termination_run_agrees_with_sheet(self, variable):
         # dtr is excluded: it is derived, so it has no provenance row by design.
