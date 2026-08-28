@@ -541,38 +541,6 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         """Check if this is an SAI intervention scenario"""
         return self.scenario and ("G6" in self.scenario.upper() or "SAI" in self.scenario.upper())
 
-    def make_config_for_variable(self, variable: str) -> BCSDConfig:
-        """
-        Return a new BCSDConfig for a different variable, keeping all other parameters the same.
-
-        Useful for grabbing paths to intermediate artifacts for a sibling variable (e.g. dtr or
-        tasmax when processing tasmin) without redefining the entire config. Variable-specific
-        parameters are auto-populated based on the new variable.
-
-        The sibling inherits this config's ``debias_approach`` while taking its own
-        per-variable defaults for every other field.
-        """
-        return BCSDConfig(
-            gcm=self.gcm,
-            variable=variable,
-            ensemble_member=self.ensemble_member,
-            scenario=self.scenario,
-            train_period_start=self.train_period_start,
-            train_period_end=self.train_period_end,
-            predict_period_start=self.predict_period_start,
-            predict_period_end=self.predict_period_end,
-            subset_bounds=self.subset_bounds,
-            downscaling_method=self.downscaling_method,
-            # The sibling gets its own per-variable defaults, read from the same table
-            # this run uses, but inherits this run's debias_approach so a run-wide
-            # override still points at the artifacts the sibling was actually computed
-            # with. model_copy is safe here because the source value is an
-            # already-validated Literal.
-            variable_config=VariableConfig.for_variable(
-                variable, self.downscaling_method
-            ).model_copy(update={"debias_approach": self.variable_config.debias_approach}),
-        )
-
 
 class VariableClipBounds(BaseModel):
     min: float | None = None

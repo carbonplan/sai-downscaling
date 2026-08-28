@@ -285,24 +285,6 @@ class TestBCSDConfigConstruction:
         )
         assert cfg.variable_config.debias_approach == "nonparametric"
 
-    def test_make_config_for_variable_carries_debias_approach(self):
-        """Sibling-variable configs are used for artifact path lookup; keep the approach aligned."""
-        cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
-            downscaling_method="BCSD",
-            variable="tasmin",
-            ensemble_member="r1i1p1f1",
-            variable_config=VariableConfig.for_variable("tasmin", "BCSD").model_copy(
-                update={"debias_approach": "nonparametric"}
-            ),
-        )
-        sibling = cfg.make_config_for_variable("dtr")
-        assert sibling.variable == "dtr"
-        assert sibling.variable_config.debias_approach == "nonparametric"
-        assert (
-            sibling.variable_config.disaggregation_method == "multiplicative"
-        )  # dtr's own default
-
     def test_qdm_requires_qdmsd_downscaling_method(self):
         """A qdm debias_approach under BCSD would detrend around a trend-carrying method."""
         with pytest.raises(ValidationError, match="incompatible with debias_approach"):
