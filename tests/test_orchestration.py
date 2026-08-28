@@ -1219,3 +1219,30 @@ class TestExecutorValidation:
     def test_unknown_executor_raises_when_work_is_pending(self, orchestrator, config):
         with pytest.raises(ValueError, match="aws_batch"):
             orchestrator.submit_stage("prepare_observations", [config], executor="aws_batch")
+
+
+class TestPlanStage:
+    """A single-stage estimate must mirror submit_stage, which does not deduplicate."""
+
+    def test_counts_every_config_not_the_deduplicated_set(self, orchestrator, multi_configs):
+        # run --stage obs hands submit_stage the full list, so the estimate must too.
+        deduped = len(orchestrator._deduplicate_obs_configs(multi_configs))
+        assert deduped < len(multi_configs)
+
+        plan = orchestrator.plan_stage("prepare_observations", multi_configs)
+        assert plan.to_run == len(multi_configs)
+        assert plan.stage == "prepare_observations"
+
+    def test_matches_what_submit_stage_dispatches(self, orchestrator, multi_configs):
+        planned = orchestrator.plan_stage("prepare_observations", multi_configs)
+        with patch.object(orchestrator, "_run_local", return_value=[]) as mock_local:
+            orchestrator.submit_stage("prepare_observations", multi_configs, executor="local")
+        submitted = sum(len(call.args[1]) for call in mock_local.call_args_list)
+        assert planned.to_run == submitted
+
+    def test_cached_configs_are_excluded(self, orchestrator, config):
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+        plan = orchestrator.plan_stage("transform_scenario", [config])
+        assert (plan.to_run, plan.cached) == (0, 1)

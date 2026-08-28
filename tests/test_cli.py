@@ -4,6 +4,7 @@ import itertools
 from unittest.mock import patch
 
 import pytest
+import typer
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
@@ -1035,3 +1036,29 @@ class TestStageScopedCostPlan:
     )
     def test_only_the_selected_stage_is_priced(self, orchestrator, configs, alias, expected):
         assert self._priced_stages(orchestrator, configs, alias) == [expected]
+
+
+class TestStageValidation:
+    """An unrecognized --stage used to prompt for cost and then silently do nothing."""
+
+    def test_unknown_stage_is_rejected(self, tmp_path):
+        from srm.cli import _resolve_stage
+
+        with pytest.raises(typer.BadParameter, match="foo"):
+            _resolve_stage("foo")
+
+    @pytest.mark.parametrize(
+        "given,expected",
+        [
+            (None, None),
+            ("all", None),
+            ("obs", "prepare_observations"),
+            ("historical", "fit_historical"),
+            ("scenario", "transform_scenario"),
+            ("transform_scenario", "transform_scenario"),
+        ],
+    )
+    def test_known_stages_resolve(self, given, expected):
+        from srm.cli import _resolve_stage
+
+        assert _resolve_stage(given) == expected

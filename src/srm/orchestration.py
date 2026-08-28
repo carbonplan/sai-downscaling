@@ -424,6 +424,38 @@ class BCSDOrchestrator:
                 output_paths.append(None)
         return configs_to_run, output_paths
 
+    def plan_stage(self, stage: str, configs: list[BCSDConfig], force: bool = False) -> StagePlan:
+        """
+        Report what one stage would submit for ``configs``, without submitting anything.
+
+        Mirrors :meth:`submit_stage`, which takes the caller's list as given. That differs
+        from :meth:`plan`, which deduplicates the obs and historical stages the way
+        :meth:`run_full_workflow` does, so a single-stage estimate must not reuse it.
+
+        Parameters
+        ----------
+        stage : str
+            Pipeline stage name.
+        configs : list[BCSDConfig]
+            Configurations exactly as they would be handed to :meth:`submit_stage`.
+        force : bool, optional
+            Ignore cached artifacts.
+
+        Returns
+        -------
+        StagePlan
+            Counts and sizing for that one stage.
+        """
+        cache = self._get_cache()
+        to_run, _ = self._partition_by_cache(cache, stage, configs, force)
+        return StagePlan(
+            stage=stage,
+            to_run=len(to_run),
+            cached=len(configs) - len(to_run),
+            vm_type=self._vm_types_for(stage, to_run or configs)[0],
+            regional=self._is_regional(to_run or configs),
+        )
+
     def plan(self, configs: list[BCSDConfig], force: bool = False) -> list[StagePlan]:
         """
         Report what each stage would submit, without submitting anything.

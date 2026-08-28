@@ -790,6 +790,25 @@ _STAGE_ALIASES: dict[str, str] = {
 }
 
 
+def _resolve_stage(stage: str | None) -> str | None:
+    """Map a ``--stage`` value to a pipeline stage name, or None for the whole workflow.
+
+    Raises
+    ------
+    typer.BadParameter
+        For an unrecognized value. The dispatch below is an if/elif chain with no else,
+        so an unknown stage used to run nothing and exit zero.
+    """
+    if stage is None or stage == "all":
+        return None
+    try:
+        return _STAGE_ALIASES[stage]
+    except KeyError:
+        raise typer.BadParameter(
+            f"Unknown stage {stage!r}; expected one of {sorted(set(_STAGE_ALIASES) | {'all'})}"
+        ) from None
+
+
 def _confirm_cost(
     orchestrator: BCSDOrchestrator,
     configs: list[BCSDConfig],
@@ -836,12 +855,12 @@ def _render_cost_plan(
     """
     executor_name = executor or orchestrator.options.executor
 
-    only = _STAGE_ALIASES.get(stage or "")
-    plans = [
-        p
-        for p in orchestrator.plan(configs, force=force)
-        if p.to_run and (only is None or p.stage == only)
-    ]
+    only = _resolve_stage(stage)
+    if only is None:
+        plans = [p for p in orchestrator.plan(configs, force=force) if p.to_run]
+    else:
+        # submit_stage receives the caller's list untouched, so price it the same way.
+        plans = [p for p in [orchestrator.plan_stage(only, configs, force=force)] if p.to_run]
     if not plans:
         console.print("[green]Everything is already cached; nothing to submit.[/green]")
         return False
@@ -919,6 +938,7 @@ def run(
     if save_intermediate:
         updates["save_intermediate"] = True
     options = options.model_copy(update=updates)
+    _resolve_stage(stage)
     logger.info("Loaded %d configuration(s)", len(configs))
     _print_lineage_summary(configs)
     _validate_lineage_members(configs)
@@ -1300,6 +1320,7 @@ def run_matrix(
         logger.error(str(exc))
         raise typer.Exit(1)
 
+    _resolve_stage(stage)
     _validate_lineage_members(configs)
     _validate_predict_periods(configs)
 
@@ -1334,7 +1355,6 @@ def run_matrix(
                 cfg.downscaling_method,
             )
         console.print(table)
-        _render_cost_plan(BCSDOrchestrator(options), configs, executor, force, stage=stage)
         return
 
     orchestrator = BCSDOrchestrator(options)
