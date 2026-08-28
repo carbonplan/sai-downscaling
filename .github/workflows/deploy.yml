@@ -232,7 +232,7 @@ jobs:
         continue-on-error: true
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
             == 'production')
-        needs: [image, models]
+        needs: models
         runs-on: ubuntu-latest
         timeout-minutes: 15
         strategy:
@@ -258,14 +258,21 @@ jobs:
                   if [[ -n "$BRANCH" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
+                  set +e
+                  uv run bcsd run --config-path "$PLAN_CONFIG_PATH" \
+                    --executor aws-batch --dry-run $EXTRA_ARGS >plan.txt 2>&1
+                  STATUS=$?
+                  set -e
+
+                  cat plan.txt
                   {
                     echo "### Production cost estimate: ${{ matrix.model }}"
                     echo
                     echo '```'
-                    uv run bcsd run --config-path "$PLAN_CONFIG_PATH" \
-                      --executor aws-batch --dry-run $EXTRA_ARGS 2>&1
+                    cat plan.txt
                     echo '```'
                   } >> "$GITHUB_STEP_SUMMARY"
+                  exit $STATUS
 
     production:
         name: Production run (${{ matrix.model }})

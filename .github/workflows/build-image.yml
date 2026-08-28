@@ -45,6 +45,10 @@ jobs:
                   role-to-assume: arn:aws:iam::631969445205:role/github-action-role
                   role-session-name: srm-build-image
                   aws-region: ${{ env.AWS_REGION }}
+                  # Above this job's 60-minute timeout: the credentials are static for the
+                  # job, and the register-job-definition step at the end needs them after a
+                  # cold build has spent most of that hour compiling cartopy.
+                  role-duration-seconds: 7200
 
             - id: login-ecr
               uses: aws-actions/amazon-ecr-login@v2
@@ -58,6 +62,9 @@ jobs:
                   IMAGE="${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}"
                   echo "version=$VERSION" >> "$GITHUB_OUTPUT"
                   echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+                  # image-manifest/oci-mediatypes make the cache manifest one ECR accepts;
+                  # ignore-error keeps a cache export failure from failing the build.
+                  echo "cache_ref=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:buildcache" >> "$GITHUB_OUTPUT"
 
                   # Only a release moves :latest or claims a version tag. Any dispatch can
                   # build this workflow, and the job definition's default image is :latest,
@@ -91,8 +98,8 @@ jobs:
                   push: true
                   build-args: SRM_VERSION=${{ steps.meta.outputs.version }}
                   tags: ${{ steps.meta.outputs.tags }}
-                  cache-from: type=gha
-                  cache-to: type=gha,mode=max
+                  cache-from: type=registry,ref=${{ steps.meta.outputs.cache_ref }}
+                  cache-to: type=registry,ref=${{ steps.meta.outputs.cache_ref }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
 
             - name: Register a job definition revision for this image
               id: register
