@@ -144,9 +144,7 @@ class TestCheckLineageMemberAvailability:
         assert "not found" in result.message
 
     def test_pass_ukesm_ssp245_all_hist_present(self, mock_datasets):
-        mock_datasets["UKESM"] = _datatree_entry(
-            historical=_ds_with_members("r2i1p1f2", "r3i1p1f2", "r12i1p1f2")
-        )
+        mock_datasets["UKESM"] = _datatree_entry(historical=_ds_with_members("u-by791"))
         result = DatasetValidator(
             gcm="UKESM", scenario="SSP245"
         ).check_lineage_member_availability()

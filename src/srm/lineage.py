@@ -69,6 +69,10 @@ class LineageEntry:
 # The one SAI run that another scenario continues.
 _G6_002 = ScenarioMember(scenario="G6-1.5K", member="002")
 
+# UKESM historical is a single UM suite, not a CMIP6 realization, so its ID is the suite name
+# rather than a ripf label. Every UKESM scenario member and variable branches from this one run.
+_UKESM_HIST = "u-by791"
+
 
 def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     table: dict[tuple[str, str, str, str], LineageEntry] = {}
@@ -145,13 +149,14 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     _all = _std + _tmx
 
     # UKESM1-0-LL (code gcm name: "UKESM")
-    # As of #355, SSP245 and G6-1.5K are each consolidated into a single icechunk
-    # store keyed by ripf members (r2/r3/r12i1p1f2) covering all variables, matching
-    # the historical store's member IDs. Lineage is therefore self-referential:
-    # hist=self for both scenarios, ssp245_bridge=self for the G6-1.5K SAI bridge.
+    # SSP245 and G6-1.5K are each a single icechunk store keyed by ripf members
+    # (r2/r3/r12i1p1f2) covering all variables. Historical is no longer the matching CEDA
+    # ripf trio: it is one UM suite, u-by791, transferred from Matthew Henry (Exeter), so all
+    # three scenario members share that single historical parent. The SAI bridge stays
+    # self-referential (ssp245_bridge=self).
     for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):
-        add("UKESM", "SSP245", _m, _all, _m)
-        add("UKESM", "G6-1.5K", _m, _all, _m, _m)
+        add("UKESM", "SSP245", _m, _all, _UKESM_HIST)
+        add("UKESM", "G6-1.5K", _m, _all, _UKESM_HIST, _m)
 
     # MIROC-ES2H GeoMIP runs (r01–r10, abbreviated IDs, not CMIP6 ripf format).
     # SSP245 = paired SSP245-continuation runs (formerly "baseline"); these serve as

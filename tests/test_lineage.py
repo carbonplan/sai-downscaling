@@ -269,13 +269,13 @@ class TestLineageKeyError:
 
 
 class TestUKESMSSP245Lineage:
-    """SSP245 lineage: single ripf-keyed store covers all variables, hist=self."""
+    """SSP245 lineage: single ripf-keyed store covers all variables, hist=u-by791."""
 
     @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
     @pytest.mark.parametrize("variable", _UKESM_VARS)
-    def test_members_hist_equals_self(self, member, variable):
+    def test_members_share_single_historical_suite(self, member, variable):
         entry = resolve_member_lineage("UKESM", "SSP245", member, variable)
-        assert entry.historical == member
+        assert entry.historical == "u-by791"
         assert entry.ssp245_bridge is None
 
     @pytest.mark.parametrize("member", ("001", "002", "003"))
@@ -290,13 +290,13 @@ class TestUKESMSSP245Lineage:
 
 
 class TestUKESMG6Lineage:
-    """G6-1.5K lineage: single ripf-keyed store covers all variables, hist=self, ssp245_bridge=self."""
+    """G6-1.5K lineage: single ripf-keyed store covers all variables, hist=u-by791, ssp245_bridge=self."""
 
     @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
     @pytest.mark.parametrize("variable", _UKESM_VARS)
-    def test_members_self_consistent(self, member, variable):
+    def test_members_share_single_historical_suite(self, member, variable):
         entry = resolve_member_lineage("UKESM", "G6-1.5K", member, variable)
-        assert entry.historical == member
+        assert entry.historical == "u-by791"
         assert entry.ssp245_bridge == member
         assert entry.ssp245_esgf_bridge is None
         assert entry.sai_parent is None

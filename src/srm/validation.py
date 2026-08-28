@@ -156,10 +156,9 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "r2i1p1f2": ("2015-01-01", "2099-12-31"),
             "r3i1p1f2": ("2015-01-01", "2099-12-31"),
         },
+        # Single UM suite (not a ripf realization); parent of all three scenario members.
         "historical": {
-            "r12i1p1f2": ("1850-01-01", "2014-12-31"),
-            "r2i1p1f2": ("1850-01-01", "2014-12-31"),
-            "r3i1p1f2": ("1850-01-01", "2014-12-31"),
+            "u-by791": ("1850-01-01", "2014-12-31"),
         },
     },
 }
