@@ -26,7 +26,7 @@ from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import ArtifactCache, StoreLocation
+from srm.cache import COARSE_ONLY_VARIABLES, ArtifactCache, StoreLocation
 from srm.config import _ensure_root_group, _icechunk_storage_for_path
 from srm.datasets import catalog as _catalog
 from srm.downscaling_utils import (
@@ -1118,6 +1118,11 @@ class BCSDPipeline:
         existing artifact; ``force=False`` skips all three and returns the existing path
         immediately.
 
+        Variables in :data:`~srm.cache.COARSE_ONLY_VARIABLES` stop after the
+        ``debiased_coarse`` write: they are never spatially disaggregated and never
+        published at fine resolution (issue #461), so that coarse group is both their
+        deliverable and the completion gate ``transform_scenario`` checks for them.
+
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
         """
@@ -1132,10 +1137,15 @@ class BCSDPipeline:
 
         loc = self.cache.historical_loc(self._hist_member)
         coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
+        # Coarse-only variables never write the fine artifact, so their coarse group is
+        # both the deliverable and the completion marker (issue #461).
+        coarse_only = self.config.variable in COARSE_ONLY_VARIABLES
+        final_loc = coarse_loc if coarse_only else loc
+        required = (coarse_loc,) if coarse_only else (loc, coarse_loc)
 
-        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
-            return loc.store_path
+        if not force and all(self.cache.exists(dep) for dep in required):
+            logger.info("✓ Using existing historical: %s/%s", final_loc.store_path, final_loc.group)
+            return final_loc.store_path
 
         logger.info(
             "Computing historical downscaling for %s/%s/%s",
@@ -1166,6 +1176,14 @@ class BCSDPipeline:
             coarse_loc.group,
             time.perf_counter() - t0,
         )
+
+        if coarse_only:
+            logger.info(
+                "Skipping fine-resolution historical for %s: bias corrected so tasmin can "
+                "be derived, not published (issue #461)",
+                self.config.variable,
+            )
+            return coarse_loc.store_path
 
         t0 = time.perf_counter()
         model_hist_downscaled = self._apply_spatial_downscaling(
@@ -1953,6 +1971,9 @@ class BCSDPipeline:
         -----
         Dependency validation is always performed before checking this stage's
         cache-hit short-circuit.
+
+        Variables in :data:`~srm.cache.COARSE_ONLY_VARIABLES` stop after the
+        ``debiased_coarse`` write and are never spatially disaggregated (issue #461).
         """
         # tasmin is derived (tasmax - dtr) and reconciled against tasmax; route it to
         # the dedicated method from here so every entry point — including the
@@ -1970,10 +1991,14 @@ class BCSDPipeline:
 
         loc = self.cache.scenario_loc
         coarse_loc = self.cache.debiased_coarse_scenario_loc()
+        # Coarse-only variables never write the fine artifact (issue #461); see fit_historical.
+        coarse_only = self.config.variable in COARSE_ONLY_VARIABLES
+        final_loc = coarse_loc if coarse_only else loc
+        required = (coarse_loc,) if coarse_only else (loc, coarse_loc)
 
-        if self.cache.exists(loc) and self.cache.exists(coarse_loc) and not force:
-            logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
-            return loc.store_path
+        if not force and all(self.cache.exists(dep) for dep in required):
+            logger.info("✓ Using cached scenario: %s/%s", final_loc.store_path, final_loc.group)
+            return final_loc.store_path
 
         logger.info(
             "Computing scenario downscaling for %s/%s/%s/%s",
@@ -2034,6 +2059,14 @@ class BCSDPipeline:
             coarse_loc.group,
             time.perf_counter() - t0,
         )
+
+        if coarse_only:
+            logger.info(
+                "Skipping fine-resolution scenario for %s: bias corrected so tasmin can "
+                "be derived, not published (issue #461)",
+                self.config.variable,
+            )
+            return coarse_loc.store_path
 
         t0 = time.perf_counter()
         scenario_downscaled = self._apply_spatial_downscaling(

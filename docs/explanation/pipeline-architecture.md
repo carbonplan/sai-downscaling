@@ -101,8 +101,8 @@ graph TB
 **Key points:**
 
 - **stage 1 (prepare_observations)**: runs once per (GCM, obs_dataset, variable, spatial_subset) combination. The key deliberately omits `downscaling_method`, because regridding observations to the coarse grid does not consult `variable_config`, so `BCSD` and `QDMSD` share one artifact.
-- **stage 2 (fit_historical)**: runs once per (GCM, obs_dataset, variable, downscaling_method, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store. The method belongs in the key because each one writes its own `{method}/historical/…` group.
-- **stage 3 (transform_scenario)**: runs for each scenario configuration; writes fine-res scenario and debiased coarse scenario to the output store
+- **stage 2 (fit_historical)**: runs once per (GCM, obs_dataset, variable, downscaling_method, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store (coarse only for `dtr`, see [`dtr` is bias-corrected but not published](#dtr-is-bias-corrected-but-not-published)). The method belongs in the key because each one writes its own `{method}/historical/…` group.
+- **stage 3 (transform_scenario)**: runs for each scenario configuration; writes fine-res scenario and debiased coarse scenario to the output store (coarse only for `dtr`)
 - **green boxes**: cached intermediate artifacts (obs regridded) in the scratch icechunk store, on the active branch
 - **gold boxes**: deliverables in the output icechunk store, on the active branch (fine-res historical + fine-res scenario + debiased coarse data)
 - **dotted arrows**: cache dependencies (automatic validation)
@@ -113,7 +113,21 @@ Daily minimum temperature is **not** bias-corrected directly. Bias-correcting `t
 
 `tasmax` and `tasmin` are still spatially disaggregated **independently**, and that final interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step (`reconcile_temperature_extremes`) closes this gap: once both fine fields exist it swaps the offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields (issue #331). The swap is NaN-safe and structurally monotone, and the `bcsd validate-output` gate blocks any run whose stored output still contains an inversion.
 
-Both behaviours are keyed on the **variable**, not on which entry point runs the stage. `fit_historical` and `transform_scenario` route a `tasmin` config to their `_tasmin` variants at the top of the method, so the distributed `batch_runner`, the local `run_full_pipeline`, and the CLI all produce derived-and-reconciled `tasmin` identically. Because the derivation reads the `tasmax` and `dtr` outputs, `tasmin` must run after them; `BCSDOrchestrator` enforces this by scheduling `tasmin` in a later intra-stage dependency wave.
+Both behaviors are keyed on the **variable**, not on which entry point runs the stage. `fit_historical` and `transform_scenario` route a `tasmin` config to their `_tasmin` variants at the top of the method, so the distributed `batch_runner`, the local `run_full_pipeline`, and the CLI all produce derived-and-reconciled `tasmin` identically. Because the derivation reads the `tasmax` and `dtr` outputs, `tasmin` must run after them; `BCSDOrchestrator` enforces this by scheduling `tasmin` in a later intra-stage dependency wave.
+
+## `dtr` is bias-corrected but not published
+
+`dtr` exists only to make the `tasmin` reconstruction possible. The reconcile step above adjusts the fine `tasmax`/`tasmin` pair without revisiting `dtr`, so a disaggregated `dtr` would no longer equal `tasmax − tasmin` and would mislead anyone reading it as the diurnal range. Both stages therefore return immediately after writing its `debiased_coarse` group (issue #461):
+
+| Aspect | Behavior for `dtr` |
+| --- | --- |
+| Groups written | `{method}/debiased_coarse/historical/dtr/{member}` and `{method}/debiased_coarse/{scenario_group}/dtr/{member}` only |
+| Groups **not** written | `{method}/historical/dtr/{member}`, `{method}/{scenario_group}/dtr/{member}` |
+| Spatial disaggregation | Skipped entirely, so the stage's most expensive step never runs |
+| Stage-completion marker | The `debiased_coarse` group, via `ArtifactCache.stage_loc` |
+| Config files | Unchanged: `dtr` stays in every `variables:` list, because `tasmin` needs it |
+
+The rule is declared once, as `COARSE_ONLY_VARIABLES` in `srm/cache.py`. `ArtifactCache.stage_loc` is the single place that maps a stage to the artifact marking it complete, so the pipeline's write path, the orchestrator's cache-skip and retry logic, and the downstream dependency gate all agree on where `dtr` ends.
 
 ## Cache Store Structure
 
@@ -157,7 +171,7 @@ The paths above are the scratch defaults. Production runs override `output_dir` 
 public [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling), so the
 current published outputs live at
 `s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk`
-on branch `v0.12.0`. See [How to Access Downscaled Output Data](../access-data.md) for reading
+on branch `v0.13.0`. See [How to Access Downscaled Output Data](../access-data.md) for reading
 published stores.
 
 ## Coiled Execution
@@ -319,5 +333,5 @@ run and across machines.
 
 Existence is checked by walking the icechunk commit ancestry on the current branch and looking for
 a commit whose message equals the group path. This is atomic: a partially-written group (whose
-commit was never finalised) is invisible to the check, so interrupted runs can safely resume by
+commit was never finalized) is invisible to the check, so interrupted runs can safely resume by
 writing the group again without risking a false cache hit.

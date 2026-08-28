@@ -1373,6 +1373,192 @@ class TestTransformScenarioCoarseOutput:
 
 
 # ---------------------------------------------------------------------------
+# Coarse-only variables — dtr is bias corrected but never published fine (issue #461)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dtr_config() -> BCSDConfig:
+    return BCSDConfig(
+        gcm="CESM2-WACCM",
+        variable="dtr",
+        ensemble_member="008",
+        scenario="SSP245",
+        downscaling_method="BCSD",
+        predict_period_start=2015,
+        predict_period_end=2100,
+    )
+
+
+@pytest.fixture
+def dtr_pipeline(dtr_config, pipeline_options) -> BCSDPipeline:
+    return BCSDPipeline(dtr_config, pipeline_options)
+
+
+def _write_recorder(calls: list):
+    """Stand-in for _write_to_icechunk that records the locations it was handed."""
+
+    def capture_write(da, loc, **kwargs):
+        calls.append(loc)
+        return "snapshot"
+
+    return capture_write
+
+
+class TestCoarseOnlyFitHistorical:
+    def test_writes_the_coarse_group_only(self, dtr_pipeline):
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        write_calls: list = []
+
+        with _mock_fit_historical_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+            ):
+                p.fit_historical()
+
+        groups = [loc.group for loc in write_calls]
+        assert groups == [p.cache.debiased_coarse_historical_loc(p._hist_member).group]
+        assert p.cache.historical_loc(p._hist_member).group not in groups
+
+    def test_does_not_disaggregate(self, dtr_pipeline):
+        """The fine write is the expensive step; skipping it must skip the interp too."""
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+
+        with _mock_fit_historical_compute():
+            with patch.object(BCSDPipeline, "_apply_spatial_downscaling") as mock_disagg:
+                p.fit_historical()
+
+        mock_disagg.assert_not_called()
+
+    def test_returns_the_store_holding_its_coarse_group(self, dtr_pipeline):
+        # The coarse and fine artifacts share one store, so only the group distinguishes
+        # them (that is stage_loc's job). This just pins the early return to a real path.
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+
+        with _mock_fit_historical_compute():
+            result = p.fit_historical()
+
+        assert result == p.cache.debiased_coarse_historical_loc(p._hist_member).store_path
+
+    def test_cache_hit_fires_on_the_coarse_group_alone(self, dtr_pipeline):
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(
+            p.cache.debiased_coarse_historical_loc(p._hist_member), branch=p.cache.branch
+        )
+
+        with patch("srm.pipeline.get_obs") as mock_get_obs:
+            p.fit_historical()
+
+        mock_get_obs.assert_not_called()
+
+    def test_stale_fine_group_alone_does_not_short_circuit(self, dtr_pipeline):
+        """A fine dtr group from a pre-#461 run must not read as a completed stage."""
+        p = dtr_pipeline
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+
+        with _mock_fit_historical_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+            ) as mock_write:
+                p.fit_historical()
+
+        mock_write.assert_called()
+
+
+class TestCoarseOnlyTransformScenario:
+    @staticmethod
+    def _seed_deps(p: BCSDPipeline) -> None:
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(
+            p.cache.debiased_coarse_historical_loc(p._hist_member), branch=p.cache.branch
+        )
+
+    def test_writes_the_coarse_group_only(self, dtr_pipeline):
+        p = dtr_pipeline
+        self._seed_deps(p)
+        write_calls: list = []
+
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+            ):
+                p.transform_scenario()
+
+        groups = [loc.group for loc in write_calls]
+        assert p.cache.debiased_coarse_scenario_loc().group in groups
+        assert p.cache.scenario_loc.group not in groups
+
+    def test_does_not_disaggregate(self, dtr_pipeline):
+        p = dtr_pipeline
+        self._seed_deps(p)
+
+        with _mock_transform_scenario_compute():
+            with patch.object(BCSDPipeline, "_apply_spatial_downscaling") as mock_disagg:
+                p.transform_scenario()
+
+        mock_disagg.assert_not_called()
+
+    def test_returns_the_store_holding_its_coarse_group(self, dtr_pipeline):
+        # As above: coarse and fine share a store, so this pins the early return only.
+        p = dtr_pipeline
+        self._seed_deps(p)
+
+        with _mock_transform_scenario_compute():
+            result = p.transform_scenario()
+
+        assert result == p.cache.debiased_coarse_scenario_loc().store_path
+
+    def test_cache_hit_fires_on_the_coarse_group_alone(self, dtr_pipeline):
+        p = dtr_pipeline
+        self._seed_deps(p)
+        _make_icechunk_group(p.cache.debiased_coarse_scenario_loc(), branch=p.cache.branch)
+
+        with patch("srm.pipeline.get_obs") as mock_get_obs:
+            p.transform_scenario()
+
+        mock_get_obs.assert_not_called()
+
+
+class TestNormalVariableStillPublishesFine:
+    """Regression guard: only COARSE_ONLY_VARIABLES lose their fine artifact."""
+
+    def test_pr_scenario_still_writes_both_groups(self, pipeline_pr):
+        p = pipeline_pr
+        _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
+        _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
+        write_calls: list = []
+
+        with _mock_transform_scenario_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+            ):
+                p.transform_scenario()
+
+        groups = [loc.group for loc in write_calls]
+        assert p.cache.debiased_coarse_scenario_loc().group in groups
+        assert p.cache.scenario_loc.group in groups
+
+    def test_tas_historical_still_writes_both_groups(self, all_deps_present):
+        p = all_deps_present
+        write_calls: list = []
+
+        with _mock_fit_historical_compute():
+            with patch.object(
+                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+            ):
+                p.fit_historical()
+
+        groups = [loc.group for loc in write_calls]
+        assert p.cache.debiased_coarse_historical_loc(p._hist_member).group in groups
+        assert p.cache.historical_loc(p._hist_member).group in groups
+
+
+# ---------------------------------------------------------------------------
 # Tasmin dependency read-path — coarse output locs
 # ---------------------------------------------------------------------------
 
