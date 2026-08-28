@@ -784,7 +784,11 @@ def run(
     ),
     stage: str = typer.Option(None, help="Run specific stage: obs, historical, scenario, or all"),
     force: bool = typer.Option(False, help="Force recompute even if cached"),
-    coiled: bool = typer.Option(True, help="Use Coiled for execution"),
+    executor: str = typer.Option(
+        None,
+        "--executor",
+        help="Where tasks run: coiled, aws-batch, or local. Defaults to the config value.",
+    ),
     branch: str | None = typer.Option(
         None, "--branch", help="Override the output icechunk branch (e.g. 'v2')"
     ),
@@ -815,12 +819,12 @@ def run(
 
     if stage == "obs" or stage == "prepare_observations":
         paths = orchestrator.submit_stage(
-            "prepare_observations", configs, force=force, use_coiled=coiled
+            "prepare_observations", configs, force=force, executor=executor
         )
         _print_paths_summary(paths, configs, "prepare_observations", cache)
 
     elif stage == "historical" or stage == "fit_historical":
-        paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage("fit_historical", configs, force=force, executor=executor)
         _print_paths_summary(paths, configs, "fit_historical", cache)
         _print_paths_summary(
             _coarse_hist_paths(configs, cache), configs, "debiased_coarse_historical", cache
@@ -828,7 +832,7 @@ def run(
 
     elif stage == "scenario" or stage == "transform_scenario":
         paths = orchestrator.submit_stage(
-            "transform_scenario", configs, force=force, use_coiled=coiled
+            "transform_scenario", configs, force=force, executor=executor
         )
         _print_paths_summary(paths, configs, "transform_scenario", cache)
         _print_paths_summary(
@@ -836,7 +840,7 @@ def run(
         )
 
     elif stage == "all" or stage is None:
-        all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        all_paths = orchestrator.run_full_workflow(configs, force=force, executor=executor)
         obs_configs = orchestrator._deduplicate_obs_configs(configs)
         hist_configs = orchestrator._deduplicate_historical_configs(configs)
         _print_paths_summary(
@@ -999,7 +1003,11 @@ def run_matrix(
         None, help="Run specific stage: obs, historical, scenario, or all"
     ),
     force: bool = typer.Option(False, help="Force recompute even if cached"),
-    coiled: bool = typer.Option(True, help="Use Coiled for distributed execution"),
+    executor: str = typer.Option(
+        None,
+        "--executor",
+        help="Where tasks run: coiled, aws-batch, or local. Defaults to the config value.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show configs without executing"),
     save_intermediate: bool = typer.Option(
         False,
@@ -1207,19 +1215,19 @@ def run_matrix(
 
     if stage == "obs" or stage == "prepare_observations":
         paths = orchestrator.submit_stage(
-            "prepare_observations", configs, force=force, use_coiled=coiled
+            "prepare_observations", configs, force=force, executor=executor
         )
         _print_paths_summary(paths, configs, "prepare_observations")
     elif stage == "historical" or stage == "fit_historical":
-        paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage("fit_historical", configs, force=force, executor=executor)
         _print_paths_summary(paths, configs, "fit_historical")
     elif stage == "scenario" or stage == "transform_scenario":
         paths = orchestrator.submit_stage(
-            "transform_scenario", configs, force=force, use_coiled=coiled
+            "transform_scenario", configs, force=force, executor=executor
         )
         _print_paths_summary(paths, configs, "transform_scenario")
     elif stage == "all" or stage is None:
-        all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        all_paths = orchestrator.run_full_workflow(configs, force=force, executor=executor)
         obs_configs = orchestrator._deduplicate_obs_configs(configs)
         hist_configs = orchestrator._deduplicate_historical_configs(configs)
         _print_paths_summary(all_paths["prepare_observations"], obs_configs, "prepare_observations")

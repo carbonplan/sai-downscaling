@@ -596,9 +596,31 @@ class PipelineOptions(pydantic_settings.BaseSettings):
         },
         description="Per-variable clip bounds applied when clip_values=True.",
     )
+    executor: Literal["coiled", "aws-batch", "local"] = Field(
+        "coiled",
+        description=(
+            "Where stage tasks run. 'aws-batch' avoids Coiled's per-CPU-hour platform fee; "
+            "'local' runs sequentially in-process."
+        ),
+    )
     batch_job_queue: str = Field("srm-production", description="AWS Batch job queue name")
     batch_job_definition: str = Field("srm-bcsd", description="AWS Batch job definition name")
     batch_region: str = Field("us-west-2", description="Region for the AWS Batch control plane")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_use_coiled(cls, values):
+        """Reject the removed ``use_coiled`` flag rather than silently ignoring it.
+
+        ``extra = "ignore"`` would otherwise swallow the old key and quietly change which
+        executor runs, which is exactly the failure mode a hard break is meant to prevent.
+        """
+        if isinstance(values, dict) and "use_coiled" in values:
+            raise ValueError(
+                "'use_coiled' was replaced by 'executor'. Set executor to 'coiled', "
+                "'aws-batch', or 'local'."
+            )
+        return values
 
     model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 

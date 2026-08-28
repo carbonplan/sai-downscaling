@@ -41,7 +41,7 @@ class BCSDOrchestrator:
     ...     BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=1, scenario="ssp245", ...),
     ... ]
     >>> orchestrator = BCSDOrchestrator()
-    >>> output_paths = orchestrator.run_full_workflow(configs, use_coiled=True)
+    >>> output_paths = orchestrator.run_full_workflow(configs, executor="aws-batch")
     """
 
     # VM sizes per pipeline stage for a global run. fit_historical is memory-intensive
@@ -191,9 +191,7 @@ class BCSDOrchestrator:
         str
             AWS Batch job ID.
         """
-        import boto3
-
-        client = boto3.client("batch", region_name=self.options.batch_region)
+        client = self._batch_client()
         resources = self._resources_for(stage, configs)
         environment: list[dict[str, str]] = []
 
@@ -251,6 +249,17 @@ class BCSDOrchestrator:
         """
         self.options = options
         self._cache: ArtifactCache | None = None
+        self._batch_client_instance = None
+
+    def _batch_client(self):
+        """Get or create the AWS Batch client, shared by submission and polling."""
+        if self._batch_client_instance is None:
+            import boto3
+
+            self._batch_client_instance = boto3.client(
+                "batch", region_name=self.options.batch_region
+            )
+        return self._batch_client_instance
 
     def _get_cache(self) -> ArtifactCache:
         """Get or create cache instance from options."""
@@ -339,7 +348,7 @@ class BCSDOrchestrator:
         stage: Literal["prepare_observations", "fit_historical", "transform_scenario"],
         configs: list[BCSDConfig],
         force: bool = False,
-        use_coiled: bool = True,
+        executor: str | None = None,
     ) -> list[str]:
         """
         Submit tasks for a specific stage, skipping cached outputs.
@@ -352,8 +361,8 @@ class BCSDOrchestrator:
             List of configurations to process
         force : bool, optional
             Force recomputation even if cached
-        use_coiled : bool, optional
-            Use Coiled for distributed execution
+        executor : {'coiled', 'aws-batch', 'local'}, optional
+            Where to run the tasks. Defaults to ``options.executor``.
 
         Returns
         -------
@@ -387,15 +396,24 @@ class BCSDOrchestrator:
             logger.info(f"✓ All {len(configs)} {stage} tasks already cached!")
             return output_paths
 
+        executor_name = executor or self.options.executor
         logger.info(
-            f"→ Submitting {len(configs_to_run)}/{len(configs)} {stage} tasks "
-            f"({'Coiled' if use_coiled else 'local'})"
+            f"→ Submitting {len(configs_to_run)}/{len(configs)} {stage} tasks ({executor_name})"
         )
 
-        # Submit to Coiled or run locally, respecting intra-stage dependency
+        # Dispatch to the selected executor, respecting intra-stage dependency
         # ordering (tasmin must run after its debiased-coarse tasmax/dtr inputs).
-        executor = self._submit_to_coiled if use_coiled else self._run_local
-        completed_paths = self._run_in_dependency_waves(executor, stage, configs_to_run)
+        executors = {
+            "coiled": self._submit_to_coiled,
+            "aws-batch": self._submit_to_aws_batch,
+            "local": self._run_local,
+        }
+        if executor_name not in executors:
+            raise ValueError(
+                f"Unknown executor {executor_name!r}; expected one of {sorted(executors)}"
+            )
+        runner = executors[executor_name]
+        completed_paths = self._run_in_dependency_waves(runner, stage, configs_to_run)
 
         # Fill in the output_paths list
         completed_idx = 0
@@ -569,9 +587,14 @@ class BCSDOrchestrator:
         import time
 
         while True:
-            status = client.describe_jobs(jobs=[job_id])["jobs"][0]["status"]
+            job = client.describe_jobs(jobs=[job_id])["jobs"][0]
+            status = job["status"]
             if status in self._BATCH_TERMINAL_STATES:
-                logger.info(f"AWS Batch job {job_id} finished with state: {status}")
+                summary = job.get("arrayProperties", {}).get("statusSummary")
+                logger.info(
+                    f"AWS Batch job {job_id} finished with state: {status}"
+                    + (f", children: {summary}" if summary else "")
+                )
                 return status
             time.sleep(poll_seconds)
 
@@ -601,8 +624,6 @@ class BCSDOrchestrator:
         RuntimeError
             If any config has no artifact in the cache after the job finishes.
         """
-        import boto3
-
         from srm.batch_manifest import write_manifest
 
         cache = self._get_cache()
@@ -622,8 +643,7 @@ class BCSDOrchestrator:
             )
 
         job_id = self._submit_batch_job(stage, configs, manifest_uri)
-        client = boto3.client("batch", region_name=self.options.batch_region)
-        self._await_batch_job(client, job_id)
+        self._await_batch_job(self._batch_client(), job_id)
 
         failed = [config for config in configs if not cache.exists(loc_for(config))]
         if failed:
@@ -676,7 +696,7 @@ class BCSDOrchestrator:
         self,
         configs: list[BCSDConfig],
         force: bool = False,
-        use_coiled: bool = True,
+        executor: str | None = None,
     ) -> dict[str, list[str]]:
         """
         Run all three stages in sequence with automatic dependency management.
@@ -692,8 +712,8 @@ class BCSDOrchestrator:
             List of configurations to process
         force : bool, optional
             Force recomputation of all stages
-        use_coiled : bool, optional
-            Use Coiled for distributed execution
+        executor : {'coiled', 'aws-batch', 'local'}, optional
+            Where to run the tasks. Defaults to ``options.executor``.
 
         Returns
         -------
@@ -707,20 +727,20 @@ class BCSDOrchestrator:
         obs_configs = self._deduplicate_obs_configs(configs)
         logger.info(f"║ Stage 1: prepare_observations ({len(obs_configs)} unique tasks)")
         obs_paths = self.submit_stage(
-            "prepare_observations", obs_configs, force=force, use_coiled=use_coiled
+            "prepare_observations", obs_configs, force=force, executor=executor
         )
 
         # Stage 2: Unique historical tasks
         hist_configs = self._deduplicate_historical_configs(configs)
         logger.info(f"║ Stage 2: fit_historical ({len(hist_configs)} unique tasks)")
         hist_paths = self.submit_stage(
-            "fit_historical", hist_configs, force=force, use_coiled=use_coiled
+            "fit_historical", hist_configs, force=force, executor=executor
         )
 
         # Stage 3: All scenario tasks
         logger.info(f"║ Stage 3: transform_scenario ({len(configs)} tasks)")
         scenario_paths = self.submit_stage(
-            "transform_scenario", configs, force=force, use_coiled=use_coiled
+            "transform_scenario", configs, force=force, executor=executor
         )
 
         logger.info("╚═══ Workflow complete! ✓")

@@ -212,7 +212,7 @@ class TestDeduplicateObsIsMethodBlind:
 
 class TestSubmitStage:
     def test_returns_empty_for_empty_configs(self, orchestrator):
-        result = orchestrator.submit_stage("prepare_observations", [], use_coiled=False)
+        result = orchestrator.submit_stage("prepare_observations", [], executor="local")
         assert result == []
 
     def test_skips_all_when_all_cached(self, orchestrator, config):
@@ -221,7 +221,7 @@ class TestSubmitStage:
         _make_icechunk_group(loc, branch=cache.branch)
 
         with patch.object(orchestrator, "_run_local") as mock_local:
-            result = orchestrator.submit_stage("prepare_observations", [config], use_coiled=False)
+            result = orchestrator.submit_stage("prepare_observations", [config], executor="local")
 
         mock_local.assert_not_called()
         assert result == [f"{loc.store_path}::{loc.group}"]
@@ -229,16 +229,16 @@ class TestSubmitStage:
     def test_calls_run_local_for_uncached_task(self, orchestrator, config):
         computed_path = "computed_obs_path"
         with patch.object(orchestrator, "_run_local", return_value=[computed_path]) as mock_local:
-            result = orchestrator.submit_stage("prepare_observations", [config], use_coiled=False)
+            result = orchestrator.submit_stage("prepare_observations", [config], executor="local")
 
         mock_local.assert_called_once_with("prepare_observations", [config])
         assert result == [computed_path]
 
-    def test_calls_submit_to_coiled_when_use_coiled(self, orchestrator, config):
+    def test_calls_submit_to_coiled_when_selected(self, orchestrator, config):
         with patch.object(
             orchestrator, "_submit_to_coiled", return_value=["coiled_path"]
         ) as mock_coiled:
-            result = orchestrator.submit_stage("prepare_observations", [config], use_coiled=True)
+            result = orchestrator.submit_stage("prepare_observations", [config], executor="coiled")
 
         mock_coiled.assert_called_once_with("prepare_observations", [config])
         assert result == ["coiled_path"]
@@ -250,7 +250,7 @@ class TestSubmitStage:
 
         with patch.object(orchestrator, "_run_local", return_value=[loc.store_path]) as mock_local:
             orchestrator.submit_stage(
-                "prepare_observations", [config], force=True, use_coiled=False
+                "prepare_observations", [config], force=True, executor="local"
             )
 
         mock_local.assert_called_once()
@@ -272,7 +272,7 @@ class TestSubmitStage:
             result = orchestrator.submit_stage(
                 "prepare_observations",
                 [cfg_cached, cfg_uncached],
-                use_coiled=False,
+                executor="local",
             )
 
         # cached config returns its qualified path; uncached goes through _run_local
@@ -304,7 +304,7 @@ class TestTasminOrdering:
         ]
         calls: list[list[str]] = []
         with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
-            orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+            orchestrator.submit_stage("transform_scenario", configs, executor="local")
 
         assert len(calls) == 2, "tasmin should be submitted in a separate, later wave"
         assert "tasmin" not in calls[0]
@@ -318,7 +318,7 @@ class TestTasminOrdering:
         ]
         calls: list[list[str]] = []
         with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
-            orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+            orchestrator.submit_stage("transform_scenario", configs, executor="local")
 
         assert len(calls) == 1
         assert set(calls[0]) == {"tasmax", "dtr"}
@@ -332,7 +332,7 @@ class TestTasminOrdering:
         ]
         calls: list[list[str]] = []
         with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
-            orchestrator.submit_stage("prepare_observations", configs, use_coiled=False)
+            orchestrator.submit_stage("prepare_observations", configs, executor="local")
 
         assert len(calls) == 1
         assert set(calls[0]) == {"tasmax", "tasmin"}
@@ -343,7 +343,7 @@ class TestTasminOrdering:
             _make_config(variable="tasmax", ensemble_member="008"),
         ]
         with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder([])):
-            result = orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+            result = orchestrator.submit_stage("transform_scenario", configs, executor="local")
 
         # result[i] must correspond to configs[i] even though tasmin ran last
         assert "tasmin" in result[0]
@@ -385,7 +385,7 @@ class TestCoarseOnlyStageLoc:
         _make_icechunk_group(coarse_loc, branch=cache.branch)
 
         with patch.object(orchestrator, "_run_local") as mock_local:
-            result = orchestrator.submit_stage("transform_scenario", [config], use_coiled=False)
+            result = orchestrator.submit_stage("transform_scenario", [config], executor="local")
 
         mock_local.assert_not_called()
         assert result == [f"{coarse_loc.store_path}::{coarse_loc.group}"]
@@ -398,7 +398,7 @@ class TestCoarseOnlyStageLoc:
         _make_icechunk_group(cache.scenario_loc, branch=cache.branch)
 
         with patch.object(orchestrator, "_run_local", return_value=["computed"]) as mock_local:
-            orchestrator.submit_stage("transform_scenario", [config], use_coiled=False)
+            orchestrator.submit_stage("transform_scenario", [config], executor="local")
 
         mock_local.assert_called_once()
 
@@ -628,7 +628,7 @@ class TestRunLocal:
 class TestRunFullWorkflow:
     def test_calls_all_three_stages(self, orchestrator, config):
         with patch.object(orchestrator, "submit_stage", return_value=["path"]) as mock_submit:
-            orchestrator.run_full_workflow([config], use_coiled=False)
+            orchestrator.run_full_workflow([config], executor="local")
 
         assert mock_submit.call_count == 3
 
@@ -640,7 +640,7 @@ class TestRunFullWorkflow:
             return ["path"]
 
         with patch.object(orchestrator, "submit_stage", side_effect=record_stage):
-            orchestrator.run_full_workflow([config], use_coiled=False)
+            orchestrator.run_full_workflow([config], executor="local")
 
         assert call_order == ["prepare_observations", "fit_historical", "transform_scenario"]
 
@@ -652,7 +652,7 @@ class TestRunFullWorkflow:
             return ["path"] * len(configs)
 
         with patch.object(orchestrator, "submit_stage", side_effect=capture):
-            orchestrator.run_full_workflow(multi_configs, use_coiled=False)
+            orchestrator.run_full_workflow(multi_configs, executor="local")
 
         # 4 configs → 3 unique (gcm, variable) pairs for obs
         assert len(submitted["prepare_observations"]) == 3
@@ -665,7 +665,7 @@ class TestRunFullWorkflow:
             return ["path"] * len(configs)
 
         with patch.object(orchestrator, "submit_stage", side_effect=capture):
-            orchestrator.run_full_workflow(multi_configs, use_coiled=False)
+            orchestrator.run_full_workflow(multi_configs, executor="local")
 
         # 4 configs → 4 unique (gcm, variable, ensemble) combinations
         assert len(submitted["fit_historical"]) == 4
@@ -678,7 +678,7 @@ class TestRunFullWorkflow:
             return ["path"] * len(configs)
 
         with patch.object(orchestrator, "submit_stage", side_effect=capture):
-            orchestrator.run_full_workflow(multi_configs, use_coiled=False)
+            orchestrator.run_full_workflow(multi_configs, executor="local")
 
         assert len(submitted["transform_scenario"]) == len(multi_configs)
 
@@ -687,7 +687,7 @@ class TestRunFullWorkflow:
             return [f"{stage}_path_{i}" for i in range(len(configs))]
 
         with patch.object(orchestrator, "submit_stage", side_effect=mock_submit):
-            result = orchestrator.run_full_workflow([config], use_coiled=False)
+            result = orchestrator.run_full_workflow([config], executor="local")
 
         assert isinstance(result, dict)
         assert set(result) == {"prepare_observations", "fit_historical", "transform_scenario"}
@@ -701,7 +701,7 @@ class TestRunFullWorkflow:
             return ["path"] * len(configs)
 
         with patch.object(orchestrator, "submit_stage", side_effect=capture):
-            orchestrator.run_full_workflow([config], force=True, use_coiled=False)
+            orchestrator.run_full_workflow([config], force=True, executor="local")
 
         for stage in ("prepare_observations", "fit_historical", "transform_scenario"):
             with subtests.test(stage=stage):
@@ -1000,3 +1000,21 @@ class TestSubmitToAwsBatch:
         ):
             orchestrator._submit_to_aws_batch("fit_historical", [config])
         mock_write.assert_not_called()
+
+
+class TestExecutorRouting:
+    def test_routes_to_aws_batch_when_selected(self, pipeline_options, config):
+        pipeline_options.executor = "aws-batch"
+        orchestrator = BCSDOrchestrator(pipeline_options)
+        with patch.object(
+            orchestrator, "_submit_to_aws_batch", return_value=["s3://x::g"]
+        ) as mock_batch:
+            orchestrator.submit_stage("prepare_observations", [config])
+        mock_batch.assert_called_once_with("prepare_observations", [config])
+
+    def test_explicit_executor_argument_overrides_options(self, pipeline_options, config):
+        pipeline_options.executor = "coiled"
+        orchestrator = BCSDOrchestrator(pipeline_options)
+        with patch.object(orchestrator, "_run_local", return_value=["s3://x::g"]) as mock_local:
+            orchestrator.submit_stage("prepare_observations", [config], executor="local")
+        mock_local.assert_called_once()
