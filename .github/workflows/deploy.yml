@@ -48,14 +48,27 @@ permissions:
     contents: read
 
 jobs:
+    image:
+        # Builds the container the AWS Batch tasks run and pins a job definition revision to
+        # it. Both run jobs depend on this, so a deploy cannot execute a stale image: the
+        # revision it submits against was built from this very commit.
+        name: Build task image
+        uses: ./.github/workflows/build-image.yml
+        permissions:
+            id-token: write
+            contents: read
+
     qa:
         name: QA run (${{ inputs.model || 'all models' }})
         timeout-minutes: 120
         runs-on: ubuntu-latest
         if: github.event_name == 'workflow_dispatch' && inputs.environment == 'qa'
+        needs: image
         environment:
             name: qa
         env:
+            BCSD_BATCH_JOB_QUEUE: srm-qa
+            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
             QA_CONFIG_PATH: ${{ inputs.model == '' && 'configs/qa/' || endsWith(inputs.model, '.yaml') && format('configs/qa/{0}', inputs.model) || format('configs/qa/{0}/', inputs.model) }}
             FORCE: ${{ inputs.force }}
             BRANCH: ${{ inputs.branch }}
@@ -71,8 +84,8 @@ jobs:
               run: uv run bcsd validate --config-path "$QA_CONFIG_PATH"
 
             - name: Run BCSD pipeline (QA)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # No Coiled token: tasks run on AWS Batch under the OIDC role the setup action
+              # assumes. The validate steps around this one still use a Coiled Dask cluster.
               run: |
                   EXTRA_ARGS=""
                   if [[ "$FORCE" == "true" ]]; then
@@ -81,7 +94,7 @@ jobs:
                   if [[ -n "$BRANCH" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
-                  uv run bcsd run --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
+                  uv run bcsd run --config-path "$QA_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
 
             - name: Validate output datasets (QA)
               env:
@@ -167,6 +180,7 @@ jobs:
         runs-on: ubuntu-latest
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
             == 'production')
+        needs: image
         environment:
             name: production
         strategy:
@@ -196,6 +210,8 @@ jobs:
             PROD_CONFIG_PATH: ${{ endsWith(matrix.model, '.yaml') && format('configs/production/{0}', matrix.model) || format('configs/production/{0}/', matrix.model) }}
             FORCE: ${{ inputs.force }}
             BRANCH: ${{ inputs.branch }}
+            BCSD_BATCH_JOB_QUEUE: srm-production
+            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
         steps:
             - uses: actions/checkout@v7
               with:
@@ -213,8 +229,8 @@ jobs:
               run: uv run bcsd validate --config-path "$PROD_CONFIG_PATH"
 
             - name: Run BCSD pipeline (production)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # No Coiled token: tasks run on AWS Batch under the OIDC role the setup action
+              # assumes. The validate steps around this one still use a Coiled Dask cluster.
               run: |
                   EXTRA_ARGS=""
                   if [[ "$FORCE" == "true" ]]; then
@@ -223,7 +239,7 @@ jobs:
                   if [[ -n "$BRANCH" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
-                  uv run bcsd run --config-path "$PROD_CONFIG_PATH" $EXTRA_ARGS
+                  uv run bcsd run --config-path "$PROD_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
 
             - name: Validate output datasets (production)
               env:

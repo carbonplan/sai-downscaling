@@ -1,18 +1,18 @@
 name: build image
 
-# Builds the arm64 container the AWS Batch executor runs. Task VMs pull from ECR, so
-# an image must exist before `bcsd run --executor aws-batch` can succeed.
+# Builds the arm64 container the AWS Batch executor runs, then registers a job definition
+# revision pinned to that exact image. Deploy calls this and submits against the returned
+# revision, so a run can only ever execute the code it was built from.
 on:
+    workflow_call:
+        outputs:
+            job_definition:
+                description: "Job definition pinned to this commit's image, as name:revision."
+                value: ${{ jobs.build.outputs.job_definition }}
+            image:
+                description: "Full ECR image URI built for this commit."
+                value: ${{ jobs.build.outputs.image }}
     workflow_dispatch:
-        inputs:
-            tag:
-                description: "Extra image tag to push alongside the version and commit SHA."
-                required: false
-                default: ""
-                type: string
-    release:
-        types:
-            - published
 
 permissions:
     id-token: write
@@ -20,36 +20,44 @@ permissions:
 
 env:
     ECR_REPOSITORY: srm-downscaling
+    JOB_DEFINITION: srm-downscaling
+    AWS_REGION: us-west-2
 
 jobs:
     build:
         name: Build and push srm-downscaling
-        # Native arm64 runner: emulating Graviton under QEMU on x86 makes the uv sync
-        # step take tens of minutes.
+        # Native arm64 runner: emulating Graviton under QEMU on x86 makes the uv sync step,
+        # which compiles cartopy from source, take tens of minutes.
         runs-on: ubuntu-24.04-arm
         timeout-minutes: 60
+        outputs:
+            job_definition: ${{ steps.register.outputs.job_definition }}
+            image: ${{ steps.meta.outputs.image }}
         steps:
             - uses: actions/checkout@v7
               with:
-                  # setuptools_scm needs full history to derive the version.
+                  # setuptools_scm derives the version from history, and that version is
+                  # stamped into every output store as srm_downscaling:version.
                   fetch-depth: 0
 
             - uses: aws-actions/configure-aws-credentials@v4
               with:
                   role-to-assume: arn:aws:iam::631969445205:role/github-action-role
                   role-session-name: srm-build-image
-                  aws-region: us-west-2
+                  aws-region: ${{ env.AWS_REGION }}
 
             - id: login-ecr
               uses: aws-actions/amazon-ecr-login@v2
 
             - uses: astral-sh/setup-uv@v7
 
-            - name: Resolve the package version
-              id: version
-              # The image stamps this into every output store, so it has to match what a
-              # local `uv run bcsd` would report rather than setuptools_scm's fallback.
-              run: echo "value=$(uvx --from setuptools-scm python -m setuptools_scm)" >> "$GITHUB_OUTPUT"
+            - name: Resolve version and image tag
+              id: meta
+              run: |
+                  VERSION=$(uvx --from setuptools-scm python -m setuptools_scm)
+                  IMAGE="${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}"
+                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+                  echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
             - uses: docker/setup-buildx-action@v3
 
@@ -58,10 +66,37 @@ jobs:
                   context: .
                   platforms: linux/arm64
                   push: true
-                  build-args: SRM_VERSION=${{ steps.version.outputs.value }}
+                  build-args: SRM_VERSION=${{ steps.meta.outputs.version }}
                   tags: |
-                      ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.value }}
-                      ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+                      ${{ steps.meta.outputs.image }}
                       ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
                   cache-from: type=gha
                   cache-to: type=gha,mode=max
+
+            - name: Register a job definition revision for this image
+              id: register
+              # containerOverrides cannot override the image, so pinning a run to a commit
+              # means a revision per image. vCPU and memory here are placeholders that
+              # _submit_batch_job always overrides from its per-stage table.
+              run: |
+                  REVISION=$(aws batch register-job-definition \
+                    --region "$AWS_REGION" \
+                    --job-definition-name "$JOB_DEFINITION" \
+                    --type container \
+                    --platform-capabilities EC2 \
+                    --propagate-tags \
+                    --tags Project=SRM \
+                    --retry-strategy '{"attempts":3}' \
+                    --container-properties "$(jq -n --arg image "${{ steps.meta.outputs.image }}" '{
+                        image: $image,
+                        jobRoleArn: "arn:aws:iam::631969445205:role/srm-batch-job-role",
+                        executionRoleArn: "arn:aws:iam::631969445205:role/srm-batch-execution-role",
+                        resourceRequirements: [
+                          {type: "VCPU", value: "8"},
+                          {type: "MEMORY", value: "61440"}
+                        ],
+                        logConfiguration: {logDriver: "awslogs"}
+                      }')" \
+                    --query 'revision' --output text)
+                  echo "job_definition=$JOB_DEFINITION:$REVISION" >> "$GITHUB_OUTPUT"
+                  echo "Pinned job definition: $JOB_DEFINITION:$REVISION" >> "$GITHUB_STEP_SUMMARY"
