@@ -179,13 +179,53 @@ jobs:
                       echo '```'
                   } >> "$GITHUB_STEP_SUMMARY"
 
+    plan:
+        # Renders the cost estimate into the job summary so the reviewer who releases the
+        # production environment is approving a number rather than a blank prompt. Enable
+        # the gate itself under Settings > Environments > production > required reviewers;
+        # without it this job is informational only.
+        name: Cost plan (production)
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
+            == 'production')
+        needs: image
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        env:
+            PLAN_CONFIG_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.model != '' && (endsWith(inputs.model, '.yaml') && format('configs/production/{0}', inputs.model) || format('configs/production/{0}/', inputs.model)) || 'configs/production/' }}
+            FORCE: ${{ inputs.force }}
+            BRANCH: ${{ inputs.branch }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  ref: ${{ github.event.release.tag_name || github.ref }}
+                  fetch-depth: 0
+            - uses: ./.github/actions/setup
+
+            - name: Estimate cost
+              run: |
+                  EXTRA_ARGS=""
+                  if [[ "$FORCE" == "true" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --force"
+                  fi
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
+                  fi
+                  {
+                    echo "### Production cost estimate"
+                    echo
+                    echo '```'
+                    uv run bcsd run --config-path "$PLAN_CONFIG_PATH" \
+                      --executor aws-batch --dry-run $EXTRA_ARGS 2>&1
+                    echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
     production:
         name: Production run (${{ matrix.model }})
         timeout-minutes: 360
         runs-on: ubuntu-latest
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
             == 'production')
-        needs: image
+        needs: [image, plan]
         environment:
             name: production
         strategy:

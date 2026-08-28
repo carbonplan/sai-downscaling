@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cli import (
+    _confirm_cost,
     _expand_matrix_config,
     _is_matrix_config,
     _parse_variable_overrides,
@@ -891,3 +892,89 @@ branch: "v9"
                 app, ["release", "--config-path", str(config_file), "--tag", "snapshot-v1.0.0"]
             )
         assert result.exit_code == 1, result.output
+
+
+# ---------------------------------------------------------------------------
+# Cost confirmation gate
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmCost:
+    """The gate must protect humans without ever blocking CI."""
+
+    @pytest.fixture
+    def orchestrator(self, tmp_path):
+        from srm.orchestration import BCSDOrchestrator
+
+        return BCSDOrchestrator(
+            PipelineOptions(
+                scratch_dir=str(tmp_path / "cache"),
+                output_dir=str(tmp_path / "out"),
+                verbose=False,
+            )
+        )
+
+    @pytest.fixture
+    def configs(self):
+        return [
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                scenario="SSP245",
+                predict_period_start=2015,
+                predict_period_end=2100,
+            )
+        ]
+
+    def test_local_executor_skips_the_gate_entirely(self, orchestrator, configs):
+        # Nothing is spent locally, so there is nothing to confirm.
+        with patch("srm.cli._render_cost_plan") as mock_render:
+            assert _confirm_cost(orchestrator, configs, "local", False, False) is True
+        mock_render.assert_not_called()
+
+    def test_non_interactive_proceeds_without_prompting(self, orchestrator, configs):
+        # Every deploy job is non-interactive; a prompt would hang it until timeout.
+        with (
+            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("sys.stdin.isatty", return_value=False),
+            patch("typer.confirm") as mock_confirm,
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, False) is True
+        mock_confirm.assert_not_called()
+
+    def test_yes_flag_skips_the_prompt(self, orchestrator, configs):
+        with (
+            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("sys.stdin.isatty", return_value=True),
+            patch("typer.confirm") as mock_confirm,
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, True) is True
+        mock_confirm.assert_not_called()
+
+    def test_interactive_prompts_and_honors_a_refusal(self, orchestrator, configs):
+        with (
+            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("sys.stdin.isatty", return_value=True),
+            patch("typer.confirm", return_value=False) as mock_confirm,
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, False) is False
+        mock_confirm.assert_called_once()
+
+    def test_interactive_prompts_and_honors_acceptance(self, orchestrator, configs):
+        with (
+            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("sys.stdin.isatty", return_value=True),
+            patch("typer.confirm", return_value=True),
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, False) is True
+
+    def test_nothing_to_submit_does_not_prompt(self, orchestrator, configs):
+        with (
+            patch("srm.cli._render_cost_plan", return_value=False),
+            patch("sys.stdin.isatty", return_value=True),
+            patch("typer.confirm") as mock_confirm,
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, False) is True
+        mock_confirm.assert_not_called()

@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 from typing import Literal
 
@@ -20,6 +21,17 @@ from srm.cache import ArtifactCache, StoreLocation
 from srm.pipeline import BCSDPipeline
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class StagePlan:
+    """What one stage of a run will submit, before anything is dispatched."""
+
+    stage: str
+    to_run: int
+    cached: int
+    vm_type: str
+    regional: bool
 
 
 class BCSDOrchestrator:
@@ -383,6 +395,74 @@ class BCSDOrchestrator:
                 completed[i] = path
         return completed  # type: ignore[return-value]
 
+    def _partition_by_cache(
+        self,
+        cache: ArtifactCache,
+        stage: str,
+        configs: list[BCSDConfig],
+        force: bool = False,
+    ) -> tuple[list[BCSDConfig], list[str | None]]:
+        """Split configs into those still needing a run and the paths of those cached.
+
+        Shared by :meth:`submit_stage` and :meth:`plan` so a cost preview cannot disagree
+        with what the run then submits.
+
+        Returns
+        -------
+        tuple
+            ``(configs_to_run, output_paths)``, where ``output_paths`` is positional over
+            ``configs`` and holds ``None`` wherever the artifact still has to be produced.
+        """
+        configs_to_run: list[BCSDConfig] = []
+        output_paths: list[str | None] = []
+        for config in configs:
+            loc = self._stage_loc_for(cache, stage, config)
+            if cache.exists(loc) and not force:
+                output_paths.append(f"{loc.store_path}::{loc.group}")
+            else:
+                configs_to_run.append(config)
+                output_paths.append(None)
+        return configs_to_run, output_paths
+
+    def plan(self, configs: list[BCSDConfig], force: bool = False) -> list[StagePlan]:
+        """
+        Report what each stage would submit, without submitting anything.
+
+        Deduplication and cache filtering run exactly as :meth:`run_full_workflow` would,
+        so the counts are what the run will actually dispatch. Stage 3's artifacts are not
+        written by stages 1 and 2, so surveying all three up front stays accurate.
+
+        Parameters
+        ----------
+        configs : list[BCSDConfig]
+            The full set of configurations for the run.
+        force : bool, optional
+            Ignore cached artifacts, matching the same flag on the run.
+
+        Returns
+        -------
+        list[StagePlan]
+            One entry per stage, in execution order.
+        """
+        cache = self._get_cache()
+        plans = []
+        for stage, stage_configs in (
+            ("prepare_observations", self._deduplicate_obs_configs(configs)),
+            ("fit_historical", self._deduplicate_historical_configs(configs)),
+            ("transform_scenario", configs),
+        ):
+            to_run, _ = self._partition_by_cache(cache, stage, stage_configs, force)
+            plans.append(
+                StagePlan(
+                    stage=stage,
+                    to_run=len(to_run),
+                    cached=len(stage_configs) - len(to_run),
+                    vm_type=self._vm_types_for(stage, to_run or stage_configs)[0],
+                    regional=self._is_regional(to_run or stage_configs),
+                )
+            )
+        return plans
+
     def submit_stage(
         self,
         stage: Literal["prepare_observations", "fit_historical", "transform_scenario"],
@@ -413,24 +493,15 @@ class BCSDOrchestrator:
             return []
 
         cache = self._get_cache()
+        configs_to_run, output_paths = self._partition_by_cache(cache, stage, configs, force)
 
-        # Filter out configs that are already cached
-        configs_to_run = []
-        output_paths = []
-
-        for config in configs:
-            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
-            loc = self._stage_loc(cache, stage, config, hist_member=hist_member)
-
-            if cache.exists(loc) and not force:
-                branch = cache._branch_for()
+        branch = cache._branch_for()
+        for config, path in zip(configs, output_paths):
+            if path is not None:
+                group = path.split("::")[-1]
                 logger.info(
-                    f"⊙ Skipping {config.run_id} - {loc.group} already cached (branch: {branch})"
+                    f"⊙ Skipping {config.run_id} - {group} already cached (branch: {branch})"
                 )
-                output_paths.append(f"{loc.store_path}::{loc.group}")
-            else:
-                configs_to_run.append(config)
-                output_paths.append(None)  # Placeholder
 
         if not configs_to_run:
             logger.info(f"✓ All {len(configs)} {stage} tasks already cached!")

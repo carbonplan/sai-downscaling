@@ -11,6 +11,7 @@ import itertools
 import json
 import logging
 import os
+import sys
 from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
@@ -26,6 +27,7 @@ from rich.tree import Tree
 
 from srm.bcsd_config import BCSDConfig, DownscalingMethod, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
+from srm.cost import estimate_workflow
 from srm.orchestration import BCSDOrchestrator
 from srm.validation import CheckResult, CheckStatus
 
@@ -777,6 +779,84 @@ def configs_from_matrix(
     return configs, options
 
 
+def _confirm_cost(
+    orchestrator: BCSDOrchestrator,
+    configs: list[BCSDConfig],
+    executor: str | None,
+    force: bool,
+    assume_yes: bool,
+) -> bool:
+    """Show what a run will cost and, when a human is watching, ask before dispatching.
+
+    The prompt is skipped when stdin is not a terminal, because every deploy job runs
+    non-interactively and would otherwise block until its timeout. The plan is still
+    logged there, so the estimate lands in the job output either way.
+
+    Returns
+    -------
+    bool
+        True to proceed with the run.
+    """
+    if (executor or orchestrator.options.executor) == "local":
+        return True
+    if not _render_cost_plan(orchestrator, configs, executor, force):
+        return True
+
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        logger.info("Non-interactive session; proceeding without confirmation.")
+        return True
+    return typer.confirm("Submit these tasks?", default=False)
+
+
+def _render_cost_plan(
+    orchestrator: BCSDOrchestrator,
+    configs: list[BCSDConfig],
+    executor: str | None,
+    force: bool,
+) -> bool:
+    """Print the per-stage cost table. Returns False when there is nothing to submit."""
+    executor_name = executor or orchestrator.options.executor
+
+    plans = [p for p in orchestrator.plan(configs, force=force) if p.to_run]
+    if not plans:
+        console.print("[green]Everything is already cached; nothing to submit.[/green]")
+        return False
+
+    estimate = estimate_workflow(
+        [(p.stage, p.to_run, p.vm_type, p.regional) for p in plans], executor_name
+    )
+
+    table = Table(title=f"Cost estimate ({executor_name})", box=box.SIMPLE, title_justify="left")
+    table.add_column("Stage", style="cyan", no_wrap=True)
+    table.add_column("Tasks", justify="right")
+    table.add_column("Instance", style="magenta", no_wrap=True)
+    table.add_column("$/h", justify="right", style="yellow")
+    table.add_column("Hours", justify="right")
+    table.add_column("Cost", justify="right", style="yellow")
+    for plan, wave in zip(plans, estimate.waves):
+        skipped = f" (+{plan.cached} cached)" if plan.cached else ""
+        table.add_row(
+            plan.stage,
+            f"{plan.to_run}{skipped}",
+            plan.vm_type,
+            f"${wave.burn_rate:,.2f}",
+            f"{wave.low_hours:.2g}-{wave.high_hours:.2g}",
+            f"${wave.low_cost:,.0f}-${wave.high_cost:,.0f}",
+        )
+    console.print(table)
+    console.print(
+        f"  Peak burn [yellow]${estimate.peak_burn_rate:,.2f}/hour[/yellow] while running "
+        "[dim](exact)[/dim]"
+    )
+    console.print(
+        f"  Total     [yellow]${estimate.low_cost:,.0f}-${estimate.high_cost:,.0f}[/yellow] "
+        "[dim](rough: duration estimated from past runs)[/dim]"
+    )
+    return True
+
+
 @app.command()
 def run(
     config_path: list[str] = typer.Option(
@@ -788,6 +868,15 @@ def run(
         None,
         "--executor",
         help="Where tasks run: coiled, aws-batch, or local. Defaults to the config value.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the cost confirmation prompt.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show the cost plan and exit without submitting anything"
     ),
     branch: str | None = typer.Option(
         None, "--branch", help="Override the output icechunk branch (e.g. 'v2')"
@@ -814,6 +903,14 @@ def run(
     _validate_predict_periods(configs)
 
     orchestrator = BCSDOrchestrator(options)
+
+    if dry_run:
+        _render_cost_plan(orchestrator, configs, executor, force)
+        return
+
+    if not _confirm_cost(orchestrator, configs, executor, force, yes):
+        console.print("[yellow]Aborted; nothing was submitted.[/yellow]")
+        raise typer.Exit(1)
 
     cache = orchestrator._get_cache()
 
@@ -1007,6 +1104,12 @@ def run_matrix(
         None,
         "--executor",
         help="Where tasks run: coiled, aws-batch, or local. Defaults to the config value.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the cost confirmation prompt.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show configs without executing"),
     save_intermediate: bool = typer.Option(
@@ -1209,9 +1312,14 @@ def run_matrix(
                 cfg.downscaling_method,
             )
         console.print(table)
+        _render_cost_plan(BCSDOrchestrator(options), configs, executor, force)
         return
 
     orchestrator = BCSDOrchestrator(options)
+
+    if not _confirm_cost(orchestrator, configs, executor, force, yes):
+        console.print("[yellow]Aborted; nothing was submitted.[/yellow]")
+        raise typer.Exit(1)
 
     if stage == "obs" or stage == "prepare_observations":
         paths = orchestrator.submit_stage(

@@ -1141,3 +1141,65 @@ class TestFailedJobIsNotMaskedByStaleCache:
         ):
             paths = orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
         assert len(paths) == n
+
+
+class TestPlan:
+    """plan() must predict exactly what submit_stage would run."""
+
+    def test_counts_every_stage_when_nothing_is_cached(self, orchestrator, multi_configs):
+        plans = {p.stage: p for p in orchestrator.plan(multi_configs)}
+        assert set(plans) == {"prepare_observations", "fit_historical", "transform_scenario"}
+        assert plans["transform_scenario"].to_run == len(multi_configs)
+        assert plans["transform_scenario"].cached == 0
+
+    def test_matches_the_stage_deduplication(self, orchestrator, multi_configs):
+        plans = {p.stage: p for p in orchestrator.plan(multi_configs)}
+        assert plans["prepare_observations"].to_run == len(
+            orchestrator._deduplicate_obs_configs(multi_configs)
+        )
+        assert plans["fit_historical"].to_run == len(
+            orchestrator._deduplicate_historical_configs(multi_configs)
+        )
+
+    def test_cached_artifacts_move_out_of_to_run(self, orchestrator, config):
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        plans = {p.stage: p for p in orchestrator.plan([config])}
+        assert plans["transform_scenario"].to_run == 0
+        assert plans["transform_scenario"].cached == 1
+
+    def test_force_ignores_the_cache(self, orchestrator, config):
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        plans = {p.stage: p for p in orchestrator.plan([config], force=True)}
+        assert plans["transform_scenario"].to_run == 1
+        assert plans["transform_scenario"].cached == 0
+
+    def test_carries_the_vm_type_and_extent(self, orchestrator, config):
+        plans = {p.stage: p for p in orchestrator.plan([config])}
+        assert plans["transform_scenario"].vm_type == "r8g.24xlarge"
+        assert plans["transform_scenario"].regional is False
+
+        regional = _make_config(subset_bounds=_SA_BOUNDS)
+        rplans = {p.stage: p for p in orchestrator.plan([regional])}
+        assert rplans["transform_scenario"].vm_type == "r8g.4xlarge"
+        assert rplans["transform_scenario"].regional is True
+
+    def test_agrees_with_what_submit_stage_actually_runs(self, orchestrator, multi_configs):
+        # Cache one config's scenario output; plan and submit_stage must agree on the rest.
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", multi_configs[0])
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        planned = {p.stage: p for p in orchestrator.plan(multi_configs)}["transform_scenario"]
+
+        with patch.object(orchestrator, "_run_local", return_value=[]) as mock_local:
+            orchestrator.submit_stage("transform_scenario", multi_configs, executor="local")
+
+        # Summed over waves: tasmin, when present, is dispatched separately.
+        submitted = sum(len(call.args[1]) for call in mock_local.call_args_list)
+        assert planned.to_run == submitted
