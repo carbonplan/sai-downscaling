@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Callable
+from functools import partial
 from typing import Literal
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
@@ -302,6 +303,33 @@ class BCSDOrchestrator:
         cache.config = config
         return cache.stage_loc(stage, config, hist_member=hist_member)
 
+    def _stage_loc_for(self, cache: ArtifactCache, stage: str, config: BCSDConfig) -> StoreLocation:
+        """Resolve a config's artifact location, supplying the historical member when due."""
+        hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
+        return self._stage_loc(cache, stage, config, hist_member=hist_member)
+
+    def _preexisting_artifacts(
+        self, cache: ArtifactCache, stage: str, configs: list[BCSDConfig]
+    ) -> list[str]:
+        """Report which configs already have an artifact before this run submits anything.
+
+        Both executors decide success by cache presence, which is proof only for artifacts
+        the run itself created. Normally every one qualifies, because ``submit_stage`` only
+        queues uncached configs; under ``force`` it queues everything, and then a post-run
+        sweep would accept the previous run's output as evidence that a failed recompute
+        succeeded. Whatever this returns needs the job's own status to corroborate it.
+
+        Returns
+        -------
+        list[str]
+            ``run_id`` of every config whose artifact predates the submission.
+        """
+        return [
+            config.run_id
+            for config in configs
+            if cache.exists(self._stage_loc_for(cache, stage, config))
+        ]
+
     # Stages where tasmin reconstructs itself from its sibling tasmax/dtr stores
     # and therefore must run after them. Other stages (obs regridding) have no
     # cross-variable dependency and are never wave-split.
@@ -486,15 +514,8 @@ class BCSDOrchestrator:
             f"extent={'regional' if self._is_regional(configs) else 'global'}"
         )
 
-        def loc_for(config: BCSDConfig) -> StoreLocation:
-            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
-            return self._stage_loc(cache, stage, config, hist_member=hist_member)
-
-        # Artifacts present before submission cannot testify about this run. Normally there
-        # are none, because submit_stage only queues uncached configs; under force it queues
-        # everything, and then the sweep below would accept the previous run's output as
-        # proof that a failed recompute succeeded.
-        preexisting = [config.run_id for config in configs if cache.exists(loc_for(config))]
+        loc_for = partial(self._stage_loc_for, cache, stage)
+        preexisting = self._preexisting_artifacts(cache, stage, configs)
 
         remaining = list(configs)
         attempt = 0
@@ -648,9 +669,7 @@ class BCSDOrchestrator:
 
         cache = self._get_cache()
 
-        def loc_for(config: BCSDConfig) -> StoreLocation:
-            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
-            return self._stage_loc(cache, stage, config, hist_member=hist_member)
+        loc_for = partial(self._stage_loc_for, cache, stage)
 
         manifest_uri: str | None = None
         if len(configs) > 1:
@@ -662,11 +681,7 @@ class BCSDOrchestrator:
                 manifest_uri, stage, [json.loads(self._config_payload_json(c)) for c in configs]
             )
 
-        # Artifacts present before submission cannot testify about this run. Normally there
-        # are none, because submit_stage only queues uncached configs; under force it
-        # queues everything, and then a post-run sweep would happily accept the previous
-        # run's output as proof that a failed recompute succeeded.
-        preexisting = [config.run_id for config in configs if cache.exists(loc_for(config))]
+        preexisting = self._preexisting_artifacts(cache, stage, configs)
 
         job_id = self._submit_batch_job(stage, configs, manifest_uri)
         status = self._await_batch_job(self._batch_client(), job_id)
