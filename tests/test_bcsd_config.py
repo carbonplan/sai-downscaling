@@ -25,7 +25,9 @@ from srm.bcsd_config import (
 @pytest.fixture
 def minimal_config() -> BCSDConfig:
     """Minimal valid BCSDConfig for a historical-only run (no scenario)."""
-    return BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+    return BCSDConfig(
+        downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+    )
 
 
 @pytest.fixture
@@ -33,6 +35,7 @@ def scenario_config() -> BCSDConfig:
     """BCSDConfig with a standard (non-SAI) scenario."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r1i1p1f1",
         scenario="ssp245",
@@ -46,6 +49,7 @@ def sai_config() -> BCSDConfig:
     """BCSDConfig with a G6-SAI scenario."""
     return BCSDConfig(
         gcm="CESM2-WACCM",
+        downscaling_method="BCSD",
         variable="pr",
         ensemble_member="r2i1p1f1",
         scenario="G6-1.5K",
@@ -59,6 +63,7 @@ def regional_config() -> BCSDConfig:
     """BCSDConfig with a spatial subset (South Africa region)."""
     return BCSDConfig(
         gcm="MIROC-ES2H",
+        downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="01",
         scenario="ssp245",
@@ -81,70 +86,125 @@ class TestVariableConfig:
             "detrend_data": True,
             "detrend_method": "additive",
             "do_windowing": True,
-            "downscaling_method": "additive",
-            "downscaling_clim_method": "fft",
+            "disaggregation_method": "additive",
+            "disaggregation_clim_method": "fft",
         },
         "tasmax": {
             "detrend_data": True,
             "detrend_method": "additive",
             "do_windowing": True,
-            "downscaling_method": "additive",
-            "downscaling_clim_method": "fft",
+            "disaggregation_method": "additive",
+            "disaggregation_clim_method": "fft",
         },
         "pr": {
             "detrend_data": False,
             "detrend_method": "multiplicative",
             "do_windowing": True,
-            "downscaling_method": "multiplicative",
-            "downscaling_clim_method": "fft",
+            "disaggregation_method": "multiplicative",
+            "disaggregation_clim_method": "fft",
         },
         "rsds": {
             "detrend_data": False,
             "detrend_method": "multiplicative",
             "do_windowing": True,
-            "downscaling_method": "multiplicative",
-            "downscaling_clim_method": "fft",
+            "disaggregation_method": "multiplicative",
+            "disaggregation_clim_method": "fft",
         },
     }
 
     def test_known_variables_return_config(self, subtests):
         for variable in self._EXPECTED:
             with subtests.test(variable=variable):
-                cfg = VariableConfig.for_variable(variable)
+                cfg = VariableConfig.for_variable(variable, "BCSD")
                 assert isinstance(cfg, VariableConfig)
 
     def test_variable_settings_are_correct(self, subtests):
         for variable, expected in self._EXPECTED.items():
             with subtests.test(variable=variable):
-                cfg = VariableConfig.for_variable(variable)
+                cfg = VariableConfig.for_variable(variable, "BCSD")
                 assert cfg.detrend_data == expected["detrend_data"]
                 assert cfg.detrend_method == expected["detrend_method"]
                 assert cfg.do_windowing == expected["do_windowing"]
-                assert cfg.downscaling_method == expected["downscaling_method"]
-                assert cfg.downscaling_clim_method == expected["downscaling_clim_method"]
+                assert cfg.disaggregation_method == expected["disaggregation_method"]
+                assert cfg.disaggregation_clim_method == expected["disaggregation_clim_method"]
 
     def test_unknown_variable_raises(self):
         with pytest.raises(ValueError, match="Unknown variable"):
-            VariableConfig.for_variable("sfcWind")
+            VariableConfig.for_variable("sfcWind", "BCSD")
 
     def test_direct_construction(self):
         cfg = VariableConfig(
             detrend_data=False,
             do_windowing=False,
-            downscaling_method="multiplicative",
-            downscaling_clim_method="simple",
+            running_window_length=31,
+            running_window_step_length=1,
+            disaggregation_method="multiplicative",
+            disaggregation_clim_method="simple",
+            disaggregation_tiny_threshold=0.0,
+            detrend_method="additive",
+            debias_approach="nonparametric",
         )
         assert cfg.detrend_data is False
-        assert cfg.downscaling_method == "multiplicative"
+        assert cfg.disaggregation_method == "multiplicative"
 
-    def test_invalid_downscaling_method_raises(self):
+    def test_invalid_disaggregation_method_raises(self):
         with pytest.raises(ValidationError):
             VariableConfig(
                 detrend_data=True,
                 do_windowing=True,
-                downscaling_method="multiply",  # not a valid Literal
-                downscaling_clim_method="fft",
+                running_window_length=31,
+                running_window_step_length=1,
+                disaggregation_method="multiply",  # not a valid Literal
+                disaggregation_clim_method="fft",
+                disaggregation_tiny_threshold=0.0,
+                detrend_method="additive",
+                debias_approach="nonparametric",
             )
+
+    def test_renamed_disaggregation_keys_raise(self):
+        """The pre-rename keys must fail loudly, not be dropped by extra="ignore"."""
+        with pytest.raises(ValidationError, match="renamed to 'disaggregation_method'"):
+            VariableConfig(
+                detrend_data=True,
+                do_windowing=True,
+                running_window_length=31,
+                running_window_step_length=1,
+                downscaling_method="additive",  # pre-rename name
+                disaggregation_clim_method="fft",
+                disaggregation_tiny_threshold=0.0,
+                detrend_method="additive",
+                debias_approach="nonparametric",
+            )
+
+    def test_renamed_tiny_threshold_key_raises(self):
+        """The #556 spelling of the clipping threshold must be rejected, not dropped."""
+        with pytest.raises(ValidationError, match="renamed to 'disaggregation_tiny_threshold'"):
+            VariableConfig(
+                detrend_data=True,
+                do_windowing=True,
+                running_window_length=31,
+                running_window_step_length=1,
+                disaggregation_method="multiplicative",
+                disaggregation_clim_method="fft",
+                downscaling_tiny_threshold=1.0e-6,  # pre-rename name
+                detrend_method="additive",
+                debias_approach="nonparametric",
+            )
+
+    def test_unknown_downscaling_method_raises(self):
+        with pytest.raises(ValueError, match="Unknown downscaling_method"):
+            VariableConfig.for_variable("tas", "BCSDSD")
+
+    def test_qdmsd_table_differs_from_bcsd(self):
+        """QDMSD rows carry the qdm approach and the wider seasonal window."""
+        bcsd = VariableConfig.for_variable("tas", "BCSD")
+        qdmsd = VariableConfig.for_variable("tas", "QDMSD")
+        assert bcsd.debias_approach == "nonparametric_hybrid_2sided"
+        assert qdmsd.debias_approach == "qdm"
+        assert (bcsd.running_window_length, bcsd.running_window_step_length) == (31, 1)
+        assert (qdmsd.running_window_length, qdmsd.running_window_step_length) == (91, 31)
+        assert bcsd.detrend_data is True
+        assert qdmsd.detrend_data is False
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +238,9 @@ class TestBCSDConfigConstruction:
             "detrend_method",
             "do_windowing",
             "running_window_length",
-            "downscaling_method",
-            "downscaling_clim_method",
+            "running_window_step_length",
+            "disaggregation_method",
+            "disaggregation_clim_method",
             "debias_approach",
         )
         for attr in shadowed:
@@ -206,6 +267,7 @@ class TestBCSDConfigConstruction:
         with pytest.raises(ValidationError, match="variable_overrides"):
             BCSDConfig(
                 gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
                 debias_approach="nonparametric",
@@ -214,34 +276,59 @@ class TestBCSDConfigConstruction:
     def test_variable_config_carries_debias_approach(self):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="dtr",
             ensemble_member="r1i1p1f1",
-            variable_config=VariableConfig.for_variable("dtr").model_copy(
+            variable_config=VariableConfig.for_variable("dtr", "BCSD").model_copy(
                 update={"debias_approach": "nonparametric"}
             ),
         )
         assert cfg.variable_config.debias_approach == "nonparametric"
 
-    def test_make_config_for_variable_carries_debias_approach(self):
-        """Sibling-variable configs are used for artifact path lookup; keep the approach aligned."""
-        cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
-            variable="tasmin",
-            ensemble_member="r1i1p1f1",
-            variable_config=VariableConfig.for_variable("tasmin").model_copy(
-                update={"debias_approach": "nonparametric"}
-            ),
-        )
-        sibling = cfg.make_config_for_variable("dtr")
-        assert sibling.variable == "dtr"
-        assert sibling.variable_config.debias_approach == "nonparametric"
-        assert sibling.variable_config.downscaling_method == "multiplicative"  # dtr's own default
+    def test_qdm_requires_qdmsd_downscaling_method(self):
+        """A qdm debias_approach under BCSD would detrend around a trend-carrying method."""
+        with pytest.raises(ValidationError, match="incompatible with debias_approach"):
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                variable_config=VariableConfig.for_variable("tas", "QDMSD"),
+            )
+
+    def test_qdmsd_requires_qdm_debias_approach(self):
+        """QDMSD without qdm is not quantile delta mapping at all."""
+        with pytest.raises(ValidationError, match="incompatible with debias_approach"):
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                downscaling_method="QDMSD",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                variable_config=VariableConfig.for_variable("tas", "BCSD"),
+            )
+
+    def test_matching_method_and_approach_are_accepted(self, subtests):
+        for method, approach in (("BCSD", "nonparametric_hybrid_2sided"), ("QDMSD", "qdm")):
+            with subtests.test(method=method):
+                cfg = BCSDConfig(
+                    gcm="CESM2-WACCM",
+                    downscaling_method=method,
+                    variable="tas",
+                    ensemble_member="r1i1p1f1",
+                )
+                assert cfg.variable_config.debias_approach == approach
+
+    def test_missing_downscaling_method_raises(self):
+        """There is no default: a config that omits the method must fail loudly."""
+        with pytest.raises(ValidationError, match="'downscaling_method' is required"):
+            BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
 
     def test_renamed_mapping_type_key_raises(self):
         """The pre-rename ``mapping_type`` key must fail loudly, not be silently ignored."""
         with pytest.raises(ValidationError, match="renamed to 'debias_approach'"):
             BCSDConfig(
                 gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
                 mapping_type="parametric",
@@ -257,25 +344,37 @@ class TestBCSDConfigConstruction:
         """
         monkeypatch.setenv(env_var, "nonparametric")
         with pytest.raises(ValidationError, match="variable_overrides"):
-            BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+            BCSDConfig(
+                downscaling_method="BCSD",
+                gcm="CESM2-WACCM",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+            )
 
     def test_moved_key_env_check_is_case_insensitive(self, monkeypatch):
         """pydantic-settings matches env vars case-insensitively; so must the check."""
         monkeypatch.setenv("bcsd_debias_approach", "nonparametric")
         with pytest.raises(ValidationError, match="variable_overrides"):
-            BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+            BCSDConfig(
+                downscaling_method="BCSD",
+                gcm="CESM2-WACCM",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+            )
 
     def test_variable_config_env_override_is_the_supported_path(self, monkeypatch):
         """BCSD_VARIABLE_CONFIG replaces the removed BCSD_DEBIAS_APPROACH env override."""
         monkeypatch.setenv(
             "BCSD_VARIABLE_CONFIG",
             json.dumps(
-                VariableConfig.for_variable("tas")
+                VariableConfig.for_variable("tas", "BCSD")
                 .model_copy(update={"debias_approach": "parametric"})
                 .model_dump()
             ),
         )
-        cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        cfg = BCSDConfig(
+            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+        )
         assert cfg.variable_config.debias_approach == "parametric"
 
     def test_explicit_variable_config_not_overwritten(self):
@@ -283,11 +382,17 @@ class TestBCSDConfigConstruction:
         custom_vc = VariableConfig(
             detrend_data=False,
             do_windowing=False,
-            downscaling_method="additive",
-            downscaling_clim_method="simple",
+            running_window_length=31,
+            running_window_step_length=1,
+            disaggregation_method="additive",
+            disaggregation_clim_method="simple",
+            disaggregation_tiny_threshold=0.0,
+            detrend_method="additive",
+            debias_approach="nonparametric_hybrid_2sided",
         )
         cfg = BCSDConfig(
             gcm="UKESM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r2i1p1f2",
             scenario="ssp245",
@@ -301,13 +406,20 @@ class TestBCSDConfigConstruction:
     def test_all_supported_variables_construct(self, subtests):
         for var in ("tas", "tasmax", "pr"):
             with subtests.test(variable=var):
-                cfg = BCSDConfig(gcm="CESM2-WACCM", variable=var, ensemble_member="r1i1p1f1")
+                cfg = BCSDConfig(
+                    downscaling_method="BCSD",
+                    gcm="CESM2-WACCM",
+                    variable=var,
+                    ensemble_member="r1i1p1f1",
+                )
                 assert cfg.variable == var
 
     def test_all_supported_gcms_construct(self, subtests):
         for gcm in ("CESM2-WACCM", "MIROC-ES2H", "UKESM"):
             with subtests.test(gcm=gcm):
-                cfg = BCSDConfig(gcm=gcm, variable="tas", ensemble_member="r1i1p1f1")
+                cfg = BCSDConfig(
+                    downscaling_method="BCSD", gcm=gcm, variable="tas", ensemble_member="r1i1p1f1"
+                )
                 assert cfg.gcm == gcm
 
     def test_apply_ocean_mask_defaults_false(self):
@@ -355,7 +467,7 @@ class TestVariableConfigDebiasDefaults:
     def test_all_variables_have_debias_approach(self, subtests):
         for var in ("tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"):
             with subtests.test(variable=var):
-                vc = VariableConfig.for_variable(var)
+                vc = VariableConfig.for_variable(var, "BCSD")
                 assert vc.debias_approach == "nonparametric_hybrid_2sided"
 
 
@@ -370,12 +482,13 @@ class TestConfigJsonRoundTrip:
     def test_resolved_debias_approach_survives_round_trip(self):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="dtr",
             ensemble_member="r1i1p1f1",
             scenario="ssp245",
             predict_period_start=2015,
             predict_period_end=2100,
-            variable_config=VariableConfig.for_variable("dtr").model_copy(
+            variable_config=VariableConfig.for_variable("dtr", "BCSD").model_copy(
                 update={"debias_approach": "nonparametric"}
             ),
         )
@@ -407,7 +520,12 @@ class TestBCSDConfigComputedFields:
     def test_run_id_contains_ensemble_label(self, subtests):
         for label in ("r1i1p1f1", "r12i1p1f2", "01", "r10i1p1f2"):
             with subtests.test(label=label):
-                cfg = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=label)
+                cfg = BCSDConfig(
+                    downscaling_method="BCSD",
+                    gcm="CESM2-WACCM",
+                    variable="tas",
+                    ensemble_member=label,
+                )
                 assert f"_{label}" in cfg.run_id
 
     def test_config_hash_is_12_char_hex(self, minimal_config):
@@ -416,8 +534,12 @@ class TestBCSDConfigComputedFields:
         assert all(c in "0123456789abcdef" for c in h)
 
     def test_config_hash_is_stable(self):
-        cfg_a = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
-        cfg_b = BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+        cfg_a = BCSDConfig(
+            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+        )
+        cfg_b = BCSDConfig(
+            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+        )
         assert cfg_a.config_hash == cfg_b.config_hash
 
     def test_config_hash_differs_across_configs(
@@ -444,6 +566,7 @@ class TestBCSDConfigComputedFields:
     def test_is_sai_true_for_sai_keyword(self):
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
             scenario="SAI-2050",
@@ -471,6 +594,7 @@ class TestBCSDConfigValidation:
         with pytest.raises(ValidationError):
             BCSDConfig(
                 gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
                 scenario="ssp245",
@@ -482,6 +606,7 @@ class TestBCSDConfigValidation:
         with pytest.raises(ValidationError):
             BCSDConfig(
                 gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
                 scenario="ssp245",
@@ -493,6 +618,7 @@ class TestBCSDConfigValidation:
         with pytest.raises(ValidationError):
             BCSDConfig(
                 gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
                 train_period_start=2000,
@@ -503,6 +629,7 @@ class TestBCSDConfigValidation:
         with pytest.raises(ValidationError):
             BCSDConfig(
                 gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
                 scenario="ssp245",
@@ -512,12 +639,18 @@ class TestBCSDConfigValidation:
 
     def test_unsupported_variable_raises(self):
         with pytest.raises(ValidationError):
-            BCSDConfig(gcm="CESM2-WACCM", variable="sfcWind", ensemble_member="r1i1p1f1")
+            BCSDConfig(
+                downscaling_method="BCSD",
+                gcm="CESM2-WACCM",
+                variable="sfcWind",
+                ensemble_member="r1i1p1f1",
+            )
 
     def test_subset_bounds_lat_min_ge_max_raises(self):
         with pytest.raises(ValidationError, match="lat_min"):
             BCSDConfig(
                 gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
                 subset_bounds=(20.0, 10.0, 0.0, 30.0),  # lat_min > lat_max
@@ -527,6 +660,7 @@ class TestBCSDConfigValidation:
         with pytest.raises(ValidationError, match="lon_min"):
             BCSDConfig(
                 gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
                 subset_bounds=(10.0, 20.0, 50.0, 30.0),  # lon_min > lon_max
@@ -542,6 +676,7 @@ class TestBCSDConfigValidation:
                 with pytest.raises(ValidationError, match="Latitude"):
                     BCSDConfig(
                         gcm="CESM2-WACCM",
+                        downscaling_method="BCSD",
                         variable="tas",
                         ensemble_member="r1i1p1f1",
                         subset_bounds=bounds,
@@ -625,3 +760,41 @@ class TestRuntimeConfig:
     def test_max_parallel_tasks_can_be_set(self):
         cfg = RuntimeConfig(max_parallel_tasks=4)
         assert cfg.max_parallel_tasks == 4
+
+
+# ---------------------------------------------------------------------------
+# Module-level usage examples
+# ---------------------------------------------------------------------------
+
+
+class TestUsageExamples:
+    """The usage-example block at the foot of bcsd_config.py must stay copy-pasteable.
+
+    ``downscaling_method`` is required and has no default, so an example that omits it
+    raises a ValidationError the moment anyone copies it.
+    """
+
+    @staticmethod
+    def _example_block() -> str:
+        import inspect
+
+        import srm.bcsd_config
+
+        source = inspect.getsource(srm.bcsd_config)
+        _, _, block = source.partition("Usage Examples:")
+        assert block, "usage-example block not found in srm/bcsd_config.py"
+        return block
+
+    def test_every_constructor_call_sets_downscaling_method(self, subtests):
+        import re
+
+        calls = re.findall(r"BCSDConfig\((.*?)\n\)", self._example_block(), flags=re.DOTALL)
+        assert len(calls) == 4  # examples 1-4; example 5 builds from the YAML block
+        for i, call in enumerate(calls, start=1):
+            with subtests.test(example=i):
+                assert "downscaling_method=" in call
+
+    def test_yaml_example_sets_downscaling_method(self):
+        block = self._example_block()
+        _, _, yaml_example = block.partition("# Config file: configs/cesm_tas.yaml")
+        assert "downscaling_method:" in yaml_example.split('"""')[1]

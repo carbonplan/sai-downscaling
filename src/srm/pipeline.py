@@ -21,7 +21,7 @@ import icechunk
 import numpy as np
 import scipy.stats
 import xarray as xr
-from ibicus.debias import QuantileMapping
+from ibicus.debias import QuantileDeltaMapping, QuantileMapping
 from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
@@ -189,6 +189,61 @@ def _assert_stitched_continuity(result: xr.DataArray) -> None:
     gaps = [(int(y1), int(y2)) for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
     if gaps:
         raise ValueError(f"Stitched timeseries has year-level gap(s): {gaps}")
+
+
+def _assert_qdm_pad_complete(
+    scenario_pad: xr.DataArray,
+    stitched: xr.DataArray,
+    *,
+    pad_start_year: int,
+    pad_end_year: int,
+    predict_period_start: int,
+) -> None:
+    """Raise ValueError if the quantile delta mapping lead-in pad is short.
+
+    Quantile delta mapping estimates each future year's correction from a moving window
+    over years of ``cm_future`` centered on that year, so the years immediately before
+    ``predict_period_start`` have to be prepended to fill the window. ``.sel`` on a time
+    slice returns whatever it finds, so a stitched series that does not reach back to
+    ``pad_start_year`` yields a short or empty pad; the window is then under-filled for
+    the first future years and the shortfall never surfaces, because dropping the pad
+    afterwards still lines up with whatever was prepended.
+
+    Coverage is checked per year, matching :func:`_assert_stitched_continuity`, which
+    tolerates day-level gaps inside a year but no year-level ones.
+
+    Parameters
+    ----------
+    scenario_pad : xr.DataArray
+        The lead-in context actually selected out of ``stitched``.
+    stitched : xr.DataArray
+        The continuous historical/scenario series the pad was selected from.
+    pad_start_year, pad_end_year : int
+        First and last year (both inclusive) the pad has to cover.
+    predict_period_start : int
+        First year of the prediction period, quoted in the error message.
+
+    Raises
+    ------
+    ValueError
+        If any year in ``[pad_start_year, pad_end_year]`` is absent from the pad.
+    """
+    present = {int(y) for y in np.unique(scenario_pad["time.year"].values)}
+    missing = [y for y in range(pad_start_year, pad_end_year + 1) if y not in present]
+    if not missing:
+        return
+
+    available = (
+        f"{min(present)} to {max(present)} ({len(present)} year(s))" if present else "no years"
+    )
+    earliest = stitched["time"].values[0] if stitched.sizes.get("time", 0) else "nothing"
+    raise ValueError(
+        f"Quantile delta mapping needs lead-in context covering {pad_start_year} to "
+        f"{pad_end_year} before predict_period_start={predict_period_start}, but the "
+        f"stitched historical/scenario series supplies {available}; missing {missing}. "
+        f"The earliest time present in the stitched series is {earliest}. Extend the "
+        f"upstream series back to {pad_start_year} or start the prediction period later."
+    )
 
 
 def stitch_historical_scenario(
@@ -427,7 +482,10 @@ class BCSDPipeline:
             "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
             "srm_downscaling:observation_dataset": self.config.obs_dataset,
             "srm_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
-            "srm_downscaling:downscaling_method": self.config.variable_config.downscaling_method,
+            "srm_downscaling:downscaling_method": self.config.downscaling_method,
+            "srm_downscaling:disaggregation_method": (
+                self.config.variable_config.disaggregation_method
+            ),
             "srm_downscaling:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
             ),
@@ -441,6 +499,43 @@ class BCSDPipeline:
             attrs["srm_downscaling:sai_parent_scenario"] = self._sai_parent.scenario
             attrs["srm_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
         return attrs
+
+    def _build_obs_attrs(self) -> dict:
+        """Build dataset-level attributes for the regridded observation artifact.
+
+        Regridded observations are keyed on ``(gcm, obs_dataset, subset, variable)``
+        and are shared across every ensemble member, scenario, and downscaling method
+        for that combination. They are also independent of ``VariableConfig`` and of
+        both time periods.
+
+        The full :meth:`_build_output_attrs` set is therefore wrong here: it records a
+        method, a scenario, a member, a train period, and a config hash, each fixed to
+        whatever run happened to write the artifact first. Only the fields the artifact
+        is actually keyed on are recorded, which makes the presence of
+        ``srm_downscaling:downscaling_method`` a reliable signal that a group depends
+        on the method.
+
+        Returns
+        -------
+        dict
+            Dataset-level attributes for the ``obs/{variable}`` group.
+        """
+        version = importlib.metadata.version("srm")
+        return {
+            # CF-standard — flat
+            "Conventions": "CF-1.8",
+            "institution": "CarbonPlan",
+            "history": (
+                f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}: "
+                f"observations regridded to the model grid by srm v{version}"
+            ),
+            # Pipeline provenance — namespaced. Only what this artifact is keyed on.
+            "srm_downscaling:version": version,
+            "srm_downscaling:gcm": self.config.gcm,
+            "srm_downscaling:variable": self.config.variable,
+            "srm_downscaling:observation_dataset": self.config.obs_dataset,
+            "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        }
 
     def _write_to_icechunk(
         self,
@@ -742,9 +837,7 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         obs_coarse.name = self.config.variable
-        self._write_to_icechunk(
-            obs_coarse, loc, dataset_attrs=self._build_output_attrs(), force=force
-        )
+        self._write_to_icechunk(obs_coarse, loc, dataset_attrs=self._build_obs_attrs(), force=force)
         logger.info(
             "✓ Cached observations: %s/%s (%.2fs)",
             loc.store_path,
@@ -798,16 +891,30 @@ class BCSDPipeline:
         debias_approach = self.config.variable_config.debias_approach
         mapping_type = (
             "nonparametric"
-            if debias_approach in ["nonparametric_hybrid", "nonparametric_hybrid_2sided"]
+            if debias_approach in ["nonparametric_hybrid", "nonparametric_hybrid_2sided", "qdm"]
             else debias_approach
         )
+        # Quantile delta mapping widens the seasonal window it maps quantiles over to
+        # 91 days, stepped every 31 days, instead of the narrower window the other
+        # approaches use here. This keeps the historical fit consistent with the
+        # windowing quantile delta mapping applies to the scenario itself.
+        # Note: this means that _apply_bias_correction_scenario and _apply_bias_correction
+        # will not give the same answer for the QDM pathway. That is intentional: the
+        # 31-year running mean operating on the historical timeseries would mean that the
+        # CDFs were only ever full at the center of the historical period, and toward the
+        # beginning/end of the historical period the CDFs would only have ~15 years of data,
+        # breaking our clean ability to use non-parametric quantile mapping. Further, the
+        # "delta" part doesn't make sense for the historical and, given the rolling behavior,
+        # would instead introduce artifacts.
+        running_window_length = self.config.variable_config.running_window_length
+        running_window_step_length = self.config.variable_config.running_window_step_length
         debiaser = _make_debiaser(
             variable=self.config.variable,
             mapping_type=mapping_type,
             detrending="no_detrending",
             running_window_mode=self.config.variable_config.do_windowing,
-            running_window_length=self.config.variable_config.running_window_length,
-            running_window_step_length=1,
+            running_window_length=running_window_length,
+            running_window_step_length=running_window_step_length,
             running_window_mode_over_years_of_cm_future=False,
         )
 
@@ -820,6 +927,7 @@ class BCSDPipeline:
         obs_np = obs_coarse.values
         cm_hist_np = model_hist.values
 
+        logger.debug("[_apply_bias_correction] %s", debiaser)
         debiased_np = debiaser.apply(
             obs=obs_np,
             cm_hist=cm_hist_np,
@@ -858,10 +966,10 @@ class BCSDPipeline:
             da=debiased,
             obs_coarse=obs_coarse.as_numpy(),
             obs_fine=obs_fine.as_numpy(),
-            method=self.config.variable_config.downscaling_method,
-            clim_method=self.config.variable_config.downscaling_clim_method,
+            method=self.config.variable_config.disaggregation_method,
+            clim_method=self.config.variable_config.disaggregation_clim_method,
             allow_negative_values=False,
-            tiny_threshold=self.config.variable_config.downscaling_tiny_threshold,
+            tiny_threshold=self.config.variable_config.disaggregation_tiny_threshold,
             use_tiny_threshold=False,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
@@ -1449,12 +1557,19 @@ class BCSDPipeline:
         obs_coarse: xr.DataArray,
         model_hist: xr.DataArray,
         scenario_detrended: xr.DataArray,
+        model_scenario_for_qdm: xr.DataArray | None = None,
+        ssp_timeseries_for_qdm: xr.DataArray | None = None,
     ) -> xr.DataArray:
         """Apply quantile mapping to the (optionally detrended) scenario.
 
         For nonparametric_hybrid: runs both parametric and nonparametric debiasers and
         blends them — parametric where the scenario falls outside the historical range,
         nonparametric everywhere else.
+
+        ``model_scenario_for_qdm`` and ``ssp_timeseries_for_qdm`` are the pre-detrend scenario data and
+        (for SAI scenarios) SSP245/parent bridge. They are required for the ``qdm``
+        branch, which uses them to rebuild the correctly-sourced lead-in context for its
+        padding — see the comment there — and unused otherwise.
         """
         debias_approach = self.config.variable_config.debias_approach
         obs_coarse = obs_coarse.as_numpy()
@@ -1495,17 +1610,18 @@ class BCSDPipeline:
         )
 
         if debias_approach in ["parametric", "nonparametric"]:
-            debiased_np = _make_debiaser(mapping_type=debias_approach, **common_kwargs).apply(
-                **apply_kwargs
-            )
+            debiaser = _make_debiaser(mapping_type=debias_approach, **common_kwargs)
+            logger.debug("[_apply_bias_correction_scenario] %s", debiaser)
+            debiased_np = debiaser.apply(**apply_kwargs)
 
         elif debias_approach == "nonparametric_hybrid":
-            parametric_np = _make_debiaser(mapping_type="parametric", **common_kwargs).apply(
-                **apply_kwargs
-            )
-            nonparametric_np = _make_debiaser(mapping_type="nonparametric", **common_kwargs).apply(
-                **apply_kwargs
-            )
+            parametric_debiaser = _make_debiaser(mapping_type="parametric", **common_kwargs)
+            logger.debug("[_apply_bias_correction_scenario] %s", parametric_debiaser)
+            parametric_np = parametric_debiaser.apply(**apply_kwargs)
+
+            nonparametric_debiaser = _make_debiaser(mapping_type="nonparametric", **common_kwargs)
+            logger.debug("[_apply_bias_correction_scenario] %s", nonparametric_debiaser)
+            nonparametric_np = nonparametric_debiaser.apply(**apply_kwargs)
 
             out_of_range, _, _ = calculate_out_of_range_mask(
                 model_hist=model_hist,
@@ -1523,23 +1639,28 @@ class BCSDPipeline:
                 low_dist = _weibull_min_zero_bounded
                 high_dist = scipy.stats.gumbel_r
 
-                parametric_low_np = _make_debiaser(
+                parametric_low_debiaser = _make_debiaser(
                     distribution=low_dist, mapping_type="parametric", **common_kwargs
-                ).apply(**apply_kwargs)
-                parametric_high_np = _make_debiaser(
+                )
+                logger.debug("[_apply_bias_correction_scenario] %s", parametric_low_debiaser)
+                parametric_low_np = parametric_low_debiaser.apply(**apply_kwargs)
+
+                parametric_high_debiaser = _make_debiaser(
                     distribution=high_dist, mapping_type="parametric", **common_kwargs
-                ).apply(**apply_kwargs)
+                )
+                logger.debug("[_apply_bias_correction_scenario] %s", parametric_high_debiaser)
+                parametric_high_np = parametric_high_debiaser.apply(**apply_kwargs)
             else:
                 # Unless explicitly specified, use the same parametric debiaser for both tails even if calling "nonparametric_hybrid_2sided"
-                parametric_low_np = _make_debiaser(
-                    mapping_type="parametric", **common_kwargs
-                ).apply(**apply_kwargs)
+                parametric_low_debiaser = _make_debiaser(mapping_type="parametric", **common_kwargs)
+                logger.debug("[_apply_bias_correction_scenario] %s", parametric_low_debiaser)
+                parametric_low_np = parametric_low_debiaser.apply(**apply_kwargs)
 
                 parametric_high_np = parametric_low_np
 
-            nonparametric_np = _make_debiaser(mapping_type="nonparametric", **common_kwargs).apply(
-                **apply_kwargs
-            )
+            nonparametric_debiaser = _make_debiaser(mapping_type="nonparametric", **common_kwargs)
+            logger.debug("[_apply_bias_correction_scenario] %s", nonparametric_debiaser)
+            nonparametric_np = nonparametric_debiaser.apply(**apply_kwargs)
 
             _, out_of_range_low, out_of_range_high = calculate_out_of_range_mask(
                 model_hist=model_hist,
@@ -1550,9 +1671,139 @@ class BCSDPipeline:
             debiased_np = np.where(out_of_range_low.values, parametric_low_np, nonparametric_np)
             debiased_np = np.where(out_of_range_high.values, parametric_high_np, debiased_np)
 
+        elif debias_approach == "qdm":
+            # Both lead-in sources are optional in the signature because no other debias
+            # approach reads them, so the qdm branch checks them itself. Left unchecked, a
+            # missing model_scenario_for_qdm fails inside the stitch on a None it cannot
+            # explain, and a missing SAI bridge sends the stitch down its non-SAI path,
+            # which surfaces later as a pad-completeness error blaming the length of the
+            # input series rather than the absent bridge.
+            if model_scenario_for_qdm is None:
+                raise ValueError(
+                    "debias_approach='qdm' requires model_scenario_for_qdm, the "
+                    "pre-detrend scenario data used to build the lead-in pad for the "
+                    "moving window over years of cm_future."
+                )
+            if self.config.is_sai_scenario and ssp_timeseries_for_qdm is None:
+                raise ValueError(
+                    f"debias_approach='qdm' on SAI scenario {self.config.scenario!r} "
+                    "requires ssp_timeseries_for_qdm, the SSP245/parent bridge covering "
+                    "the years between train_period_end and the first scenario year. "
+                    "Without it the lead-in pad is built from the non-SAI stitch path."
+                )
+
+            # Quantile delta mapping maps quantile changes between the historical and
+            # future model runs directly onto observations, which is what keeps the
+            # projected trend without a separate detrend/retrend step.
+            #
+            # The seasonal (day-of-year) window comes from variable_config, exactly as it
+            # does for the historical fit in _apply_bias_correction, so the scenario
+            # mapping and the fit stay on the same window and editing QDMSD_CONFIG moves
+            # both. Only those three settings are passed: common_kwargs is deliberately
+            # not reused here because it pins running_window_step_length to 1 and turns
+            # running_window_mode_over_years_of_cm_future off, and quantile delta mapping
+            # depends on that years-window (pad_years below is derived from its length).
+            # Every years-window setting therefore stays at the ibicus default.
+            qdm_window_kwargs = dict(
+                running_window_mode=self.config.variable_config.do_windowing,
+                running_window_length=self.config.variable_config.running_window_length,
+                running_window_step_length=self.config.variable_config.running_window_step_length,
+            )
+            if self.config.variable == "pr":
+                debiaser = QuantileDeltaMapping.for_precipitation(**qdm_window_kwargs)
+            elif self.config.variable == "rsds":
+                # ibicus has no built-in QDM defaults for rsds: "standard" defaults
+                # only cover tas/pr, and "experimental" defaults cover
+                # hurs/psl/rlds/sfcwind/tasmin/tasmax -- rsds is missing from both,
+                # so .from_variable("rsds") raises ValueError. Built directly
+                # instead: nonparametric mapping with "relative" trend preservation,
+                # the most appropriate ibicus option that respects rsds's zero lower
+                # bound (it also mirrors the multiplicative disaggregation used for rsds).
+                # censor_values_to_zero guards against a 0/0 divide in polar-night
+                # windows, where obs/cm_hist/cm_future can all be genuinlely zero.
+                debiaser = QuantileDeltaMapping(
+                    variable="rsds",
+                    reasonable_physical_range=[0, 1000],
+                    distribution=None,
+                    mapping_type="nonparametric",
+                    trend_preservation="relative",
+                    censor_values_to_zero=True,
+                    censoring_threshold=1.0,
+                    **qdm_window_kwargs,
+                )
+            elif self.config.variable == "dtr":
+                debiaser = QuantileDeltaMapping(
+                    variable="dtr",
+                    reasonable_physical_range=[0, 100],
+                    distribution=None,
+                    mapping_type="nonparametric",
+                    trend_preservation="relative",
+                    censor_values_to_zero=True,
+                    censoring_threshold=0.01,
+                    **qdm_window_kwargs,
+                )
+            else:
+                debiaser = QuantileDeltaMapping.from_variable(
+                    self.config.variable, **qdm_window_kwargs
+                )
+
+            # Each future year's correction is estimated from a moving window over years
+            # of cm_future centered on that year (31 years by default, left at the ibicus
+            # default above), so the method needs 15 years of context immediately before
+            # the prediction period to fill
+            # that window. What precedes the prediction period depends on the
+            # scenario: plain historical for an SSP245 run, SSP245 for an SAI
+            # run whose predict_period_start lands inside the SSP245 bridge (e.g.
+            # G6-1.5K, predict_period_start=2035), or the parent SAI run for a
+            # termination run continuing it (e.g. G6-1.5K-END, predict_period_start
+            # =2085, padded with G6-1.5K). The padded years
+            # are then dropped from the result below, once they've served their
+            # purpose, leaving only the requested period.
+            pad_years = debiaser.running_window_over_years_of_cm_future_length // 2
+            stitched_for_pad = stitch_historical_scenario(
+                model_hist=model_hist,
+                model_scenario=model_scenario_for_qdm,
+                train_period_end=self.config.train_period_end,
+                predict_period_start=self.config.predict_period_start,
+                ssp_timeseries=ssp_timeseries_for_qdm if self.config.is_sai_scenario else None,
+            )
+            # Find the years you want to pad
+            pad_start_year = self.config.predict_period_start - pad_years
+            pad_end_year = self.config.predict_period_start - 1
+            scenario_pad = stitched_for_pad.sel(
+                time=slice(f"{pad_start_year}", f"{pad_end_year}")
+            ).as_numpy()
+            # A short pad is silent otherwise: .sel on a slice happily returns fewer years
+            # than asked for, the moving window is then under-filled for the first future
+            # years, and the trailing de-padding below still lines up, so the shortfall
+            # never reaches the output. Fail loudly instead, at the same year granularity
+            # _assert_stitched_continuity uses.
+            _assert_qdm_pad_complete(
+                scenario_pad,
+                stitched_for_pad,
+                pad_start_year=pad_start_year,
+                pad_end_year=pad_end_year,
+                predict_period_start=self.config.predict_period_start,
+            )
+            padded_future = xr.concat([scenario_pad, scenario_detrended], dim="time")
+
+            qdm_apply_kwargs = {
+                **apply_kwargs,
+                "cm_future": padded_future.values,
+                "time_cm_future": padded_future["time"].values,
+            }
+            logger.debug("[_apply_bias_correction_scenario] %s", debiaser)
+            debiased_padded_np = debiaser.apply(**qdm_apply_kwargs)
+            # remove the padding and take only the part of debiased_padded_np that is from the scenario you're running
+            debiased_np = debiased_padded_np[scenario_pad.sizes["time"] :]
+            if self.config.variable in ["rsds", "dtr"]:
+                # zero out any near-zero/near-zero divide blow-up left over from censor_values_to_zero
+                debiased_np[cm_future_np < debiaser.censoring_threshold] = 0.0
+
         else:
             raise ValueError(
-                "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', or 'nonparametric_hybrid_2sided'."
+                "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', "
+                "'nonparametric_hybrid_2sided', or 'qdm'."
             )
 
         assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)
@@ -1769,7 +2020,7 @@ class BCSDPipeline:
 
         t0 = time.perf_counter()
         scenario_debiased = self._apply_bias_correction_scenario(
-            obs_coarse, model_hist, scenario_detrended
+            obs_coarse, model_hist, scenario_detrended, model_scenario, ssp_timeseries
         )
         logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
 

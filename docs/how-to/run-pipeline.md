@@ -32,7 +32,7 @@ uv run bcsd run --config-path configs/example.yaml --branch v2
 BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
 ```
 
-A single config file can also expand into many runs. List values for `gcm`, `variables`, `ensemble_members`, and `scenarios` produce one run per cartesian-product combination — see the [matrix config format](../reference/configuration.md#matrix-config-format) reference for the syntax.
+A single config file can also expand into many runs. List values for `gcm`, `variables`, `ensemble_members`, `scenarios`, and `downscaling_methods` produce one run per cartesian-product combination — see the [matrix config format](../reference/configuration.md#matrix-config-format) reference for the syntax.
 
 Check pipeline status at any time:
 
@@ -45,6 +45,7 @@ For quick ad-hoc runs from the command line without writing a config file, `bcsd
 ```bash
 # 2 GCMs × 2 variables × 3 members × 2 scenarios
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM --gcm MIROC-ES2H \
   --variable tas --variable pr \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
@@ -58,6 +59,7 @@ Use `--dry-run` to preview the generated matrix before executing:
 
 ```bash
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --dry-run
@@ -93,13 +95,14 @@ uv run bcsd run --config-path configs/batch/
 
 </details>
 
-A single matrix config file expresses the same set of runs more compactly, with list values for `gcm`/`variables`/`ensemble_members`/`scenarios`. See the [matrix config format](../reference/configuration.md#matrix-config-format) reference for the syntax and its restrictions.
+A single matrix config file expresses the same set of runs more compactly, with list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods`. See the [matrix config format](../reference/configuration.md#matrix-config-format) reference for the syntax and its restrictions.
 
 For a quick ad-hoc batch without config files, `bcsd run-matrix` takes the cartesian product of the dimensions you pass on the command line and handles everything itself:
 
 ```bash
 # 3 members × 2 scenarios for CESM2-WACCM tas, with deduplication
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM \
   --variable tas \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
@@ -120,6 +123,7 @@ The orchestrator automatically deduplicates shared work across the matrix:
 
 ```bash
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM \
   --variable tas \
   --member r1i1p1f1 \
@@ -150,6 +154,7 @@ uv run bcsd run --config-path configs/example.yaml --no-coiled
 
 # Matrix run locally (useful for testing)
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33' \

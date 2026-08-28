@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import os
 from importlib.metadata import version as _pkg_version
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, get_args
 
 import pydantic_settings
 from packaging.version import Version as _Version
@@ -21,12 +21,19 @@ from pydantic import BaseModel, Field, computed_field, field_validator, model_va
 _cache_version = f"v{_Version(_pkg_version('srm')).public}"
 
 DebiasApproach = Literal[
-    "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided"
+    "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided", "qdm"
 ]
-DownscalingMethod = Literal["additive", "multiplicative"]
-DownscalingClimMethod = Literal["simple", "fft", "simple_rolling"]
+DownscalingMethod = Literal["BCSD", "QDMSD"]
+DisaggregationMethod = Literal["additive", "multiplicative"]
+DisaggregationClimMethod = Literal["simple", "fft", "simple_rolling"]
 DetrendMethod = Literal["additive", "multiplicative"]
 VariableName = Literal["tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"]
+
+# Lowercase leading group-path segments that namespace method-dependent icechunk
+# artifacts (see ``ArtifactCache._method_prefix``). Read-side tools use this to tell a
+# method segment from a scenario group when descending a store, because stores written
+# before the namespacing carry no such segment and must still be readable.
+METHOD_SEGMENTS: frozenset[str] = frozenset(m.lower() for m in get_args(DownscalingMethod))
 
 
 class VariableConfig(BaseModel):
@@ -34,83 +41,237 @@ class VariableConfig(BaseModel):
 
     detrend_data: bool
     do_windowing: bool
-    running_window_length: int = 31
-    downscaling_method: DownscalingMethod
-    downscaling_clim_method: DownscalingClimMethod
-    detrend_method: DetrendMethod = "additive"
-    debias_approach: DebiasApproach = "nonparametric_hybrid_2sided"
-    downscaling_tiny_threshold: float = 0.0
+    running_window_length: int
+    disaggregation_method: DisaggregationMethod
+    disaggregation_clim_method: DisaggregationClimMethod
+    disaggregation_tiny_threshold: float
+    detrend_method: DetrendMethod
+    debias_approach: DebiasApproach
+    running_window_step_length: int
+
+    # Spatial-disaggregation keys renamed to a 'disaggregation_' prefix when
+    # 'downscaling_method' was repurposed as the top-level BCSD/QDMSD selector.
+    # extra="ignore" would drop the old spellings silently, and one of them now means
+    # something different at the top level, so a stale config has to fail loudly.
+    _RENAMED_KEYS: ClassVar[dict[str, str]] = {
+        "downscaling_method": "disaggregation_method",
+        "downscaling_clim_method": "disaggregation_clim_method",
+        "downscaling_tiny_threshold": "disaggregation_tiny_threshold",
+    }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed_keys(cls, data):
+        """Fail loudly if a config still uses the pre-rename spatial-disaggregation keys."""
+        if isinstance(data, dict):
+            for old, new in cls._RENAMED_KEYS.items():
+                if old in data:
+                    raise ValueError(
+                        f"'{old}' was renamed to '{new}' on VariableConfig. "
+                        f"Spatial-disaggregation settings now carry a 'disaggregation_' "
+                        f"prefix, because 'downscaling_method' is the top-level "
+                        f"BCSD/QDMSD selector on BCSDConfig. Leaving '{old}' here would "
+                        f"be dropped silently, so rename it to '{new}'."
+                    )
+        return data
 
     @classmethod
-    def for_variable(cls, variable: str) -> VariableConfig:
-        """Load variable-specific config from BCSD_CONFIG.
+    def for_variable(cls, variable: str, downscaling_method: DownscalingMethod) -> VariableConfig:
+        """Load variable-specific defaults for ``variable`` under ``downscaling_method``.
 
-        Rows list only the fields that vary by variable. Anything uniform across all
-        variables, such as ``debias_approach`` and ``running_window_length``, is left
-        to the field default above so there is one place to change it.
+        ``downscaling_method`` selects which table to read: ``BCSD`` uses
+        ``BCSD_CONFIG`` (detrend, then standard quantile mapping), while ``QDMSD``
+        uses ``QDMSD_CONFIG`` (quantile delta mapping, then spatial disaggregation).
+        QDM carries the climate trend through its own quantile mapping, so it never
+        needs the separate detrend/retrend step, and it maps over a wider seasonal
+        window. Those are the differences between the two tables.
+
+        Each row lists every field rather than leaning on class defaults, because a
+        value that is uniform within one table is generally not uniform across both.
+
+        Parameters
+        ----------
+        variable : str
+            Variable name, one of :data:`VariableName`.
+        downscaling_method : DownscalingMethod
+            Which method table to read, ``"BCSD"`` or ``"QDMSD"``.
+
+        Returns
+        -------
+        VariableConfig
+            Validated defaults for ``variable`` under ``downscaling_method``.
         """
         BCSD_CONFIG = {
             "pr": {
                 "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
-                "downscaling_tiny_threshold": 1.0e-6,  # kg m-2 s-1, ~0.086 mm/day
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0e-6,  # kg m-2 s-1, ~0.086 mm/day
+                "running_window_length": 31,
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided",
             },
             "tas": {
                 "detrend_data": True,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
+                "running_window_length": 31,
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided",
             },
             "tasmax": {
                 "detrend_data": True,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
+                "running_window_length": 31,
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided",
             },
             "tasmin": {
                 "detrend_data": True,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "additive",
-                "downscaling_clim_method": "fft",
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
+                "running_window_length": 31,
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided",
             },
             "rsds": {
                 "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
-                "downscaling_tiny_threshold": 1.0,  # W m-2
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0,  # W m-2
+                "running_window_length": 31,
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided",
             },
             "dtr": {
                 "detrend_data": False,
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
-                "downscaling_tiny_threshold": 0.0,
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
+                "running_window_length": 31,
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided",
             },
             "hurs": {
                 "detrend_data": False,
                 "detrend_method": "additive",
                 "do_windowing": True,
-                "downscaling_method": "multiplicative",
-                "downscaling_clim_method": "fft",
-                "downscaling_tiny_threshold": 1.0e-2,  # percent
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0e-2,  # percent
+                "running_window_length": 31,
+                "running_window_step_length": 1,
+                "debias_approach": "nonparametric_hybrid_2sided",
             },
         }
 
-        if variable not in BCSD_CONFIG:
-            raise ValueError(
-                f"Unknown variable: {variable}. Must be one of {list(BCSD_CONFIG.keys())}"
-            )
+        QDMSD_CONFIG = {
+            "pr": {
+                "detrend_data": False,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0e-6,  # kg m-2 s-1, ~0.086 mm/day
+                "running_window_length": 91,
+                "running_window_step_length": 31,
+                "debias_approach": "qdm",
+            },
+            "tas": {
+                "detrend_data": False,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
+                "running_window_length": 91,
+                "running_window_step_length": 31,
+                "debias_approach": "qdm",
+            },
+            "tasmax": {
+                "detrend_data": False,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
+                "running_window_length": 91,
+                "running_window_step_length": 31,
+                "debias_approach": "qdm",
+            },
+            "tasmin": {
+                "detrend_data": False,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "disaggregation_method": "additive",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
+                "running_window_length": 91,
+                "running_window_step_length": 31,
+                "debias_approach": "qdm",
+            },
+            "rsds": {
+                "detrend_data": False,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0,  # W m-2
+                "running_window_length": 91,
+                "running_window_step_length": 31,
+                "debias_approach": "qdm",
+            },
+            "dtr": {
+                "detrend_data": False,
+                "detrend_method": "multiplicative",
+                "do_windowing": True,
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 0.0,
+                "running_window_length": 91,
+                "running_window_step_length": 31,
+                "debias_approach": "qdm",
+            },
+            "hurs": {
+                "detrend_data": False,
+                "detrend_method": "additive",
+                "do_windowing": True,
+                "disaggregation_method": "multiplicative",
+                "disaggregation_clim_method": "fft",
+                "disaggregation_tiny_threshold": 1.0e-2,  # percent
+                "running_window_length": 91,
+                "running_window_step_length": 31,
+                "debias_approach": "qdm",
+            },
+        }
 
-        return cls(**BCSD_CONFIG[variable])
+        tables = {"BCSD": BCSD_CONFIG, "QDMSD": QDMSD_CONFIG}
+        if downscaling_method not in tables:
+            raise ValueError(
+                f"Unknown downscaling_method: {downscaling_method}. Must be one of {sorted(tables)}"
+            )
+        table = tables[downscaling_method]
+
+        if variable not in table:
+            raise ValueError(f"Unknown variable: {variable}. Must be one of {list(table.keys())}")
+
+        return cls(**table[variable])
 
 
 class BCSDConfig(pydantic_settings.BaseSettings):
@@ -173,6 +334,18 @@ class BCSDConfig(pydantic_settings.BaseSettings):
 
     model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
 
+    # Which downscaling method this run uses. Selects the VariableConfig defaults
+    # table in VariableConfig.for_variable, so it has to be a run-identity field rather
+    # than a PipelineOptions one: changing it changes the numbers, not just the plumbing.
+    downscaling_method: DownscalingMethod = Field(
+        ...,
+        description=(
+            "Downscaling method: 'BCSD' (detrend + quantile mapping) or 'QDMSD' "
+            "(quantile delta mapping). Selects the per-variable defaults table. "
+            "Required: every config states its method rather than inheriting one."
+        ),
+    )
+
     # Variable-specific settings. Always populated: when not supplied explicitly it is
     # derived from ``variable`` in a ``mode="before"`` validator (see below), so it is
     # never ``None`` after construction. This is the single source of truth for
@@ -194,8 +367,9 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         ),
         "debias_approach": (
             "'debias_approach' moved from BCSDConfig onto VariableConfig. Set "
-            "'variable_config.debias_approach' for a single-variable config, or "
-            "'variable_overrides' in a matrix config (or --debias-approach / "
+            "'variable_config.debias_approach' for a single-variable config; in a matrix "
+            "config, use a top-level 'debias_approach' key to apply it to every variable, "
+            "or 'variable_overrides' to set it per variable (or --debias-approach / "
             "--variable-override on the CLI, or BCSD_VARIABLE_CONFIG as JSON in the "
             "environment)."
         ),
@@ -237,9 +411,39 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         """
         if isinstance(data, dict) and data.get("variable_config") is None:
             variable = data.get("variable")
+            method = data.get("downscaling_method") or os.environ.get("BCSD_DOWNSCALING_METHOD")
             if variable is not None:
-                data["variable_config"] = VariableConfig.for_variable(variable)
+                if method is None:
+                    raise ValueError(
+                        "'downscaling_method' is required: set it to 'BCSD' or 'QDMSD' in "
+                        "the config, or BCSD_DOWNSCALING_METHOD in the environment. There "
+                        "is deliberately no default, so every run states which method "
+                        "produced it."
+                    )
+                data["variable_config"] = VariableConfig.for_variable(variable, method)
         return data
+
+    @model_validator(mode="after")
+    def _check_method_matches_debias_approach(self):
+        """Reject a debias_approach that contradicts the declared downscaling_method.
+
+        The two are set independently: ``downscaling_method`` picks the defaults table,
+        but ``debias_approach`` can still be overridden run-wide or per variable. A
+        mismatch is silently wrong rather than loud, because the rest of the row still
+        comes from the other table. ``BCSD`` with ``qdm`` would detrend and retrend
+        around a method that carries the trend itself, and ``QDMSD`` without ``qdm``
+        would not be quantile delta mapping at all.
+        """
+        is_qdm = self.variable_config.debias_approach == "qdm"
+        if is_qdm != (self.downscaling_method == "QDMSD"):
+            raise ValueError(
+                f"downscaling_method={self.downscaling_method!r} is incompatible with "
+                f"debias_approach={self.variable_config.debias_approach!r}. "
+                "'qdm' requires downscaling_method='QDMSD', and 'QDMSD' requires "
+                "debias_approach='qdm'. Set both consistently, or drop the "
+                "debias_approach override and let the method's table supply it."
+            )
+        return self
 
     @field_validator("predict_period_start", "predict_period_end")
     @classmethod
@@ -321,6 +525,10 @@ class BCSDConfig(pydantic_settings.BaseSettings):
             "train_period": (self.train_period_start, self.train_period_end),
             "predict_period": (self.predict_period_start, self.predict_period_end),
             "subset_bounds": self.subset_bounds,
+            # downscaling_method is deliberately absent: it only selects which table
+            # variable_config was read from, and variable_config is hashed below, so
+            # BCSD and QDMSD already produce different hashes. Adding it would change
+            # every existing config's hash and invalidate the S3 cache for no gain.
             "variable_config": self.variable_config.model_dump() if self.variable_config else None,
         }
 
@@ -332,35 +540,6 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     def is_sai_scenario(self) -> bool:
         """Check if this is an SAI intervention scenario"""
         return self.scenario and ("G6" in self.scenario.upper() or "SAI" in self.scenario.upper())
-
-    def make_config_for_variable(self, variable: str) -> BCSDConfig:
-        """
-        Return a new BCSDConfig for a different variable, keeping all other parameters the same.
-
-        Useful for grabbing paths to intermediate artifacts for a sibling variable (e.g. dtr or
-        tasmax when processing tasmin) without redefining the entire config. Variable-specific
-        parameters are auto-populated based on the new variable.
-
-        The sibling inherits this config's ``debias_approach`` while taking its own
-        per-variable defaults for every other field.
-        """
-        return BCSDConfig(
-            gcm=self.gcm,
-            variable=variable,
-            ensemble_member=self.ensemble_member,
-            scenario=self.scenario,
-            train_period_start=self.train_period_start,
-            train_period_end=self.train_period_end,
-            predict_period_start=self.predict_period_start,
-            predict_period_end=self.predict_period_end,
-            subset_bounds=self.subset_bounds,
-            # The sibling gets its own per-variable defaults but inherits this run's
-            # debias_approach, matching the pre-move behavior. model_copy is safe here
-            # because the source value is an already-validated Literal.
-            variable_config=VariableConfig.for_variable(variable).model_copy(
-                update={"debias_approach": self.variable_config.debias_approach}
-            ),
-        )
 
 
 class VariableClipBounds(BaseModel):
@@ -465,13 +644,14 @@ config = BCSDConfig(
     variable="tas",
     ensemble_member=0,
     scenario="ssp245",
+    downscaling_method="BCSD",
     predict_period_start=2015,
     predict_period_end=2100
 )
 
 print(config.run_id)  # "CESM2-WACCM_tas_e00_ssp245"
 print(config.variable_config.detrend_data)  # True (auto-loaded from variable config)
-print(config.variable_config.downscaling_method)  # "additive"
+print(config.variable_config.disaggregation_method)  # "additive"
 
 # 2. SAI scenario
 sai_config = BCSDConfig(
@@ -479,6 +659,7 @@ sai_config = BCSDConfig(
     variable="pr",
     ensemble_member=1,
     scenario="G6-1.5K",
+    downscaling_method="BCSD",
     predict_period_start=2015,
     predict_period_end=2100,
 )
@@ -492,6 +673,7 @@ subset_config = BCSDConfig(
     variable="tasmax",
     ensemble_member=0,
     scenario="ssp245",
+    downscaling_method="BCSD",
     predict_period_start=2015,
     predict_period_end=2100,
     subset_bounds=(-35, -20, 15, 35)  # South Africa
@@ -503,13 +685,19 @@ custom_config = BCSDConfig(
     variable="tas",
     ensemble_member=2,
     scenario="ssp245",
+    downscaling_method="BCSD",
     predict_period_start=2015,
     predict_period_end=2100,
     variable_config=VariableConfig(
         detrend_data=False,  # Custom: don't detrend
         do_windowing=True,
-        downscaling_method="additive",
-        downscaling_clim_method="simple"
+        running_window_length=31,
+        running_window_step_length=1,
+        disaggregation_method="additive",
+        disaggregation_clim_method="simple",
+        disaggregation_tiny_threshold=0.0,
+        detrend_method="additive",
+        debias_approach="nonparametric_hybrid_2sided",
     )
 )
 
@@ -520,6 +708,7 @@ gcm: CESM2-WACCM
 variable: tas
 ensemble_member: 0
 scenario: ssp245
+downscaling_method: BCSD
 predict_period_start: 2015
 predict_period_end: 2100
 environment: qa
