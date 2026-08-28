@@ -1,0 +1,67 @@
+name: build image
+
+# Builds the arm64 container the AWS Batch executor runs. Task VMs pull from ECR, so
+# an image must exist before `bcsd run --executor aws-batch` can succeed.
+on:
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: "Extra image tag to push alongside the version and commit SHA."
+                required: false
+                default: ""
+                type: string
+    release:
+        types:
+            - published
+
+permissions:
+    id-token: write
+    contents: read
+
+env:
+    ECR_REPOSITORY: srm-bcsd
+
+jobs:
+    build:
+        name: Build and push srm-bcsd
+        # Native arm64 runner: emulating Graviton under QEMU on x86 makes the uv sync
+        # step take tens of minutes.
+        runs-on: ubuntu-24.04-arm
+        timeout-minutes: 60
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  # setuptools_scm needs full history to derive the version.
+                  fetch-depth: 0
+
+            - uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  role-to-assume: arn:aws:iam::631969445205:role/github-action-role
+                  role-session-name: srm-build-image
+                  aws-region: us-west-2
+
+            - id: login-ecr
+              uses: aws-actions/amazon-ecr-login@v2
+
+            - uses: astral-sh/setup-uv@v7
+
+            - name: Resolve the package version
+              id: version
+              # The image stamps this into every output store, so it has to match what a
+              # local `uv run bcsd` would report rather than setuptools_scm's fallback.
+              run: echo "value=$(uvx --from setuptools-scm python -m setuptools_scm)" >> "$GITHUB_OUTPUT"
+
+            - uses: docker/setup-buildx-action@v3
+
+            - uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  platforms: linux/arm64
+                  push: true
+                  build-args: SRM_VERSION=${{ steps.version.outputs.value }}
+                  tags: |
+                      ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.value }}
+                      ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+                      ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
