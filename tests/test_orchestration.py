@@ -1057,8 +1057,51 @@ class TestJobName:
 
 
 class TestAwaitBatchJobMissingRecord:
-    def test_treats_a_dropped_job_record_as_failed(self, orchestrator):
+    def test_reports_a_dropped_job_record_as_unknown(self, orchestrator):
+        # Distinct from FAILED: an aged-out record says nothing about the outcome, so the
+        # cache sweep must be allowed to decide rather than the run being failed outright.
         client = MagicMock()
         client.describe_jobs.return_value = {"jobs": []}
         with patch("time.sleep"):
-            assert orchestrator._await_batch_job(client, "gone-1", poll_seconds=0) == "FAILED"
+            assert orchestrator._await_batch_job(client, "gone-1", poll_seconds=0) == "UNKNOWN"
+
+
+class TestFailedJobIsNotMaskedByStaleCache:
+    def _run(self, orchestrator, configs, status):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": [{"status": status}]}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", return_value=True),
+            patch("time.sleep"),
+        ):
+            return orchestrator._submit_to_aws_batch("transform_scenario", configs)
+
+    def test_failed_job_raises_even_when_every_artifact_is_present(
+        self, orchestrator, multi_configs
+    ):
+        # With force=True every config is resubmitted regardless of cache, so a populated
+        # cache may hold the previous run's output. Trusting it would report a failed
+        # recompute as success.
+        with pytest.raises(RuntimeError, match="FAILED"):
+            self._run(orchestrator, multi_configs, "FAILED")
+
+    def test_succeeded_job_with_present_artifacts_is_fine(self, orchestrator, multi_configs):
+        assert len(self._run(orchestrator, multi_configs, "SUCCEEDED")) == len(multi_configs)
+
+    def test_dropped_record_defers_to_the_cache(self, orchestrator, multi_configs):
+        # An aged-out record is not evidence of failure; artifacts present means success.
+        # describe_jobs returns no entry, which is the only way UNKNOWN is ever produced.
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": []}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", return_value=True),
+            patch("time.sleep"),
+        ):
+            paths = orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
+        assert len(paths) == len(multi_configs)
