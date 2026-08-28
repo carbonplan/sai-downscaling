@@ -14,6 +14,7 @@ BCSDPipeline is always mocked so no real compute or S3 access is required.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -852,3 +853,77 @@ class TestVmSizing:
                 assert BCSDOrchestrator._vm_types_for("no_such_stage", configs) == (
                     BCSDOrchestrator._DEFAULT_VM_TYPE
                 )
+
+
+# ---------------------------------------------------------------------------
+# AWS Batch: resource sizing and job submission
+# ---------------------------------------------------------------------------
+
+
+class TestAwsBatchResources:
+    def test_global_transform_scenario_fills_r8g_24xlarge(self, orchestrator, config):
+        res = orchestrator._resources_for("transform_scenario", [config])
+        assert res == {"vcpu": 96, "memory_mib": 737280}
+
+    def test_regional_batch_uses_smaller_resources(self, orchestrator):
+        regional = _make_config(subset_bounds=_SA_BOUNDS)
+        res = orchestrator._resources_for("transform_scenario", [regional])
+        assert res == {"vcpu": 16, "memory_mib": 122880}
+
+    def test_mixed_batch_is_treated_as_global(self, orchestrator, config):
+        regional = _make_config(subset_bounds=_SA_BOUNDS)
+        res = orchestrator._resources_for("fit_historical", [config, regional])
+        assert res == {"vcpu": 48, "memory_mib": 368640}
+
+
+class TestSubmitBatchJob:
+    def test_multi_task_wave_submits_an_array_job(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            job_id = orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        assert job_id == "abc-123"
+        kwargs = client.submit_job.call_args.kwargs
+        assert kwargs["arrayProperties"] == {"size": len(multi_configs)}
+        env = {e["name"]: e["value"] for e in kwargs["containerOverrides"]["environment"]}
+        assert env["CONFIG_MANIFEST_URI"] == "s3://bucket/manifest.json"
+        assert "CONFIG_JSON" not in env
+
+    def test_single_task_wave_submits_a_plain_job_with_config_json(self, orchestrator, config):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "solo-1"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job("fit_historical", [config], None)
+        kwargs = client.submit_job.call_args.kwargs
+        assert "arrayProperties" not in kwargs
+        env = {e["name"]: e["value"] for e in kwargs["containerOverrides"]["environment"]}
+        assert json.loads(env["CONFIG_JSON"])["variable"] == config.variable
+
+    def test_submission_carries_retries_and_project_tag(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        kwargs = client.submit_job.call_args.kwargs
+        assert kwargs["retryStrategy"] == {"attempts": 3}
+        assert kwargs["tags"] == {"Project": "SRM"}
+        assert kwargs["propagateTags"] is True
+
+    def test_submission_requests_stage_resources(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        reqs = {
+            r["type"]: r["value"]
+            for r in client.submit_job.call_args.kwargs["containerOverrides"][
+                "resourceRequirements"
+            ]
+        }
+        assert reqs == {"VCPU": "96", "MEMORY": "737280"}

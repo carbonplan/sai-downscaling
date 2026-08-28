@@ -9,6 +9,7 @@ across ensemble members and scenarios, and submits only the necessary tasks.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Callable
 from typing import Literal
@@ -104,6 +105,130 @@ class BCSDOrchestrator:
         """
         table = cls._REGIONAL_STAGE_VM_TYPES if cls._is_regional(configs) else cls._STAGE_VM_TYPES
         return table.get(stage, cls._DEFAULT_VM_TYPE)
+
+    # AWS Batch takes resource requirements rather than instance types and picks the
+    # instance itself. Each entry is sized to fill one instance of the class the Coiled
+    # path requested, leaving ECS headroom, because every task uses all of its VM's cores
+    # through threaded Dask and must not share a host.
+    _STAGE_RESOURCES: dict[str, dict[str, int]] = {
+        "prepare_observations": {"vcpu": 16, "memory_mib": 122880},  # r8g.4xlarge
+        "fit_historical": {"vcpu": 48, "memory_mib": 368640},  # r8g.12xlarge
+        "transform_scenario": {"vcpu": 96, "memory_mib": 737280},  # r8g.24xlarge
+    }
+
+    _REGIONAL_STAGE_RESOURCES: dict[str, dict[str, int]] = {
+        "prepare_observations": {"vcpu": 8, "memory_mib": 61440},  # r8g.2xlarge
+        "fit_historical": {"vcpu": 8, "memory_mib": 61440},  # r8g.2xlarge
+        "transform_scenario": {"vcpu": 16, "memory_mib": 122880},  # r8g.4xlarge
+    }
+
+    @classmethod
+    def _resources_for(cls, stage: str, configs: list[BCSDConfig]) -> dict[str, int]:
+        """
+        Select vCPU and memory for a stage, scaled to the batch's spatial extent.
+
+        Parameters
+        ----------
+        stage : str
+            Pipeline stage name.
+        configs : list[BCSDConfig]
+            Configurations making up a single batch submission.
+
+        Returns
+        -------
+        dict[str, int]
+            Mapping with ``vcpu`` and ``memory_mib`` keys.
+        """
+        table = cls._REGIONAL_STAGE_RESOURCES if cls._is_regional(configs) else cls._STAGE_RESOURCES
+        return table[stage]
+
+    def _config_payload_json(self, config: BCSDConfig) -> str:
+        """Serialize one task's ``CONFIG_JSON`` payload.
+
+        Computed fields (``run_id``, ``config_hash``, ``is_sai_scenario``) are excluded
+        because ``BCSDConfig`` does not accept them as constructor inputs.
+        """
+        computed_fields = set(BCSDConfig.model_computed_fields.keys())
+        return json.dumps(
+            {
+                **config.model_dump(exclude=computed_fields),
+                "options": self.options.model_dump(),
+            }
+        )
+
+    def _job_name(self, stage: str, configs: list[BCSDConfig]) -> str:
+        """Build the deterministic job name shared by both remote executors."""
+        gcms = "-".join(sorted({c.gcm for c in configs}))
+        variables = "-".join(sorted({c.variable for c in configs}))
+        batch_hash = hashlib.sha256(
+            "".join(sorted(c.config_hash for c in configs)).encode()
+        ).hexdigest()[:8]
+        return f"bcsd-{stage}-{gcms}-{variables}-{batch_hash}"
+
+    def _submit_batch_job(
+        self, stage: str, configs: list[BCSDConfig], manifest_uri: str | None
+    ) -> str:
+        """
+        Submit one AWS Batch job covering ``configs`` and return its job ID.
+
+        A wave of two or more tasks becomes an array job whose children index into
+        ``manifest_uri``. A wave of exactly one task becomes a plain job carrying
+        ``CONFIG_JSON`` directly, because ``arrayProperties.size`` must be at least 2.
+
+        Parameters
+        ----------
+        stage : str
+            Pipeline stage name.
+        configs : list[BCSDConfig]
+            Configurations to run, in array-index order.
+        manifest_uri : str or None
+            Manifest location. Required when ``configs`` holds more than one entry.
+
+        Returns
+        -------
+        str
+            AWS Batch job ID.
+        """
+        import boto3
+
+        client = boto3.client("batch", region_name=self.options.batch_region)
+        resources = self._resources_for(stage, configs)
+        environment = [{"name": "SRM_STAGE", "value": stage}]
+
+        if len(configs) == 1:
+            environment.append(
+                {"name": "CONFIG_JSON", "value": self._config_payload_json(configs[0])}
+            )
+            array_kwargs: dict = {}
+        else:
+            if manifest_uri is None:
+                raise ValueError("manifest_uri is required for a multi-task AWS Batch submission")
+            environment.append({"name": "CONFIG_MANIFEST_URI", "value": manifest_uri})
+            array_kwargs = {"arrayProperties": {"size": len(configs)}}
+
+        response = client.submit_job(
+            jobName=self._job_name(stage, configs),
+            jobQueue=self.options.batch_job_queue,
+            jobDefinition=self.options.batch_job_definition,
+            containerOverrides={
+                "command": ["uv", "run", "--no-sync", "python", "-m", "srm.batch_runner", stage],
+                "environment": environment,
+                "resourceRequirements": [
+                    {"type": "VCPU", "value": str(resources["vcpu"])},
+                    {"type": "MEMORY", "value": str(resources["memory_mib"])},
+                ],
+            },
+            retryStrategy={"attempts": 3},
+            tags={"Project": "SRM"},
+            propagateTags=True,
+            **array_kwargs,
+        )
+        logger.info(
+            f"→ {stage}: submitted AWS Batch job {response['jobId']} "
+            f"({len(configs)} task(s), {resources['vcpu']} vCPU, "
+            f"extent={'regional' if self._is_regional(configs) else 'global'})"
+        )
+        return response["jobId"]
 
     # Every batch runs on-demand regardless of spatial extent. Regional runs were briefly
     # placed on spot to cut cost, but reclamation was frequent enough that jobs failed
@@ -312,15 +437,10 @@ class BCSDOrchestrator:
             If batch job fails or outputs not found in cache
         """
         try:
-            import json
-
             import coiled
         except ImportError:
             raise ImportError("Coiled is not installed. Install with: uv pip install coiled")
 
-        # Exclude computed fields (run_id, config_hash, is_sai_scenario) since they
-        # are derived values and BCSDConfig does not accept them as constructor inputs.
-        computed_fields = set(BCSDConfig.model_computed_fields.keys())
         cache = self._get_cache()
         command = ["python", "-m", "srm.batch_runner", stage]
 
@@ -343,22 +463,9 @@ class BCSDOrchestrator:
                 )
 
             task_var_dicts = [
-                {
-                    "CONFIG_JSON": json.dumps(
-                        {
-                            **config.model_dump(exclude=computed_fields),
-                            "options": self.options.model_dump(),
-                        }
-                    )
-                }
-                for config in remaining
+                {"CONFIG_JSON": self._config_payload_json(config)} for config in remaining
             ]
-
-            gcms = "-".join(sorted({c.gcm for c in remaining}))
-            variables = "-".join(sorted({c.variable for c in remaining}))
-            config_hashes: list[str] = [c.config_hash for c in remaining]
-            batch_hash = hashlib.sha256("".join(sorted(config_hashes)).encode()).hexdigest()[:8]
-            job_name = f"bcsd-{stage}-{gcms}-{variables}-{batch_hash}"
+            job_name = self._job_name(stage, remaining)
 
             job_result = coiled.batch.run(
                 command=command,
