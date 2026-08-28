@@ -115,10 +115,17 @@ jobs:
         timeout-minutes: 120
         runs-on: ubuntu-latest
         if: github.event_name == 'release'
+        needs: image
         environment:
             name: qa
         env:
             TAG: ${{ github.event.release.tag_name }}
+            # The srm-qa queue, not srm-production: this runs alongside the production job
+            # on the same release, and the baseline is a small regional run that must not
+            # delay the global one. srm-production outranks it on the shared compute
+            # environment.
+            BCSD_BATCH_JOB_QUEUE: srm-qa
+            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
         steps:
             - uses: actions/checkout@v7
               with:
@@ -126,11 +133,9 @@ jobs:
             - uses: ./.github/actions/setup
 
             - name: Run BCSD pipeline (snapshot baseline)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
               # No --branch: at a release tag the default branch is the package version, which
               # is the name baselines.py cites.
-              run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
+              run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/ --executor aws-batch
 
             - name: Validate output datasets (snapshot baseline)
               env:
