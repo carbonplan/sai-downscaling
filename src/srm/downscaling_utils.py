@@ -15,7 +15,7 @@ import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 from xarray_regrid.utils import format_for_regrid
 
-from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
+from srm.bcsd_config import DetrendMethod, DisaggregationClimMethod, DisaggregationMethod
 from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
 from srm.qa_checks import assert_no_nans
@@ -564,8 +564,13 @@ def interpolate_coarse_to_fine_grid(
     )
 
 
-def fft_smooth_3harmonics(data):
-    """Apply FFT and retain only mean + 3 harmonics"""
+def fft_smooth_nharmonics(data: np.ndarray, num_harmonics: int = 3) -> np.ndarray:
+    """Smooth a day-of-year cycle by keeping the mean plus the first N harmonics"""
+    n = data.shape[-1]
+    if not 1 <= num_harmonics <= n // 2:
+        raise ValueError(
+            f"num_harmonics must be between 1 and {n // 2} for a series of length {n}, got {num_harmonics}"
+        )
     # Handle NaN values
     if np.all(np.isnan(data)):
         return data
@@ -573,11 +578,17 @@ def fft_smooth_3harmonics(data):
     # Compute FFT
     Z = np.fft.fft(data)
 
-    # Create filtered version: keep mean (0) + first 3 harmonics (1,2,3 and -3,-2,-1)
+    # Create filtered version: keep mean (0) + first num_harmonics harmonics
+    # e.g. if num_harmonics is 3, keep first 3 harmonics (1,2,3 and -3,-2,-1)
     Z_filtered = np.zeros_like(Z)
     Z_filtered[0] = Z[0]  # mean (DC component)
-    Z_filtered[1:4] = Z[1:4]  # positive frequencies (harmonics 1-3)
-    Z_filtered[-3:] = Z[-3:]  # negative frequencies (harmonics 1-3)
+    if num_harmonics:
+        Z_filtered[1 : (num_harmonics + 1)] = Z[
+            1 : (num_harmonics + 1)
+        ]  # positive frequencies (harmonics 1-3 if num_harmonics==3)
+        Z_filtered[-num_harmonics:] = Z[
+            -num_harmonics:
+        ]  # negative frequencies (harmonics 1-3 if num_harmonics==3)
 
     # Inverse FFT to get smoothed time series
     smoothed = np.real(np.fft.ifft(Z_filtered)).astype(data.dtype)
@@ -587,7 +598,7 @@ def fft_smooth_3harmonics(data):
 
 def calculate_doy_means(
     da: xr.DataArray,
-    clim_method: DownscalingClimMethod = "simple",
+    clim_method: DisaggregationClimMethod = "simple",
     allow_negative_values: bool = True,
 ) -> xr.DataArray:
     """
@@ -616,10 +627,24 @@ def calculate_doy_means(
     if clim_method == "simple":
         return da_xr_doy_mean
 
+    elif clim_method == "simple_rolling":
+        # Note that this rolling mean is used for smoothing the day-of-year climatology in the spatial disaggregation step,
+        # and is allowed to be different from the running_window_length used for the bias correction step. running_window_length is
+        # a parameter defined in bcsd_config.py, while rolling_window is hard-coded here to 31 days
+        rolling_window = 31
+        clim_rolling_window = (
+            da_xr_doy_mean.pad(dayofyear=rolling_window, mode="wrap")
+            .rolling(dayofyear=rolling_window, center=True)
+            .mean()
+            .isel(dayofyear=slice(rolling_window, -rolling_window))
+            .assign_coords(dayofyear=da_xr_doy_mean.dayofyear)
+        )
+        return clim_rolling_window
+
     elif clim_method == "fft":
         # Apply FFT smoothing along the time dimension
         obs_fine_doy_means_smoothed = xr.apply_ufunc(
-            fft_smooth_3harmonics,
+            fft_smooth_nharmonics,
             da_xr_doy_mean.load(),
             input_core_dims=[["dayofyear"]],
             output_core_dims=[["dayofyear"]],
@@ -651,11 +676,13 @@ def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    method: DownscalingMethod = "additive",
-    clim_method: DownscalingClimMethod = "simple",
+    method: DisaggregationMethod = "additive",
+    clim_method: DisaggregationClimMethod = "simple",
     allow_negative_values: bool = True,
     max_residual: float = 100,
+    tiny_threshold: float = 0.0,
     enforce_conservation: bool = False,
+    use_tiny_threshold: bool = False,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
@@ -712,19 +739,33 @@ def downscale_from_coarse(
     if method == "additive":
         residuals = da.groupby("time.dayofyear") - obs_coarse_doy_means
     elif method == "multiplicative":
-        # Guard the denominator: where coarse climatology is zero (dry cells/days),
-        # the NCL reference forces the ratio to 0 rather than producing inf/NaN.
-        # Replace exact zeros with NaN so the division yields NaN, then fill those
-        # specific locations with 0 after dividing.
-        zero_clim = obs_coarse_doy_means == 0
-        safe_clim = obs_coarse_doy_means.where(~zero_clim)  # zeros -> NaN
+        if use_tiny_threshold:
+            replacement_residual = 1.0
+
+            tiny_clim = obs_coarse_doy_means < tiny_threshold
+            safe_clim = obs_coarse_doy_means.where(
+                ~tiny_clim
+            )  # less than tiny threshold becomes NaN
+        else:
+            # Guard the denominator: where coarse climatology is zero (dry cells/days),
+            # the NCL reference forces the ratio to 0 rather than producing inf/NaN.
+            # Replace exact zeros with NaN so the division yields NaN, then fill those
+            # specific locations with 0 after dividing.
+            zero_clim = obs_coarse_doy_means == 0
+            safe_clim = obs_coarse_doy_means.where(~zero_clim)  # zeros -> NaN
 
         residuals = da.groupby("time.dayofyear") / safe_clim
 
         # Force ratio to 0 exactly where the coarse climatology was zero.
         # Broadcast the per-DOY zero mask back onto the time axis.
-        zero_clim_on_time = zero_clim.sel(dayofyear=da["time"].dt.dayofyear)
-        residuals = residuals.where(~zero_clim_on_time, 0.0).clip(max=max_residual)
+        if use_tiny_threshold:
+            tiny_clim_on_time = tiny_clim.sel(dayofyear=da["time"].dt.dayofyear)
+            residuals = residuals.where(~tiny_clim_on_time, replacement_residual).clip(
+                max=max_residual
+            )
+        else:
+            zero_clim_on_time = zero_clim.sel(dayofyear=da["time"].dt.dayofyear)
+            residuals = residuals.where(~zero_clim_on_time, 0.0).clip(max=max_residual)
 
     assert_no_nans(residuals, name="residuals")
 
@@ -752,6 +793,20 @@ def downscale_from_coarse(
         downscaled = residuals_fine.groupby("time.dayofyear") + obs_fine_doy_means
     elif method == "multiplicative":
         downscaled = residuals_fine.groupby("time.dayofyear") * obs_fine_doy_means
+        if use_tiny_threshold:
+            # find whenever the obs doy means are less than the variable-specific tiny threshold
+            tiny_fine_clim_on_time = (obs_fine_doy_means < tiny_threshold).sel(
+                dayofyear=residuals_fine["time"].dt.dayofyear
+            )
+            obs_fine_doy_means_simple = calculate_doy_means(
+                obs_fine, clim_method="simple", allow_negative_values=allow_negative_values
+            )
+            obs_fine_doy_means_on_time = obs_fine_doy_means_simple.sel(
+                dayofyear=downscaled["time"].dt.dayofyear
+            )
+            # replace all days of year when the doy mean is tiny (or smaller) with the
+            # mean obs climatology. This will be daily means - so will likely be a drizzle.
+            downscaled = downscaled.where(~tiny_fine_clim_on_time, obs_fine_doy_means_on_time)
 
     # Optional Step 6: Enforce conservation of the coarse-scale mean after downscaling
     if enforce_conservation:

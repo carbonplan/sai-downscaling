@@ -15,13 +15,14 @@ from srm.pipeline import BCSDPipeline
 def _make_config(**overrides) -> BCSDConfig:
     defaults = dict(
         gcm="MIROC-ES2H",
+        downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r01",
         scenario="G6-1.5K",
         predict_period_start=2015,
         predict_period_end=2100,
         subset_bounds=(-35.0, -22.0, 16.0, 33.0),
-        variable_config=VariableConfig.for_variable("tas").model_copy(
+        variable_config=VariableConfig.for_variable("tas", "BCSD").model_copy(
             update={"debias_approach": "nonparametric_hybrid"}
         ),
     )

@@ -141,16 +141,16 @@ class BCSDOrchestrator:
         config: BCSDConfig,
         hist_member: str | None = None,
     ) -> StoreLocation:
-        """Return the StoreLocation for a stage/config, binding config to cache."""
+        """Return the StoreLocation for a stage/config, binding config to cache.
+
+        The stage-to-artifact mapping itself lives in
+        :meth:`~srm.cache.ArtifactCache.stage_loc`, shared with the pipeline's write path
+        and the downstream dependency gate. Coarse-only variables (issue #461) therefore
+        skip, retry, and report against their ``debiased_coarse`` group here without this
+        method needing to know about them.
+        """
         cache.config = config
-        if stage == "prepare_observations":
-            return cache.obs_loc
-        elif stage == "fit_historical":
-            return cache.historical_loc(hist_member or config.ensemble_member)
-        elif stage == "transform_scenario":
-            return cache.scenario_loc
-        else:
-            raise ValueError(f"Unknown stage: {stage}")
+        return cache.stage_loc(stage, config, hist_member=hist_member)
 
     # Stages where tasmin reconstructs itself from its sibling tasmax/dtr stores
     # and therefore must run after them. Other stages (obs regridding) have no
@@ -565,6 +565,10 @@ class BCSDOrchestrator:
         separate historical tasks. obs_dataset is part of the key because the
         historical artifact store path embeds it and fit_historical bias-corrects
         against obs; different obs_datasets require separate historical fits.
+        downscaling_method is part of the key because fit_historical writes its
+        output under a leading method segment (``{method}/historical/...`` and
+        ``{method}/debiased_coarse/historical/...``); two configs differing only in
+        method write different artifacts, so each one has to run.
 
         Parameters
         ----------
@@ -583,6 +587,7 @@ class BCSDOrchestrator:
                 config.gcm,
                 config.obs_dataset,
                 config.variable,
+                config.downscaling_method,
                 self._resolve_hist_member(config),
             )
             if key not in seen:

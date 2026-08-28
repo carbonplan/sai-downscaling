@@ -51,9 +51,11 @@ def _make_config(
     ensemble_member="r1i1p1f1",
     scenario="SSP245",
     subset_bounds=None,
+    downscaling_method="BCSD",
 ) -> BCSDConfig:
     return BCSDConfig(
         gcm=gcm,
+        downscaling_method=downscaling_method,
         variable=variable,
         ensemble_member=ensemble_member,
         scenario=scenario,
@@ -171,6 +173,35 @@ class TestDeduplicateHistorical:
 
     def test_empty_configs_returns_empty(self, orchestrator):
         assert orchestrator._deduplicate_historical_configs([]) == []
+
+    def test_different_downscaling_method_not_deduplicated(self, orchestrator):
+        """fit_historical writes under a leading method segment, so each method must run.
+
+        The two configs are identical apart from ``downscaling_method``. A method-blind
+        key collapses them into one task, and the method that loses the race never gets
+        its ``{method}/historical/...`` artifact written.
+        """
+        bcsd = _make_config(downscaling_method="BCSD")
+        qdmsd = _make_config(downscaling_method="QDMSD")
+        result = orchestrator._deduplicate_historical_configs([bcsd, qdmsd])
+        assert [c.downscaling_method for c in result] == ["BCSD", "QDMSD"]
+
+    def test_same_method_still_deduplicates(self, orchestrator):
+        """Adding the method to the key must not stop same-method configs collapsing."""
+        result = orchestrator._deduplicate_historical_configs(
+            [_make_config(downscaling_method="QDMSD"), _make_config(downscaling_method="QDMSD")]
+        )
+        assert len(result) == 1
+
+
+class TestDeduplicateObsIsMethodBlind:
+    """obs/{variable} is shared across methods, so the obs key must stay method-blind."""
+
+    def test_different_downscaling_method_deduplicates(self, orchestrator):
+        result = orchestrator._deduplicate_obs_configs(
+            [_make_config(downscaling_method="BCSD"), _make_config(downscaling_method="QDMSD")]
+        )
+        assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +347,59 @@ class TestTasminOrdering:
         # result[i] must correspond to configs[i] even though tasmin ran last
         assert "tasmin" in result[0]
         assert "tasmax" in result[1]
+
+
+# ---------------------------------------------------------------------------
+# coarse-only variables: dtr is bias corrected so tasmin can be derived from it, but
+# is never disaggregated, so its debiased_coarse group is what marks a stage complete
+# (issue #461).
+# ---------------------------------------------------------------------------
+
+
+class TestCoarseOnlyStageLoc:
+    def test_fit_historical_points_at_the_coarse_group(self, orchestrator):
+        config = _make_config(variable="dtr", ensemble_member="008")
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "fit_historical", config, hist_member="001")
+        assert loc.group == "bcsd/debiased_coarse/historical/dtr/001"
+
+    def test_transform_scenario_points_at_the_coarse_group(self, orchestrator):
+        config = _make_config(variable="dtr", ensemble_member="008")
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        assert loc.group == "bcsd/debiased_coarse/ssp245/dtr/008"
+
+    def test_normal_variable_still_points_at_the_fine_group(self, orchestrator):
+        config = _make_config(variable="tas", ensemble_member="003")
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        assert loc.group == "bcsd/ssp245/tas/003"
+
+    def test_submit_stage_skips_dtr_when_only_the_coarse_group_exists(self, orchestrator):
+        # Without this, a finished dtr task looks uncached and re-runs every invocation.
+        config = _make_config(variable="dtr", ensemble_member="008")
+        cache = orchestrator._get_cache()
+        cache.config = config
+        coarse_loc = cache.debiased_coarse_scenario_loc()
+        _make_icechunk_group(coarse_loc, branch=cache.branch)
+
+        with patch.object(orchestrator, "_run_local") as mock_local:
+            result = orchestrator.submit_stage("transform_scenario", [config], use_coiled=False)
+
+        mock_local.assert_not_called()
+        assert result == [f"{coarse_loc.store_path}::{coarse_loc.group}"]
+
+    def test_submit_stage_does_not_skip_dtr_on_a_stale_fine_group(self, orchestrator):
+        # A fine dtr group left behind by a pre-#461 run must not read as complete.
+        config = _make_config(variable="dtr", ensemble_member="008")
+        cache = orchestrator._get_cache()
+        cache.config = config
+        _make_icechunk_group(cache.scenario_loc, branch=cache.branch)
+
+        with patch.object(orchestrator, "_run_local", return_value=["computed"]) as mock_local:
+            orchestrator.submit_stage("transform_scenario", [config], use_coiled=False)
+
+        mock_local.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
