@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 import xarray as xr
 
+from srm.bcsd_config import METHOD_SEGMENTS
 from srm.snapshot.tolerances import Tolerance
 
 #: Verdict for a leaf with no caller-supplied tolerance. Exact equality is the strictest
@@ -219,6 +220,36 @@ def _iter_leaf_datasets(obj: xr.Dataset | xr.DataTree) -> Iterator[tuple[str, xr
     raise TypeError(f"Expected xr.Dataset or xr.DataTree, got {type(obj)}")
 
 
+def _select_matching_branch(
+    candidate: xr.Dataset | xr.DataTree, snapshot: xr.Dataset | xr.DataTree
+) -> xr.Dataset | xr.DataTree:
+    """Narrow ``candidate`` to the branch whose leaf paths line up with ``snapshot``.
+
+    Method-dependent groups are namespaced under a leading downscaling-method segment
+    (``bcsd``, ``qdmsd``; see :data:`srm.bcsd_config.METHOD_SEGMENTS`), so a
+    method-namespaced candidate's leaves sit one level deeper than a pre-namespacing
+    snapshot's (``bcsd/g6_1p5k/tas/003/tas`` vs ``g6_1p5k/tas/003/tas``).
+    :func:`compare` matches leaves by literal path, so diffing the two trees as-is would
+    report every leaf on both sides as missing, even though the same data exists one
+    level down. When the candidate's top level holds only method segments and the
+    snapshot's does not, descend into the candidate's ``bcsd`` branch -- the layout every
+    pre-namespacing snapshot corresponds to -- so leaf paths line up again. Any other
+    combination (both namespaced, neither namespaced, a bare Dataset, or a candidate
+    with no ``bcsd`` branch) is returned unchanged.
+    """
+    if not (isinstance(candidate, xr.DataTree) and isinstance(snapshot, xr.DataTree)):
+        return candidate
+    cand_children = set(candidate.children)
+    if not cand_children or not cand_children <= METHOD_SEGMENTS:
+        return candidate
+    snap_children = set(snapshot.children)
+    if snap_children and snap_children <= METHOD_SEGMENTS:
+        return candidate  # snapshot is namespaced too; paths already line up
+    if "bcsd" not in candidate.children:
+        return candidate
+    return candidate["bcsd"]
+
+
 def compare(
     candidate: xr.Dataset | xr.DataTree,
     snapshot: xr.Dataset | xr.DataTree,
@@ -248,6 +279,11 @@ def compare(
     """
     if type(candidate) is not type(snapshot):
         raise TypeError(f"candidate ({type(candidate)}) and snapshot ({type(snapshot)}) must match")
+
+    # A method-namespaced candidate diffed against a pre-namespacing snapshot has its
+    # leaves one level deeper than the snapshot's; see _select_matching_branch. Narrowed
+    # first so every leaf below is looked up under matching paths.
+    candidate = _select_matching_branch(candidate, snapshot)
 
     snapshot_groups = dict(_iter_leaf_datasets(snapshot))
     leaves: list[LeafDiff] = []

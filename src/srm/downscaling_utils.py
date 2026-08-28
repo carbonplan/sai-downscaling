@@ -15,7 +15,7 @@ import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 from xarray_regrid.utils import format_for_regrid
 
-from srm.bcsd_config import DetrendMethod, DownscalingClimMethod, DownscalingMethod
+from srm.bcsd_config import DetrendMethod, DisaggregationClimMethod, DisaggregationMethod
 from srm.config import SCENARIO_TO_GROUP
 from srm.datasets import catalog
 from srm.qa_checks import assert_no_nans
@@ -598,7 +598,7 @@ def fft_smooth_nharmonics(data: np.ndarray, num_harmonics: int = 3) -> np.ndarra
 
 def calculate_doy_means(
     da: xr.DataArray,
-    clim_method: DownscalingClimMethod = "simple",
+    clim_method: DisaggregationClimMethod = "simple",
     allow_negative_values: bool = True,
 ) -> xr.DataArray:
     """
@@ -676,8 +676,8 @@ def downscale_from_coarse(
     da: xr.DataArray,
     obs_coarse: xr.DataArray,
     obs_fine: xr.DataArray,
-    method: DownscalingMethod = "additive",
-    clim_method: DownscalingClimMethod = "simple",
+    method: DisaggregationMethod = "additive",
+    clim_method: DisaggregationClimMethod = "simple",
     allow_negative_values: bool = True,
     max_residual: float = 100,
     tiny_threshold: float = 0.0,

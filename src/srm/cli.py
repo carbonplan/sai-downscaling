@@ -24,7 +24,7 @@ from rich.logging import RichHandler
 from rich.table import Table
 from rich.tree import Tree
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
+from srm.bcsd_config import BCSDConfig, DownscalingMethod, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
 from srm.orchestration import BCSDOrchestrator
 from srm.validation import CheckResult, CheckStatus
@@ -101,11 +101,16 @@ def _build_check_matrix_table(
     return tbl
 
 
+# (plural key, singular key, BCSDConfig field). The first four axes select a slice of
+# input data. 'downscaling_method' is different in kind: it selects an algorithm, and
+# picks which per-variable defaults table VariableConfig is built from, so expanding
+# over it re-derives variable_config per combination rather than reusing one.
 _MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("gcms", "gcm", "gcm"),
     ("variables", "variable", "variable"),
     ("ensemble_members", "ensemble_member", "ensemble_member"),
     ("scenarios", "scenario", "scenario"),
+    ("downscaling_methods", "downscaling_method", "downscaling_method"),
 )
 
 
@@ -348,6 +353,7 @@ def _validate_variable_overrides(overrides: dict, variables: list[str]) -> None:
 
 def _resolve_variable_config(
     variable: str,
+    downscaling_method: DownscalingMethod,
     run_wide: dict | None = None,
     overrides: dict[str, dict] | None = None,
 ) -> VariableConfig:
@@ -360,10 +366,16 @@ def _resolve_variable_config(
     rather than ``model_copy(update=...)`` because ``model_copy`` does not validate,
     which previously let bad values through to the pipeline.
 
+    ``downscaling_method`` selects which defaults table the first tier comes from,
+    since BCSD and QDMSD disagree on more than one field (detrending, window length,
+    window step, and debias_approach all differ).
+
     Parameters
     ----------
     variable : str
         Variable name, used to look up the table defaults.
+    downscaling_method : DownscalingMethod
+        Which defaults table to start from, ``"BCSD"`` or ``"QDMSD"``.
     run_wide : dict or None
         Values applied to every variable in the run.
     overrides : dict[str, dict] or None
@@ -374,8 +386,10 @@ def _resolve_variable_config(
     VariableConfig
         Fully resolved and validated config for ``variable``.
     """
-    merged = VariableConfig.for_variable(variable).model_dump()
-    for source in (run_wide or {}, (overrides or {}).get(variable, {})):
+    run_wide = run_wide or {}
+    var_overrides = (overrides or {}).get(variable, {})
+    merged = VariableConfig.for_variable(variable, downscaling_method).model_dump()
+    for source in (run_wide, var_overrides):
         merged.update({k: v for k, v in source.items() if v is not None})
     return VariableConfig(**merged)
 
@@ -422,11 +436,63 @@ def _is_matrix_config(config_dict: dict) -> bool:
     )
 
 
+def _reject_debias_approach_across_methods(
+    methods: list,
+    run_wide_debias_approach: str | None,
+    overrides: dict[str, dict] | None,
+) -> None:
+    """
+    Reject an explicit ``debias_approach`` when the matrix spans more than one method.
+
+    ``BCSDConfig`` pins ``debias_approach='qdm'`` to ``downscaling_method='QDMSD'`` and
+    forbids it under ``'BCSD'``, so any single explicit value contradicts one arm of a
+    multi-method product. Raising here names the matrix as the cause. Letting the
+    cross-field invariant fire instead produces an error that reads like a typo in one
+    config rather than an unsatisfiable combination.
+
+    Parameters
+    ----------
+    methods : list
+        The resolved ``downscaling_method`` axis.
+    run_wide_debias_approach : str or None
+        A ``debias_approach`` applied to every variable in the run.
+    overrides : dict[str, dict] or None
+        Per-variable overrides, checked for their own ``debias_approach`` entries.
+    """
+    if len(methods) <= 1:
+        return
+    remedy = (
+        "'qdm' requires 'QDMSD' and 'QDMSD' requires 'qdm', so one method in the matrix "
+        "would always contradict it. Drop the value and let each method's defaults table "
+        "supply it, or run one method at a time."
+    )
+    if run_wide_debias_approach:
+        raise ValueError(
+            f"Cannot combine a run-wide 'debias_approach' ({run_wide_debias_approach!r}) "
+            f"with multiple downscaling methods ({methods}). {remedy}"
+        )
+    flagged = sorted(v for v, fields in (overrides or {}).items() if fields.get("debias_approach"))
+    if flagged:
+        raise ValueError(
+            f"Cannot set 'debias_approach' in variable_overrides for {flagged} with "
+            f"multiple downscaling methods ({methods}). {remedy}"
+        )
+
+
 def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
     """Expand a matrix config dict into one BCSDConfig per cartesian-product combination."""
     d = dict(config_dict)
     axes: dict[str, list] = {}
     for plural, singular, field in _MATRIX_FIELDS:
+        # Both spellings name the same axis. Popping only the winner would leave the
+        # loser in `d`, where it reaches the constructor as a second value for a keyword
+        # the product loop already passes.
+        if plural in d and singular in d:
+            raise ValueError(
+                f"Config sets both {plural!r} and {singular!r}, which are two spellings of "
+                f"the same axis. Keep {plural!r} for a list of values or {singular!r} for a "
+                "single one, not both."
+            )
         if plural in d:
             val = d.pop(plural)
         elif singular in d:
@@ -439,7 +505,30 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
     if overrides:
         _validate_variable_overrides(overrides, axes["variable"])
 
+    # A top-level 'debias_approach' applies to every variable in the matrix, e.g.
+    # switching a whole run between standard quantile mapping and quantile delta
+    # mapping. It has to be popped out of `d` here rather than left for BCSDConfig,
+    # which rejects 'debias_approach' at the top level since it's a per-variable
+    # setting everywhere else.
+    run_wide_debias_approach = d.pop("debias_approach", None)
+    run_wide = {"debias_approach": run_wide_debias_approach} if run_wide_debias_approach else {}
+
+    # 'downscaling_method' was popped into `axes` with the other expandable fields, so
+    # unlike them it has to be handed back to the constructor explicitly below. Each
+    # entry also picks which per-variable defaults table _resolve_variable_config starts
+    # from, which is why variable_config is resolved inside the product loop.
+    methods = axes["downscaling_method"]
+    _reject_debias_approach_across_methods(methods, run_wide_debias_approach, overrides)
+
     if "variable_config" in d:
+        if len(methods) > 1:
+            raise ValueError(
+                "Cannot use 'variable_config' with multiple 'downscaling_methods' "
+                f"({methods}). An explicit 'variable_config' is passed through verbatim to "
+                "every combination, and its 'debias_approach' can only agree with one "
+                "method. Drop 'variable_config' and let each method's defaults table supply "
+                "it, or run one method at a time."
+            )
         if len(axes["variable"]) > 1:
             raise ValueError(
                 "Cannot use 'variable_config' in a matrix config with multiple variables "
@@ -453,14 +542,32 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
                 "silently discarded. Fold the override values into 'variable_config', or "
                 "drop 'variable_config' and use 'variable_overrides' alone."
             )
+        if run_wide_debias_approach:
+            raise ValueError(
+                "Cannot combine 'variable_config' with a top-level 'debias_approach'. An "
+                "explicit 'variable_config' is passed through verbatim, so the top-level "
+                "value would be silently discarded. Fold 'debias_approach' into "
+                "'variable_config', or drop 'variable_config' and use the top-level key alone."
+            )
 
     configs = []
-    for gcm, variable, member, scenario in itertools.product(
-        axes["gcm"], axes["variable"], axes["ensemble_member"], axes["scenario"]
+    for gcm, variable, member, scenario, method in itertools.product(
+        axes["gcm"],
+        axes["variable"],
+        axes["ensemble_member"],
+        axes["scenario"],
+        axes["downscaling_method"],
     ):
         kwargs = dict(d)
-        if "variable_config" not in kwargs:
-            kwargs["variable_config"] = _resolve_variable_config(variable, None, overrides)
+        # When the key is missing, leave both downscaling_method and variable_config out
+        # of the kwargs so BCSDConfig raises the single "downscaling_method is required"
+        # error rather than a table lookup failure or a None-is-not-a-valid-method error.
+        if method is not None:
+            kwargs["downscaling_method"] = method
+            if "variable_config" not in kwargs:
+                kwargs["variable_config"] = _resolve_variable_config(
+                    variable, method, run_wide, overrides
+                )
         configs.append(
             BCSDConfig(
                 gcm=gcm,
@@ -540,20 +647,22 @@ def configs_from_matrix(
     branch: str = "main",
     subset_bounds: tuple[float, float, float, float] | None = None,
     save_intermediate: bool = False,
+    downscaling_methods: list[DownscalingMethod],
     debias_approach: str | None = None,
     verbose: bool = False,
     # VariableConfig overrides (None = use per-variable default)
     detrend_data: bool | None = None,
     do_windowing: bool | None = None,
     running_window_length: int | None = None,
-    downscaling_method: str | None = None,
-    downscaling_clim_method: str | None = None,
+    running_window_step_length: int | None = None,
+    disaggregation_method: str | None = None,
+    disaggregation_clim_method: str | None = None,
     detrend_method: str | None = None,
     variable_overrides: dict[str, dict] | None = None,
 ) -> tuple[list[BCSDConfig], PipelineOptions]:
     """
     Generate BCSDConfig objects for every cartesian-product combination of GCMs,
-    variables, ensemble members, and scenarios.
+    variables, ensemble members, scenarios, and downscaling methods.
 
     Parameters
     ----------
@@ -585,10 +694,15 @@ def configs_from_matrix(
         Spatial bounds as (lat_min, lat_max, lon_min, lon_max)
     save_intermediate : bool
         Save intermediate artifacts (detrended, debiased, etc.) to cache
+    downscaling_methods : list[DownscalingMethod]
+        Downscaling methods to expand over: "BCSD" (detrend + quantile mapping) and
+        "QDMSD" (quantile delta mapping). Each entry selects a per-variable defaults
+        table, so the matrix gains a fifth axis. Required, with no default.
     debias_approach : str | None
         Override VariableConfig.debias_approach for every variable (parametric,
-        nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided). None uses
-        each variable's own default.
+        nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided, qdm). None
+        uses each variable's own default. Cannot be combined with more than one entry
+        in ``downscaling_methods``.
     verbose : bool
         Enable verbose logging
     detrend_data : bool | None
@@ -597,10 +711,12 @@ def configs_from_matrix(
         Override VariableConfig.do_windowing
     running_window_length : int | None
         Override VariableConfig.running_window_length
-    downscaling_method : str | None
-        Override VariableConfig.downscaling_method (additive, multiplicative)
-    downscaling_clim_method : str | None
-        Override VariableConfig.downscaling_clim_method (simple, fft)
+    running_window_step_length : int | None
+        Override VariableConfig.running_window_step_length
+    disaggregation_method : str | None
+        Override VariableConfig.disaggregation_method (additive, multiplicative)
+    disaggregation_clim_method : str | None
+        Override VariableConfig.disaggregation_clim_method (simple, fft)
     detrend_method : str | None
         Override VariableConfig.detrend_method (additive, multiplicative)
     variable_overrides : dict[str, dict] | None
@@ -624,19 +740,23 @@ def configs_from_matrix(
     variable_overrides = variable_overrides or {}
     if variable_overrides:
         _validate_variable_overrides(variable_overrides, variables)
+    _reject_debias_approach_across_methods(downscaling_methods, debias_approach, variable_overrides)
 
     run_wide = {
         "debias_approach": debias_approach,
         "detrend_data": detrend_data,
         "do_windowing": do_windowing,
         "running_window_length": running_window_length,
-        "downscaling_method": downscaling_method,
-        "downscaling_clim_method": downscaling_clim_method,
+        "running_window_step_length": running_window_step_length,
+        "disaggregation_method": disaggregation_method,
+        "disaggregation_clim_method": disaggregation_clim_method,
         "detrend_method": detrend_method,
     }
 
     configs = []
-    for gcm, variable, member, scenario in itertools.product(gcms, variables, members, scenarios):
+    for gcm, variable, member, scenario, method in itertools.product(
+        gcms, variables, members, scenarios, downscaling_methods
+    ):
         configs.append(
             BCSDConfig(
                 gcm=gcm,
@@ -648,7 +768,10 @@ def configs_from_matrix(
                 predict_period_start=predict_period_start,
                 predict_period_end=predict_period_end,
                 subset_bounds=subset_bounds,
-                variable_config=_resolve_variable_config(variable, run_wide, variable_overrides),
+                downscaling_method=method,
+                variable_config=_resolve_variable_config(
+                    variable, method, run_wide, variable_overrides
+                ),
             )
         )
     return configs, options
@@ -883,12 +1006,22 @@ def run_matrix(
         "--save-intermediate",
         help="Save intermediate artifacts (detrended, debiased, etc.) to cache",
     ),
+    downscaling_method: list[str] = typer.Option(
+        ...,
+        "--downscaling-method",
+        help=(
+            "Downscaling method: BCSD (detrend + quantile mapping) or QDMSD (quantile "
+            "delta mapping). Selects the per-variable defaults table. Repeatable to "
+            "expand the matrix over both: --downscaling-method BCSD --downscaling-method "
+            "QDMSD. Required."
+        ),
+    ),
     debias_approach: str | None = typer.Option(
         None,
         "--debias-approach",
         help=(
             "Debias approach for every variable: parametric, nonparametric, "
-            "nonparametric_hybrid, nonparametric_hybrid_2sided. "
+            "nonparametric_hybrid, nonparametric_hybrid_2sided, qdm. "
             "Omit to use each variable's default. Override one variable with "
             "--variable-override."
         ),
@@ -904,13 +1037,20 @@ def run_matrix(
     running_window_length: int | None = typer.Option(
         None, "--running-window-length", help="Override running_window_length for all variables"
     ),
-    downscaling_method: str | None = typer.Option(
-        None, "--downscaling-method", help="Override downscaling_method (additive, multiplicative)"
-    ),
-    downscaling_clim_method: str | None = typer.Option(
+    running_window_step_length: int | None = typer.Option(
         None,
-        "--downscaling-clim-method",
-        help="Override downscaling_clim_method (simple, fft)",
+        "--running-window-step-length",
+        help="Override running_window_step_length for all variables",
+    ),
+    disaggregation_method: str | None = typer.Option(
+        None,
+        "--disaggregation-method",
+        help="Override disaggregation_method (additive, multiplicative)",
+    ),
+    disaggregation_clim_method: str | None = typer.Option(
+        None,
+        "--disaggregation-clim-method",
+        help="Override disaggregation_clim_method (simple, fft)",
     ),
     detrend_method: str | None = typer.Option(
         None, "--detrend-method", help="Override detrend_method (additive, multiplicative)"
@@ -925,21 +1065,32 @@ def run_matrix(
         ),
     ),
 ):
-    """Run BCSD pipeline over cartesian product of GCMs x variables x members x scenarios.
+    """Run the pipeline over the cartesian product of GCMs, variables, members,
+    scenarios, and downscaling methods.
 
     Rather than pre-generating config files, specify each dimension as a repeatable
     option and the CLI will run every combination.
 
-    Example (2 GCMs x 2 variables x 3 members x 2 scenarios = 24 runs):
+    Example (2 GCMs x 2 variables x 3 members x 2 scenarios x 1 method = 24 runs):
 
         bcsd run-matrix \\
           --gcm CESM2-WACCM --gcm MIROC-ES2H \\
           --variable tas --variable pr \\
           --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \\
           --scenario SSP245 --scenario G6-1.5K \\
+          --downscaling-method BCSD \\
           --predict-period-start 2015 --predict-period-end 2100
 
     Omit --scenario for historical-only runs.
+
+    Repeat --downscaling-method to compare methods on identical inputs. The two
+    methods share one regridded observation artifact and write to separate group
+    prefixes, so nothing collides:
+
+        bcsd run-matrix \\
+          --gcm CESM2-WACCM --variable pr --member 003 --scenario SSP245 \\
+          --downscaling-method BCSD --downscaling-method QDMSD \\
+          --predict-period-start 2015 --predict-period-end 2100
 
     Give one variable a different setting with --variable-override
     (repeatable, 'variable:field=value'):
@@ -948,6 +1099,7 @@ def run_matrix(
           --gcm CESM2-WACCM \\
           --variable tasmax --variable dtr \\
           --member 007 --scenario ssp245 \\
+          --downscaling-method BCSD \\
           --predict-period-start 2015 --predict-period-end 2100 \\
           --variable-override dtr:debias_approach=nonparametric
     """
@@ -999,13 +1151,15 @@ def run_matrix(
             branch=branch,
             subset_bounds=parsed_bounds,
             save_intermediate=save_intermediate,
+            downscaling_methods=downscaling_method,
             debias_approach=debias_approach,
             verbose=verbose,
             detrend_data=detrend_data,
             do_windowing=do_windowing,
             running_window_length=running_window_length,
-            downscaling_method=downscaling_method,
-            downscaling_clim_method=downscaling_clim_method,
+            running_window_step_length=running_window_step_length,
+            disaggregation_method=disaggregation_method,
+            disaggregation_clim_method=disaggregation_clim_method,
             detrend_method=detrend_method,
             variable_overrides=parsed_overrides,
         )
@@ -1035,9 +1189,16 @@ def run_matrix(
         table.add_column("Variable", style="magenta")
         table.add_column("Member", justify="right")
         table.add_column("Scenario", style="yellow")
+        # Without a Method column a two-method matrix prints identical rows, since every
+        # other axis is shared between the pair.
+        table.add_column("Method", style="green")
         for cfg in configs:
             table.add_row(
-                cfg.gcm, cfg.variable, str(cfg.ensemble_member), cfg.scenario or "(historical)"
+                cfg.gcm,
+                cfg.variable,
+                str(cfg.ensemble_member),
+                cfg.scenario or "(historical)",
+                cfg.downscaling_method,
             )
         console.print(table)
         return

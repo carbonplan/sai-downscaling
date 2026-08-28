@@ -421,14 +421,25 @@ class TestValidate:
 
 
 # In-range fill values per variable so validate_spatial_range passes on the dummy leaf.
-_VAR_FILL = {"tas": 280.0, "tasmax": 290.0, "tasmin": 270.0, "pr": 0.001, "rsds": 200.0}
+# pr is absent on purpose: its range check wants a dry spatial minimum (in [0, 1e-7]) and
+# a wet spatial maximum (in [1e-4, 3e-2]), which no constant field satisfies.
+_VAR_FILL = {"tas": 280.0, "tasmax": 290.0, "tasmin": 270.0, "rsds": 200.0}
 
 
-def _ds_single_var(var: str) -> xr.Dataset:
+def _leaf_values(var: str) -> np.ndarray:
+    """In-range (3, 2, 2) data for one leaf variable."""
+    if var == "pr":
+        values = np.zeros((3, 2, 2))
+        values[0, 0, 0] = 1e-3  # one wet cell, so min and max both land in range
+        return values
+    return np.full((3, 2, 2), _VAR_FILL.get(var, 1.0))
+
+
+def _ds_single_var(var: str, values: np.ndarray | None = None) -> xr.Dataset:
     """Minimal single-variable dataset matching a /scenario/variable/member leaf."""
     time = xr.date_range("2015-01-01", periods=3, freq="D", calendar="proleptic_gregorian")
     ds = xr.Dataset(
-        {var: (["time", "lat", "lon"], np.full((3, 2, 2), _VAR_FILL.get(var, 1.0)))},
+        {var: (["time", "lat", "lon"], _leaf_values(var) if values is None else values)},
         coords={"time": time, "lat": [0.0, 1.0], "lon": [0.0, 1.0]},
     )
     ds.time.encoding["calendar"] = "proleptic_gregorian"
@@ -436,16 +447,22 @@ def _ds_single_var(var: str) -> xr.Dataset:
 
 
 def _make_output_datatree(
-    scenarios: list[str], variables: list[str], members: list[str]
+    scenarios: list[str],
+    variables: list[str],
+    members: list[str],
+    method: str | None = None,
 ) -> xr.DataTree:
-    """Build a DataTree mirroring the real /scenario/variable/member output store structure.
+    """Build a DataTree mirroring a real output store structure.
 
     Intermediate nodes (/scenario, /scenario/variable) have no data_vars — only member
-    leaves do.
+    leaves do. ``method`` selects the layout: ``None`` gives the pre-namespace
+    ``/scenario/variable/member`` tree, and a method name (e.g. ``"bcsd"``) gives the
+    method-namespaced ``/method/scenario/variable/member`` tree.
     """
+    prefix = f"/{method}" if method else ""
     return xr.DataTree.from_dict(
         {
-            f"/{scenario}/{var}/{member}": _ds_single_var(var)
+            f"{prefix}/{scenario}/{var}/{member}": _ds_single_var(var)
             for scenario in scenarios
             for var in variables
             for member in members
@@ -498,6 +515,92 @@ def test_validate_output_store_filters():
     assert validate_output_store(tree, scenarios=["nope"]) == []
 
 
+class TestValidateOutputStoreLayouts:
+    """Both store layouts must be validated, not just descended without error.
+
+    Method-dependent groups are namespaced under a leading downscaling-method segment,
+    so the tree is ``/method/scenario/variable/member``; stores on older branches still
+    carry the pre-namespace ``/scenario/variable/member`` tree. A depth-blind descent
+    reads the scenario group as the variable name, which silently skips every
+    ``var``-scoped check and reports all-PASS.
+    """
+
+    @staticmethod
+    def _var_scoped_check_ids() -> set[str]:
+        return {check_id for check_id, _, kwargs in OUTPUT_CHECKS if kwargs.get("var") is not None}
+
+    @pytest.mark.parametrize("method", [None, "bcsd", "qdmsd"])
+    def test_var_scoped_checks_run(self, method):
+        tree = _make_output_datatree(
+            scenarios=["ssp245"], variables=["pr"], members=["006"], method=method
+        )
+        results = validate_output_store(tree)
+        ran = {r.check_id for r in results}
+        assert "negative_precip" in ran
+        assert "spatial_range_pr" in ran
+        # Only pr leaves are present, so no other var-scoped check may fire.
+        assert ran & self._var_scoped_check_ids() == {"negative_precip", "spatial_range_pr"}
+        assert [r for r in results if r.status == CheckStatus.FAIL] == []
+
+    @pytest.mark.parametrize("method", [None, "bcsd"])
+    def test_var_scoped_check_actually_fails_on_bad_data(self, method):
+        bad = _leaf_values("pr")
+        bad[1, 1, 1] = -1.0
+        leaf = "/ssp245/pr/006" if method is None else f"/{method}/ssp245/pr/006"
+        tree = xr.DataTree.from_dict({leaf: _ds_single_var("pr", bad)})
+        results = validate_output_store(tree)
+        failed = [r for r in results if r.check_id == "negative_precip"]
+        assert len(failed) == 1
+        assert failed[0].status == CheckStatus.FAIL
+
+    @pytest.mark.parametrize("method", [None, "bcsd"])
+    def test_tasmax_ge_tasmin_pass_fires(self, method):
+        tree = _make_output_datatree(
+            scenarios=["ssp245"],
+            variables=["tasmax", "tasmin"],
+            members=["006", "007"],
+            method=method,
+        )
+        gate = [r for r in validate_output_store(tree) if r.check_id == "tasmax_ge_tasmin"]
+        assert sorted(r.scenario for r in gate) == [
+            "ssp245/tasmax_ge_tasmin/006",
+            "ssp245/tasmax_ge_tasmin/007",
+        ]
+        assert all(r.status == CheckStatus.PASS for r in gate)
+
+    @pytest.mark.parametrize("method", [None, "bcsd"])
+    def test_scenario_filter_matches_scenario_groups(self, method):
+        tree = _make_output_datatree(
+            scenarios=["ssp245", "historical"],
+            variables=["tas"],
+            members=["006"],
+            method=method,
+        )
+        results = validate_output_store(tree, scenarios=["ssp245"])
+        assert results
+        assert {r.scenario for r in results} == {
+            "/ssp245/tas/006" if method is None else f"/{method}/ssp245/tas/006"
+        }
+
+    def test_mixed_top_level_segments(self):
+        """A store holding a method segment beside other top-level groups still validates.
+
+        ``debiased_coarse`` sits next to the scenario groups under the method segment, so
+        detection must classify each top-level child on its own rather than assuming the
+        whole store uses one layout.
+        """
+        tree = xr.DataTree.from_dict(
+            {
+                "/bcsd/ssp245/pr/006": _ds_single_var("pr"),
+                "/bcsd/debiased_coarse/ssp245/pr/006": _ds_single_var("pr"),
+                "/ssp245/pr/007": _ds_single_var("pr"),
+            }
+        )
+        results = validate_output_store(tree)
+        checked = {r.scenario for r in results if r.check_id == "negative_precip"}
+        assert checked == {"/bcsd/ssp245/pr/006", "/ssp245/pr/007"}
+
+
 def test_parse_variable():
     from srm.validation import parse_variable
 
@@ -522,6 +625,7 @@ class TestCheckConfigTimeDomain:
 
         return BCSDConfig(
             gcm="CESM2-WACCM",
+            downscaling_method="BCSD",
             variable="tas",
             ensemble_member=member,
             scenario=scenario,
@@ -624,7 +728,11 @@ class TestCheckConfigTimeDomain:
         from srm.validation import check_config_time_domain
 
         cfg = BCSDConfig(
-            gcm="MIROC-ES2H", variable="tas", ensemble_member="r1i1p4f2", scenario=None
+            gcm="MIROC-ES2H",
+            variable="tas",
+            ensemble_member="r1i1p4f2",
+            scenario=None,
+            downscaling_method="BCSD",
         )
         assert check_config_time_domain(cfg).status == CheckStatus.SKIP
 

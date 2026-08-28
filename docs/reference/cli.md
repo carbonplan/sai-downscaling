@@ -4,7 +4,7 @@ This page is the exhaustive reference for all `bcsd` commands, their options, an
 
 ## `bcsd run` — Execute Pipeline from Config File (Recommended)
 
-Run the BCSD downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format) — list values for `gcm`/`variables`/`ensemble_members`/`scenarios` are expanded into one run per cartesian-product combination.
+Run the BCSD downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format): list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods` are expanded into one run per cartesian-product combination.
 
 :::{tip} Recommended for most workflows
 Config files are version-controlled and reproducible, and they are what the QA and production deploys consume. For quick ad-hoc runs from the command line without config files, use `bcsd run-matrix` instead.
@@ -68,6 +68,7 @@ uv run bcsd run-matrix [OPTIONS]
 - `--variable TEXT` (required, repeatable): variable to downscale
 - `--member TEXT` (required, repeatable): ensemble member label (e.g. `r1i1p1f1`, `01`)
 - `--scenario TEXT` (repeatable): scenario name (e.g. `SSP245`, `G6-1.5K`). Omit for historical-only runs.
+- `--downscaling-method TEXT` (required, repeatable): `BCSD` (detrend, quantile-map, retrend) or `QDMSD` (quantile delta mapping). Selects the per-variable defaults table. Repeat it to run both methods over identical inputs; they share one observation regrid and write under separate group prefixes.
 - `--predict-period-start INTEGER`: start year of prediction period (required when `--scenario` is given)
 - `--predict-period-end INTEGER`: end year of prediction period (required when `--scenario` is given)
 - `--train-period-start INTEGER`: start year of training period (default: `1978`)
@@ -77,7 +78,7 @@ uv run bcsd run-matrix [OPTIONS]
 - `--environment TEXT`: environment (default: `qa`)
 - `--branch TEXT`: icechunk output branch (default: `main`)
 - `--subset-bounds TEXT`: spatial bounds as `'lat_min,lat_max,lon_min,lon_max'`
-- `--debias-approach TEXT`: bias-correction approach — `parametric`, `nonparametric`, `nonparametric_hybrid`, `nonparametric_hybrid_2sided`. Applies to every variable in the matrix; omit to use each variable's own default.
+- `--debias-approach TEXT`: bias-correction approach, one of `parametric`, `nonparametric`, `nonparametric_hybrid`, `nonparametric_hybrid_2sided`, `qdm`. Applies to every variable in the matrix; omit to use each variable's own default. Cannot be combined with more than one `--downscaling-method`, because `qdm` requires `QDMSD` and `QDMSD` requires `qdm`.
 - `--stage TEXT`: run specific stage (`obs`/`historical`/`scenario`/`all`, default: `all`)
 - `--force`: force recompute even if cached
 - `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
@@ -90,8 +91,9 @@ uv run bcsd run-matrix [OPTIONS]
 - `--detrend-data / --no-detrend-data`: override `detrend_data`
 - `--do-windowing / --no-do-windowing`: override `do_windowing`
 - `--running-window-length INTEGER`: override `running_window_length`
-- `--downscaling-method TEXT`: override `downscaling_method` (`additive`, `multiplicative`)
-- `--downscaling-clim-method TEXT`: override `downscaling_clim_method` (`simple`, `fft`)
+- `--running-window-step-length INTEGER`: override `running_window_step_length`
+- `--disaggregation-method TEXT`: override `disaggregation_method` (`additive`, `multiplicative`)
+- `--disaggregation-clim-method TEXT`: override `disaggregation_clim_method` (`simple`, `fft`)
 - `--detrend-method TEXT`: override `detrend_method` (`additive`, `multiplicative`)
 
 **Per-variable overrides:**
@@ -103,6 +105,7 @@ uv run bcsd run-matrix [OPTIONS]
 ```bash
 # 2 GCMs x 2 variables x 3 members x 2 scenarios
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM --gcm MIROC-ES2H \
   --variable tas --variable pr \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
@@ -111,8 +114,15 @@ uv run bcsd run-matrix \
   --scratch-dir "s3://carbonplan-srm/scratch/cache/" \
   --output-dir "s3://carbonplan-srm/scratch/output/"
 
+# Compare both downscaling methods on identical inputs
+uv run bcsd run-matrix \
+  --gcm CESM2-WACCM --variable pr --member 003 --scenario SSP245 \
+  --downscaling-method BCSD --downscaling-method QDMSD \
+  --predict-period-start 2015 --predict-period-end 2099
+
 # Give one variable a different bias-correction approach
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM \
   --variable tasmax --variable dtr \
   --member 007 --scenario ssp245 \
@@ -121,6 +131,7 @@ uv run bcsd run-matrix \
 
 # Preview what would run without executing
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM --gcm MIROC-ES2H \
   --variable tas \
   --member r1i1p1f1 --member r2i1p1f1 \
@@ -130,12 +141,14 @@ uv run bcsd run-matrix \
 
 # Historical-only (omit --scenario)
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM \
   --variable tas --variable pr \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1
 
 # Regional subset
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM \
   --variable tas \
   --member r1i1p1f1 \
@@ -145,18 +158,28 @@ uv run bcsd run-matrix \
 
 # Run only a specific stage
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --stage scenario
 
 # Force recompute of all runs
 uv run bcsd run-matrix \
+  --downscaling-method BCSD \
   --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --force
 ```
 
-The matrix is the cartesian product `GCMs × variables × members × scenarios`. The orchestrator automatically deduplicates shared work: `prepare_observations` runs once per (GCM, variable) combination and `fit_historical` runs once per (GCM, variable, ensemble) combination, regardless of how many scenarios are in the matrix.
+The matrix is the cartesian product `GCMs × variables × members × scenarios × downscaling methods`. The orchestrator automatically deduplicates shared work, and the two methods deduplicate differently:
+
+| Stage | Deduplicated per | Effect of a second method |
+| --- | --- | --- |
+| `prepare_observations` | (GCM, obs dataset, variable) | None. Observation regridding does not depend on the method, so both methods share one artifact. |
+| `fit_historical` | (GCM, obs dataset, variable, method, historical member) | Doubles. Each method writes its own `{method}/historical/...` group. |
+| `transform_scenario` | Not deduplicated | Doubles, one task per config. |
+
+A two-method run is therefore cheaper than two separate runs, which each pay for their own observation check.
 
 **How Deduplication Works:**
 

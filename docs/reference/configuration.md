@@ -13,20 +13,32 @@ Both classes use `extra="ignore"`, so a single flat YAML file is accepted by bot
 
 ## Matrix config format
 
-Any of the four dimension fields can be a list. `load_configs` expands them into one `BCSDConfig` per cartesian-product combination:
+Any of the five dimension fields can be a list. `load_configs` expands them into one `BCSDConfig` per cartesian-product combination:
 
 ```yaml
-gcm: "CESM2-WACCM"                              # singular — still works
-variables: ["tas", "pr"]                         # list — expands
+gcm: "CESM2-WACCM"                              # singular, still works
+variables: ["tas", "pr"]                         # list, expands
 ensemble_members: ["001", "002", "003"]
 scenarios: ["SSP245"]
+downscaling_methods: ["BCSD", "QDMSD"]           # see Downscaling method below
 predict_period_start: 2015
 predict_period_end: 2099                         # must fit every member's data extent (see below)
 ```
 
-Both singular (`variable`) and plural (`variables`) key names are accepted. All other fields are shared across every combination.
+Both singular (`variable`) and plural (`variables`) key names are accepted, but not both at once for the same axis. All other fields are shared across every combination.
 
-**Restriction:** `variable_config` may not be set when `variables` contains more than one entry — it would silently apply to every variable, including those with incompatible settings (e.g. additive `tas` settings applied to `pr`). Remove it and rely on per-variable defaults (see [Variable-Specific Auto-Configuration](#variable-specific-auto-configuration)), or split into separate files.
+`downscaling_methods` differs in kind from the other four axes. Those select a slice of input data, while this one selects an algorithm, so each entry re-derives `variable_config` from its own defaults table rather than reusing one. The two methods share a single regridded observation artifact and write under separate group prefixes, which is what lets a comparison run live in one config file.
+
+**Restrictions:**
+
+| Combination | Why it is rejected |
+| --- | --- |
+| `variable_config` with more than one entry in `variables` | It would silently apply to every variable, including those with incompatible settings, such as additive `tas` settings applied to `pr`. |
+| `variable_config` with more than one entry in `downscaling_methods` | It is passed through verbatim, and its `debias_approach` can only agree with one method. |
+| `debias_approach` (top level or in `variable_overrides`) with more than one entry in `downscaling_methods` | `qdm` requires `QDMSD` and `QDMSD` requires `qdm`, so one arm of the product always contradicts the value. |
+| Both `variables` and `variable`, or any other plural/singular pair for one axis | The two spellings name the same axis, and keeping both is ambiguous. |
+
+For the first case, remove `variable_config` and rely on per-variable defaults (see [Variable-Specific Auto-Configuration](#variable-specific-auto-configuration)), or split into separate files. For the `debias_approach` cases, drop the override and let each method's defaults table supply it, or list one method at a time.
 
 ## Prediction period and per-member data extents
 
@@ -73,10 +85,11 @@ variable_config:
   detrend_data: true                   # Whether to detrend (auto-set based on variable)
   detrend_method: "additive"           # "additive" or "multiplicative" trend model
   do_windowing: true                   # Use a running window for quantile mapping
-  running_window_length: 31            # Running-window length in days (default: 31)
-  downscaling_method: "additive"       # "additive" for temperature-like vars, "multiplicative" for pr/rsds
-  downscaling_clim_method: "fft"       # "fft" or "simple" climatology smoothing
-  debias_approach: "nonparametric_hybrid_2sided"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided
+  running_window_length: 31            # Running-window length in days
+  running_window_step_length: 1        # Days the running window advances per step
+  disaggregation_method: "additive"    # "additive" for temperature-like vars, "multiplicative" for pr/rsds
+  disaggregation_clim_method: "fft"    # "fft" or "simple" climatology smoothing
+  debias_approach: "nonparametric_hybrid_2sided"  # parametric, nonparametric, nonparametric_hybrid, nonparametric_hybrid_2sided, qdm
 
 # Per-variable overrides, keyed by variable name (matrix configs only)
 variable_overrides:
@@ -217,9 +230,13 @@ This is useful for:
 
 ## Variable-Specific Auto-Configuration
 
-The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/srm/bcsd_config.py`). All variables use a `running_window_length` of `31` days.
+The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/srm/bcsd_config.py`). Which table it reads is set by the required top-level `downscaling_method` key, described in [Downscaling method](#downscaling-method) below.
 
-| Variable | detrend_data | detrend_method | do_windowing | downscaling_method | downscaling_clim_method |
+### BCSD defaults
+
+All variables use a `running_window_length` of `31` days and a `running_window_step_length` of `1` day, with `debias_approach: nonparametric_hybrid_2sided`.
+
+| Variable | detrend_data | detrend_method | do_windowing | disaggregation_method | disaggregation_clim_method |
 | --- | --- | --- | --- | --- | --- |
 | `tas` | `true` | `additive` | `true` | `additive` | `fft` |
 | `tasmax` | `true` | `additive` | `true` | `additive` | `fft` |
@@ -229,7 +246,47 @@ The pipeline automatically sets variable-specific parameters from the per-variab
 | `dtr` | `false` | `multiplicative` | `true` | `multiplicative` | `fft` |
 | `hurs` | `false` | `additive` | `true` | `multiplicative` | `fft` |
 
-You can override these per run through the nested `variable_config` block in the config file, or with the `bcsd run-matrix` override flags (`--downscaling-method`, `--detrend-data/--no-detrend-data`, etc.).
+### QDMSD defaults
+
+All variables use a `running_window_length` of `91` days and a `running_window_step_length` of `31` days, with `debias_approach: qdm`. Quantile delta mapping carries the climate trend through its own quantile mapping, so `detrend_data` is `false` for every variable. The `detrend_method`, `disaggregation_method`, and `disaggregation_clim_method` columns match the BCSD table above.
+
+You can override these per run through the nested `variable_config` block in the config file, or with the `bcsd run-matrix` override flags (`--disaggregation-method`, `--detrend-data/--no-detrend-data`, etc.).
+
+## Downscaling method
+
+Every config must set a top-level `downscaling_method`. There is deliberately no default, so each run records which method produced its output.
+
+| Value | Meaning |
+| --- | --- |
+| `BCSD` | Detrend, quantile-map, retrend, then spatially disaggregate. |
+| `QDMSD` | Quantile delta mapping, then spatially disaggregate. No separate detrend/retrend step. |
+
+```yaml
+downscaling_method: "BCSD"
+```
+
+The key selects which per-variable defaults table `VariableConfig.for_variable` reads. It
+is recorded in the store metadata as `srm_downscaling:downscaling_method`, and it also
+namespaces the store layout: every group except the shared `obs/{variable}` lives under a
+`bcsd/` or `qdmsd/` segment. Both methods can therefore write to one store and share a
+single observation regrid.
+
+To run both methods over identical inputs, use the plural key as a
+[matrix axis](#matrix-config-format):
+
+```yaml
+downscaling_methods: ["BCSD", "QDMSD"]
+```
+
+The pair regrids observations once and fits each method separately, which is cheaper than
+two runs because obs deduplication is deliberately method-blind. On the command line the
+equivalent is a repeated flag:
+
+```bash
+uv run bcsd run-matrix --gcm CESM2-WACCM --variable pr --member 003 --scenario SSP245 \
+  --downscaling-method BCSD --downscaling-method QDMSD \
+  --predict-period-start 2015 --predict-period-end 2099
+```
 
 ## Validation Examples
 

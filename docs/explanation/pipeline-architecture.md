@@ -33,7 +33,7 @@ graph TB
         S2D[Apply spatial subset if specified]
         S2E[Time subset to training period<br/>1978-2014]
         S2F[Quantile mapping bias correction<br/>GCM historical → observations]
-        S2FC[Write debiased_coarse/historical<br/>to output store]
+        S2FC[Write method/debiased_coarse/historical<br/>to output store]
         S2G[Spatial disaggregation<br/>coarse → fine resolution]
         S2H[Output: historical<br/>Deliverable + scenario gate]
         
@@ -62,7 +62,7 @@ graph TB
         
         S3N{Re-trend needed?}
         S3O[Add saved trend back]
-        S3OC[Write debiased_coarse/scenario<br/>to output store]
+        S3OC[Write method/debiased_coarse/scenario<br/>to output store]
         
         S3P[Spatial disaggregation<br/>coarse → fine resolution]
         S3Q[Add variable name and metadata]
@@ -100,8 +100,8 @@ graph TB
 
 **Key points:**
 
-- **stage 1 (prepare_observations)**: runs once per (GCM, variable, spatial_subset) combination
-- **stage 2 (fit_historical)**: runs once per (GCM, variable, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store
+- **stage 1 (prepare_observations)**: runs once per (GCM, obs_dataset, variable, spatial_subset) combination. The key deliberately omits `downscaling_method`, because regridding observations to the coarse grid does not consult `variable_config`, so `BCSD` and `QDMSD` share one artifact.
+- **stage 2 (fit_historical)**: runs once per (GCM, obs_dataset, variable, downscaling_method, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store. The method belongs in the key because each one writes its own `{method}/historical/…` group.
 - **stage 3 (transform_scenario)**: runs for each scenario configuration; writes fine-res scenario and debiased coarse scenario to the output store
 - **green boxes**: cached intermediate artifacts (obs regridded) in the scratch icechunk store, on the active branch
 - **gold boxes**: deliverables in the output icechunk store, on the active branch (fine-res historical + fine-res scenario + debiased coarse data)
@@ -125,23 +125,24 @@ zarr group paths on a named branch (defaulting to the installed package version)
 # Scratch store — obs regridded + optional intermediates
 s3://carbonplan-srm/scratch/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3        ← installed package version (BCSD_BRANCH to override)
-    obs/{variable}
-    detrended_scenario/{scenario_group}/{variable}/{ensemble_member}  # only if save_intermediate=True
-    trend_scenario/{scenario_group}/{variable}/{ensemble_member}      # only if save_intermediate=True
-    debiased_scenario/{scenario_group}/{variable}/{ensemble_member}   # only if save_intermediate=True
+    obs/{variable}                                                   # shared by both methods
+    {method}/detrended_scenario/{scenario_group}/{variable}/{ensemble_member}  # only if save_intermediate=True
+    {method}/trend_scenario/{scenario_group}/{variable}/{ensemble_member}      # only if save_intermediate=True
+    {method}/debiased_scenario/{scenario_group}/{variable}/{ensemble_member}   # only if save_intermediate=True
 
 # Output store — fine-res historical + scenario results + debiased coarse data
 s3://carbonplan-srm/scratch/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
-    historical/{variable}/{hist_member}
-    {scenario_group}/{variable}/{ensemble_member}
-    debiased_coarse/historical/{variable}/{hist_member}
-    debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
+    {method}/historical/{variable}/{hist_member}
+    {method}/{scenario_group}/{variable}/{ensemble_member}
+    {method}/debiased_coarse/historical/{variable}/{hist_member}
+    {method}/debiased_coarse/{scenario_group}/{variable}/{ensemble_member}
 ```
 
 Where:
 
 - `{environment}`: `qa` or `production`
+- `{method}`: `bcsd` or `qdmsd`, the lowercase `downscaling_method`. Stage 1 output is method-independent so `obs/` sits outside it, which lets both methods share a single regrid. Stages 2 and 3 differ between methods, so their artifacts are namespaced.
 - `{obs_dataset}`: `ERA5` or `GDEX-GMF`
 - `{subset_id}`: `global` or `lat{min}to{max}_lon{min}to{max}` (e.g., `lat-35.0to-22.0_lon16.0to33.0`)
 - `{scenario_group}`: `ssp245`, `g6_1p5k`, or `esgf_ssp245`
@@ -223,7 +224,7 @@ VM types are selected per pipeline stage to match resource requirements:
 The CLI is built on several key components:
 
 1. **BCSDConfig** + **PipelineOptions** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
-   - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `is_sai_scenario`. Variable-specific parameters (`detrend_data`, `downscaling_method`, `debias_approach`, etc.) live only on the nested `variable_config`, never as accessors on `BCSDConfig`.
+   - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `is_sai_scenario`. Variable-specific parameters (`detrend_data`, `disaggregation_method`, `debias_approach`, etc.) live only on the nested `variable_config`, never as accessors on `BCSDConfig`. The required top-level `downscaling_method` (`BCSD` or `QDMSD`) is a `BCSDConfig` field: it selects which per-variable defaults table `variable_config` is read from.
    - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `branch`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`, `clip_values`, `clip_bounds`. The `branch` field (default: installed package version) names the icechunk branch all artifacts are written to and read from.
    - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 
