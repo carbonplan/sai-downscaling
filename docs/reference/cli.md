@@ -19,7 +19,9 @@ uv run bcsd run --config-path PATH [OPTIONS]
 - `--config-path TEXT` (required, repeatable): path to YAML config file or directory of configs (can be specified multiple times)
 - `--stage TEXT`: run specific stage. Accepts either short (`obs`/`historical`/`scenario`) or long (`prepare_observations`/`fit_historical`/`transform_scenario`) names, or `all` (default: `all`)
 - `--force`: force recompute even if cached
-- `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
+- `--executor TEXT`: where tasks run, one of `aws-batch`, `coiled`, or `local`. Defaults to the config's `executor` field, which itself defaults to `coiled`.
+- `--yes / -y`: skip the cost confirmation prompt
+- `--dry-run`: print the cost estimate and exit without submitting anything
 - `--branch TEXT`: override the output icechunk branch (e.g. `v2`). Defaults to the branch resolved from the config (the installed package version).
 - `--save-intermediate`: save and display intermediate artifacts
 
@@ -30,7 +32,10 @@ uv run bcsd run --config-path PATH [OPTIONS]
 uv run bcsd run --config-path configs/example.yaml
 
 # Run only observation regridding stage locally
-uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --no-coiled
+uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --executor local
+
+# Estimate what a run will cost without submitting anything
+uv run bcsd run --config-path configs/production/cesm2-waccm/ --executor aws-batch --dry-run
 
 # Force recompute of historical stage (ignores cache)
 uv run bcsd run --config-path configs/example.yaml --stage fit_historical --force
@@ -81,8 +86,9 @@ uv run bcsd run-matrix [OPTIONS]
 - `--debias-approach TEXT`: bias-correction approach, one of `parametric`, `nonparametric`, `nonparametric_hybrid`, `nonparametric_hybrid_2sided`, `qdm`. Applies to every variable in the matrix; omit to use each variable's own default. Cannot be combined with more than one `--downscaling-method`, because `qdm` requires `QDMSD` and `QDMSD` requires `qdm`.
 - `--stage TEXT`: run specific stage (`obs`/`historical`/`scenario`/`all`, default: `all`)
 - `--force`: force recompute even if cached
-- `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
-- `--dry-run`: print the generated configs in a table without executing
+- `--executor TEXT`: where tasks run, one of `aws-batch`, `coiled`, or `local` (default: the config's `executor`)
+- `--yes / -y`: skip the cost confirmation prompt
+- `--dry-run`: print the generated configs in a table without executing. This does not read the cache, so it works without AWS credentials.
 - `--save-intermediate`: save intermediate artifacts (detrended, debiased, etc.) to cache
 - `--verbose / -v`: enable verbose logging
 

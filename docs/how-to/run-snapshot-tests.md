@@ -12,7 +12,7 @@ The comparison reads existing output stores; it does not produce them. Run the S
 uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
 ```
 
-This runs on Coiled by default and finishes quickly because the subset is small. Add `--no-coiled` only if you have local source-data access and enough memory. The run writes to the icechunk branch `bcsd run` uses — the installed package version by default, or `BCSD_BRANCH` if you set it — which Step 2 needs as `candidate_branch`.
+This dispatches to the config's executor and finishes quickly because the subset is small. Add `--executor local` only if you have local source-data access and enough memory. The run writes to the icechunk branch `bcsd run` uses — the installed package version by default, or `BCSD_BRANCH` if you set it — which Step 2 needs as `candidate_branch`.
 
 ## Step 2 — Run the comparison notebook
 

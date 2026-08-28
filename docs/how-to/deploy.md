@@ -1,14 +1,39 @@
 # Deploy the Pipeline
 
-The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds three jobs:
+The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds five jobs:
 
 | Job | Purpose | Trigger |
 |---|---|---|
+| `image` | Build the arm64 task container and pin a job definition to it | Every deploy |
 | `qa` | Fast regional validation | Manual (`workflow_dispatch` with `environment: qa`) |
 | `snapshot` | Rebuild the regional snapshot baseline, then freeze it under an icechunk tag | Automatic on GitHub release |
+| `plan` | Write the production cost estimate to the run summary | Whenever `production` would run |
 | `production` | Full global run, one job per GCM | Automatic on GitHub release, or manual (`workflow_dispatch` with `environment: production`) |
 
-`snapshot` and `production` run in parallel, so the six-hour global run does not hold up the baseline the next pull request compares against. `production` is itself a matrix with one job per GCM, so the models run concurrently and each gets its own six-hour AWS session instead of sharing one.
+`snapshot` and `production` run in parallel, so the six-hour global run does not hold up the baseline the next pull request compares against.
+
+`production` is itself a matrix with one job per GCM, so the models run concurrently and each gets its own six-hour AWS session instead of sharing one.
+
+## Where the tasks run
+
+All three run jobs dispatch to AWS Batch (`--executor aws-batch`) rather than Coiled, which removes Coiled's $0.05 per CPU-hour platform fee. Coiled still backs the `validate` and `validate-output` steps, which spin up a short-lived Dask cluster rather than submitting batch tasks, so `DASK_COILED__TOKEN` is still required.
+
+| Job | AWS Batch queue |
+|---|---|
+| `qa`, `snapshot` | `srm-qa` (priority 1) |
+| `production` | `srm-production` (priority 10) |
+
+Both queues are served by the one `srm-production` compute environment. Splitting them means a qa dispatch that overlaps a release cannot queue ahead of the global run, because AWS Batch schedules the higher-priority queue first.
+
+### The image is a dependency, not a side effect
+
+`qa`, `snapshot`, and `production` all declare `needs: image`. That job builds the container from `uv.lock`, pushes it to the `srm-downscaling` ECR repository tagged with the commit SHA, then registers an AWS Batch job definition revision pointing at that exact image and returns its `name:revision`. Each run job passes that value through `BCSD_BATCH_JOB_DEFINITION`.
+
+The indirection is necessary because AWS Batch `containerOverrides` cannot override a job's image. Building before deploying would not be enough on its own: a concurrent build could replace the `latest` tag mid-run, so a run is bound to a specific revision instead.
+
+### Cost approval
+
+The `plan` job runs `bcsd run --dry-run` and writes the per-stage cost estimate into the workflow run summary. Enabling **required reviewers** on the `production` environment (Settings → Environments → production) pauses the run there, so the reviewer approves against a concrete number rather than a blank prompt. Without that setting the job is informational only, and the run proceeds unattended.
 
 ## Config structure
 
@@ -48,7 +73,7 @@ QA runs execute all configs in `configs/qa/` against a small South Africa spatia
 
 The job runs three steps in order, against `configs/qa/` or the narrower path implied by **model**:
 
-1. `bcsd validate --config-path configs/qa/` — checks input datasets for the GCMs and scenarios referenced by the configs. Exits with code 1 on any blocking failure before Coiled compute is spent.
+1. `bcsd validate --config-path configs/qa/` — checks input datasets for the GCMs and scenarios referenced by the configs. Exits with code 1 on any blocking failure before any compute is spent.
 2. `bcsd run --config-path configs/qa/` — runs the full pipeline.
 3. `bcsd validate-output --config-path configs/qa/` — checks the written output datasets.
 
@@ -110,5 +135,6 @@ To add a **new GCM**, do the same in a new `configs/production/{model}/` folder,
 The deploy workflow requires the following to be configured in the GitHub repository settings:
 
 - **GitHub environments**: `qa` and `production` must exist (Settings → Environments)
-- **`DASK_COILED__TOKEN` secret**: must be set in both the `qa` and `production` environments
+- **`DASK_COILED__TOKEN` secret**: must be set in both the `qa` and `production` environments. Only the `validate` and `validate-output` steps need it now; the pipeline runs themselves go through AWS Batch.
+- **AWS Batch resources** in `us-west-2`: the `srm-qa` and `srm-production` job queues, the `srm-production` compute environment, the `srm-downscaling` ECR repository, and the `srm-batch-job-role`, `srm-batch-execution-role`, and `srm-batch-instance-role` IAM roles. None of this is defined in the repository, so it must be recreated by hand if lost.
 - **AWS OIDC role**: `arn:aws:iam::631969445205:role/github-action-role` is assumed via the [setup action](../../.github/actions/setup/action.yml) — the role must trust the repository's GitHub Actions OIDC provider

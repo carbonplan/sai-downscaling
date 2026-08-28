@@ -146,11 +146,11 @@ uv run bcsd run --config-path configs/production/cesm2-waccm/
 
 ## Local Execution
 
-For testing or small regions, disable Coiled and run locally:
+For testing or small regions, run the stages in-process instead of dispatching them:
 
 ```bash
 # Single config (sequential execution of stages)
-uv run bcsd run --config-path configs/example.yaml --no-coiled
+uv run bcsd run --config-path configs/example.yaml --executor local
 
 # Matrix run locally (useful for testing)
 uv run bcsd run-matrix \
@@ -158,7 +158,7 @@ uv run bcsd run-matrix \
   --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33' \
-  --no-coiled
+  --executor local
 ```
 
 ## See Also
