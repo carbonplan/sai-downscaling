@@ -210,6 +210,9 @@ class BCSDOrchestrator:
         ValueError
             If the job definition has no ACTIVE revision.
         """
+        if self._resolved_job_definition is not None:
+            return self._resolved_job_definition
+
         name = self.options.batch_job_definition
         client = self._batch_client()
         if ":" in name or name.startswith("arn:"):
@@ -222,10 +225,11 @@ class BCSDOrchestrator:
             raise ValueError(f"No ACTIVE job definition found for {name!r}")
 
         latest = max(definitions, key=lambda d: d["revision"])
-        return {
+        self._resolved_job_definition = {
             "job_definition": f"{name.split(':')[0]}:{latest['revision']}",
             "image": latest["containerProperties"]["image"],
         }
+        return self._resolved_job_definition
 
     def _submit_batch_job(
         self, stage: str, configs: list[BCSDConfig], manifest_uri: str | None
@@ -253,6 +257,19 @@ class BCSDOrchestrator:
         """
         client = self._batch_client()
         resources = self._resources_for(stage, configs)
+
+        # Submit against a pinned revision rather than the bare name. AWS resolves a bare
+        # name at submit time, so a revision registered after the cost preview would run
+        # code the operator never saw. Falling back leaves today's behavior intact when the
+        # definition cannot be described.
+        try:
+            job_definition = self.resolve_job_definition()["job_definition"]
+        except Exception as exc:  # noqa: BLE001 - reported, and the fallback is the old path
+            job_definition = self.options.batch_job_definition
+            logger.warning(
+                f"Could not resolve job definition {job_definition!r} to a revision "
+                f"({type(exc).__name__}); AWS will resolve it at submit time."
+            )
         environment: list[dict[str, str]] = []
 
         if len(configs) == 1:
@@ -269,7 +286,7 @@ class BCSDOrchestrator:
         response = client.submit_job(
             jobName=self._job_name(stage, configs),
             jobQueue=self.options.batch_job_queue,
-            jobDefinition=self.options.batch_job_definition,
+            jobDefinition=job_definition,
             containerOverrides={
                 # Overrides the image's CMD, not its ENTRYPOINT, which already invokes
                 # the runner. Repeating the interpreter here appends it as arguments.
@@ -310,6 +327,7 @@ class BCSDOrchestrator:
         self.options = options
         self._cache: ArtifactCache | None = None
         self._batch_client_instance = None
+        self._resolved_job_definition: dict[str, str] | None = None
 
     def _batch_client(self):
         """Get or create the AWS Batch client, shared by submission and polling."""

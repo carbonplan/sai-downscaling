@@ -1294,3 +1294,49 @@ class TestResolveJobDefinition:
         with patch("boto3.client", return_value=client):
             with pytest.raises(ValueError, match="srm-downscaling"):
                 orch.resolve_job_definition()
+
+
+class TestSubmissionUsesTheResolvedDefinition:
+    """What the cost prompt showed must be what the submission runs."""
+
+    def _client(self):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_job_definitions.return_value = {
+            "jobDefinitions": [
+                {"revision": 4, "containerProperties": {"image": "ecr/img:sha4"}},
+            ]
+        }
+        return client
+
+    def test_submits_against_the_pinned_revision(self, pipeline_options, config):
+        pipeline_options.batch_job_definition = "srm-downscaling"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = self._client()
+        with patch("boto3.client", return_value=client):
+            orch._submit_batch_job("fit_historical", [config], None)
+        # Not the bare name: AWS would re-resolve it, and a revision registered between
+        # the preview and the submission would run code the confirmation never showed.
+        assert client.submit_job.call_args.kwargs["jobDefinition"] == "srm-downscaling:4"
+
+    def test_resolution_is_reused_across_a_run(self, pipeline_options, config):
+        orch = BCSDOrchestrator(pipeline_options)
+        client = self._client()
+        with patch("boto3.client", return_value=client):
+            orch.resolve_job_definition()
+            orch._submit_batch_job("fit_historical", [config], None)
+            orch._submit_batch_job("transform_scenario", [config], None)
+        # One resolution per orchestrator, so every stage of a multi-hour run pins the
+        # same image rather than drifting if a revision lands mid-run.
+        assert client.describe_job_definitions.call_count == 1
+
+    def test_falls_back_to_the_configured_name_when_resolution_fails(
+        self, pipeline_options, config
+    ):
+        pipeline_options.batch_job_definition = "srm-downscaling"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = self._client()
+        client.describe_job_definitions.side_effect = RuntimeError("denied")
+        with patch("boto3.client", return_value=client):
+            orch._submit_batch_job("fit_historical", [config], None)
+        assert client.submit_job.call_args.kwargs["jobDefinition"] == "srm-downscaling"
