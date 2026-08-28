@@ -120,7 +120,15 @@ def vcpus(vm_type: str) -> int:
 
 def burn_rate_per_hour(vm_type: str, n_tasks: int, executor: str) -> float:
     """Dollars per hour while every task in a wave is running. Exact, not an estimate."""
-    return vcpus(vm_type) * n_tasks * RATE_PER_VCPU_HOUR.get(executor, EC2_RATE_PER_VCPU_HOUR)
+    try:
+        rate = RATE_PER_VCPU_HOUR[executor]
+    except KeyError:
+        # Defaulting to the bare EC2 rate would under-price a coiled run by a third in the
+        # very table meant to inform the confirmation.
+        raise KeyError(
+            f"Unknown executor {executor!r}; add it to srm.cost.RATE_PER_VCPU_HOUR"
+        ) from None
+    return vcpus(vm_type) * n_tasks * rate
 
 
 def duration_range(stage: str, regional: bool) -> tuple[float, float]:

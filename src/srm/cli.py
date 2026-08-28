@@ -779,12 +779,24 @@ def configs_from_matrix(
     return configs, options
 
 
+#: CLI stage aliases mapped to pipeline stage names. "all"/None means every stage.
+_STAGE_ALIASES: dict[str, str] = {
+    "obs": "prepare_observations",
+    "prepare_observations": "prepare_observations",
+    "historical": "fit_historical",
+    "fit_historical": "fit_historical",
+    "scenario": "transform_scenario",
+    "transform_scenario": "transform_scenario",
+}
+
+
 def _confirm_cost(
     orchestrator: BCSDOrchestrator,
     configs: list[BCSDConfig],
     executor: str | None,
     force: bool,
     assume_yes: bool,
+    stage: str | None = None,
 ) -> bool:
     """Show what a run will cost and, when a human is watching, ask before dispatching.
 
@@ -799,7 +811,7 @@ def _confirm_cost(
     """
     if (executor or orchestrator.options.executor) == "local":
         return True
-    if not _render_cost_plan(orchestrator, configs, executor, force):
+    if not _render_cost_plan(orchestrator, configs, executor, force, stage=stage):
         return True
 
     if assume_yes:
@@ -815,11 +827,21 @@ def _render_cost_plan(
     configs: list[BCSDConfig],
     executor: str | None,
     force: bool,
+    stage: str | None = None,
 ) -> bool:
-    """Print the per-stage cost table. Returns False when there is nothing to submit."""
+    """Print the per-stage cost table. Returns False when there is nothing to submit.
+
+    ``stage`` restricts the estimate to a single stage, matching ``run --stage``; pricing
+    all three would overstate what the invocation is about to spend.
+    """
     executor_name = executor or orchestrator.options.executor
 
-    plans = [p for p in orchestrator.plan(configs, force=force) if p.to_run]
+    only = _STAGE_ALIASES.get(stage or "")
+    plans = [
+        p
+        for p in orchestrator.plan(configs, force=force)
+        if p.to_run and (only is None or p.stage == only)
+    ]
     if not plans:
         console.print("[green]Everything is already cached; nothing to submit.[/green]")
         return False
@@ -905,10 +927,10 @@ def run(
     orchestrator = BCSDOrchestrator(options)
 
     if dry_run:
-        _render_cost_plan(orchestrator, configs, executor, force)
+        _render_cost_plan(orchestrator, configs, executor, force, stage=stage)
         return
 
-    if not _confirm_cost(orchestrator, configs, executor, force, yes):
+    if not _confirm_cost(orchestrator, configs, executor, force, yes, stage=stage):
         console.print("[yellow]Aborted; nothing was submitted.[/yellow]")
         raise typer.Exit(1)
 
@@ -1312,12 +1334,12 @@ def run_matrix(
                 cfg.downscaling_method,
             )
         console.print(table)
-        _render_cost_plan(BCSDOrchestrator(options), configs, executor, force)
+        _render_cost_plan(BCSDOrchestrator(options), configs, executor, force, stage=stage)
         return
 
     orchestrator = BCSDOrchestrator(options)
 
-    if not _confirm_cost(orchestrator, configs, executor, force, yes):
+    if not _confirm_cost(orchestrator, configs, executor, force, yes, stage=stage):
         console.print("[yellow]Aborted; nothing was submitted.[/yellow]")
         raise typer.Exit(1)
 

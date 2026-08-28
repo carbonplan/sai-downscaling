@@ -36,6 +36,12 @@ class TestRates:
         ratio = (EC2_RATE_PER_VCPU_HOUR + COILED_FEE_PER_VCPU_HOUR) / EC2_RATE_PER_VCPU_HOUR
         assert coiled / aws == pytest.approx(ratio)
 
+    def test_unknown_executor_raises_rather_than_guessing(self):
+        # Falling back to the EC2 rate would price a coiled run ~46% under its real cost
+        # in the very table meant to inform the confirmation.
+        with pytest.raises(KeyError, match="slurm"):
+            burn_rate_per_hour("r8g.24xlarge", 1, "slurm")
+
     def test_local_executor_is_free(self):
         assert burn_rate_per_hour("r8g.24xlarge", 10, "local") == 0.0
 

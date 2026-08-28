@@ -1203,3 +1203,19 @@ class TestPlan:
         # Summed over waves: tasmin, when present, is dispatched separately.
         submitted = sum(len(call.args[1]) for call in mock_local.call_args_list)
         assert planned.to_run == submitted
+
+
+class TestExecutorValidation:
+    def test_unknown_executor_raises_even_when_everything_is_cached(self, orchestrator, config):
+        # The all-cached short circuit used to return before the name was ever checked, so
+        # a typo reported success instead of failing.
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        with pytest.raises(ValueError, match="aws_batch"):
+            orchestrator.submit_stage("prepare_observations", [config], executor="aws_batch")
+
+    def test_unknown_executor_raises_when_work_is_pending(self, orchestrator, config):
+        with pytest.raises(ValueError, match="aws_batch"):
+            orchestrator.submit_stage("prepare_observations", [config], executor="aws_batch")

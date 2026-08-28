@@ -492,6 +492,19 @@ class BCSDOrchestrator:
         if not configs:
             return []
 
+        # Resolved up front: validating after the all-cached short circuit below would let
+        # a mistyped executor report success on a run that submitted nothing.
+        executor_name = executor or self.options.executor
+        executors = {
+            "coiled": self._submit_to_coiled,
+            "aws-batch": self._submit_to_aws_batch,
+            "local": self._run_local,
+        }
+        if executor_name not in executors:
+            raise ValueError(
+                f"Unknown executor {executor_name!r}; expected one of {sorted(executors)}"
+            )
+
         cache = self._get_cache()
         configs_to_run, output_paths = self._partition_by_cache(cache, stage, configs, force)
 
@@ -507,22 +520,12 @@ class BCSDOrchestrator:
             logger.info(f"✓ All {len(configs)} {stage} tasks already cached!")
             return output_paths
 
-        executor_name = executor or self.options.executor
         logger.info(
             f"→ Submitting {len(configs_to_run)}/{len(configs)} {stage} tasks ({executor_name})"
         )
 
         # Dispatch to the selected executor, respecting intra-stage dependency
         # ordering (tasmin must run after its debiased-coarse tasmax/dtr inputs).
-        executors = {
-            "coiled": self._submit_to_coiled,
-            "aws-batch": self._submit_to_aws_batch,
-            "local": self._run_local,
-        }
-        if executor_name not in executors:
-            raise ValueError(
-                f"Unknown executor {executor_name!r}; expected one of {sorted(executors)}"
-            )
         runner = executors[executor_name]
         completed_paths = self._run_in_dependency_waves(runner, stage, configs_to_run)
 

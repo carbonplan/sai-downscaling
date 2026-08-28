@@ -978,3 +978,60 @@ class TestConfirmCost:
         ):
             assert _confirm_cost(orchestrator, configs, "aws-batch", False, False) is True
         mock_confirm.assert_not_called()
+
+
+class TestStageScopedCostPlan:
+    """`run --stage historical` must not price the other two stages."""
+
+    @pytest.fixture
+    def orchestrator(self, tmp_path):
+        from srm.orchestration import BCSDOrchestrator
+
+        return BCSDOrchestrator(
+            PipelineOptions(
+                scratch_dir=str(tmp_path / "cache"),
+                output_dir=str(tmp_path / "out"),
+                verbose=False,
+            )
+        )
+
+    @pytest.fixture
+    def configs(self):
+        return [
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                scenario="SSP245",
+                predict_period_start=2015,
+                predict_period_end=2100,
+            )
+        ]
+
+    def _priced_stages(self, orchestrator, configs, stage):
+        from srm.cli import _render_cost_plan
+
+        with patch("srm.cli.estimate_workflow", side_effect=ValueError) as mock_est:
+            with pytest.raises(ValueError):
+                _render_cost_plan(orchestrator, configs, "aws-batch", False, stage=stage)
+        return [entry[0] for entry in mock_est.call_args.args[0]]
+
+    def test_all_stages_priced_when_unscoped(self, orchestrator, configs):
+        assert self._priced_stages(orchestrator, configs, None) == [
+            "prepare_observations",
+            "fit_historical",
+            "transform_scenario",
+        ]
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [
+            ("obs", "prepare_observations"),
+            ("historical", "fit_historical"),
+            ("scenario", "transform_scenario"),
+            ("transform_scenario", "transform_scenario"),
+        ],
+    )
+    def test_only_the_selected_stage_is_priced(self, orchestrator, configs, alias, expected):
+        assert self._priced_stages(orchestrator, configs, alias) == [expected]
