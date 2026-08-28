@@ -539,24 +539,14 @@ class BCSDOrchestrator:
         list[StagePlan]
             One entry per stage, in execution order.
         """
-        cache = self._get_cache()
-        plans = []
-        for stage, stage_configs in (
-            ("prepare_observations", self._deduplicate_obs_configs(configs)),
-            ("fit_historical", self._deduplicate_historical_configs(configs)),
-            ("transform_scenario", configs),
-        ):
-            to_run, _ = self._partition_by_cache(cache, stage, stage_configs, force)
-            plans.append(
-                StagePlan(
-                    stage=stage,
-                    to_run=len(to_run),
-                    cached=len(stage_configs) - len(to_run),
-                    vm_type=self._vm_types_for(stage, to_run or stage_configs)[0],
-                    regional=self._is_regional(to_run or stage_configs),
-                )
+        return [
+            self.plan_stage(stage, stage_configs, force)
+            for stage, stage_configs in (
+                ("prepare_observations", self._deduplicate_obs_configs(configs)),
+                ("fit_historical", self._deduplicate_historical_configs(configs)),
+                ("transform_scenario", configs),
             )
-        return plans
+        ]
 
     def submit_stage(
         self,
@@ -584,11 +574,8 @@ class BCSDOrchestrator:
         list[str]
             List of output paths (either from cache or newly computed)
         """
-        if not configs:
-            return []
-
-        # Resolved up front: validating after the all-cached short circuit below would let
-        # a mistyped executor report success on a run that submitted nothing.
+        # Resolved before any short circuit below, so a mistyped executor cannot report
+        # success on a stage that happened to have nothing to submit.
         executor_name = executor or self.options.executor
         executors = {
             "coiled": self._submit_to_coiled,
@@ -599,6 +586,9 @@ class BCSDOrchestrator:
             raise ValueError(
                 f"Unknown executor {executor_name!r}; expected one of {sorted(executors)}"
             )
+
+        if not configs:
+            return []
 
         cache = self._get_cache()
         configs_to_run, output_paths = self._partition_by_cache(cache, stage, configs, force)

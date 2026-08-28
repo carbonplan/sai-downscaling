@@ -1384,3 +1384,14 @@ class TestJobDefinitionPagination:
         assert resolved == {"job_definition": "srm-downscaling:102", "image": "ecr/img:new"}
         assert client.describe_job_definitions.call_count == 2
         assert client.describe_job_definitions.call_args.kwargs["nextToken"] == "page2"
+
+
+class TestEmptyStageStillValidatesExecutor:
+    def test_typo_raises_even_with_no_configs(self, orchestrator):
+        # Otherwise a mistyped executor reports success on a stage that had nothing to do,
+        # and the typo only surfaces at whichever stage happens to have work.
+        with pytest.raises(ValueError, match="aws_batch"):
+            orchestrator.submit_stage("prepare_observations", [], executor="aws_batch")
+
+    def test_valid_executor_with_no_configs_is_a_no_op(self, orchestrator):
+        assert orchestrator.submit_stage("prepare_observations", [], executor="local") == []
