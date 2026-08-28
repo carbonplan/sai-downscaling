@@ -16,7 +16,8 @@ on:
                 description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm), or a single
                     config file relative to the chosen config root (e.g.
                     cesm2-waccm/cesm2-waccm-g6-southafrica.yaml). Leave blank to run every model
-                    for that environment."
+                    for that environment. Production accepts only the models on the allowlist in
+                    the `models` job, currently cesm2-waccm; qa accepts any subfolder."
                 required: false
                 default: ""
                 type: string
@@ -232,14 +233,20 @@ jobs:
         continue-on-error: true
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
             == 'production')
-        needs: models
+        needs: [models, image]
         runs-on: ubuntu-latest
-        timeout-minutes: 15
+        # Generous: the step syncs the dev dependency group and then probes the cache for
+        # every stage of every production leaf. Timing out here is indistinguishable from
+        # success at the approval screen, because the job is continue-on-error.
+        timeout-minutes: 30
         strategy:
             matrix:
                 model: ${{ fromJSON(needs.models.outputs.list) }}
         env:
             PLAN_CONFIG_PATH: ${{ endsWith(matrix.model, '.yaml') && format('configs/production/{0}', matrix.model) || format('configs/production/{0}/', matrix.model) }}
+            # The same pinned revision production submits against, so the image the
+            # reviewer approves is the image that runs.
+            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
             FORCE: ${{ inputs.force }}
             BRANCH: ${{ inputs.branch }}
         steps:

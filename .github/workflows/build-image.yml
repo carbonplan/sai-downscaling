@@ -64,7 +64,13 @@ jobs:
                   echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
                   # image-manifest/oci-mediatypes make the cache manifest one ECR accepts;
                   # ignore-error keeps a cache export failure from failing the build.
-                  echo "cache_ref=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:buildcache" >> "$GITHUB_OUTPUT"
+                  CACHE_REF="${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:buildcache"
+                  echo "cache_ref=$CACHE_REF" >> "$GITHUB_OUTPUT"
+                  if [[ "${{ github.event_name }}" == "release" ]]; then
+                    echo "cache_to=type=registry,ref=$CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "cache_to=" >> "$GITHUB_OUTPUT"
+                  fi
 
                   # Only a release moves :latest or claims a version tag. Any dispatch can
                   # build this workflow, and the job definition's default image is :latest,
@@ -99,7 +105,7 @@ jobs:
                   build-args: SRM_VERSION=${{ steps.meta.outputs.version }}
                   tags: ${{ steps.meta.outputs.tags }}
                   cache-from: type=registry,ref=${{ steps.meta.outputs.cache_ref }}
-                  cache-to: type=registry,ref=${{ steps.meta.outputs.cache_ref }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+                  cache-to: ${{ steps.meta.outputs.cache_to }}
 
             - name: Register a job definition revision for this image
               id: register
@@ -114,8 +120,8 @@ jobs:
                     --platform-capabilities EC2 \
                     --propagate-tags \
                     --tags Project=SRM \
-                    --retry-strategy '{"attempts":3}' \
-                    --timeout '{"attemptDurationSeconds":28800}' \
+                    --retry-strategy '{"attempts":3,"evaluateOnExit":[{"onStatusReason":"Job attempt duration exceeded timeout","action":"EXIT"}]}' \
+                    --timeout '{"attemptDurationSeconds":21600}' \
                     --container-properties "$(jq -n --arg image "${{ steps.meta.outputs.image }}" '{
                         image: $image,
                         jobRoleArn: "arn:aws:iam::631969445205:role/srm-batch-job-role",
