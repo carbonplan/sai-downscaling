@@ -101,15 +101,16 @@ covers every variable.
 | Scenario group | Variables | Members |
 | --- | --- | --- |
 | `historical` | `tas`, `pr`, `rsds`, `hurs` | `r2i1p1f1`, `r3i1p1f1` |
-| `historical` | `tasmax`, `tasmin`, `dtr` | `001` |
+| `historical` | `tasmax`, `tasmin` | `001` |
 | `ssp245` | `tas`, `pr`, `rsds`, `hurs` | `003`, `008` |
-| `ssp245` | `tasmax`, `tasmin`, `dtr` | `008` |
-| `g6_1p5k` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin`, `dtr` | `002`, `003` |
-| `g6_1p5k_end` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin`, `dtr` | `002` |
+| `ssp245` | `tasmax`, `tasmin` | `008` |
+| `g6_1p5k` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin` | `002`, `003` |
+| `g6_1p5k_end` | `tas`, `pr`, `rsds`, `hurs`, `tasmax`, `tasmin` | `002` |
 
-The `debiased_coarse/` subtree mirrors this inventory exactly, with one coarse-grid group for every
-fine-grid group listed above. This release contains no `esgf_ssp245` group, so every group in
-the table above has exactly one `debiased_coarse/` counterpart and nothing else is present.
+The `debiased_coarse/` subtree holds one coarse-grid group for every fine-grid group listed
+above, plus a `dtr` group under each scenario group in the table. Those `dtr` groups are the
+only ones with no fine-grid counterpart. This release contains no `esgf_ssp245` group, so
+nothing beyond those two sets is present.
 
 ## Opening a single variable/member/scenario
 
