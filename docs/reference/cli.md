@@ -106,7 +106,7 @@ uv run bcsd run-matrix [OPTIONS]
 # 2 GCMs x 2 variables x 3 members x 2 scenarios
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --gcm MIROC-ES2H \
+  --gcm CESM2-WACCM --gcm UKESM \
   --variable tas --variable pr \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 --scenario G6-1.5K \
@@ -132,7 +132,7 @@ uv run bcsd run-matrix \
 # Preview what would run without executing
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --gcm MIROC-ES2H \
+  --gcm CESM2-WACCM --gcm UKESM \
   --variable tas \
   --member r1i1p1f1 --member r2i1p1f1 \
   --scenario ssp245 \

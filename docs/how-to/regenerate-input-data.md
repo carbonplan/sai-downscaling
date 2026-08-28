@@ -6,7 +6,7 @@ Re-process raw source files into the icechunk stores the BCSD pipeline reads fro
 - A raw source file was corrected upstream and needs re-ingestion
 - An icechunk store is corrupted or accidentally deleted
 
-There are two workflows: one for GCM datasets (CESM2-WACCM, MIROC-ES2H, UKESM, NASA-NEX)
+There are two workflows: one for GCM datasets (CESM2-WACCM, UKESM, NASA-NEX)
 and one for ERA5. Use the appropriate workflow for the dataset you want to regenerate.
 
 ---
@@ -25,7 +25,7 @@ and one for ERA5. Use the appropriate workflow for the dataset you want to regen
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `gcm` | yes | GCM to process. One of `CESM2-WACCM`, `MIROC-ES2H`, `UKESM`, `NASA-NEX` |
+| `gcm` | yes | GCM to process. One of `CESM2-WACCM`, `UKESM`, `NASA-NEX` |
 | `scenario` | yes | Comma-separated scenario(s). See valid values below |
 | `extra_flags` | no | Additional flags passed to the processing script (e.g. `--subset`) |
 
@@ -34,7 +34,6 @@ and one for ERA5. Use the appropriate workflow for the dataset you want to regen
 | GCM | Valid scenarios |
 |-----|----------------|
 | `CESM2-WACCM` | `historical`, `ssp245`, `G6-1.5K`, `G6-1.5K-END` |
-| `MIROC-ES2H` | `historical`, `esgf-ssp245`, `ssp245`, `G6-1.5K` |
 | `UKESM` | `historical`, `SSP245`, `G6-1.5K` |
 | `NASA-NEX` | `historical`, `SSP245` |
 

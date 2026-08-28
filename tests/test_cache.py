@@ -69,7 +69,7 @@ def sai_config() -> BCSDConfig:
 def regional_config() -> BCSDConfig:
     """Config with a spatial subset (South Africa region)."""
     return BCSDConfig(
-        gcm="MIROC-ES2H",
+        gcm="UKESM",
         downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="01",
@@ -626,7 +626,7 @@ class TestStageLoc:
             ("variable", "dtr"),
             ("scenario", "G6-1.5K"),
             ("ensemble_member", "008"),
-            ("gcm", "MIROC-ES2H"),
+            ("gcm", "UKESM"),
         ):
             with subtests.test(field=field):
                 other = bound_cache_with_output.config.model_copy(update={field: value})

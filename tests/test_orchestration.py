@@ -77,7 +77,7 @@ def multi_configs() -> list[BCSDConfig]:
         _make_config(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"),
         _make_config(gcm="CESM2-WACCM", variable="tas", ensemble_member="r2i1p1f1"),
         _make_config(gcm="CESM2-WACCM", variable="pr", ensemble_member="r1i1p1f1"),
-        _make_config(gcm="MIROC-ES2H", variable="tas", ensemble_member="01"),
+        _make_config(gcm="UKESM", variable="tas", ensemble_member="01"),
     ]
 
 
@@ -134,7 +134,7 @@ class TestDeduplicateObs:
         gcm_var_pairs = [(c.gcm, c.variable) for c in result]
         assert ("CESM2-WACCM", "tas") in gcm_var_pairs
         assert ("CESM2-WACCM", "pr") in gcm_var_pairs
-        assert ("MIROC-ES2H", "tas") in gcm_var_pairs
+        assert ("UKESM", "tas") in gcm_var_pairs
 
     def test_four_configs_produce_three_unique_obs_tasks(self, orchestrator, multi_configs):
         result = orchestrator._deduplicate_obs_configs(multi_configs)
@@ -161,7 +161,7 @@ class TestDeduplicateHistorical:
 
     def test_different_ensemble_not_deduplicated(self, orchestrator, multi_configs):
         result = orchestrator._deduplicate_historical_configs(multi_configs)
-        # two CESM2-WACCM/tas (ens 0 and 1) + one CESM2-WACCM/pr + one MIROC-ES2H/tas = 4
+        # two CESM2-WACCM/tas (ens 0 and 1) + one CESM2-WACCM/pr + one UKESM/tas = 4
         assert len(result) == 4
 
     def test_all_unique_combinations_preserved(self, orchestrator, multi_configs, subtests):

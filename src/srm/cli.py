@@ -667,7 +667,7 @@ def configs_from_matrix(
     Parameters
     ----------
     gcms : list[str]
-        GCM names (e.g., ["CESM2-WACCM", "MIROC-ES2H"])
+        GCM names (e.g., ["CESM2-WACCM", "UKESM"])
     variables : list[str]
         Variables to downscale (e.g., ["tas", "pr"])
     members : list[str]
@@ -959,9 +959,7 @@ def _print_paths_summary(
 
 @app.command()
 def run_matrix(
-    gcm: list[str] = typer.Option(
-        ..., help="GCM name (repeatable: --gcm CESM2-WACCM --gcm MIROC-ES2H)"
-    ),
+    gcm: list[str] = typer.Option(..., help="GCM name (repeatable: --gcm CESM2-WACCM --gcm UKESM)"),
     variable: list[str] = typer.Option(
         ..., help="Variable to downscale (repeatable: --variable tas --variable pr)"
     ),
@@ -1074,7 +1072,7 @@ def run_matrix(
     Example (2 GCMs x 2 variables x 3 members x 2 scenarios x 1 method = 24 runs):
 
         bcsd run-matrix \\
-          --gcm CESM2-WACCM --gcm MIROC-ES2H \\
+          --gcm CESM2-WACCM --gcm UKESM \\
           --variable tas --variable pr \\
           --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \\
           --scenario SSP245 --scenario G6-1.5K \\

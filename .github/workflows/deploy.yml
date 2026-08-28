@@ -13,7 +13,7 @@ on:
                     - qa
                     - production
             model:
-                description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm), or a single
+                description: "GCM subfolder to run (e.g. cesm2-waccm, ukesm), or a single
                     config file relative to the chosen config root (e.g.
                     cesm2-waccm/cesm2-waccm-g6-southafrica.yaml). Leave blank to run every model
                     for that environment."
@@ -185,11 +185,12 @@ jobs:
             # so that adding a folder under configs/production/ cannot silently start a
             # global run at the next release. ukesm is deliberately absent: issue #529
             # leaves a 0.70 K discontinuity at 2015 between our UKESM1.0 historical and
-            # the UKESM1.1 ARISE runs, so it is not fit to publish yet.
+            # the UKESM1.1 ARISE runs, so it is not fit to publish yet. miroc-es2h was
+            # dropped from the deliverable entirely and no longer has configs.
             fail-fast: false
             matrix:
                 model: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.model != '' && format('["{0}"]',
-                    inputs.model) || '["cesm2-waccm","miroc-es2h"]') }}
+                    inputs.model) || '["cesm2-waccm"]') }}
         env:
             # Mirrors the QA job: a value ending in .yaml is a single config file, anything
             # else is a subfolder of every config in it.

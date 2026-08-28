@@ -18,12 +18,10 @@ Configs are organized by environment under `configs/`, with one subdirectory per
 configs/
   qa/                    # regional (South Africa subset) end-to-end checks
     cesm2-waccm/         # e.g. cesm2-waccm-ssp245-std-southafrica.yaml, ...-g6-southafrica.yaml
-    miroc-es2h/
     ukesm/
     obs-comparison/      # ERA5 vs GDEX observation-dataset comparison configs
   production/            # global runs
     cesm2-waccm/         # e.g. cesm2-waccm-ssp245-std.yaml, cesm2-waccm-g6.yaml, ...
-    miroc-es2h/
     ukesm/
   snapshot/              # configs used by the snapshot regression tests
     cesm2-waccm/
@@ -41,7 +39,7 @@ QA runs execute all configs in `configs/qa/` against a small South Africa spatia
 
 1. Go to **Actions → deploy → Run workflow**
 2. Leave **environment** set to `qa`, which is the default
-3. Optionally name a **model** to run one GCM subfolder (e.g. `miroc-es2h`), or a single config file relative to `configs/qa/` (e.g. `cesm2-waccm/cesm2-waccm-g6-southafrica.yaml`). Leave it blank to run every model.
+3. Optionally name a **model** to run one GCM subfolder (e.g. `ukesm`), or a single config file relative to `configs/qa/` (e.g. `cesm2-waccm/cesm2-waccm-g6-southafrica.yaml`). Leave it blank to run every model.
 4. Optionally enable **Force recompute** to bypass the S3 cache
 5. Optionally provide a **branch** override to pin a specific cache namespace (passed to the pipeline's `--branch` flag)
 6. Click **Run workflow**
@@ -61,7 +59,6 @@ The matrix is an explicit list in `deploy.yml` rather than a directory listing, 
 | GCM | In the release matrix | Reason |
 | --- | --- | --- |
 | `cesm2-waccm` | Yes | |
-| `miroc-es2h` | Yes | |
 | `ukesm` | No | Issue #529 leaves a 0.70 K discontinuity at 2015 between the UKESM1.0 historical and the UKESM1.1 ARISE runs |
 
 **To run every model in the matrix:**
@@ -74,7 +71,7 @@ The matrix is an explicit list in `deploy.yml` rather than a directory listing, 
 
 1. Go to **Actions → deploy → Run workflow**
 2. Set **environment** to `production`
-3. Set **model** to a GCM subfolder (e.g. `miroc-es2h`), or to a single config file relative to `configs/production/`. Leave it blank to run every model in the matrix.
+3. Set **model** to a GCM subfolder (e.g. `ukesm`), or to a single config file relative to `configs/production/`. Leave it blank to run every model in the matrix.
 4. Set **branch** explicitly. At a release tag the default resolves to the release version, but off any other ref `setuptools_scm` resolves a development version such as `v0.12.0.post28`, which no documentation page or `baselines.py` entry cites.
 5. Click **Run workflow**
 

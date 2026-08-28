@@ -284,7 +284,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     """
 
     # Model and data identifiers
-    gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM', 'MIROC-ES2H', 'UKESM')")
+    gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM', 'UKESM')")
     variable: VariableName = Field(..., description="Variable to downscale")
     ensemble_member: str = Field(..., description="Ensemble member label (e.g. 'r1i1p1f1', '01')")
     scenario: str | None = Field(
@@ -669,7 +669,7 @@ print(sai_config.variable_config.detrend_data)  # False (precipitation doesn't d
 
 # 3. Regional subset
 subset_config = BCSDConfig(
-    gcm="MIROC-ES2H",
+    gcm="UKESM",
     variable="tasmax",
     ensemble_member=0,
     scenario="ssp245",
