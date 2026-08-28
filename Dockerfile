@@ -6,15 +6,7 @@
 # shared libraries the compiled extension links against.
 FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
-# setuptools_scm reads the version from git metadata, which is not copied in. Without
-# this the build falls back to "999" and every output store is stamped
-# srm_downscaling:version = 999 (see pipeline.py). CI passes the real version.
-#
-# Scoped to _FOR_SRM: the unscoped variable applies to every setuptools_scm build in the
-# environment, which pins cartopy's metadata to this value and fails the lock check.
-ARG SRM_VERSION=0.0.0
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SRM=${SRM_VERSION} \
-    UV_COMPILE_BYTECODE=1 \
+ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
 
@@ -27,6 +19,16 @@ WORKDIR /app
 # Dependencies first, without the project, so source edits do not rebuild cartopy.
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
+
+# setuptools_scm reads the version from git metadata, which is not copied in. Without
+# this the build falls back to "999" and every output store is stamped
+# srm_downscaling:version = 999 (see pipeline.py). CI passes the real version.
+#
+# Scoped to _FOR_SRM: the unscoped variable applies to every setuptools_scm build in the
+# environment, which pins cartopy's metadata to this value and fails the lock check.
+# Declared below the dependency layer so a version bump does not recompile cartopy.
+ARG SRM_VERSION=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SRM=${SRM_VERSION}
 
 COPY src/ ./src/
 RUN uv sync --frozen --no-dev
