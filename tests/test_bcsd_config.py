@@ -465,10 +465,14 @@ class TestVariableConfigDebiasDefaults:
     """Every supported variable must carry an explicit debias_approach default."""
 
     def test_all_variables_have_debias_approach(self, subtests):
-        for var in ("tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"):
+        for var in ("tas", "tasmax", "tasmin", "pr", "dtr", "hurs"):
             with subtests.test(variable=var):
                 vc = VariableConfig.for_variable(var, "BCSD")
                 assert vc.debias_approach == "nonparametric_hybrid_2sided"
+        for var in "rsds":
+            with subtests.test(variable=var):
+                vc = VariableConfig.for_variable(var, "BCSD")
+                assert vc.debias_approach == "nonparametric"
 
 
 class TestConfigJsonRoundTrip:

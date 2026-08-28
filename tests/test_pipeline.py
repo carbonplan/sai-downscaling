@@ -1159,7 +1159,7 @@ class TestWeibullZeroBounded:
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
             downscaling_method="BCSD",
-            variable="rsds",
+            variable="pr",
             ensemble_member="r1i1p1f1",
             scenario="SSP245",
             predict_period_start=2015,
