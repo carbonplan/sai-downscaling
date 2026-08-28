@@ -7,11 +7,13 @@ import pytest
 from srm.cost import (
     COILED_FEE_PER_VCPU_HOUR,
     EC2_RATE_PER_VCPU_HOUR,
+    MEMORY_MIB_PER_VCPU,
     STAGE_HOURS,
     burn_rate_per_hour,
     duration_range,
     estimate_wave,
     estimate_workflow,
+    memory_mib,
     vcpus,
 )
 
@@ -99,3 +101,20 @@ class TestWorkflowEstimate:
     def test_empty_plan_is_free(self):
         wf = estimate_workflow([], "aws-batch")
         assert wf.high_cost == 0.0 and wf.peak_burn_rate == 0.0
+
+
+class TestInstanceMemory:
+    """One instance table serves both the cost estimate and the Batch resource request."""
+
+    def test_memory_is_derived_from_vcpus(self):
+        assert memory_mib("r8g.24xlarge") == 96 * MEMORY_MIB_PER_VCPU == 737280
+        assert memory_mib("r8g.2xlarge") == 8 * MEMORY_MIB_PER_VCPU == 61440
+
+    def test_leaves_headroom_below_the_instance_total(self):
+        # r8g carries 8 GiB per vCPU; requesting all of it would never place, because the
+        # ECS agent and the OS are not free.
+        assert MEMORY_MIB_PER_VCPU < 8 * 1024
+
+    def test_unknown_instance_raises(self):
+        with pytest.raises(KeyError, match="r9z.99xlarge"):
+            memory_mib("r9z.99xlarge")

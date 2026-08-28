@@ -29,6 +29,11 @@ INSTANCE_VCPU: dict[str, int] = {
     "c8g.12xlarge": 48,
 }
 
+#: Memory requested per vCPU, in MiB. The r8g family carries 8 GiB per vCPU; requesting all
+#: of it would never place, because the ECS agent and the OS are not free. This is 15/16 of
+#: the total, the headroom the hand-written resource table used to encode per instance.
+MEMORY_MIB_PER_VCPU = 7680
+
 #: On-demand EC2 price for the r8g family, per vCPU-hour.
 EC2_RATE_PER_VCPU_HOUR = 0.0589
 
@@ -116,6 +121,15 @@ def vcpus(vm_type: str) -> int:
         raise KeyError(
             f"Unknown instance type {vm_type!r}; add it to srm.cost.INSTANCE_VCPU"
         ) from None
+
+
+def memory_mib(vm_type: str) -> int:
+    """Memory to request for a task that should fill one instance of ``vm_type``.
+
+    Derived rather than tabulated so the AWS Batch resource request and the cost estimate
+    cannot drift apart: both read one instance table.
+    """
+    return vcpus(vm_type) * MEMORY_MIB_PER_VCPU
 
 
 def burn_rate_per_hour(vm_type: str, n_tasks: int, executor: str) -> float:

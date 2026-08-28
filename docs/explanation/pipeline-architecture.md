@@ -251,7 +251,7 @@ VM types are selected per pipeline stage to match resource requirements. A spati
 | `fit_historical` | `r8g.12xlarge` | `r8g.2xlarge` | Memory-intensive QM fitting |
 | `transform_scenario` | `r8g.24xlarge` | `r8g.4xlarge` | 768GB RAM, 96 vCPUs, AWS Graviton |
 
-AWS Batch takes resource requirements rather than instance types and picks the instance itself, so `_STAGE_RESOURCES` mirrors this table as vCPU and memory sized to fill one instance of the same class.
+AWS Batch takes resource requirements rather than instance types and picks the instance itself. `_resources_for` derives those requirements from this same table, asking for the vCPU count of the chosen instance and 7680 MiB per vCPU, which fills the instance while leaving the ECS agent and the OS their share. Deriving rather than tabulating keeps the Batch request and the cost estimate from drifting apart.
 
 - **region**: `us-west-2` (same as S3 data)
 - **keepalive**: VMs stay alive briefly after task completion for follow-up work

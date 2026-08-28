@@ -18,6 +18,7 @@ from typing import Literal
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.cache import ArtifactCache, StoreLocation
+from srm.cost import memory_mib, vcpus
 from srm.pipeline import BCSDPipeline
 
 logger = logging.getLogger(__name__)
@@ -119,22 +120,6 @@ class BCSDOrchestrator:
         table = cls._REGIONAL_STAGE_VM_TYPES if cls._is_regional(configs) else cls._STAGE_VM_TYPES
         return table.get(stage, cls._DEFAULT_VM_TYPE)
 
-    # AWS Batch takes resource requirements rather than instance types and picks the
-    # instance itself. Each entry is sized to fill one instance of the class the Coiled
-    # path requested, leaving ECS headroom, because every task uses all of its VM's cores
-    # through threaded Dask and must not share a host.
-    _STAGE_RESOURCES: dict[str, dict[str, int]] = {
-        "prepare_observations": {"vcpu": 16, "memory_mib": 122880},  # r8g.4xlarge
-        "fit_historical": {"vcpu": 48, "memory_mib": 368640},  # r8g.12xlarge
-        "transform_scenario": {"vcpu": 96, "memory_mib": 737280},  # r8g.24xlarge
-    }
-
-    _REGIONAL_STAGE_RESOURCES: dict[str, dict[str, int]] = {
-        "prepare_observations": {"vcpu": 8, "memory_mib": 61440},  # r8g.2xlarge
-        "fit_historical": {"vcpu": 8, "memory_mib": 61440},  # r8g.2xlarge
-        "transform_scenario": {"vcpu": 16, "memory_mib": 122880},  # r8g.4xlarge
-    }
-
     @classmethod
     def _resources_for(cls, stage: str, configs: list[BCSDConfig]) -> dict[str, int]:
         """
@@ -152,10 +137,17 @@ class BCSDOrchestrator:
         dict[str, int]
             Mapping with ``vcpu`` and ``memory_mib`` keys.
         """
-        table = cls._REGIONAL_STAGE_RESOURCES if cls._is_regional(configs) else cls._STAGE_RESOURCES
-        # Indexed rather than defaulted, unlike _vm_types_for: an unsized stage should
-        # fail at submission rather than run a long job on a guessed instance.
-        return table[stage]
+        # AWS Batch takes resource requirements rather than an instance type and picks the
+        # instance itself, so this asks for enough to fill the instance the Coiled path
+        # would have requested. Derived from that one table rather than a parallel one:
+        # every task uses all of its VM's cores through threaded Dask and must not share a
+        # host, so the two must agree by construction.
+        #
+        # Indexed rather than defaulted, unlike _vm_types_for: an unsized stage should fail
+        # at submission rather than run a long job on a guessed instance.
+        table = cls._REGIONAL_STAGE_VM_TYPES if cls._is_regional(configs) else cls._STAGE_VM_TYPES
+        vm_type = table[stage][0]
+        return {"vcpu": vcpus(vm_type), "memory_mib": memory_mib(vm_type)}
 
     def _config_payload_json(self, config: BCSDConfig) -> str:
         """Serialize one task's ``CONFIG_JSON`` payload.
@@ -173,6 +165,9 @@ class BCSDOrchestrator:
 
     #: AWS Batch rejects a jobName longer than this.
     _MAX_JOB_NAME = 128
+
+    #: Page cap when listing job definition revisions; each page holds up to 100.
+    _MAX_JOB_DEFINITION_PAGES = 100
 
     def _job_name(self, stage: str, configs: list[BCSDConfig]) -> str:
         """Build the deterministic job name shared by both remote executors.
@@ -216,11 +211,26 @@ class BCSDOrchestrator:
         name = self.options.batch_job_definition
         client = self._batch_client()
         if ":" in name or name.startswith("arn:"):
-            response = client.describe_job_definitions(jobDefinitions=[name])
+            definitions = client.describe_job_definitions(jobDefinitions=[name])["jobDefinitions"]
         else:
-            response = client.describe_job_definitions(jobDefinitionName=name, status="ACTIVE")
+            definitions = []
+            kwargs: dict = {"jobDefinitionName": name, "status": "ACTIVE"}
+            for _ in range(self._MAX_JOB_DEFINITION_PAGES):
+                response = client.describe_job_definitions(**kwargs)
+                definitions.extend(response["jobDefinitions"])
+                token = response.get("nextToken")
+                if not token:
+                    break
+                kwargs["nextToken"] = token
+            else:
+                # Bounded rather than `while True`: the loop is driven by a token the
+                # server supplies, and stopping quietly would pin whichever revision
+                # happened to be newest in the pages read so far.
+                raise RuntimeError(
+                    f"Job definition {name!r} paged past "
+                    f"{self._MAX_JOB_DEFINITION_PAGES * 100} revisions without ending"
+                )
 
-        definitions = response["jobDefinitions"]
         if not definitions:
             raise ValueError(f"No ACTIVE job definition found for {name!r}")
 

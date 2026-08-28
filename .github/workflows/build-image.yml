@@ -59,13 +59,22 @@ jobs:
                   echo "version=$VERSION" >> "$GITHUB_OUTPUT"
                   echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-                  # Only a release moves :latest. Any dispatch can build this workflow, and
-                  # the job definition's default image is :latest, so tagging it every time
-                  # would silently repoint unpinned runs at feature-branch code.
+                  # Only a release moves :latest or claims a version tag. Any dispatch can
+                  # build this workflow, and the job definition's default image is :latest,
+                  # so tagging it every time would silently repoint unpinned runs at
+                  # feature-branch code.
+                  #
+                  # The version tag closes the trace from data back to image: every output
+                  # store is stamped srm_downscaling:version and written to an icechunk
+                  # branch of that version, so the tag lets you go straight from a store to
+                  # the image that produced it. "+" is legal in a version but not in a
+                  # Docker tag.
                   TAGS="$IMAGE"
                   if [[ "${{ github.event_name }}" == "release" ]]; then
+                    REPO="${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY"
                     TAGS="$TAGS
-                  ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:latest"
+                  $REPO:${VERSION//+/_}
+                  $REPO:latest"
                   fi
                   {
                     echo "tags<<__TAGS__"

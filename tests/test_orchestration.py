@@ -1340,3 +1340,47 @@ class TestSubmissionUsesTheResolvedDefinition:
         with patch("boto3.client", return_value=client):
             orch._submit_batch_job("fit_historical", [config], None)
         assert client.submit_job.call_args.kwargs["jobDefinition"] == "srm-downscaling"
+
+
+class TestResourcesDerivedFromOneTable:
+    def test_unknown_stage_still_raises(self, orchestrator, config):
+        # Deliberately louder than _vm_types_for's default: an unsized stage should fail at
+        # submission rather than run a long job on a guessed instance.
+        with pytest.raises(KeyError):
+            orchestrator._resources_for("polish_the_output", [config])
+
+    def test_matches_the_instance_the_coiled_path_would_pick(self, orchestrator, config):
+        from srm.cost import memory_mib, vcpus
+
+        vm_type = orchestrator._vm_types_for("transform_scenario", [config])[0]
+        assert orchestrator._resources_for("transform_scenario", [config]) == {
+            "vcpu": vcpus(vm_type),
+            "memory_mib": memory_mib(vm_type),
+        }
+
+
+class TestJobDefinitionPagination:
+    def test_follows_next_token(self, pipeline_options):
+        # describe_job_definitions caps a page at 100, and a revision is registered per
+        # deploy, so reading only the first page would eventually pin a stale revision.
+        pipeline_options.batch_job_definition = "srm-downscaling"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.side_effect = [
+            {
+                "jobDefinitions": [
+                    {"revision": 1, "containerProperties": {"image": "ecr/img:old"}}
+                ],
+                "nextToken": "page2",
+            },
+            {
+                "jobDefinitions": [
+                    {"revision": 102, "containerProperties": {"image": "ecr/img:new"}}
+                ]
+            },
+        ]
+        with patch("boto3.client", return_value=client):
+            resolved = orch.resolve_job_definition()
+        assert resolved == {"job_definition": "srm-downscaling:102", "image": "ecr/img:new"}
+        assert client.describe_job_definitions.call_count == 2
+        assert client.describe_job_definitions.call_args.kwargs["nextToken"] == "page2"
