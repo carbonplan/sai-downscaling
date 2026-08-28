@@ -471,7 +471,8 @@ class TestSubmitToCoiled:
 
         mock_coiled = MagicMock()
         mock_coiled.batch.run.side_effect = fake_run
-        mock_coiled.batch.wait_for_job_done.return_value = "done (errors)"
+        # The retry, which loses no task, reports a clean "done".
+        mock_coiled.batch.wait_for_job_done.side_effect = ["done (errors)", "done"]
 
         with patch.dict("sys.modules", {"coiled": mock_coiled}):
             result = orchestrator._submit_to_coiled(
@@ -487,6 +488,22 @@ class TestSubmitToCoiled:
         assert all(c["variable"] == cfg_fail.variable for c in retry_configs)
         assert f"{loc_ok.store_path}::{loc_ok.group}" in result
         assert f"{loc_fail.store_path}::{loc_fail.group}" in result
+
+    def test_failed_job_does_not_pass_on_preexisting_artifacts(self, orchestrator, config):
+        """An artifact that predates the run cannot clear a job that reported errors.
+
+        submit_stage resubmits every config when force is set, so the cache may still hold
+        the previous run's output and its presence proves nothing about this one.
+        """
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        mock_coiled = self._make_coiled_mock(["done (errors)"])
+
+        with patch.dict("sys.modules", {"coiled": mock_coiled}):
+            with pytest.raises(RuntimeError, match="already existed"):
+                orchestrator._submit_to_coiled("prepare_observations", [config])
 
     def test_raises_after_max_retries_exhausted(self, orchestrator, config):
         """RuntimeError is raised when all retries are exhausted."""

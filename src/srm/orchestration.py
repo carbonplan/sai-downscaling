@@ -486,8 +486,19 @@ class BCSDOrchestrator:
             f"extent={'regional' if self._is_regional(configs) else 'global'}"
         )
 
+        def loc_for(config: BCSDConfig) -> StoreLocation:
+            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
+            return self._stage_loc(cache, stage, config, hist_member=hist_member)
+
+        # Artifacts present before submission cannot testify about this run. Normally there
+        # are none, because submit_stage only queues uncached configs; under force it queues
+        # everything, and then the sweep below would accept the previous run's output as
+        # proof that a failed recompute succeeded.
+        preexisting = [config.run_id for config in configs if cache.exists(loc_for(config))]
+
         remaining = list(configs)
         attempt = 0
+        final_state: str | None = None
 
         while remaining and attempt < max_retries:
             attempt += 1
@@ -525,20 +536,7 @@ class BCSDOrchestrator:
             logger.info(f"Batch job {job_id} finished with state: {final_state}")
 
             # Partition into succeeded / still-failed based on cache presence
-            still_failed = [
-                config
-                for config in remaining
-                if not cache.exists(
-                    self._stage_loc(
-                        cache,
-                        stage,
-                        config,
-                        hist_member=self._resolve_hist_member(config)
-                        if stage == "fit_historical"
-                        else None,
-                    )
-                )
-            ]
+            still_failed = [config for config in remaining if not cache.exists(loc_for(config))]
 
             if not still_failed:
                 logger.info(f"✓ Batch job {job_id} completed successfully")
@@ -559,21 +557,20 @@ class BCSDOrchestrator:
                 f"{[c.run_id for c in remaining]}"
             )
 
+        # A clean Coiled job reports "done"; one that lost a task reports "done (errors)",
+        # and a timeout returns None. Either way the pre-existing artifacts stay unproven.
+        if preexisting and final_state != "done":
+            raise RuntimeError(
+                f"Stage '{stage}' Coiled batch job finished in state {final_state!r} and "
+                f"{len(preexisting)} artifact(s) already existed before it ran, so their "
+                f"presence now proves nothing: {preexisting}. Check the job's task logs "
+                "before treating this run as complete."
+            )
+
         logger.info(f"✓ All {len(configs)} {stage} tasks completed")
 
         # Collect and return all output paths (now guaranteed to exist)
-        result = []
-        for config in configs:
-            loc = self._stage_loc(
-                cache,
-                stage,
-                config,
-                hist_member=self._resolve_hist_member(config)
-                if stage == "fit_historical"
-                else None,
-            )
-            result.append(f"{loc.store_path}::{loc.group}")
-        return result
+        return [f"{loc.store_path}::{loc.group}" for loc in map(loc_for, configs)]
 
     #: AWS Batch job states that mean the job will not progress further.
     _BATCH_TERMINAL_STATES = frozenset({"SUCCEEDED", "FAILED"})
