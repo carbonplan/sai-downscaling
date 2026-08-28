@@ -913,6 +913,19 @@ class TestSubmitBatchJob:
         assert kwargs["tags"] == {"Project": "SRM"}
         assert kwargs["propagateTags"] is True
 
+    def test_command_override_carries_only_the_stage(self, orchestrator, multi_configs):
+        # containerOverrides.command replaces CMD, not ENTRYPOINT. Repeating the
+        # interpreter invocation here appends it to the image's ENTRYPOINT and every
+        # task dies on argument parsing.
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        overrides = client.submit_job.call_args.kwargs["containerOverrides"]
+        assert overrides["command"] == ["transform_scenario"]
+
     def test_submission_requests_stage_resources(self, orchestrator, multi_configs):
         client = MagicMock()
         client.submit_job.return_value = {"jobId": "abc-123"}
@@ -927,3 +940,63 @@ class TestSubmitBatchJob:
             ]
         }
         assert reqs == {"VCPU": "96", "MEMORY": "737280"}
+
+
+class TestAwaitBatchJob:
+    def test_returns_terminal_status(self, orchestrator):
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [{"status": "RUNNING"}]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            assert orchestrator._await_batch_job(client, "abc-123", poll_seconds=0) == "SUCCEEDED"
+        assert client.describe_jobs.call_count == 2
+
+    def test_returns_failed_without_raising(self, orchestrator):
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [{"status": "FAILED"}]}
+        with patch("time.sleep"):
+            assert orchestrator._await_batch_job(client, "abc-123", poll_seconds=0) == "FAILED"
+
+
+class TestSubmitToAwsBatch:
+    def test_returns_paths_when_cache_confirms_every_task(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", return_value=True),
+            patch("time.sleep"),
+        ):
+            paths = orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
+        assert len(paths) == len(multi_configs)
+        assert all("::" in p for p in paths)
+
+    def test_raises_when_cache_is_missing_output(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", return_value=False),
+            patch("time.sleep"),
+        ):
+            with pytest.raises(RuntimeError, match="did not produce output"):
+                orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
+
+    def test_single_config_skips_manifest_write(self, orchestrator, config):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "solo-1"}
+        client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest") as mock_write,
+            patch.object(ArtifactCache, "exists", return_value=True),
+            patch("time.sleep"),
+        ):
+            orchestrator._submit_to_aws_batch("fit_historical", [config])
+        mock_write.assert_not_called()

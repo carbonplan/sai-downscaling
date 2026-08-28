@@ -140,6 +140,8 @@ class BCSDOrchestrator:
             Mapping with ``vcpu`` and ``memory_mib`` keys.
         """
         table = cls._REGIONAL_STAGE_RESOURCES if cls._is_regional(configs) else cls._STAGE_RESOURCES
+        # Indexed rather than defaulted, unlike _vm_types_for: an unsized stage should
+        # fail at submission rather than run a long job on a guessed instance.
         return table[stage]
 
     def _config_payload_json(self, config: BCSDConfig) -> str:
@@ -193,7 +195,7 @@ class BCSDOrchestrator:
 
         client = boto3.client("batch", region_name=self.options.batch_region)
         resources = self._resources_for(stage, configs)
-        environment = [{"name": "SRM_STAGE", "value": stage}]
+        environment: list[dict[str, str]] = []
 
         if len(configs) == 1:
             environment.append(
@@ -211,7 +213,9 @@ class BCSDOrchestrator:
             jobQueue=self.options.batch_job_queue,
             jobDefinition=self.options.batch_job_definition,
             containerOverrides={
-                "command": ["uv", "run", "--no-sync", "python", "-m", "srm.batch_runner", stage],
+                # Overrides the image's CMD, not its ENTRYPOINT, which already invokes
+                # the runner. Repeating the interpreter here appends it as arguments.
+                "command": [stage],
                 "environment": environment,
                 "resourceRequirements": [
                     {"type": "VCPU", "value": str(resources["vcpu"])},
@@ -540,6 +544,96 @@ class BCSDOrchestrator:
             )
             result.append(f"{loc.store_path}::{loc.group}")
         return result
+
+    #: AWS Batch job states that mean the job will not progress further.
+    _BATCH_TERMINAL_STATES = frozenset({"SUCCEEDED", "FAILED"})
+
+    def _await_batch_job(self, client, job_id: str, poll_seconds: int = 30) -> str:
+        """
+        Block until an AWS Batch job reaches a terminal state.
+
+        Parameters
+        ----------
+        client : botocore.client.BaseClient
+            AWS Batch client.
+        job_id : str
+            Job to poll.
+        poll_seconds : int, optional
+            Delay between ``describe_jobs`` calls.
+
+        Returns
+        -------
+        str
+            Terminal job status, either ``SUCCEEDED`` or ``FAILED``.
+        """
+        import time
+
+        while True:
+            status = client.describe_jobs(jobs=[job_id])["jobs"][0]["status"]
+            if status in self._BATCH_TERMINAL_STATES:
+                logger.info(f"AWS Batch job {job_id} finished with state: {status}")
+                return status
+            time.sleep(poll_seconds)
+
+    def _submit_to_aws_batch(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
+        """
+        Run a stage's tasks on AWS Batch.
+
+        Retries are delegated to the service through ``retryStrategy``, so unlike
+        ``_submit_to_coiled`` there is no resubmission loop here. Cache presence remains
+        the authority on success: a task can exit zero without producing output, so the
+        job status is logged but never trusted.
+
+        Parameters
+        ----------
+        stage : str
+            Pipeline stage name.
+        configs : list[BCSDConfig]
+            Configurations to process.
+
+        Returns
+        -------
+        list[str]
+            ``store::group`` paths, one per config, in input order.
+
+        Raises
+        ------
+        RuntimeError
+            If any config has no artifact in the cache after the job finishes.
+        """
+        import boto3
+
+        from srm.batch_manifest import write_manifest
+
+        cache = self._get_cache()
+
+        def loc_for(config: BCSDConfig) -> StoreLocation:
+            hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
+            return self._stage_loc(cache, stage, config, hist_member=hist_member)
+
+        manifest_uri: str | None = None
+        if len(configs) > 1:
+            manifest_uri = (
+                f"{self.options.scratch_dir.rstrip('/')}/manifests/"
+                f"{self._job_name(stage, configs)}.json"
+            )
+            write_manifest(
+                manifest_uri, stage, [json.loads(self._config_payload_json(c)) for c in configs]
+            )
+
+        job_id = self._submit_batch_job(stage, configs, manifest_uri)
+        client = boto3.client("batch", region_name=self.options.batch_region)
+        self._await_batch_job(client, job_id)
+
+        failed = [config for config in configs if not cache.exists(loc_for(config))]
+        if failed:
+            raise RuntimeError(
+                f"Stage '{stage}' on AWS Batch job {job_id}: "
+                f"{len(failed)} task(s) did not produce output: {[c.run_id for c in failed]}"
+            )
+
+        logger.info(f"✓ All {len(configs)} {stage} tasks completed")
+        return [f"{loc.store_path}::{loc.group}" for loc in map(loc_for, configs)]
 
     def _run_local(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
         """
