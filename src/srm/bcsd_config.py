@@ -604,7 +604,9 @@ class PipelineOptions(pydantic_settings.BaseSettings):
         ),
     )
     batch_job_queue: str = Field("srm-production", description="AWS Batch job queue name")
-    batch_job_definition: str = Field("srm-bcsd", description="AWS Batch job definition name")
+    batch_job_definition: str = Field(
+        "srm-downscaling", description="AWS Batch job definition name"
+    )
     batch_region: str = Field("us-west-2", description="Region for the AWS Batch control plane")
 
     @model_validator(mode="before")

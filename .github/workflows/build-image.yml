@@ -19,11 +19,11 @@ permissions:
     contents: read
 
 env:
-    ECR_REPOSITORY: srm-bcsd
+    ECR_REPOSITORY: srm-downscaling
 
 jobs:
     build:
-        name: Build and push srm-bcsd
+        name: Build and push srm-downscaling
         # Native arm64 runner: emulating Graviton under QEMU on x86 makes the uv sync
         # step take tens of minutes.
         runs-on: ubuntu-24.04-arm
