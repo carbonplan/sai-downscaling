@@ -179,19 +179,52 @@ jobs:
                       echo '```'
                   } >> "$GITHUB_STEP_SUMMARY"
 
+    models:
+        # Single source of truth for which GCMs a release runs. Both the cost plan and the
+        # run itself consume it, so an estimate can never cover a different set of models
+        # than the matrix that follows it.
+        name: Resolve model list
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
+            == 'production')
+        runs-on: ubuntu-latest
+        outputs:
+            list: ${{ steps.resolve.outputs.list }}
+        steps:
+            - id: resolve
+              env:
+                  MODEL: ${{ inputs.model }}
+              # The release list is explicit rather than derived from the directory listing,
+              # so adding a folder under configs/production/ cannot silently start a global
+              # run at the next release.
+              #
+              # ukesm is absent because issue #529 leaves a 0.70 K discontinuity at 2015
+              # between our UKESM1.0 historical and the UKESM1.1 ARISE runs, so it is not fit
+              # to publish. miroc-es2h is absent because the deliverable is CESM and UKESM
+              # only; its configs are deliberately left without downscaling_method and no
+              # longer load.
+              run: |
+                  if [[ -n "$MODEL" ]]; then
+                    echo "list=[\"$MODEL\"]" >> "$GITHUB_OUTPUT"
+                  else
+                    echo 'list=["cesm2-waccm"]' >> "$GITHUB_OUTPUT"
+                  fi
+
     plan:
         # Renders the cost estimate into the job summary so the reviewer who releases the
         # production environment is approving a number rather than a blank prompt. Enable
         # the gate itself under Settings > Environments > production > required reviewers;
         # without it this job is informational only.
-        name: Cost plan (production)
+        name: Cost plan (${{ matrix.model }})
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
             == 'production')
-        needs: image
+        needs: [image, models]
         runs-on: ubuntu-latest
         timeout-minutes: 15
+        strategy:
+            matrix:
+                model: ${{ fromJSON(needs.models.outputs.list) }}
         env:
-            PLAN_CONFIG_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.model != '' && (endsWith(inputs.model, '.yaml') && format('configs/production/{0}', inputs.model) || format('configs/production/{0}/', inputs.model)) || 'configs/production/' }}
+            PLAN_CONFIG_PATH: ${{ endsWith(matrix.model, '.yaml') && format('configs/production/{0}', matrix.model) || format('configs/production/{0}/', matrix.model) }}
             FORCE: ${{ inputs.force }}
             BRANCH: ${{ inputs.branch }}
         steps:
@@ -211,7 +244,7 @@ jobs:
                     EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
                   {
-                    echo "### Production cost estimate"
+                    echo "### Production cost estimate: ${{ matrix.model }}"
                     echo
                     echo '```'
                     uv run bcsd run --config-path "$PLAN_CONFIG_PATH" \
@@ -225,7 +258,7 @@ jobs:
         runs-on: ubuntu-latest
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
             == 'production')
-        needs: [image, plan]
+        needs: [image, plan, models]
         environment:
             name: production
         strategy:
@@ -240,15 +273,11 @@ jobs:
             # which is what a sequential run would exhaust: the CESM2-WACCM run alone
             # takes ~4h.
             #
-            # The release list is explicit rather than derived from the directory listing
-            # so that adding a folder under configs/production/ cannot silently start a
-            # global run at the next release. ukesm is deliberately absent: issue #529
-            # leaves a 0.70 K discontinuity at 2015 between our UKESM1.0 historical and
-            # the UKESM1.1 ARISE runs, so it is not fit to publish yet.
+            # Which models run, and why the list is an explicit allowlist, is decided by the
+            # `models` job above.
             fail-fast: false
             matrix:
-                model: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.model != '' && format('["{0}"]',
-                    inputs.model) || '["cesm2-waccm","miroc-es2h"]') }}
+                model: ${{ fromJSON(needs.models.outputs.list) }}
         env:
             # Mirrors the QA job: a value ending in .yaml is a single config file, anything
             # else is a subfolder of every config in it.

@@ -1,13 +1,14 @@
 # Deploy the Pipeline
 
-The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds five jobs:
+The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds six jobs:
 
 | Job | Purpose | Trigger |
 |---|---|---|
 | `image` | Build the arm64 task container and pin a job definition to it | Every deploy |
 | `qa` | Fast regional validation | Manual (`workflow_dispatch` with `environment: qa`) |
 | `snapshot` | Rebuild the regional snapshot baseline, then freeze it under an icechunk tag | Automatic on GitHub release |
-| `plan` | Write the production cost estimate to the run summary | Whenever `production` would run |
+| `models` | Resolve which GCMs the release runs | Whenever `production` would run |
+| `plan` | Write the production cost estimate to the run summary, one job per GCM | Whenever `production` would run |
 | `production` | Full global run, one job per GCM | Automatic on GitHub release, or manual (`workflow_dispatch` with `environment: production`) |
 
 `snapshot` and `production` run in parallel, so the six-hour global run does not hold up the baseline the next pull request compares against.
@@ -128,7 +129,9 @@ To add a variable, member, or scenario to a GCM that already runs in production:
 3. Omit `subset_bounds` for a global run.
 4. Open a pull request. The config is picked up on the next release, because each job loads every YAML under its own GCM folder.
 
-To add a **new GCM**, do the same in a new `configs/production/{model}/` folder, then add that folder name to the `strategy.matrix.model` list in `.github/workflows/deploy.yml`. Both steps are required: the matrix is a deliberate allowlist, so a config folder that is not named there is never run.
+To add a **new GCM**, do the same in a new `configs/production/{model}/` folder, then add that folder name to the list emitted by the `models` job in `.github/workflows/deploy.yml`. Both steps are required: that list is a deliberate allowlist, so a config folder not named there is never run. The `plan` and `production` jobs both read it, which keeps the cost estimate covering exactly the models that then run.
+
+Two GCMs are deliberately excluded. `ukesm` is held back by issue #529, which leaves a 0.70 K discontinuity at 2015 between our UKESM1.0 historical and the UKESM1.1 ARISE runs. `miroc-es2h` is out of scope for the deliverable, and its configs are intentionally left without `downscaling_method`, so they no longer load.
 
 ## Prerequisites
 
