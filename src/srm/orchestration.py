@@ -158,14 +158,26 @@ class BCSDOrchestrator:
             }
         )
 
+    #: AWS Batch rejects a jobName longer than this.
+    _MAX_JOB_NAME = 128
+
     def _job_name(self, stage: str, configs: list[BCSDConfig]) -> str:
-        """Build the deterministic job name shared by both remote executors."""
+        """Build the deterministic job name shared by both remote executors.
+
+        The descriptive middle grows with the batch's GCMs and variables, so a wide
+        enough wave would overrun the AWS Batch limit. Trimming keeps the hash, which
+        is what makes the name unique, and only production waves are ever near it.
+        """
         gcms = "-".join(sorted({c.gcm for c in configs}))
         variables = "-".join(sorted({c.variable for c in configs}))
         batch_hash = hashlib.sha256(
             "".join(sorted(c.config_hash for c in configs)).encode()
         ).hexdigest()[:8]
-        return f"bcsd-{stage}-{gcms}-{variables}-{batch_hash}"
+        name = f"bcsd-{stage}-{gcms}-{variables}-{batch_hash}"
+        if len(name) > self._MAX_JOB_NAME:
+            head = name[: self._MAX_JOB_NAME - len(batch_hash) - 1].rstrip("-")
+            name = f"{head}-{batch_hash}"
+        return name
 
     def _submit_batch_job(
         self, stage: str, configs: list[BCSDConfig], manifest_uri: str | None
@@ -587,7 +599,14 @@ class BCSDOrchestrator:
         import time
 
         while True:
-            job = client.describe_jobs(jobs=[job_id])["jobs"][0]
+            jobs = client.describe_jobs(jobs=[job_id])["jobs"]
+            if not jobs:
+                # AWS Batch drops terminated jobs from describe_jobs after about a day.
+                # Report failure and let the cache sweep, which is the real authority on
+                # success, decide whether the tasks actually wrote their output.
+                logger.warning(f"AWS Batch job {job_id} is no longer described; assuming FAILED")
+                return "FAILED"
+            job = jobs[0]
             status = job["status"]
             if status in self._BATCH_TERMINAL_STATES:
                 summary = job.get("arrayProperties", {}).get("statusSummary")

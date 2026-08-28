@@ -1018,3 +1018,47 @@ class TestExecutorRouting:
         with patch.object(orchestrator, "_run_local", return_value=["s3://x::g"]) as mock_local:
             orchestrator.submit_stage("prepare_observations", [config], executor="local")
         mock_local.assert_called_once()
+
+
+class _NameStub:
+    """Minimal stand-in exposing only the fields ``_job_name`` reads."""
+
+    def __init__(self, gcm: str, variable: str, config_hash: str):
+        self.gcm = gcm
+        self.variable = variable
+        self.config_hash = config_hash
+
+
+class TestJobName:
+    def test_stays_within_the_aws_batch_limit(self, orchestrator):
+        configs = [
+            _NameStub(f"SOME-VERY-LONG-MODEL-NAME-{i:02d}", f"variable_{i:02d}", f"hash{i:04d}")
+            for i in range(20)
+        ]
+        name = orchestrator._job_name("transform_scenario", configs)
+        assert len(name) <= 128
+
+    def test_truncated_name_keeps_the_batch_hash(self, orchestrator):
+        configs = [
+            _NameStub(f"SOME-VERY-LONG-MODEL-NAME-{i:02d}", f"variable_{i:02d}", f"hash{i:04d}")
+            for i in range(20)
+        ]
+        import hashlib
+
+        expected = hashlib.sha256(
+            "".join(sorted(c.config_hash for c in configs)).encode()
+        ).hexdigest()[:8]
+        assert orchestrator._job_name("transform_scenario", configs).endswith(expected)
+
+    def test_short_name_is_left_alone(self, orchestrator, config):
+        name = orchestrator._job_name("fit_historical", [config])
+        assert name.startswith("bcsd-fit_historical-CESM2-WACCM-tas-")
+        assert len(name) < 128
+
+
+class TestAwaitBatchJobMissingRecord:
+    def test_treats_a_dropped_job_record_as_failed(self, orchestrator):
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": []}
+        with patch("time.sleep"):
+            assert orchestrator._await_batch_job(client, "gone-1", poll_seconds=0) == "FAILED"
