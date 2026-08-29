@@ -1155,7 +1155,11 @@ class TestWeibullZeroBounded:
 
     def test_pipeline_wires_zero_bounded_weibull_to_low_tail(self, pipeline_options):
         """The 2-sided hybrid branch must feed the zero-bounded Weibull to the low
-        tail and gumbel_r to the high tail for pr/rsds/hurs/dtr."""
+        tail and gumbel_r to the high tail for pr/hurs/dtr.
+
+        rsds shares that gate in ``pipeline.py`` but no longer reaches it by default:
+        its BCSD table entry is ``nonparametric`` as of #523, so ``pr`` stands in here.
+        """
         cfg = BCSDConfig(
             gcm="CESM2-WACCM",
             downscaling_method="BCSD",
