@@ -149,11 +149,8 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     _all = _std + _tmx
 
     # UKESM1-0-LL (code gcm name: "UKESM")
-    # SSP245 and G6-1.5K are each a single icechunk store keyed by ripf members
-    # (r2/r3/r12i1p1f2) covering all variables. Historical is no longer the matching CEDA
-    # ripf trio: it is one UM suite, u-by791, transferred from Matthew Henry (Exeter), so all
-    # three scenario members share that single historical parent. The SAI bridge stays
-    # self-referential (ssp245_bridge=self).
+    # SSP245 and G6-1.5K are each a single icechunk (r2/r3/r12i1p1f2) covering all variables.
+    # The Historical scenario has a single ensemble_member: u-by791, so scenario members share that single historical parent.
     for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):
         add("UKESM", "SSP245", _m, _all, _UKESM_HIST)
         add("UKESM", "G6-1.5K", _m, _all, _UKESM_HIST, _m)

@@ -384,7 +384,7 @@ class TestProvenanceReconciliation:
             "malformed",
         }
 
-    def test_uncertainty_prefix_is_detected(self, tmp_path):
+    def test_every_sheet_parent_cell_is_parseable(self, tmp_path):
         # Fabricates the row rather than reading the sheet: Test parsing '???' in sheet.
         from srm.lineage import diff_against_provenance
 
