@@ -155,7 +155,7 @@ class VariableConfig(BaseModel):
                 "disaggregation_tiny_threshold": 1.0,  # W m-2
                 "running_window_length": 31,
                 "running_window_step_length": 1,
-                "debias_approach": "nonparametric_hybrid_2sided",
+                "debias_approach": "nonparametric",
             },
             "dtr": {
                 "detrend_data": False,
