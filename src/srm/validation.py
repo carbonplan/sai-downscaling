@@ -178,7 +178,7 @@ def resolve_member_time_bounds(
     return _SCENARIO_TIME_BOUNDS.get(gcm, {}).get(scenario)
 
 
-_FAST: dict = {"isel_kwargs": {"time": slice(0, 5)}}
+_FAST: dict = {"isel_kwargs": {"time": slice(0, 10)}}
 
 _DS_CHECKER_CHECKS: list[tuple[str, str, dict]] = [
     ("ensemble_member_dim", "validate_ensemble_member_dim", {}),
