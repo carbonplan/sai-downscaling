@@ -384,6 +384,40 @@ class TestProvenanceReconciliation:
             "malformed",
         }
 
+    def test_every_sheet_parent_cell_is_parseable(self, tmp_path):
+        # A malformed cell would otherwise be skipped silently, hiding real drift.
+        # The '???' uncertainty prefix must be handled rather than treated as a parse error.
+        # Driven off a fixture, not docs/srm-provenance.csv: the live sheet currently carries
+        # no '???' cells, so reading it would make this assertion vacuous.
+        import csv as _csv
+        from pathlib import Path
+
+        from srm.lineage import diff_against_provenance
+
+        header = Path(__file__).resolve().parent.parent / "docs" / "srm-provenance.csv"
+        with open(header, newline="") as handle:
+            fields = next(_csv.reader(handle))
+
+        tmp = tmp_path / "provenance.csv"
+        with open(tmp, "w", newline="") as handle:
+            writer = _csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "gcm": "UKESM1-0-LL",
+                    "experiment_id": "SSP245",
+                    "ensemble_id": "r2i1p1f2",
+                    "variable": "tas",
+                    "parent_experiment_ensemble_ids": "??? [('historical','u-by791')]",
+                }
+            )
+
+        diff = diff_against_provenance(tmp)
+        assert diff["uncertain"] == [("UKESM", "SSP245", "r2i1p1f2", "tas")], (
+            "the '???' prefix is no longer being detected"
+        )
+        assert not diff["malformed"]
+
     @pytest.mark.parametrize("variable", _STANDARD_VARS + ("tasmax", "tasmin"))
     def test_termination_run_agrees_with_sheet(self, variable):
         # dtr is excluded: it is derived, so it has no provenance row by design.
