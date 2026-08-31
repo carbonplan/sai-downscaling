@@ -384,35 +384,16 @@ class TestProvenanceReconciliation:
             "malformed",
         }
 
-    def test_every_sheet_parent_cell_is_parseable(self, tmp_path):
-        # A malformed cell would otherwise be skipped silently, hiding real drift.
-        # The '???' uncertainty prefix must be handled rather than treated as a parse error.
-        # Driven off a fixture, not docs/srm-provenance.csv: the live sheet currently carries
-        # no '???' cells, so reading it would make this assertion vacuous.
-        import csv as _csv
-        from pathlib import Path
-
+    def test_uncertainty_prefix_is_detected(self, tmp_path):
+        # Fabricates the row rather than reading the sheet: Test parsing '???' in sheet.
         from srm.lineage import diff_against_provenance
 
-        header = Path(__file__).resolve().parent.parent / "docs" / "srm-provenance.csv"
-        with open(header, newline="") as handle:
-            fields = next(_csv.reader(handle))
-
-        tmp = tmp_path / "provenance.csv"
-        with open(tmp, "w", newline="") as handle:
-            writer = _csv.DictWriter(handle, fieldnames=fields)
-            writer.writeheader()
-            writer.writerow(
-                {
-                    "gcm": "UKESM1-0-LL",
-                    "experiment_id": "SSP245",
-                    "ensemble_id": "r2i1p1f2",
-                    "variable": "tas",
-                    "parent_experiment_ensemble_ids": "??? [('historical','u-by791')]",
-                }
-            )
-
-        diff = diff_against_provenance(tmp)
+        csv_path = tmp_path / "provenance.csv"
+        csv_path.write_text(
+            "gcm,experiment_id,ensemble_id,variable,parent_experiment_ensemble_ids\n"
+            "UKESM1-0-LL,SSP245,r2i1p1f2,tas,\"??? [('historical','u-by791')]\"\n"
+        )
+        diff = diff_against_provenance(csv_path)
         assert diff["uncertain"] == [("UKESM", "SSP245", "r2i1p1f2", "tas")], (
             "the '???' prefix is no longer being detected"
         )
