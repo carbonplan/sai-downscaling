@@ -757,9 +757,37 @@ class BCSDOrchestrator:
     #: AWS Batch job states that mean the job will not progress further.
     _BATCH_TERMINAL_STATES = frozenset({"SUCCEEDED", "FAILED"})
 
-    def _await_batch_job(self, client, job_id: str, poll_seconds: int = 30) -> str:
+    #: States a job occupies before any container starts. A job that never leaves them is
+    #: waiting on the queue, not doing work.
+    _BATCH_QUEUED_STATES = frozenset({"SUBMITTED", "PENDING", "RUNNABLE"})
+
+    #: How long a job may sit queued before the wait gives up. Generous enough to absorb a
+    #: compute environment scaling up from zero, short enough that a queue with no instance
+    #: large enough to place the task fails with a diagnostic rather than hanging until the
+    #: surrounding CI job times out hours later with nothing to read.
+    _MAX_QUEUED_SECONDS = 3600
+
+    def _terminate_batch_job(self, client, job_id: str, reason: str) -> None:
+        """Cancel a job, best effort. A failure here must not replace why we gave up."""
+        try:
+            client.terminate_job(jobId=job_id, reason=reason)
+        except Exception as exc:  # noqa: BLE001 - reported, never raised over the real cause
+            logger.warning(f"Could not terminate AWS Batch job {job_id}: {exc}")
+
+    def _await_batch_job(
+        self,
+        client,
+        job_id: str,
+        poll_seconds: int = 30,
+        max_queued_seconds: float | None = None,
+    ) -> str:
         """
         Block until an AWS Batch job reaches a terminal state.
+
+        There is deliberately no cap on a job that is running: a global
+        ``transform_scenario`` has been measured at 17 hours, and a wall-clock limit that
+        tolerated that would never fire in time to be useful. The cap is on the queue
+        instead, which is where a job hangs when nothing is wrong with the code.
 
         Parameters
         ----------
@@ -769,22 +797,37 @@ class BCSDOrchestrator:
             Job to poll.
         poll_seconds : int, optional
             Delay between ``describe_jobs`` calls.
+        max_queued_seconds : float, optional
+            How long the job may stay in :data:`_BATCH_QUEUED_STATES` before it is
+            terminated. Defaults to :data:`_MAX_QUEUED_SECONDS`. Once the job starts, this
+            no longer applies.
 
         Returns
         -------
         str
             ``SUCCEEDED``, ``FAILED``, or ``UNKNOWN`` when the job record has aged out
             of ``describe_jobs``.
+
+        Raises
+        ------
+        RuntimeError
+            If the job never starts within ``max_queued_seconds``.
         """
         import time
+
+        if max_queued_seconds is None:
+            max_queued_seconds = self._MAX_QUEUED_SECONDS
+        queued_deadline = time.monotonic() + max_queued_seconds
+        started = False
 
         while True:
             jobs = client.describe_jobs(jobs=[job_id])["jobs"]
             if not jobs:
                 # AWS Batch drops terminated jobs from describe_jobs after about a day.
                 # Distinct from FAILED: the record's absence says nothing about the
-                # outcome, so leave the verdict to the cache sweep rather than failing a
-                # run that may well have succeeded.
+                # outcome, so the cache sweep decides. The one exception is a --force run,
+                # where artifacts predating the job make their presence unprovable and
+                # _submit_to_aws_batch raises on any status that is not SUCCEEDED.
                 logger.warning(f"AWS Batch job {job_id} is no longer described; status unknown")
                 return "UNKNOWN"
             job = jobs[0]
@@ -796,6 +839,20 @@ class BCSDOrchestrator:
                     + (f", children: {summary}" if summary else "")
                 )
                 return status
+            started = started or status not in self._BATCH_QUEUED_STATES
+            if not started and time.monotonic() >= queued_deadline:
+                # Terminated rather than abandoned: a job left queued can still start
+                # hours later, spend money with nobody watching, and leave output that the
+                # next run's cache check reads as this run's.
+                self._terminate_batch_job(
+                    client, job_id, f"never started within {max_queued_seconds:.0f}s"
+                )
+                raise RuntimeError(
+                    f"AWS Batch job {job_id} sat in {status} for "
+                    f"{max_queued_seconds / 60:.0f} minutes without starting and has been "
+                    f"terminated. Check that queue {self.options.batch_job_queue!r} has a "
+                    "compute environment with capacity for the requested vCPU and memory."
+                )
             time.sleep(poll_seconds)
 
     def _submit_to_aws_batch(self, stage: str, configs: list[BCSDConfig]) -> list[str]:

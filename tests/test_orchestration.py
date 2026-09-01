@@ -977,6 +977,75 @@ class TestAwaitBatchJob:
             assert orchestrator._await_batch_job(client, "abc-123", poll_seconds=0) == "FAILED"
 
 
+class TestAwaitBatchJobQueueStall:
+    """A job that never places must fail loudly rather than poll until CI gives up."""
+
+    def test_gives_up_and_terminates_when_the_job_never_starts(self, orchestrator):
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [{"status": "RUNNABLE"}]}
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="RUNNABLE"):
+                orchestrator._await_batch_job(
+                    client, "stuck-1", poll_seconds=0, max_queued_seconds=0
+                )
+        # Abandoning it would leave a job that can still start hours later and write output
+        # the next run's cache check would credit to itself.
+        assert client.terminate_job.call_args.kwargs["jobId"] == "stuck-1"
+
+    def test_names_the_queue_to_check(self, orchestrator):
+        # A RUNNABLE stall is a queue or capacity problem, so the message has to say which
+        # queue; the job id alone sends the reader to the wrong console page.
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [{"status": "RUNNABLE"}]}
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match=orchestrator.options.batch_job_queue):
+                orchestrator._await_batch_job(
+                    client, "stuck-1", poll_seconds=0, max_queued_seconds=0
+                )
+
+    def test_a_running_job_is_never_cut_off(self, orchestrator):
+        # A global transform_scenario has run for 17 hours. The cap is on the queue, not on
+        # the work, so an already-started job outlives the deadline.
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [{"status": "RUNNING"}]},
+            {"jobs": [{"status": "RUNNING"}]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            status = orchestrator._await_batch_job(
+                client, "long-1", poll_seconds=0, max_queued_seconds=0
+            )
+        assert status == "SUCCEEDED"
+        client.terminate_job.assert_not_called()
+
+    def test_a_job_that_queues_then_starts_is_not_cut_off(self, orchestrator):
+        # The deadline is only checked while the job has never started, so passing through
+        # RUNNABLE on the way to RUNNING must not arm it retroactively.
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [{"status": "RUNNABLE"}]},
+            {"jobs": [{"status": "RUNNING"}]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            status = orchestrator._await_batch_job(
+                client, "slow-start-1", poll_seconds=0, max_queued_seconds=10_000
+            )
+        assert status == "SUCCEEDED"
+        client.terminate_job.assert_not_called()
+
+    def test_a_failed_terminate_does_not_replace_the_real_error(self, orchestrator):
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [{"status": "RUNNABLE"}]}
+        client.terminate_job.side_effect = RuntimeError("AccessDenied")
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="without starting"):
+                orchestrator._await_batch_job(
+                    client, "stuck-1", poll_seconds=0, max_queued_seconds=0
+                )
+
+
 class TestSubmitToAwsBatch:
     def test_returns_paths_when_cache_confirms_every_task(self, orchestrator, multi_configs):
         client = MagicMock()
