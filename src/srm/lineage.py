@@ -148,7 +148,10 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
 
     _all = _std + _tmx
 
-    # UKESM1-0-LL (code gcm name: "UKESM")
+    # UKESM1-1-LL (code gcm name: "UKESM")
+    # Every file from this delivery is UKESM1-1-LL: source metadata and filenames that say
+    # UKESM1-0-LL / UKESM1-1 are supplier labelling typos (confirmed by email), corrected on
+    # ingest in srm.input_data.ukesm.
     # SSP245 and G6-1.5K are each a single icechunk (r2/r3/r12i1p1f2) covering all variables.
     # The Historical scenario has a single ensemble_member: u-by791, so scenario members share that single historical parent.
     for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):
@@ -227,7 +230,7 @@ def all_lineage_keys() -> list[tuple[str, str, str, str]]:
 PROVENANCE_GCM_ALIASES: dict[str, str] = {
     "CESM2(WACCM)": "CESM2-WACCM",
     "MIROC-ES2H": "MIROC-ES2H",
-    "UKESM1-0-LL": "UKESM",
+    "UKESM1-1-LL": "UKESM",
 }
 PROVENANCE_SCENARIO_ALIASES: dict[str, str] = {
     "G6-1.5K-end": "G6-1.5K-END",

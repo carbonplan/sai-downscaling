@@ -128,6 +128,21 @@ TIME_RANGE: dict[str, str] = {
 
 ALL_SCENARIOS = list(ENSEMBLE_MEMBERS.keys())
 
+# --- Model identity ---
+# Every UKESM file delivered by this supplier is UKESM1-1-LL, across all scenarios.
+# Some source NetCDFs carry source_id/model_id/parent_source_id = "UKESM1-0-LL" and some
+# filenames say "UKESM1-1" instead of "UKESM1-1-LL". The supplier confirmed these are
+# typos in the file metadata, not a different model. We therefore overwrite the stale
+# identity attrs rather than trust them, and record the overwrite in MODEL_ATTR_NOTE so
+# the correction stays auditable downstream.
+MODEL = "UKESM1-1-LL"
+_MODEL_IDENTITY_ATTRS = ("source_id", "model_id", "parent_source_id")
+MODEL_ATTR_NOTE = (
+    f"Model identity attrs from the source files were overwritten with {MODEL}; the data "
+    "supplier confirmed the source_id/filename model labels are typos and that all files "
+    f"from this delivery are {MODEL}."
+)
+
 # --- Historical (single UM suite, delivered directly to S3) ---
 
 _HIST_STEM = f"daily_UKESM1-1-LL_historical_{HISTORICAL_MEMBER}_185001-201512.nc"
@@ -338,10 +353,17 @@ def _update_attrs(
     ds.attrs.update(
         {
             "scenario": scenario,
-            "model": "UKESM1-1-LL" if scenario == "historical" else "UKESM1-0-LL",
+            "model": MODEL,
             "Conventions": "CF-1.8",
         }
     )
+    # See MODEL_ATTR_NOTE: the identity attrs carried in from the source NetCDFs are not
+    # trusted, so any that are present are overwritten and the overwrite is recorded.
+    overwritten = [key for key in _MODEL_IDENTITY_ATTRS if key in ds.attrs]
+    if overwritten:
+        for key in overwritten:
+            ds.attrs[key] = MODEL
+        ds.attrs["model_id_correction"] = MODEL_ATTR_NOTE
     return apply_ensemble_provenance(ds, _derivation_logic(scenario, variable))
 
 
