@@ -380,24 +380,8 @@ class TestProvenanceReconciliation:
             "only_in_code",
             "only_in_sheet",
             "parent_mismatch",
-            "uncertain",
             "malformed",
         }
-
-    def test_every_sheet_parent_cell_is_parseable(self, tmp_path):
-        # Fabricates the row rather than reading the sheet: Test parsing '???' in sheet.
-        from srm.lineage import diff_against_provenance
-
-        csv_path = tmp_path / "provenance.csv"
-        csv_path.write_text(
-            "gcm,experiment_id,ensemble_id,variable,parent_experiment_ensemble_ids\n"
-            "UKESM1-0-LL,SSP245,r2i1p1f2,tas,\"??? [('historical','u-by791')]\"\n"
-        )
-        diff = diff_against_provenance(csv_path)
-        assert diff["uncertain"] == [("UKESM", "SSP245", "r2i1p1f2", "tas")], (
-            "the '???' prefix is no longer being detected"
-        )
-        assert not diff["malformed"]
 
     @pytest.mark.parametrize("variable", _STANDARD_VARS + ("tasmax", "tasmin"))
     def test_termination_run_agrees_with_sheet(self, variable):

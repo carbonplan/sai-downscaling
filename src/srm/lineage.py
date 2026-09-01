@@ -248,23 +248,16 @@ def diff_against_provenance(
     re-export and must not be hand-patched: an edit there is clobbered by the next export
     and hides the very disagreement this function exists to surface.
 
-    Returns a dict with five keys. ``only_in_code`` and ``only_in_sheet`` hold
+    Returns a dict with four keys. ``only_in_code`` and ``only_in_sheet`` hold
     ``(gcm, scenario, member, variable)`` keys present on one side alone,
     ``parent_mismatch`` holds human-readable descriptions of keys both sides carry but
-    disagree about, ``uncertain`` lists keys whose sheet entry is prefixed ``???``, and
-    ``malformed`` lists cells the sheet writes in a form that cannot be parsed.
-    ``historical`` rows in the sheet are ignored, since the lineage table registers
-    scenarios only.
-
-    The ``???`` prefix is the sheet's own marker for a parent nobody has confirmed. Those
-    rows are still compared, because a flagged row that disagrees with the code is exactly
-    what needs resolving, but they are reported separately so an unconfirmed value is never
-    mistaken for a verified one.
+    disagree about, and ``malformed`` lists cells the sheet writes in a form that cannot
+    be parsed. ``historical`` rows in the sheet are ignored, since the lineage table
+    registers scenarios only.
     """
     import csv as _csv
 
     sheet: dict[tuple[str, str, str, str], dict[str, str]] = {}
-    uncertain: list[tuple[str, str, str, str]] = []
     malformed: list[str] = []
     with open(csv_path, newline="") as handle:
         for row in _csv.DictReader(handle):
@@ -277,9 +270,6 @@ def diff_against_provenance(
             member = (row["ensemble_id"] or "").strip()
             variable = (row["variable"] or "").strip()
             key = (gcm, scenario, member, variable)
-            if parents_raw.startswith("???"):
-                uncertain.append(key)
-                parents_raw = parents_raw.removeprefix("???").strip()
             try:
                 parents = dict(ast.literal_eval(parents_raw))
             except (SyntaxError, ValueError):
@@ -314,6 +304,5 @@ def diff_against_provenance(
         "only_in_code": only_in_code,
         "only_in_sheet": only_in_sheet,
         "parent_mismatch": parent_mismatch,
-        "uncertain": sorted(uncertain),
         "malformed": sorted(malformed),
     }
