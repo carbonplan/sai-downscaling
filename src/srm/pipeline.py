@@ -928,6 +928,7 @@ class BCSDPipeline:
         cm_hist_np = model_hist.values
 
         logger.debug("[_apply_bias_correction] %s", debiaser)
+        np.random.seed(42)
         debiased_np = debiaser.apply(
             obs=obs_np,
             cm_hist=cm_hist_np,
@@ -1609,6 +1610,9 @@ class BCSDPipeline:
             failsafe=True,
         )
 
+        # Set random seed for all debiaser.apply() calls.
+        # This should only affect qdm.
+        np.random.seed(42)
         if debias_approach in ["parametric", "nonparametric"]:
             debiaser = _make_debiaser(mapping_type=debias_approach, **common_kwargs)
             logger.debug("[_apply_bias_correction_scenario] %s", debiaser)
