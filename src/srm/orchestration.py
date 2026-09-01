@@ -236,7 +236,9 @@ class BCSDOrchestrator:
 
         latest = max(definitions, key=lambda d: d["revision"])
         self._resolved_job_definition = {
-            "job_definition": f"{name.split(':')[0]}:{latest['revision']}",
+            # AWS reports the bare name back, so take it from the response rather than
+            # trimming the configured value: splitting an ARN on ':' yields "arn".
+            "job_definition": f"{latest['jobDefinitionName']}:{latest['revision']}",
             "image": latest["containerProperties"]["image"],
         }
         return self._resolved_job_definition

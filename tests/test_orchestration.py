@@ -1257,7 +1257,11 @@ class TestResolveJobDefinition:
         client = MagicMock()
         client.describe_job_definitions.return_value = {
             "jobDefinitions": [
-                {"revision": 7, "containerProperties": {"image": "ecr/srm-downscaling:abc123"}}
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 7,
+                    "containerProperties": {"image": "ecr/srm-downscaling:abc123"},
+                }
             ]
         }
         with patch("boto3.client", return_value=client):
@@ -1277,15 +1281,47 @@ class TestResolveJobDefinition:
         client = MagicMock()
         client.describe_job_definitions.return_value = {
             "jobDefinitions": [
-                {"revision": 2, "containerProperties": {"image": "ecr/img:old"}},
-                {"revision": 5, "containerProperties": {"image": "ecr/img:new"}},
-                {"revision": 3, "containerProperties": {"image": "ecr/img:mid"}},
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 2,
+                    "containerProperties": {"image": "ecr/img:old"},
+                },
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 5,
+                    "containerProperties": {"image": "ecr/img:new"},
+                },
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 3,
+                    "containerProperties": {"image": "ecr/img:mid"},
+                },
             ]
         }
         with patch("boto3.client", return_value=client):
             resolved = orch.resolve_job_definition()
         assert resolved == {"job_definition": "srm-downscaling:5", "image": "ecr/img:new"}
         assert client.describe_job_definitions.call_args.kwargs["status"] == "ACTIVE"
+
+    def test_arn_resolves_to_the_bare_name(self, pipeline_options):
+        # An ARN is colon-separated, so trimming the configured value at the first colon
+        # would submit against "arn:9" and every job would fail to place.
+        arn = "arn:aws:batch:us-west-2:123456789012:job-definition/srm-downscaling:9"
+        pipeline_options.batch_job_definition = arn
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.return_value = {
+            "jobDefinitions": [
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 9,
+                    "containerProperties": {"image": "ecr/img:sha9"},
+                }
+            ]
+        }
+        with patch("boto3.client", return_value=client):
+            resolved = orch.resolve_job_definition()
+        assert resolved == {"job_definition": "srm-downscaling:9", "image": "ecr/img:sha9"}
 
     def test_missing_definition_raises(self, pipeline_options):
         orch = BCSDOrchestrator(pipeline_options)
@@ -1304,7 +1340,11 @@ class TestSubmissionUsesTheResolvedDefinition:
         client.submit_job.return_value = {"jobId": "abc-123"}
         client.describe_job_definitions.return_value = {
             "jobDefinitions": [
-                {"revision": 4, "containerProperties": {"image": "ecr/img:sha4"}},
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 4,
+                    "containerProperties": {"image": "ecr/img:sha4"},
+                },
             ]
         }
         return client
@@ -1369,13 +1409,21 @@ class TestJobDefinitionPagination:
         client.describe_job_definitions.side_effect = [
             {
                 "jobDefinitions": [
-                    {"revision": 1, "containerProperties": {"image": "ecr/img:old"}}
+                    {
+                        "jobDefinitionName": "srm-downscaling",
+                        "revision": 1,
+                        "containerProperties": {"image": "ecr/img:old"},
+                    }
                 ],
                 "nextToken": "page2",
             },
             {
                 "jobDefinitions": [
-                    {"revision": 102, "containerProperties": {"image": "ecr/img:new"}}
+                    {
+                        "jobDefinitionName": "srm-downscaling",
+                        "revision": 102,
+                        "containerProperties": {"image": "ecr/img:new"},
+                    }
                 ]
             },
         ]
