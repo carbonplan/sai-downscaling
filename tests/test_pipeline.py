@@ -2873,17 +2873,35 @@ class TestQDMReproducibility:
         )
         np.testing.assert_array_equal(parallel, serial)
 
-    def test_stock_ibicus_is_not_reproducible(self):
-        """Documents the defect being fixed: stock ibicus varies run to run.
+    def test_stock_output_depends_on_ambient_rng_state(self):
+        """Documents the defect: stock ibicus's answer is a function of ambient RNG state.
 
-        Seeding the parent process, which is what this branch originally did, is
-        included here to show it does not help.
+        Run serially, under two different seeds, so the assertion is deterministic on
+        every platform. Asserting instead that two *parallel* stock runs differ would
+        be asserting that a race manifests in two samples, and a race can tie: that
+        version passed locally under spawn and failed on CI under fork.
         """
         np.random.seed(42)
-        first = self._apply(self._debiaser(QuantileDeltaMapping), nr_processes=2)
-        np.random.seed(42)
-        second = self._apply(self._debiaser(QuantileDeltaMapping), nr_processes=2)
+        first = self._apply(self._debiaser(QuantileDeltaMapping), nr_processes=1, parallel=False)
+        np.random.seed(43)
+        second = self._apply(self._debiaser(QuantileDeltaMapping), nr_processes=1, parallel=False)
         assert not np.array_equal(first, second)
+
+    def test_seeded_output_is_invariant_to_ambient_rng_state(self):
+        """The property the fix buys: the answer no longer reads ambient RNG state.
+
+        This is the real regression guard. Drop the mixin and it fails deterministically,
+        with no dependence on pool scheduling or start method.
+        """
+        np.random.seed(42)
+        first = self._apply(
+            self._debiaser(_SeededQuantileDeltaMapping), nr_processes=1, parallel=False
+        )
+        np.random.seed(43)
+        second = self._apply(
+            self._debiaser(_SeededQuantileDeltaMapping), nr_processes=1, parallel=False
+        )
+        np.testing.assert_array_equal(first, second)
 
 
 class TestQuantileMappingReproducibility:
@@ -2897,7 +2915,7 @@ class TestQuantileMappingReproducibility:
     """
 
     @staticmethod
-    def _apply(cls_, nr_processes: int) -> np.ndarray:
+    def _apply(cls_, nr_processes: int, parallel: bool = True) -> np.ndarray:
         obs, cm_hist, cm_future, times = TestQDMReproducibility._precip_arrays()
         debiaser = cls_(
             variable="pr",
@@ -2914,7 +2932,7 @@ class TestQuantileMappingReproducibility:
             time_obs=times,
             time_cm_hist=times,
             time_cm_future=times,
-            parallel=True,
+            parallel=parallel,
             nr_processes=nr_processes,
             progressbar=False,
             failsafe=True,
@@ -2945,8 +2963,18 @@ class TestQuantileMappingReproducibility:
         second = self._apply(_SeededQuantileMapping, nr_processes=2)
         np.testing.assert_array_equal(first, second)
 
-    def test_stock_ibicus_is_not_reproducible(self):
-        """Documents the exposure the seeding closes."""
-        first = self._apply(QuantileMapping, nr_processes=2)
-        second = self._apply(QuantileMapping, nr_processes=2)
+    def test_stock_output_depends_on_ambient_rng_state(self):
+        """Documents the exposure the seeding closes. Serial and seeded, so deterministic."""
+        np.random.seed(42)
+        first = self._apply(QuantileMapping, nr_processes=1, parallel=False)
+        np.random.seed(43)
+        second = self._apply(QuantileMapping, nr_processes=1, parallel=False)
         assert not np.array_equal(first, second)
+
+    def test_seeded_output_is_invariant_to_ambient_rng_state(self):
+        """The regression guard: drop the mixin and this fails on every platform."""
+        np.random.seed(42)
+        first = self._apply(_SeededQuantileMapping, nr_processes=1, parallel=False)
+        np.random.seed(43)
+        second = self._apply(_SeededQuantileMapping, nr_processes=1, parallel=False)
+        np.testing.assert_array_equal(first, second)
