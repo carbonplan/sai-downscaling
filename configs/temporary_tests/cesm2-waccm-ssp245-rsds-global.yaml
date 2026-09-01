@@ -1,0 +1,30 @@
+# BCSD configuration: CESM2-WACCM / SSP245 / standard variables (production)
+#
+# Standard variables (tas/pr/rsds/hurs) for full-length SSP245 member 003, which
+# reaches 2099. Truncated member 008 (data ends 2069) is downscaled in
+# cesm2-waccm-ssp245-std-trunc.yaml so each config's predict_period_end matches its
+# members' real data extent. tasmax/tasmin/dtr are split into
+# cesm2-waccm-ssp245-tmx.yaml because the corrected temperature extremes only exist
+# for members 006-010 (CMIP6 bug).
+#
+# Equivalent CLI command:
+#   uv run bcsd run --config-path configs/production/
+
+# === BCSDConfig: Run Identity ===
+gcm: "CESM2-WACCM"
+variables: ["rsds"]
+ensemble_members: ["003"]
+scenarios: ["SSP245"]
+downscaling_method: ["BCSD"]
+
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2099
+
+# === PipelineOptions: Operational Settings ===
+scratch_dir: "s3://carbonplan-srm/scratch/snapshot/cache"
+output_dir: "s3://carbonplan-srm/scratch/snapshot/output"
+environment: "qa"
+verbose: true
+save_intermediate: true
