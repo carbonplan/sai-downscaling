@@ -599,8 +599,9 @@ class PipelineOptions(pydantic_settings.BaseSettings):
     executor: Literal["coiled", "aws-batch", "local"] = Field(
         "coiled",
         description=(
-            "Where stage tasks run. 'aws-batch' avoids Coiled's per-CPU-hour platform fee; "
-            "'local' runs sequentially in-process."
+            "Where stage tasks run. 'coiled' submits one Coiled Batch task per config; "
+            "'aws-batch' submits one AWS Batch array job per wave; "
+            "'local' runs every config sequentially in-process."
         ),
     )
     batch_job_queue: str = Field("srm-production", description="AWS Batch job queue name")

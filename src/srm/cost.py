@@ -11,12 +11,21 @@ and are labelled accordingly:
   below come from measured history, but ``transform_scenario`` on a global run has been
   seen to take anywhere from 1.5 to 17 hours.
 
+Every number below is hardcoded, and all of them go stale: AWS republishes prices, Coiled
+changes its fee, and the pipeline's own runtime moves with each release. :data:`RATES_AS_OF`
+records when they were last checked, and the CLI prints it alongside the estimate so an old
+table announces its own age rather than quietly under-quoting a run.
+
 Nothing here does I/O; the orchestrator supplies the task counts and instance types.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+#: Date the prices and durations in this module were last checked, as ``YYYY-MM-DD``.
+#: Bump it whenever a rate or a duration range below changes.
+RATES_AS_OF = "2026-08-28"
 
 #: vCPU count per instance type used by either executor.
 INSTANCE_VCPU: dict[str, int] = {

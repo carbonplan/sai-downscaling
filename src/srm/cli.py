@@ -25,9 +25,10 @@ from rich.logging import RichHandler
 from rich.table import Table
 from rich.tree import Tree
 
+from srm import __version__
 from srm.bcsd_config import BCSDConfig, DownscalingMethod, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
-from srm.cost import estimate_workflow
+from srm.cost import RATES_AS_OF, estimate_workflow
 from srm.orchestration import BCSDOrchestrator
 from srm.validation import CheckResult, CheckStatus
 
@@ -928,6 +929,14 @@ def _render_cost_plan(
     console.print(
         f"  Total     [yellow]${estimate.low_cost:,.0f}-${estimate.high_cost:,.0f}[/yellow] "
         "[dim](rough: duration estimated from past runs)[/dim]"
+    )
+    # Every rate and duration is hardcoded, so an estimate is only as current as the table
+    # it came from. Stamping the version and date lets a reader judge that without
+    # reading the source, and points them at it when they want to.
+    console.print(
+        f"  [dim]Rough estimate only. Rates and durations are hardcoded in src/srm/cost.py "
+        f"(srm {__version__}, last checked {RATES_AS_OF}); actual cost varies with AWS "
+        f"pricing and runtime.[/dim]"
     )
     return True
 
