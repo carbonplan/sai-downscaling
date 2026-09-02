@@ -107,6 +107,37 @@ jobs:
                   cache-from: type=registry,ref=${{ steps.meta.outputs.cache_ref }}
                   cache-to: ${{ steps.meta.outputs.cache_to }}
 
+            - name: Smoke-test the pushed image
+              # A job definition is registered from this image in the next step, and these
+              # are the only two forms anything ever asks it to run. Batch has no entryPoint
+              # field, so the image's ENTRYPOINT and the caller's command are two halves of
+              # one string that meet only on a task VM, where a mismatch is every job dying
+              # on argument parsing an hour into a run. Testing the pushed artifact rather
+              # than the local build is deliberate: that is what the revision will pin.
+              # This runner is native arm64, so the image runs without emulation.
+              env:
+                  IMAGE: ${{ steps.meta.outputs.image }}
+              run: |
+                  docker pull "$IMAGE"
+
+                  EXPECTED='["uv","run","--no-sync"]'
+                  ACTUAL=$(docker inspect --format '{{json .Config.Entrypoint}}' "$IMAGE")
+                  if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+                    echo "::error::image ENTRYPOINT is $ACTUAL, expected $EXPECTED. Callers in orchestration.py and the batch-run action name the rest of the command themselves and will not line up."
+                    exit 1
+                  fi
+
+                  # The stage form, as BCSDOrchestrator._submit_batch_job sends it.
+                  docker run --rm "$IMAGE" python -m srm.batch_runner --help >/dev/null
+
+                  # The validate form, as the deploy workflow's batch-run action sends it.
+                  docker run --rm "$IMAGE" bcsd validate-output --help >/dev/null
+
+                  # Both validate steps pass --config-path, so the configs have to be aboard.
+                  docker run --rm --entrypoint sh "$IMAGE" -c 'test -d configs/qa && test -d configs/production && test -d configs/snapshot'
+
+                  echo "Image runs both command forms and carries configs" >> "$GITHUB_STEP_SUMMARY"
+
             - name: Register a job definition revision for this image
               id: register
               # containerOverrides cannot override the image, so pinning a run to a commit

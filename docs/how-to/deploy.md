@@ -141,13 +141,38 @@ The deploy workflow requires the following to be configured in the GitHub reposi
 
 - **GitHub environments**: `qa` and `production` must exist (Settings → Environments)
 - **AWS Batch resources** in `us-west-2`: the `srm-qa` and `srm-production` job queues, the `srm-production` compute environment, the `srm-downscaling` ECR repository, and the `srm-batch-job-role`, `srm-batch-execution-role`, and `srm-batch-instance-role` IAM roles. None of this is defined in the repository, so it must be recreated by hand if lost.
-- **Batch permissions on the deploy role**: granted by the `SrmAwsBatchDeployPolicy` inline policy on `github-action-role`. It allows `batch:SubmitJob` on the two `srm-*` queues, `batch:RegisterJobDefinition` on `srm-downscaling*` only, the read actions the poll loop needs, and `iam:PassRole` restricted to `srm-batch-job-role` and `srm-batch-execution-role` when passed to `ecs-tasks.amazonaws.com`. ECR push comes from the role's pre-existing inline policy. `batch:TerminateJob` is required: both poll loops, `_await_batch_job` and the `batch-run` action, terminate a job that never leaves the queue rather than leaving it to start later unattended. Without it the terminate is denied and logged as a warning, and the job stays queued. Verify with:
+- **Batch permissions on the deploy role**: granted by the `SrmAwsBatchDeployPolicy` inline policy on `github-action-role`. ECR push comes from the role's pre-existing inline policy.
+
+  | Sid | Actions | Resource |
+  | --- | --- | --- |
+  | `SubmitToSrmQueuesOnly` | `batch:SubmitJob` | the `srm-qa` and `srm-production` queues, and `srm-downscaling` job definitions |
+  | `TerminateStalledSrmJobs` | `batch:TerminateJob` | `job/*` in this account and region |
+  | `RegisterSrmJobDefinitionRevisions` | `batch:RegisterJobDefinition` | `srm-downscaling*` |
+  | `ReadBatchStateForPolling` | `batch:DescribeJobs`, `batch:DescribeJobDefinitions`, `batch:ListJobs` | `*` |
+  | `PassOnlyTheSrmTaskRolesToEcs` | `iam:PassRole` | `srm-batch-job-role` and `srm-batch-execution-role`, only when passed to `ecs-tasks.amazonaws.com` |
+
+  `batch:TerminateJob` is required because both poll loops, `_await_batch_job` and the `batch-run` action, terminate a job that never leaves the queue rather than leaving it to start later unattended. Without it the terminate is denied and logged as a warning while the job stays queued. Job ids are unpredictable, so `job/*` is the tightest scope available.
+
+  Verify with the commands below, each of which prints `allowed`. Pass the resource every time: `simulate-principal-policy` defaults to a resource of `*`, and every action above except the read ones is scoped to an ARN, so omitting it reports `implicitDeny` for a policy that is in fact correct.
 
   ```bash
-  aws iam simulate-principal-policy \
-    --policy-source-arn arn:aws:iam::631969445205:role/github-action-role \
-    --action-names batch:SubmitJob batch:RegisterJobDefinition batch:TerminateJob iam:PassRole \
-    --query 'EvaluationResults[].{action:EvalActionName,decision:EvalDecision}'
+  ROLE=arn:aws:iam::631969445205:role/github-action-role
+  DECISION="EvaluationResults[0].EvalDecision"
+
+  aws iam simulate-principal-policy --policy-source-arn "$ROLE" \
+    --action-names batch:SubmitJob \
+    --resource-arns arn:aws:batch:us-west-2:631969445205:job-queue/srm-production \
+    --query "$DECISION" --output text
+
+  aws iam simulate-principal-policy --policy-source-arn "$ROLE" \
+    --action-names batch:TerminateJob \
+    --resource-arns arn:aws:batch:us-west-2:631969445205:job/any-job-id \
+    --query "$DECISION" --output text
+
+  aws iam simulate-principal-policy --policy-source-arn "$ROLE" \
+    --action-names batch:RegisterJobDefinition \
+    --resource-arns arn:aws:batch:us-west-2:631969445205:job-definition/srm-downscaling \
+    --query "$DECISION" --output text
   ```
 
   Note that a local `aws` session usually authenticates as the `github-action` IAM **user**, which is a different principal with a different policy set. A run that works locally says nothing about whether the deploy role can do the same, and the role cannot be assumed from a workstation because its trust policy admits only the GitHub OIDC provider. `simulate-principal-policy` is the way to check it.
