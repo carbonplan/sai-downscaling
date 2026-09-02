@@ -140,7 +140,16 @@ Two GCMs are deliberately excluded. `ukesm` is held back by issue #529, which le
 The deploy workflow requires the following to be configured in the GitHub repository settings:
 
 - **GitHub environments**: `qa` and `production` must exist (Settings → Environments)
-- **AWS Batch resources** in `us-west-2`: the `srm-qa` and `srm-production` job queues, the `srm-production` compute environment, the `srm-downscaling` ECR repository, and the `srm-batch-job-role`, `srm-batch-execution-role`, and `srm-batch-instance-role` IAM roles. None of this is defined in the repository, so it must be recreated by hand if lost.
+- **AWS Batch resources** in `us-west-2`: the `srm-qa` and `srm-production` job queues, the `srm-production` compute environment, the `srm-downscaling` ECR repository, and the `srm-batch-execution-role` and `srm-batch-instance-role` IAM roles. None of this is defined in the repository, so it must be recreated by hand if lost.
+- **The job role is `coiled-carbonplan`**, set as `jobRoleArn` when `build-image.yml` registers a revision. It is not the tighter `srm-batch-job-role`, because source.coop grants write on `carbonplan/srm-downscaling` to `coiled-carbonplan` by name, and every production config writes its `output_dir` there. No permission we grant on our own side substitutes for that, since the deny comes from the bucket.
+
+  | Requirement | Why |
+  | --- | --- |
+  | `coiled-carbonplan` trusts `ecs-tasks.amazonaws.com` | a Batch job role is assumed by ECS, and the role originally trusted only `ec2.amazonaws.com` |
+  | It still trusts `ec2.amazonaws.com` | Coiled clusters assume it as an instance role; removing this breaks them |
+  | `github-action-role` can `iam:PassRole` it | the job role is passed at `register-job-definition` time |
+
+  The tradeoff is real: `coiled-carbonplan` carries `AmazonS3FullAccess`, so QA and snapshot jobs run broader than they need to. Registering a second job definition that keeps `srm-batch-job-role` for the non-publishing queues would restore least privilege, at the cost of routing two definitions through the deploy workflow.
 - **Batch permissions on the deploy role**: granted by the `SrmAwsBatchDeployPolicy` inline policy on `github-action-role`. ECR push comes from the role's pre-existing inline policy.
 
   | Sid | Actions | Resource |
@@ -149,7 +158,7 @@ The deploy workflow requires the following to be configured in the GitHub reposi
   | `TerminateStalledSrmJobs` | `batch:TerminateJob` | `job/*` in this account and region |
   | `RegisterSrmJobDefinitionRevisions` | `batch:RegisterJobDefinition` | `srm-downscaling*` |
   | `ReadBatchStateForPolling` | `batch:DescribeJobs`, `batch:DescribeJobDefinitions`, `batch:ListJobs` | `*` |
-  | `PassOnlyTheSrmTaskRolesToEcs` | `iam:PassRole` | `srm-batch-job-role` and `srm-batch-execution-role`, only when passed to `ecs-tasks.amazonaws.com` |
+  | `PassOnlyTheSrmTaskRolesToEcs` | `iam:PassRole` | `srm-batch-job-role`, `srm-batch-execution-role` and `coiled-carbonplan`, only when passed to `ecs-tasks.amazonaws.com` |
 
   `batch:TerminateJob` is required because both poll loops, `_await_batch_job` and the `batch-run` action, terminate a job that never leaves the queue rather than leaving it to start later unattended. Without it the terminate is denied and logged as a warning while the job stays queued. Job ids are unpredictable, so `job/*` is the tightest scope available.
 

@@ -143,6 +143,13 @@ jobs:
               # containerOverrides cannot override the image, so pinning a run to a commit
               # means a revision per image. vCPU and memory here are placeholders that
               # _submit_batch_job always overrides from its per-stage table.
+              #
+              # jobRoleArn is coiled-carbonplan, not the tighter srm-batch-job-role, because
+              # source.coop grants write on carbonplan/srm-downscaling to that principal by
+              # name. Production configs write output there, so any other identity is denied
+              # no matter what we allow on our side. Its trust policy carries
+              # ecs-tasks.amazonaws.com alongside ec2.amazonaws.com for this reason; the ec2
+              # entry is what Coiled clusters still use, so do not remove it.
               run: |
                   REVISION=$(aws batch register-job-definition \
                     --region "$AWS_REGION" \
@@ -155,7 +162,7 @@ jobs:
                     --timeout '{"attemptDurationSeconds":21600}' \
                     --container-properties "$(jq -n --arg image "${{ steps.meta.outputs.image }}" '{
                         image: $image,
-                        jobRoleArn: "arn:aws:iam::631969445205:role/srm-batch-job-role",
+                        jobRoleArn: "arn:aws:iam::631969445205:role/coiled-carbonplan",
                         executionRoleArn: "arn:aws:iam::631969445205:role/srm-batch-execution-role",
                         resourceRequirements: [
                           {type: "VCPU", value: "8"},
