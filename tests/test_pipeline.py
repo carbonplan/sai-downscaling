@@ -26,13 +26,18 @@ import scipy.stats
 import xarray as xr
 from conftest import make_icechunk_group as _make_icechunk_group
 from ibicus.debias import QuantileDeltaMapping, QuantileMapping
+from ibicus.utils import PrecipitationHurdleModelGamma
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions
 from srm.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
 from srm.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
+    _location_seed,
     _make_debiaser,
+    _SeededLocationMixin,
+    _SeededQuantileDeltaMapping,
+    _SeededQuantileMapping,
     _weibull_min_zero_bounded,
     _WeibullMinZeroBounded,
     calculate_out_of_range_mask,
@@ -66,7 +71,7 @@ def _mock_fit_historical_compute():
         patch("srm.pipeline.downscale_from_coarse"),
         # MagicMock stand-ins are not arrays; these tests assert wiring, not data
         patch("srm.pipeline.assert_no_nans"),
-        patch("srm.pipeline.QuantileMapping") as mock_qm,
+        patch("srm.pipeline._SeededQuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
@@ -93,7 +98,7 @@ def _mock_transform_scenario_compute():
         patch("srm.pipeline.downscale_from_coarse"),
         # MagicMock stand-ins are not arrays; these tests assert wiring, not data
         patch("srm.pipeline.assert_no_nans"),
-        patch("srm.pipeline.QuantileMapping") as mock_qm,
+        patch("srm.pipeline._SeededQuantileMapping") as mock_qm,
         patch("srm.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
@@ -1069,18 +1074,18 @@ class TestMakeDebiaser:
     """Tests that _make_debiaser forwards mapping_type to QuantileMapping."""
 
     def test_parametric_mapping_type_forwarded(self):
-        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(variable="tas", mapping_type="parametric")
             assert mock_qm.call_args.kwargs["mapping_type"] == "parametric"
 
     def test_nonparametric_mapping_type_forwarded(self):
-        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(variable="tas", mapping_type="nonparametric")
             assert mock_qm.call_args.kwargs["mapping_type"] == "nonparametric"
 
     def test_2sided_pr_low_tail_uses_parametric_with_weibull(self):
         """PR low-tail debiaser must use mapping_type='parametric' and the zero-bounded Weibull."""
-        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(
                 variable="pr",
                 distribution=_weibull_min_zero_bounded,
@@ -1092,7 +1097,7 @@ class TestMakeDebiaser:
 
     def test_2sided_pr_high_tail_uses_parametric_with_gumbel(self):
         """PR high-tail debiaser must use mapping_type='parametric' and gumbel_r distribution."""
-        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(
                 variable="pr",
                 distribution=scipy.stats.gumbel_r,
@@ -1104,7 +1109,7 @@ class TestMakeDebiaser:
 
     def test_tas_no_explicit_distribution_uses_norm(self):
         """tas without explicit distribution defaults to scipy.stats.norm."""
-        with patch("srm.pipeline.QuantileMapping") as mock_qm:
+        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(variable="tas", mapping_type="parametric")
             assert mock_qm.call_args.kwargs["distribution"] is scipy.stats.norm
 
@@ -2721,3 +2726,255 @@ class TestQDMPreconditions:
 
         with pytest.raises(ValueError, match="ssp_timeseries_for_qdm"):
             pipe._apply_bias_correction_scenario(da, da, da, model_scenario_for_qdm=da)
+
+
+class TestQDMReproducibility:
+    """Quantile delta mapping must give bit-identical answers on a rerun.
+
+    ibicus censors values at or below ``censoring_threshold`` by replacing them with
+    ``np.random.rand() * censoring_threshold``, drawing from numpy's process-global
+    legacy RandomState. ``Debiaser.apply`` fans locations out over a
+    ``multiprocessing.Pool``, so seeding in the parent cannot pin those draws: the
+    stream position a cell reads from depends on how the pool scheduled tasks and on
+    ``nr_processes``, and under the spawn start method the workers ignore the parent
+    seed entirely (issue #627). ``_SeededQuantileDeltaMapping`` seeds per location
+    inside the worker instead, from that location's own data.
+    """
+
+    CENSORING_THRESHOLD = 0.05 / 86400
+
+    @staticmethod
+    def _precip_arrays(nt: int = 200, ny: int = 2, nx: int = 2):
+        """Zero-inflated precipitation-like inputs whose dry days trigger censoring."""
+        rng = np.random.default_rng(0)
+        shape = (nt, ny, nx)
+
+        def draw(scale: float) -> np.ndarray:
+            values = rng.gamma(0.6, scale, size=shape)
+            values[rng.random(shape) < 0.7] = 0.0
+            return values
+
+        times = pd.date_range("2000-01-01", periods=nt, freq="D").values
+        return draw(3e-5), draw(4e-5), draw(4.5e-5), times
+
+    @classmethod
+    def _apply(cls, debiaser, nr_processes: int, parallel: bool = True) -> np.ndarray:
+        obs, cm_hist, cm_future, times = cls._precip_arrays()
+        return debiaser.apply(
+            obs=obs,
+            cm_hist=cm_hist,
+            cm_future=cm_future,
+            time_obs=times,
+            time_cm_hist=times,
+            time_cm_future=times,
+            parallel=parallel,
+            nr_processes=nr_processes,
+            progressbar=False,
+            failsafe=True,
+        )
+
+    @staticmethod
+    def _debiaser(cls_):
+        return cls_.for_precipitation(
+            running_window_mode=True, running_window_length=31, running_window_step_length=31
+        )
+
+    # --- Layer 1: the seed itself ---
+
+    def test_location_seed_is_deterministic(self):
+        """The same values always hash to the same seed."""
+        obs, cm_hist, cm_future, _ = self._precip_arrays()
+        first = _location_seed(obs[:, 0, 0], cm_hist[:, 0, 0], cm_future[:, 0, 0])
+        second = _location_seed(obs[:, 0, 0], cm_hist[:, 0, 0], cm_future[:, 0, 0])
+        assert first == second
+
+    def test_location_seed_separates_locations(self):
+        """Different cells get different seeds, so their draws stay uncorrelated."""
+        obs, cm_hist, cm_future, _ = self._precip_arrays()
+        seeds = {
+            _location_seed(obs[:, i, j], cm_hist[:, i, j], cm_future[:, i, j])
+            for i in range(obs.shape[1])
+            for j in range(obs.shape[2])
+        }
+        assert len(seeds) == obs.shape[1] * obs.shape[2]
+
+    def test_location_seed_is_accepted_by_numpy(self):
+        """The seed must fit numpy's accepted range or seeding raises in the worker."""
+        obs, cm_hist, cm_future, _ = self._precip_arrays()
+        seed = _location_seed(obs[:, 0, 0], cm_hist[:, 0, 0], cm_future[:, 0, 0])
+        assert 0 <= seed < 2**32
+        np.random.seed(seed)
+
+    # --- Layer 2: multiprocessing requirements ---
+
+    def test_seeded_debiaser_is_picklable(self):
+        """Pool workers receive the debiaser by pickle, as _WeibullMinZeroBounded does."""
+        debiaser = self._debiaser(_SeededQuantileDeltaMapping)
+        assert isinstance(pickle.loads(pickle.dumps(debiaser)), _SeededQuantileDeltaMapping)
+
+    def test_censoring_is_on_for_precipitation(self):
+        """Guards the premise: without censoring there is no randomness to pin."""
+        assert self._debiaser(_SeededQuantileDeltaMapping).censor_values_to_zero
+
+    # --- Layer 3: the wiring ---
+
+    @pytest.mark.parametrize("variable", ["pr", "rsds", "dtr", "tas"])
+    def test_qdm_branch_builds_the_seeded_debiaser(self, pipeline_options, variable):
+        """Every qdm construction site must use the seeded subclass, not stock ibicus."""
+        cfg = BCSDConfig(
+            gcm="CESM2-WACCM",
+            downscaling_method="QDMSD",
+            variable=variable,
+            ensemble_member="r1i1p1f1",
+            scenario="SSP245",
+            predict_period_start=2015,
+            predict_period_end=2016,
+        )
+        pipe = BCSDPipeline(cfg, pipeline_options)
+        captured: dict = {}
+
+        def _fake_apply(self, **kwargs):
+            captured["debiaser"] = self
+            return np.zeros(kwargs["cm_future"].shape)
+
+        hist = _qdm_da("2010-01-01", "2014-12-31")
+        scenario = _qdm_da("2015-01-01", "2016-12-31")
+        with (
+            patch(
+                "srm.pipeline.stitch_historical_scenario",
+                return_value=_qdm_da("1990-01-01", "2014-12-31"),
+            ),
+            patch.object(QuantileDeltaMapping, "apply", _fake_apply),
+        ):
+            pipe._apply_bias_correction_scenario(
+                hist, hist, scenario, model_scenario_for_qdm=scenario
+            )
+        assert isinstance(captured["debiaser"], _SeededQuantileDeltaMapping)
+
+    # --- Layer 4: the real ibicus call ---
+
+    def test_repeated_parallel_runs_are_identical(self):
+        """The regression: two identical parallel runs must agree bit for bit."""
+        first = self._apply(self._debiaser(_SeededQuantileDeltaMapping), nr_processes=2)
+        second = self._apply(self._debiaser(_SeededQuantileDeltaMapping), nr_processes=2)
+        np.testing.assert_array_equal(first, second)
+
+    def test_result_is_independent_of_worker_count(self):
+        """Instance size sets nr_processes, so it must not change the answer."""
+        two = self._apply(self._debiaser(_SeededQuantileDeltaMapping), nr_processes=2)
+        three = self._apply(self._debiaser(_SeededQuantileDeltaMapping), nr_processes=3)
+        np.testing.assert_array_equal(two, three)
+
+    def test_parallel_matches_serial(self):
+        """Parallel and serial execution must agree, so --executor local is comparable."""
+        parallel = self._apply(self._debiaser(_SeededQuantileDeltaMapping), nr_processes=2)
+        serial = self._apply(
+            self._debiaser(_SeededQuantileDeltaMapping), nr_processes=1, parallel=False
+        )
+        np.testing.assert_array_equal(parallel, serial)
+
+    def test_stock_output_depends_on_ambient_rng_state(self):
+        """Documents the defect: stock ibicus's answer is a function of ambient RNG state.
+
+        Run serially, under two different seeds, so the assertion is deterministic on
+        every platform. Asserting instead that two *parallel* stock runs differ would
+        be asserting that a race manifests in two samples, and a race can tie: that
+        version passed locally under spawn and failed on CI under fork.
+        """
+        np.random.seed(42)
+        first = self._apply(self._debiaser(QuantileDeltaMapping), nr_processes=1, parallel=False)
+        np.random.seed(43)
+        second = self._apply(self._debiaser(QuantileDeltaMapping), nr_processes=1, parallel=False)
+        assert not np.array_equal(first, second)
+
+    def test_seeded_output_is_invariant_to_ambient_rng_state(self):
+        """The property the fix buys: the answer no longer reads ambient RNG state.
+
+        This is the real regression guard. Drop the mixin and it fails deterministically,
+        with no dependence on pool scheduling or start method.
+        """
+        np.random.seed(42)
+        first = self._apply(
+            self._debiaser(_SeededQuantileDeltaMapping), nr_processes=1, parallel=False
+        )
+        np.random.seed(43)
+        second = self._apply(
+            self._debiaser(_SeededQuantileDeltaMapping), nr_processes=1, parallel=False
+        )
+        np.testing.assert_array_equal(first, second)
+
+
+class TestQuantileMappingReproducibility:
+    """The same per-location seeding must cover ``QuantileMapping``.
+
+    No BCSD path draws today, so this guards an exposure rather than fixing a live
+    defect: ``_make_debiaser`` falls back to ``PrecipitationHurdleModelGamma`` for
+    ``pr``, whose ``cdf`` randomizes below the threshold, and a table switched to
+    ``debias_approach="parametric"`` for ``pr`` would reach it. See
+    :class:`TestQDMReproducibility` for why a parent-process seed cannot cover that.
+    """
+
+    @staticmethod
+    def _apply(cls_, nr_processes: int, parallel: bool = True) -> np.ndarray:
+        obs, cm_hist, cm_future, times = TestQDMReproducibility._precip_arrays()
+        debiaser = cls_(
+            variable="pr",
+            distribution=PrecipitationHurdleModelGamma,
+            mapping_type="parametric",
+            running_window_mode=True,
+            running_window_length=31,
+            running_window_step_length=31,
+        )
+        return debiaser.apply(
+            obs=obs,
+            cm_hist=cm_hist,
+            cm_future=cm_future,
+            time_obs=times,
+            time_cm_hist=times,
+            time_cm_future=times,
+            parallel=parallel,
+            nr_processes=nr_processes,
+            progressbar=False,
+            failsafe=True,
+        )
+
+    def test_make_debiaser_returns_the_seeded_class(self):
+        """Every BCSD debiaser is built through _make_debiaser, so it is the one seam."""
+        debiaser = _make_debiaser(variable="tas", mapping_type="parametric")
+        assert isinstance(debiaser, _SeededQuantileMapping)
+
+    def test_mixin_precedes_the_debiaser_in_the_mro(self):
+        """The mixin must come first or ibicus's apply_location shadows the seeding."""
+        mro = _SeededQuantileMapping.__mro__
+        assert mro.index(_SeededLocationMixin) < mro.index(QuantileMapping)
+
+    def test_seeded_debiaser_is_picklable(self):
+        """Pool workers receive the debiaser by pickle."""
+        debiaser = _make_debiaser(variable="tas", mapping_type="parametric")
+        assert isinstance(pickle.loads(pickle.dumps(debiaser)), _SeededQuantileMapping)
+
+    def test_hurdle_model_randomizes(self):
+        """Guards the premise: without cdf randomization there is nothing to pin."""
+        assert PrecipitationHurdleModelGamma.cdf_randomization
+
+    def test_repeated_parallel_runs_are_identical(self):
+        """The parametric pr path must be reproducible if a table ever selects it."""
+        first = self._apply(_SeededQuantileMapping, nr_processes=2)
+        second = self._apply(_SeededQuantileMapping, nr_processes=2)
+        np.testing.assert_array_equal(first, second)
+
+    def test_stock_output_depends_on_ambient_rng_state(self):
+        """Documents the exposure the seeding closes. Serial and seeded, so deterministic."""
+        np.random.seed(42)
+        first = self._apply(QuantileMapping, nr_processes=1, parallel=False)
+        np.random.seed(43)
+        second = self._apply(QuantileMapping, nr_processes=1, parallel=False)
+        assert not np.array_equal(first, second)
+
+    def test_seeded_output_is_invariant_to_ambient_rng_state(self):
+        """The regression guard: drop the mixin and this fails on every platform."""
+        np.random.seed(42)
+        first = self._apply(_SeededQuantileMapping, nr_processes=1, parallel=False)
+        np.random.seed(43)
+        second = self._apply(_SeededQuantileMapping, nr_processes=1, parallel=False)
+        np.testing.assert_array_equal(first, second)
