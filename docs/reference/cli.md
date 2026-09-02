@@ -247,7 +247,7 @@ When `--config-path` is given, `bcsd validate` extracts the unique GCMs and scen
 
 ## `bcsd validate-output` — Validate Output Stores
 
-Validate downscaled **output** datatree store(s), one leaf (scenario / variable / member) at a time, and render a table per store. Exits with code 1 if any blocking check fails in any store. When `$GITHUB_STEP_SUMMARY` is set, a markdown report is appended there in addition to the console tables.
+Validate downscaled **output** datatree store(s), one leaf (scenario / variable / member) at a time, and render a table per store. Exits with code 1 if any blocking check fails in any store. A store with no populated leaves is itself a blocking failure, whether or not `--scenario` or `--variable` narrowed the read, since an empty result means the run wrote nothing or the wrong branch was read. When `$GITHUB_STEP_SUMMARY` is set, a markdown report is appended there in addition to the console tables.
 
 ```bash
 uv run bcsd validate-output [STORE_URIS...] [OPTIONS]
@@ -285,6 +285,20 @@ uv run bcsd validate-output --config-path configs/qa/ --scenario SSP245 --variab
 ```
 
 ---
+
+## `bcsd resolve-branch` — Print the Branch a Config Resolves To
+
+Print the icechunk branch a config set writes to, and nothing else, so a caller can pass it on as `--branch`.
+
+```bash
+uv run bcsd resolve-branch --config-path configs/qa/cesm2-waccm/
+```
+
+`PipelineOptions.branch` defaults to the installed package version, so the value depends on which interpreter asks. That is harmless while one process both writes and reads. It stops being harmless once they are split: the deploy workflow runs the pipeline from the runner and `validate-output` inside a container whose package version was baked at image build time. Resolving the branch once on the runner and passing it explicitly leaves a single derivation instead of two that merely tend to agree.
+
+**Options**
+
+- `--config-path`, `-c` TEXT: path to a YAML config or a directory of configs (required)
 
 ## `bcsd status` — Check Cache Status
 

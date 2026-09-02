@@ -109,10 +109,15 @@ jobs:
               # the next step an empty string.
               run: |
                   set -euo pipefail
-                  ARGS=(bcsd validate-output --config-path "$QA_CONFIG_PATH" --no-coiled)
-                  if [[ -n "$BRANCH" ]]; then
-                    ARGS+=(--branch "$BRANCH")
+                  # Resolve the branch here rather than letting the container default it.
+                  # PipelineOptions.branch falls back to the installed package version, and
+                  # the container's copy is baked at image build time, so leaving it
+                  # implicit means the writer and the reader derive it separately.
+                  RESOLVED="$BRANCH"
+                  if [[ -z "$RESOLVED" ]]; then
+                    RESOLVED=$(uv run bcsd resolve-branch --config-path "$QA_CONFIG_PATH")
                   fi
+                  ARGS=(bcsd validate-output --config-path "$QA_CONFIG_PATH" --no-coiled --branch "$RESOLVED")
                   JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
                   if [[ -z "$JSON" || "$JSON" == "null" ]]; then
                     echo "::error::failed to build the validate-output command array"
@@ -159,11 +164,27 @@ jobs:
               # is the name baselines.py cites.
               run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/ --executor aws-batch
 
+            - name: Build the output validation command (snapshot baseline)
+              id: validate-output-cmd
+              # The snapshot job never passes a branch, so without this the container would
+              # derive it from its own baked package version while the run derived it from
+              # the runner's. They agree at a release tag by coincidence, not by construction.
+              run: |
+                  set -euo pipefail
+                  RESOLVED=$(uv run bcsd resolve-branch --config-path configs/snapshot/cesm2-waccm/)
+                  ARGS=(bcsd validate-output --config-path configs/snapshot/cesm2-waccm/ --no-coiled --branch "$RESOLVED")
+                  JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
+                  if [[ -z "$JSON" || "$JSON" == "null" ]]; then
+                    echo "::error::failed to build the validate-output command array"
+                    exit 1
+                  fi
+                  echo "json=$JSON" >> "$GITHUB_OUTPUT"
+
             - name: Validate output datasets (snapshot baseline)
               uses: ./.github/actions/batch-run
               with:
                   name: validate-output-snapshot
-                  command: '["bcsd","validate-output","--config-path","configs/snapshot/cesm2-waccm/","--no-coiled"]'
+                  command: ${{ steps.validate-output-cmd.outputs.json }}
                   job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
                   job-definition: ${{ needs.image.outputs.job_definition }}
 
@@ -383,10 +404,15 @@ jobs:
               # the next step an empty string.
               run: |
                   set -euo pipefail
-                  ARGS=(bcsd validate-output --config-path "$PROD_CONFIG_PATH" --no-coiled)
-                  if [[ -n "$BRANCH" ]]; then
-                    ARGS+=(--branch "$BRANCH")
+                  # Resolve the branch here rather than letting the container default it.
+                  # PipelineOptions.branch falls back to the installed package version, and
+                  # the container's copy is baked at image build time, so leaving it
+                  # implicit means the writer and the reader derive it separately.
+                  RESOLVED="$BRANCH"
+                  if [[ -z "$RESOLVED" ]]; then
+                    RESOLVED=$(uv run bcsd resolve-branch --config-path "$PROD_CONFIG_PATH")
                   fi
+                  ARGS=(bcsd validate-output --config-path "$PROD_CONFIG_PATH" --no-coiled --branch "$RESOLVED")
                   JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
                   if [[ -z "$JSON" || "$JSON" == "null" ]]; then
                     echo "::error::failed to build the validate-output command array"

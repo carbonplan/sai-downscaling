@@ -1583,6 +1583,26 @@ def cache_list(
 
 
 @app.command()
+def resolve_branch(
+    config_path: str = typer.Option(
+        ..., "--config-path", "-c", help="Path to YAML config or directory of configs"
+    ),
+):
+    """Print the icechunk branch a config set resolves to.
+
+    ``PipelineOptions.branch`` defaults to the installed package version, so the value
+    depends on which interpreter asks. That is fine while one process both writes and
+    reads, and wrong once they are split: the deploy workflow runs the pipeline on the
+    runner and ``validate-output`` inside a container built separately, and the two
+    resolve the default independently. Printing it here lets the runner resolve it once
+    and pass ``--branch`` explicitly, so there is a single derivation rather than two
+    that merely tend to agree.
+    """
+    _, options = load_configs(config_path)
+    print(options.branch)
+
+
+@app.command()
 def release(
     config_path: str = typer.Option(
         "configs/example.yaml", "--config-path", "-c", help="Path to YAML config or directory"
@@ -1908,7 +1928,6 @@ def validate_output(
     # already canonical). parse_* raise on unknown values.
     scenarios = [SCENARIO_TO_GROUP[parse_scenario(s)] for s in scenario] if scenario else None
     variables = [parse_variable(v) for v in variable] if variable else None
-    filtered = bool(scenarios or variables)
 
     summary_lines: list[str] = []
     any_blocking = False
@@ -1926,11 +1945,14 @@ def validate_output(
                 variables=variables,
             )
             if not results:
-                # An explicit filter matching nothing is an error, not an empty success.
-                log = logger.error if filtered else logger.warning
-                log("No populated leaves found in %s", store_uri)
-                if filtered:
-                    any_blocking = True
+                # Blocking whether or not a filter is set. An explicit filter matching
+                # nothing is an error, and so is an unfiltered read of an empty store:
+                # this command runs immediately after `bcsd run` over the same configs, so
+                # nothing to validate means the run wrote nothing, or that this process
+                # resolved a different branch than the writer did. Reporting either as a
+                # warning exits 0 and passes a deploy gate that checked nothing.
+                logger.error("No populated leaves found in %s", store_uri)
+                any_blocking = True
                 continue
 
             console.rule(f"[bold]{store_uri}[/bold]")

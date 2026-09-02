@@ -330,6 +330,82 @@ class TestResolveVariableConfig:
             )
 
 
+class TestEmptyStoreIsBlocking:
+    """An unfiltered read that finds nothing must fail, not warn."""
+
+    _CONFIG_YAML = TestValidateOutputConfigPath._CONFIG_YAML
+
+    def _write_config(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(self._CONFIG_YAML)
+        return config_file
+
+    def test_no_leaves_without_a_filter_exits_nonzero(self, tmp_path):
+        # validate-output runs right after `bcsd run` over the same configs, so an empty
+        # read means the run wrote nothing or this process resolved a different branch
+        # than the writer. Warning and exiting 0 passes a deploy gate that checked nothing.
+        config_file = self._write_config(tmp_path)
+        with patch("srm.validation.validate_output_store", return_value=[]):
+            result = CliRunner().invoke(
+                app, ["validate-output", "--config-path", str(config_file), "--no-coiled"]
+            )
+        assert result.exit_code == 1, result.output
+
+    def test_no_leaves_with_a_filter_still_exits_nonzero(self, tmp_path):
+        config_file = self._write_config(tmp_path)
+        with patch("srm.validation.validate_output_store", return_value=[]):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "validate-output",
+                    "--config-path",
+                    str(config_file),
+                    "--variable",
+                    "tas",
+                    "--no-coiled",
+                ],
+            )
+        assert result.exit_code == 1, result.output
+
+    def test_populated_store_still_passes(self, tmp_path):
+        config_file = self._write_config(tmp_path)
+        passing = CheckResult(
+            check_id="lat_valid",
+            gcm="CESM2-WACCM",
+            scenario="ssp245/tas/001",
+            status=CheckStatus.PASS,
+        )
+        with patch("srm.validation.validate_output_store", return_value=[passing]):
+            result = CliRunner().invoke(
+                app, ["validate-output", "--config-path", str(config_file), "--no-coiled"]
+            )
+        assert result.exit_code == 0, result.output
+
+
+class TestResolveBranch:
+    """The runner resolves the branch once so the container cannot derive a second one."""
+
+    def test_prints_the_branch_the_config_resolves_to(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(TestValidateOutputConfigPath._CONFIG_YAML)
+        result = CliRunner().invoke(app, ["resolve-branch", "--config-path", str(config_file)])
+        assert result.exit_code == 0, result.output
+        assert result.output.strip() == "v9"
+
+    def test_falls_back_to_the_package_version(self, tmp_path):
+        # With no branch in the config, the printed value must be the same default
+        # validate-output would have used, or passing it through changes behavior.
+        from srm.bcsd_config import PipelineOptions
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            TestValidateOutputConfigPath._CONFIG_YAML.replace('branch: "v9"\n', "")
+        )
+        result = CliRunner().invoke(app, ["resolve-branch", "--config-path", str(config_file)])
+        assert result.exit_code == 0, result.output
+        assert result.output.strip() == PipelineOptions().branch
+
+
 class TestValidateVariableOverrides:
     def test_unknown_variable_key_raises(self):
         with pytest.raises(ValueError, match="not in variables"):
