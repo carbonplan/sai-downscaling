@@ -158,7 +158,10 @@ The deploy workflow requires the following to be configured in the GitHub reposi
   | `TerminateStalledSrmJobs` | `batch:TerminateJob` | `job/*` in this account and region |
   | `RegisterSrmJobDefinitionRevisions` | `batch:RegisterJobDefinition` | `srm-downscaling*` |
   | `ReadBatchStateForPolling` | `batch:DescribeJobs`, `batch:DescribeJobDefinitions`, `batch:ListJobs` | `*` |
+  | `ReadSrmImagesFromEcr` | `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`, `ecr:DescribeImages`, `ecr:ListImages` | the `srm-downscaling` repository |
   | `PassOnlyTheSrmTaskRolesToEcs` | `iam:PassRole` | `srm-batch-job-role`, `srm-batch-execution-role` and `coiled-carbonplan`, only when passed to `ecs-tasks.amazonaws.com` |
+
+  `ReadSrmImagesFromEcr` covers the read half of ECR. The shared `CustomGitHubActionsECRLambdaDeployPolicy` grants push actions only (`PutImage`, `InitiateLayerUpload`, `UploadLayerPart`, `CompleteLayerUpload`, `BatchCheckLayerAvailability`), which is not enough: buildx HEADs the existing manifest while pushing, imports the registry build cache, and the smoke test pulls the image back. Without the read actions the build fails with `not authorized to perform: ecr:BatchGetImage` after the image has already been built.
 
   `batch:TerminateJob` is required because both poll loops, `_await_batch_job` and the `batch-run` action, terminate a job that never leaves the queue rather than leaving it to start later unattended. Without it the terminate is denied and logged as a warning while the job stays queued. Job ids are unpredictable, so `job/*` is the tightest scope available.
 
