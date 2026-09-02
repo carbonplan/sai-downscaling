@@ -12,7 +12,7 @@
 
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs"]
+variables: ["tas", "pr", "rsds"]
 ensemble_members: ["003"]
 scenarios: ["SSP245"]
 
