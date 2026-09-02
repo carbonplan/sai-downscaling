@@ -103,12 +103,22 @@ jobs:
             - name: Build the output validation command (QA)
               id: validate-output-cmd
               # jq builds the array so an optional --branch cannot be word-split into it.
+              # One argument per line rather than jq --args: --args does not stop jq from
+              # parsing a value like --config-path as one of its own options, and the
+              # failure is silent, since the command substitution still exits 0 and hands
+              # the next step an empty string.
               run: |
+                  set -euo pipefail
                   ARGS=(bcsd validate-output --config-path "$QA_CONFIG_PATH" --no-coiled)
                   if [[ -n "$BRANCH" ]]; then
                     ARGS+=(--branch "$BRANCH")
                   fi
-                  echo "json=$(jq -nc '$ARGS.positional' --args "${ARGS[@]}")" >> "$GITHUB_OUTPUT"
+                  JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
+                  if [[ -z "$JSON" || "$JSON" == "null" ]]; then
+                    echo "::error::failed to build the validate-output command array"
+                    exit 1
+                  fi
+                  echo "json=$JSON" >> "$GITHUB_OUTPUT"
 
             - name: Validate output datasets (QA)
               uses: ./.github/actions/batch-run
@@ -367,12 +377,22 @@ jobs:
             - name: Build the output validation command (production)
               id: validate-output-cmd
               # jq builds the array so an optional --branch cannot be word-split into it.
+              # One argument per line rather than jq --args: --args does not stop jq from
+              # parsing a value like --config-path as one of its own options, and the
+              # failure is silent, since the command substitution still exits 0 and hands
+              # the next step an empty string.
               run: |
+                  set -euo pipefail
                   ARGS=(bcsd validate-output --config-path "$PROD_CONFIG_PATH" --no-coiled)
                   if [[ -n "$BRANCH" ]]; then
                     ARGS+=(--branch "$BRANCH")
                   fi
-                  echo "json=$(jq -nc '$ARGS.positional' --args "${ARGS[@]}")" >> "$GITHUB_OUTPUT"
+                  JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
+                  if [[ -z "$JSON" || "$JSON" == "null" ]]; then
+                    echo "::error::failed to build the validate-output command array"
+                    exit 1
+                  fi
+                  echo "json=$JSON" >> "$GITHUB_OUTPUT"
 
             - name: Validate output datasets (production)
               uses: ./.github/actions/batch-run

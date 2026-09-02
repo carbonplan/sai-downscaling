@@ -52,6 +52,17 @@ runs:
       run: |
         set -euo pipefail
 
+        # A caller that built this array with a failing command substitution hands us an
+        # empty string, which would otherwise surface as a bare jq parse error.
+        if [[ -z "${COMMAND// /}" ]]; then
+          echo "::error::command input is empty; the caller failed to build the command array"
+          exit 1
+        fi
+        if ! printf '%s' "$COMMAND" | jq -e 'type == "array" and length > 0' >/dev/null; then
+          echo "::error::command input is not a non-empty JSON array: $COMMAND"
+          exit 1
+        fi
+
         # Batch rejects a job name with anything but alphanumerics, hyphen and underscore.
         SAFE_NAME=$(printf '%s' "$JOB_NAME" | tr -c '[:alnum:]_-' '-' | cut -c1-128)
 
