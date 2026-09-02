@@ -14,6 +14,7 @@
 !uv.lock
 !README.md
 !src
+!configs
 
 # COPY src/ ./src/ takes the tree as it is on disk, so local build artifacts ship in the
 # image and change that layer's hash after any local test run. The bytecode is the worst

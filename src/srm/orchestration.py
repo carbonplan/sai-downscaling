@@ -300,9 +300,12 @@ class BCSDOrchestrator:
             jobQueue=self.options.batch_job_queue,
             jobDefinition=job_definition,
             containerOverrides={
-                # Overrides the image's CMD, not its ENTRYPOINT, which already invokes
-                # the runner. Repeating the interpreter here appends it as arguments.
-                "command": [stage],
+                # Batch overrides CMD only; containerProperties and containerOverrides
+                # have no entryPoint field at all. The image's ENTRYPOINT is therefore
+                # just `uv run --no-sync`, and every job names the command it wants, so
+                # one image serves both the stages and the deploy workflow's validate
+                # steps. Changing either side alone breaks every submission.
+                "command": ["python", "-m", "srm.batch_runner", stage],
                 "environment": environment,
                 "resourceRequirements": [
                     {"type": "VCPU", "value": str(resources["vcpu"])},

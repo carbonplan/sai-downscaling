@@ -15,6 +15,7 @@ BCSDPipeline is always mocked so no real compute or S3 access is required.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -930,10 +931,10 @@ class TestSubmitBatchJob:
         assert kwargs["tags"] == {"Project": "SRM"}
         assert kwargs["propagateTags"] is True
 
-    def test_command_override_carries_only_the_stage(self, orchestrator, multi_configs):
-        # containerOverrides.command replaces CMD, not ENTRYPOINT. Repeating the
-        # interpreter invocation here appends it to the image's ENTRYPOINT and every
-        # task dies on argument parsing.
+    def test_command_override_names_the_full_invocation(self, orchestrator, multi_configs):
+        # containerOverrides.command replaces CMD, and Batch has no entryPoint field to
+        # replace, so the command must spell out the interpreter the image's bare
+        # `uv run --no-sync` entrypoint expects.
         client = MagicMock()
         client.submit_job.return_value = {"jobId": "abc-123"}
         with patch("boto3.client", return_value=client):
@@ -941,7 +942,24 @@ class TestSubmitBatchJob:
                 "transform_scenario", multi_configs, "s3://bucket/manifest.json"
             )
         overrides = client.submit_job.call_args.kwargs["containerOverrides"]
-        assert overrides["command"] == ["transform_scenario"]
+        assert overrides["command"] == [
+            "python",
+            "-m",
+            "srm.batch_runner",
+            "transform_scenario",
+        ]
+
+    def test_the_command_matches_the_image_entrypoint(self, orchestrator, multi_configs):
+        # The two halves live in different files and only meet on a task VM, where a
+        # mismatch shows up as every child dying on argument parsing. Assert the
+        # Dockerfile still ends where this command expects to begin.
+        dockerfile = (Path(__file__).parent.parent / "Dockerfile").read_text()
+        entrypoint = next(line for line in dockerfile.splitlines() if line.startswith("ENTRYPOINT"))
+        assert json.loads(entrypoint.removeprefix("ENTRYPOINT").strip()) == [
+            "uv",
+            "run",
+            "--no-sync",
+        ]
 
     def test_submission_requests_stage_resources(self, orchestrator, multi_configs):
         client = MagicMock()
