@@ -462,13 +462,32 @@ class TestBCSDConfigConstruction:
 
 
 class TestVariableConfigDebiasDefaults:
-    """Every supported variable must carry an explicit debias_approach default."""
+    """Every supported variable must carry an explicit debias_approach default.
+
+    ``variable_config`` is hashed into ``config_hash``, so a default that moves
+    quietly invalidates every cached artifact and changes every production run.
+    Pinning both tables here forces such a move to surface as a reviewable diff.
+    """
 
     def test_all_variables_have_debias_approach(self, subtests):
-        for var in ("tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"):
-            with subtests.test(variable=var):
-                vc = VariableConfig.for_variable(var, "BCSD")
-                assert vc.debias_approach == "nonparametric_hybrid_2sided"
+        expected = {
+            "BCSD": {
+                "tas": "nonparametric_hybrid_2sided",
+                "tasmax": "nonparametric_hybrid_2sided",
+                "tasmin": "nonparametric_hybrid_2sided",
+                "pr": "nonparametric_hybrid_2sided",
+                "dtr": "nonparametric_hybrid_2sided",
+                "hurs": "nonparametric_hybrid_2sided",
+                # rsds is the one BCSD deviation from the NEX-GDDP hybrid default (#523).
+                "rsds": "nonparametric",
+            },
+            # QDMSD is uniform: the qdm approach must not pick up the BCSD rsds special case.
+            "QDMSD": dict.fromkeys(("tas", "tasmax", "tasmin", "pr", "rsds", "dtr", "hurs"), "qdm"),
+        }
+        for method, table in expected.items():
+            for var, approach in table.items():
+                with subtests.test(method=method, variable=var):
+                    assert VariableConfig.for_variable(var, method).debias_approach == approach
 
 
 class TestConfigJsonRoundTrip:
