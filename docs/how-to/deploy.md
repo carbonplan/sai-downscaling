@@ -17,7 +17,7 @@ The BCSD pipeline is deployed via GitHub Actions using pre-defined config files 
 
 ## Where the tasks run
 
-All three run jobs dispatch to AWS Batch (`--executor aws-batch`) rather than Coiled, which removes Coiled's $0.05 per CPU-hour platform fee. Coiled still backs the `validate` and `validate-output` steps, which spin up a short-lived Dask cluster rather than submitting batch tasks, so `DASK_COILED__TOKEN` is still required.
+Every step dispatches to AWS Batch rather than Coiled, which removes Coiled's $0.05 per CPU-hour platform fee. The run jobs pass `--executor aws-batch`; the `validate` and `validate-output` steps go through the [`batch-run`](../../.github/actions/batch-run/action.yml) composite action, which submits one job running the command in the same image and polls it. Nothing in the deploy workflow needs `DASK_COILED__TOKEN` any more.
 
 | Job | AWS Batch queue |
 |---|---|
@@ -140,14 +140,13 @@ Two GCMs are deliberately excluded. `ukesm` is held back by issue #529, which le
 The deploy workflow requires the following to be configured in the GitHub repository settings:
 
 - **GitHub environments**: `qa` and `production` must exist (Settings → Environments)
-- **`DASK_COILED__TOKEN` secret**: must be set in both the `qa` and `production` environments. Only the `validate` and `validate-output` steps need it now; the pipeline runs themselves go through AWS Batch.
 - **AWS Batch resources** in `us-west-2`: the `srm-qa` and `srm-production` job queues, the `srm-production` compute environment, the `srm-downscaling` ECR repository, and the `srm-batch-job-role`, `srm-batch-execution-role`, and `srm-batch-instance-role` IAM roles. None of this is defined in the repository, so it must be recreated by hand if lost.
-- **Batch permissions on the deploy role**: granted by the `SrmAwsBatchDeployPolicy` inline policy on `github-action-role`. It allows `batch:SubmitJob` on the two `srm-*` queues, `batch:RegisterJobDefinition` on `srm-downscaling*` only, the read actions the poll loop needs, and `iam:PassRole` restricted to `srm-batch-job-role` and `srm-batch-execution-role` when passed to `ecs-tasks.amazonaws.com`. ECR push comes from the role's pre-existing inline policy. `batch:TerminateJob` is deliberately not granted, since nothing calls it; add it alongside any orphan-cleanup step. Verify with:
+- **Batch permissions on the deploy role**: granted by the `SrmAwsBatchDeployPolicy` inline policy on `github-action-role`. It allows `batch:SubmitJob` on the two `srm-*` queues, `batch:RegisterJobDefinition` on `srm-downscaling*` only, the read actions the poll loop needs, and `iam:PassRole` restricted to `srm-batch-job-role` and `srm-batch-execution-role` when passed to `ecs-tasks.amazonaws.com`. ECR push comes from the role's pre-existing inline policy. `batch:TerminateJob` is required: both poll loops, `_await_batch_job` and the `batch-run` action, terminate a job that never leaves the queue rather than leaving it to start later unattended. Without it the terminate is denied and logged as a warning, and the job stays queued. Verify with:
 
   ```bash
   aws iam simulate-principal-policy \
     --policy-source-arn arn:aws:iam::631969445205:role/github-action-role \
-    --action-names batch:SubmitJob batch:RegisterJobDefinition iam:PassRole \
+    --action-names batch:SubmitJob batch:RegisterJobDefinition batch:TerminateJob iam:PassRole \
     --query 'EvaluationResults[].{action:EvalActionName,decision:EvalDecision}'
   ```
 

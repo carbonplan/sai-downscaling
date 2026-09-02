@@ -80,13 +80,16 @@ jobs:
             - uses: ./.github/actions/setup
 
             - name: Validate input datasets (QA)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate --config-path "$QA_CONFIG_PATH"
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-input-qa
+                  command: '["bcsd","validate","--config-path","${{ env.QA_CONFIG_PATH }}","--no-coiled"]'
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
 
             - name: Run BCSD pipeline (QA)
-              # No Coiled token: tasks run on AWS Batch under the OIDC role the setup action
-              # assumes. The validate steps around this one still use a Coiled Dask cluster.
+              # No Coiled token anywhere in this job: the pipeline tasks and both validate
+              # steps all run on AWS Batch under the OIDC role the setup action assumes.
               run: |
                   EXTRA_ARGS=""
                   if [[ "$FORCE" == "true" ]]; then
@@ -97,15 +100,23 @@ jobs:
                   fi
                   uv run bcsd run --config-path "$QA_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
 
-            - name: Validate output datasets (QA)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+            - name: Build the output validation command (QA)
+              id: validate-output-cmd
+              # jq builds the array so an optional --branch cannot be word-split into it.
               run: |
-                  EXTRA_ARGS=""
+                  ARGS=(bcsd validate-output --config-path "$QA_CONFIG_PATH" --no-coiled)
                   if [[ -n "$BRANCH" ]]; then
-                    EXTRA_ARGS="--branch $BRANCH"
+                    ARGS+=(--branch "$BRANCH")
                   fi
-                  uv run bcsd validate-output --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
+                  echo "json=$(jq -nc '$ARGS.positional' --args "${ARGS[@]}")" >> "$GITHUB_OUTPUT"
+
+            - name: Validate output datasets (QA)
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-output-qa
+                  command: ${{ steps.validate-output-cmd.outputs.json }}
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
 
     snapshot:
         # Produces the regional baseline the per-PR snapshot check compares against. It has
@@ -139,13 +150,16 @@ jobs:
               run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/ --executor aws-batch
 
             - name: Validate output datasets (snapshot baseline)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate-output --config-path configs/snapshot/cesm2-waccm/
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-output-snapshot
+                  command: '["bcsd","validate-output","--config-path","configs/snapshot/cesm2-waccm/","--no-coiled"]'
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
 
             - name: Freeze the snapshot baseline under an immutable tag
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # No Coiled token: `bcsd release` only moves an icechunk ref and opens no
+              # cluster at all, so it never needed one.
               # The branch this wrote to stays writable, so a later qa run with a matching
               # BCSD_BRANCH could overwrite the baseline in place and a comparison would then
               # diff a candidate against itself. The tag pins the snapshot id.
@@ -327,13 +341,19 @@ jobs:
             - uses: ./.github/actions/setup
 
             - name: Validate input datasets (production)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate --config-path "$PROD_CONFIG_PATH"
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-input-production
+                  command: '["bcsd","validate","--config-path","${{ env.PROD_CONFIG_PATH }}","--no-coiled"]'
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
+                  # Global stores, so twice the regional default on both axes.
+                  vcpu: "32"
+                  memory: "245760"
 
             - name: Run BCSD pipeline (production)
-              # No Coiled token: tasks run on AWS Batch under the OIDC role the setup action
-              # assumes. The validate steps around this one still use a Coiled Dask cluster.
+              # No Coiled token anywhere in this job: the pipeline tasks and both validate
+              # steps all run on AWS Batch under the OIDC role the setup action assumes.
               run: |
                   EXTRA_ARGS=""
                   if [[ "$FORCE" == "true" ]]; then
@@ -344,12 +364,23 @@ jobs:
                   fi
                   uv run bcsd run --config-path "$PROD_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
 
-            - name: Validate output datasets (production)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+            - name: Build the output validation command (production)
+              id: validate-output-cmd
+              # jq builds the array so an optional --branch cannot be word-split into it.
               run: |
-                  EXTRA_ARGS=""
+                  ARGS=(bcsd validate-output --config-path "$PROD_CONFIG_PATH" --no-coiled)
                   if [[ -n "$BRANCH" ]]; then
-                    EXTRA_ARGS="--branch $BRANCH"
+                    ARGS+=(--branch "$BRANCH")
                   fi
-                  uv run bcsd validate-output --config-path "$PROD_CONFIG_PATH" $EXTRA_ARGS
+                  echo "json=$(jq -nc '$ARGS.positional' --args "${ARGS[@]}")" >> "$GITHUB_OUTPUT"
+
+            - name: Validate output datasets (production)
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-output-production
+                  command: ${{ steps.validate-output-cmd.outputs.json }}
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
+                  # Global stores, so twice the regional default on both axes.
+                  vcpu: "32"
+                  memory: "245760"
