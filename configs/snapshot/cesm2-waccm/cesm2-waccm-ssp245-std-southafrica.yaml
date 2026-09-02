@@ -4,7 +4,7 @@
 # member 008 (data ends 2069) lives in cesm2-waccm-ssp245-std-trunc-southafrica.yaml; temperature
 # extremes are in cesm2-waccm-ssp245-tmx-southafrica.yaml.
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs"]
+variables: ["tas", "pr", "rsds"]
 ensemble_members: ["003"]
 scenarios: ["SSP245"]
 

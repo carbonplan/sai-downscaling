@@ -5,7 +5,7 @@
 
 # === Model and Scenario ===
 gcm: "MIROC-ES2H"
-variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members:
   ["r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10"]
 scenarios: ["SSP245"]

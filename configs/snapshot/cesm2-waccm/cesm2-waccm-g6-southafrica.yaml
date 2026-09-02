@@ -5,7 +5,7 @@
 # the termination run. Its leaves have no baseline counterpart until a production run
 # writes them, so the comparison reports them one-sided in the meantime; 003 is unaffected.
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002", "003"]
 scenarios: ["G6-1.5K"]
 
