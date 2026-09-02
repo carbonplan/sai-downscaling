@@ -159,7 +159,12 @@ The deploy workflow requires the following to be configured in the GitHub reposi
   | `RegisterSrmJobDefinitionRevisions` | `batch:RegisterJobDefinition` | `srm-downscaling*` |
   | `ReadBatchStateForPolling` | `batch:DescribeJobs`, `batch:DescribeJobDefinitions`, `batch:ListJobs` | `*` |
   | `ReadSrmImagesFromEcr` | `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`, `ecr:DescribeImages`, `ecr:ListImages` | the `srm-downscaling` repository |
+  | `TagSrmBatchResources` | `batch:TagResource` | `srm-downscaling*` job definitions and `job/*` |
+  | `ReadBatchJobLogs` | `logs:DescribeLogGroups` | `*` |
+  | `ReadBatchJobLogEvents` | `logs:DescribeLogStreams`, `logs:FilterLogEvents`, `logs:GetLogEvents` | the `/aws/batch/job` log group |
   | `PassOnlyTheSrmTaskRolesToEcs` | `iam:PassRole` | `srm-batch-job-role`, `srm-batch-execution-role` and `coiled-carbonplan`, only when passed to `ecs-tasks.amazonaws.com` |
+
+  `batch:TagResource` is needed because `register-job-definition` and `submit-job` both pass `--tags Project=SRM` with `--propagate-tags`, and tagging on create is a separate authorization from the create itself. The log actions let the `batch-run` action tail a job's CloudWatch stream, which is how a validate report reaches the step log and the job summary. That one fails quietly if missed: the action falls back to a placeholder line and the report is simply absent.
 
   `ReadSrmImagesFromEcr` covers the read half of ECR. The shared `CustomGitHubActionsECRLambdaDeployPolicy` grants push actions only (`PutImage`, `InitiateLayerUpload`, `UploadLayerPart`, `CompleteLayerUpload`, `BatchCheckLayerAvailability`), which is not enough: buildx HEADs the existing manifest while pushing, imports the registry build cache, and the smoke test pulls the image back. Without the read actions the build fails with `not authorized to perform: ecr:BatchGetImage` after the image has already been built.
 
