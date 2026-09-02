@@ -625,7 +625,7 @@ def calculate_doy_means(
     da_xr_doy_mean = da.groupby("time.dayofyear").mean("time")
 
     if clim_method == "simple":
-        return da_xr_doy_mean
+        result = da_xr_doy_mean
 
     elif clim_method == "simple_rolling":
         # Note that this rolling mean is used for smoothing the day-of-year climatology in the spatial disaggregation step,
@@ -639,7 +639,7 @@ def calculate_doy_means(
             .isel(dayofyear=slice(rolling_window, -rolling_window))
             .assign_coords(dayofyear=da_xr_doy_mean.dayofyear)
         )
-        return clim_rolling_window
+        result = clim_rolling_window
 
     elif clim_method == "fft":
         # Apply FFT smoothing along the time dimension
@@ -662,14 +662,14 @@ def calculate_doy_means(
             "dayofyear", "lat", "lon"
         )
 
+        result = obs_fine_doy_means_smoothed
+
     # It is possible for smoothing to introduce small negative artifacts for variables that are strictly positive (e.g., precipitation), particularly FFT smoothing
     # If allow_negative_values is False, we set any negative values to zero here.
     if not allow_negative_values:
-        obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.where(
-            obs_fine_doy_means_smoothed >= 0, 0
-        )
+        result = result.where(result >= 0, 0)
 
-    return obs_fine_doy_means_smoothed
+    return result
 
 
 def downscale_from_coarse(
