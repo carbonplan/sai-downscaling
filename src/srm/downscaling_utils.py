@@ -662,12 +662,12 @@ def calculate_doy_means(
             "dayofyear", "lat", "lon"
         )
 
-        # It is possible for the FFT smoothing to introduce small negative artifacts for variables that are strictly positive (e.g., precipitation)
-        # If allow_negative_values is False, we set any negative values to zero here.
-        if not allow_negative_values:
-            obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.where(
-                obs_fine_doy_means_smoothed >= 0, 0
-            )
+    # It is possible for smoothing to introduce small negative artifacts for variables that are strictly positive (e.g., precipitation), particularly FFT smoothing
+    # If allow_negative_values is False, we set any negative values to zero here.
+    if not allow_negative_values:
+        obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.where(
+            obs_fine_doy_means_smoothed >= 0, 0
+        )
 
     return obs_fine_doy_means_smoothed
 
@@ -682,7 +682,7 @@ def downscale_from_coarse(
     max_residual: float = 100,
     tiny_threshold: float = 0.0,
     enforce_conservation: bool = False,
-    use_tiny_threshold: bool = True,
+    use_tiny_threshold: bool = False,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
