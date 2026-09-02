@@ -9,6 +9,7 @@ GCM/variable), ``fit_historical`` (once per GCM/variable/ensemble), and
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import logging
 import time
@@ -79,6 +80,85 @@ class _WeibullMinZeroBounded(type(scipy.stats.weibull_min)):
 _weibull_min_zero_bounded = _WeibullMinZeroBounded(a=0.0, name="weibull_min_floc0")
 
 
+def _location_seed(*arrays: np.ndarray) -> int:
+    """Derive a deterministic RNG seed from the data at a single grid cell.
+
+    Parameters
+    ----------
+    *arrays : np.ndarray
+        The per-location timeseries handed to ``apply_location``.
+
+    Returns
+    -------
+    int
+        A seed in the range accepted by :func:`numpy.random.seed`, stable across
+        processes, machines and worker counts for the same input values.
+    """
+    digest = hashlib.blake2b(digest_size=4)
+    for array in arrays:
+        digest.update(np.ascontiguousarray(array, dtype=np.float64).tobytes())
+    return int.from_bytes(digest.digest(), "little")
+
+
+class _SeededLocationMixin:
+    """Make a debiaser's stochastic draws reproducible by seeding per location.
+
+    Several ibicus code paths draw from numpy's process-global legacy RandomState:
+    quantile delta mapping censors values at or below ``censoring_threshold`` by
+    replacing them with ``np.random.rand() * censoring_threshold``
+    (``_quantile_delta_mapping.py``), and the precipitation hurdle and left-censored
+    gamma models randomize their ``cdf`` below the threshold (``utils/_math_utils.py``).
+
+    ``Debiaser.apply`` fans locations out over a ``multiprocessing.Pool``, so that
+    global state is per worker and the position each cell lands at in its worker's
+    stream depends on how the pool happened to schedule tasks, and on ``nr_processes``
+    (which follows instance size). Seeding in the parent before ``apply`` therefore
+    cannot make a run reproducible: under the fork start method every worker inherits
+    the same seeded state but consumes it in a scheduling-dependent order, and under
+    spawn the workers are seeded from entropy and ignore the parent entirely
+    (issue #627).
+
+    Seeding here instead, from the cell's own data, makes every draw a function of the
+    inputs alone. Runs are then bit-identical across repeats, worker counts and start
+    methods, while keeping ibicus's per-window redraw semantics unchanged. The seed is
+    per location rather than one constant for the whole grid so that neighboring cells
+    do not receive identical jitter, which would put spatially coherent structure into
+    what is meant to be tie-breaking noise.
+
+    Mixed in ahead of the debiaser class so this ``apply_location`` wins and ``super()``
+    reaches ibicus's. Subclasses are defined at module level so multiprocessing can
+    pickle them, for the same reason as :class:`_WeibullMinZeroBounded` above.
+    """
+
+    def apply_location(self, obs, cm_hist, cm_future, **kwargs):
+        np.random.seed(_location_seed(obs, cm_hist, cm_future))
+        return super().apply_location(obs, cm_hist, cm_future, **kwargs)
+
+
+class _SeededQuantileDeltaMapping(_SeededLocationMixin, QuantileDeltaMapping):
+    """Reproducible quantile delta mapping. See :class:`_SeededLocationMixin`.
+
+    The draws come from censoring, so this bites on ``pr`` (via
+    :meth:`QuantileDeltaMapping.for_precipitation`) plus ``rsds`` and ``dtr``, which set
+    ``censor_values_to_zero`` explicitly, and on ``tasmin``, which is derived as
+    ``tasmax - dtr``. ``tas``, ``tasmax`` and ``hurs`` do not censor and were already
+    deterministic.
+    """
+
+
+class _SeededQuantileMapping(_SeededLocationMixin, QuantileMapping):
+    """Reproducible quantile mapping. See :class:`_SeededLocationMixin`.
+
+    No configured BCSD path draws today: the tables reach ``QuantileMapping`` only with
+    ``mapping_type="nonparametric"``, or parametrically with distributions that do not
+    randomize (Weibull, Gumbel, norm, beta). The exposure is latent rather than absent,
+    though, because ``_make_debiaser`` falls back to ``PrecipitationHurdleModelGamma``
+    for ``pr``, whose ``cdf`` randomizes; setting ``debias_approach="parametric"`` for
+    ``pr`` would reach it. Seeding here keeps that from silently reintroducing
+    issue #627 rather than fixing anything currently broken.
+    """
+
+
 def _make_debiaser(variable: str, distribution=None, **kwargs):
     if distribution is None:
         if variable in ["tas", "tasmax"]:
@@ -87,7 +167,7 @@ def _make_debiaser(variable: str, distribution=None, **kwargs):
             distribution = scipy.stats.beta
         elif variable == "pr":
             distribution = PrecipitationHurdleModelGamma
-    return QuantileMapping(distribution=distribution, **kwargs)
+    return _SeededQuantileMapping(distribution=distribution, **kwargs)
 
 
 def calculate_out_of_range_mask(
@@ -1609,6 +1689,10 @@ class BCSDPipeline:
             failsafe=True,
         )
 
+        # No np.random.seed() here. It cannot make a run reproducible, because
+        # debiaser.apply() draws its random values inside multiprocessing workers that
+        # do not share this process's RNG state. Reproducibility comes from
+        # _SeededQuantileDeltaMapping, which seeds per location inside the worker.
         if debias_approach in ["parametric", "nonparametric"]:
             debiaser = _make_debiaser(mapping_type=debias_approach, **common_kwargs)
             logger.debug("[_apply_bias_correction_scenario] %s", debiaser)
@@ -1710,7 +1794,7 @@ class BCSDPipeline:
                 running_window_step_length=self.config.variable_config.running_window_step_length,
             )
             if self.config.variable == "pr":
-                debiaser = QuantileDeltaMapping.for_precipitation(**qdm_window_kwargs)
+                debiaser = _SeededQuantileDeltaMapping.for_precipitation(**qdm_window_kwargs)
             elif self.config.variable == "rsds":
                 # ibicus has no built-in QDM defaults for rsds: "standard" defaults
                 # only cover tas/pr, and "experimental" defaults cover
@@ -1721,7 +1805,7 @@ class BCSDPipeline:
                 # bound (it also mirrors the multiplicative disaggregation used for rsds).
                 # censor_values_to_zero guards against a 0/0 divide in polar-night
                 # windows, where obs/cm_hist/cm_future can all be genuinlely zero.
-                debiaser = QuantileDeltaMapping(
+                debiaser = _SeededQuantileDeltaMapping(
                     variable="rsds",
                     reasonable_physical_range=[0, 1000],
                     distribution=None,
@@ -1732,7 +1816,7 @@ class BCSDPipeline:
                     **qdm_window_kwargs,
                 )
             elif self.config.variable == "dtr":
-                debiaser = QuantileDeltaMapping(
+                debiaser = _SeededQuantileDeltaMapping(
                     variable="dtr",
                     reasonable_physical_range=[0, 100],
                     distribution=None,
@@ -1743,7 +1827,7 @@ class BCSDPipeline:
                     **qdm_window_kwargs,
                 )
             else:
-                debiaser = QuantileDeltaMapping.from_variable(
+                debiaser = _SeededQuantileDeltaMapping.from_variable(
                     self.config.variable, **qdm_window_kwargs
                 )
 

@@ -14,7 +14,7 @@
 
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002"]
 scenarios: ["G6-1.5K-END"]
 

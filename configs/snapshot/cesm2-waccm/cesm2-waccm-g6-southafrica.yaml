@@ -5,7 +5,7 @@
 # the termination run. Its leaves have no baseline counterpart until a production run
 # writes them, so the comparison reports them one-sided in the meantime; 003 is unaffected.
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002", "003"]
 scenarios: ["G6-1.5K"]
 
@@ -17,7 +17,7 @@ predict_period_end: 2084
 # === Downscaling Method ===
 # "BCSD" (detrend + quantile mapping) or "QDMSD" (quantile delta mapping). Required:
 # there is no default, so every config states which method produced its output.
-downscaling_method: "BCSD"
+downscaling_method: ["BCSD","QDMSD"]
 
 # Run over a ~3 deg halo beyond the region of interest ([-35, -22, 16, 33]) so BCSD's
 # regrid + spatial disaggregation edge effects fall outside it. The comparison notebook
