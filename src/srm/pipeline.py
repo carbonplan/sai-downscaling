@@ -1400,11 +1400,11 @@ class BCSDPipeline:
     def _load_ssp245_segment(self) -> xr.DataArray:
         """Load the SSP245 portion of the bridge.
 
-        For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
-        G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
-        When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap before the
-        GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
-        dataset is converted via to_proleptic_gregorian before concat.
+        For most GCMs, returns the primary SSP245 dataset directly. A GCM whose primary
+        SSP245 run starts after the historical period ends leaves a gap at the front of
+        the scenario. When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap
+        before the primary data begins. The primary is already in proleptic_gregorian;
+        the ESGF dataset is converted via to_proleptic_gregorian before concat.
         """
         primary = get_experiment(self.config.gcm, "SSP245", self.config.variable)
         primary = primary.sel(ensemble_member=self._ssp245_member)
@@ -1499,8 +1499,8 @@ class BCSDPipeline:
         model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
         model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
-        # Non-SAI scenarios whose primary dataset starts after predict_period_start
-        # (e.g. MIROC-ES2H GeoMIP SSP245 starts 2020) need ESGF data prepended to close the gap.
+        # Non-SAI scenarios whose primary dataset starts after predict_period_start need
+        # ESGF data prepended to close the gap.
         if not self.config.is_sai_scenario and self._ssp245_esgf_member is not None:
             scenario_start_year = int(model_scenario.time.dt.year.min())
             if scenario_start_year > self.config.predict_period_start:

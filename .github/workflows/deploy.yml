@@ -14,7 +14,7 @@ on:
                     - production
                     - snapshot
             model:
-                description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm), or a single
+                description: "GCM subfolder to run (e.g. cesm2-waccm, ukesm), or a single
                     config file relative to the chosen config root (e.g.
                     cesm2-waccm/cesm2-waccm-g6-southafrica.yaml). Leave blank to run every model
                     for that environment. Production accepts only the models on the allowlist in
@@ -278,8 +278,7 @@ jobs:
               # ukesm is absent because issue #529 leaves a 0.70 K discontinuity at 2015
               # between our UKESM1.0 historical and the UKESM1.1 ARISE runs, so it is not fit
               # to publish. miroc-es2h is absent because the deliverable is CESM and UKESM
-              # only; its configs are deliberately left without downscaling_method and no
-              # longer load.
+              # only; its configs have been removed outright rather than left unloadable.
               run: |
                   if [[ -n "$MODEL" ]]; then
                     # A model may name a folder or a single config file beneath it.
