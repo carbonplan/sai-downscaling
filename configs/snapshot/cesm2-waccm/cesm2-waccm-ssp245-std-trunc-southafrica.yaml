@@ -5,7 +5,7 @@
 # valid extent.
 # Full-length member 003 lives in cesm2-waccm-ssp245-std-southafrica.yaml (2099).
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs"]
+variables: ["tas", "pr", "rsds"]
 ensemble_members: ["008"]
 scenarios: ["SSP245"]
 
