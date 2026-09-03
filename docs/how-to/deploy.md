@@ -192,5 +192,9 @@ The deploy workflow requires the following to be configured in the GitHub reposi
     --query "$DECISION" --output text
   ```
 
+  The [`preflight-iam`](../../.github/actions/preflight-iam/action.yml) action runs these checks automatically before any job is submitted, from both `./.github/actions/setup` and the image build, so a missing grant fails in seconds with the action named rather than an hour into a run. The policy documents themselves are recorded under [`infra/iam/`](../../infra/iam/); they are a reviewable copy, not applied automatically.
+
+  The `/aws/batch/job` log group is set to 90-day retention. It had none, so job logs accumulated indefinitely. Retention only affects storage at $0.03/GB-month; ingestion at $0.50/GB dominates and is unchanged.
+
   Note that a local `aws` session usually authenticates as the `github-action` IAM **user**, which is a different principal with a different policy set. A run that works locally says nothing about whether the deploy role can do the same, and the role cannot be assumed from a workstation because its trust policy admits only the GitHub OIDC provider. `simulate-principal-policy` is the way to check it.
 - **AWS OIDC role**: `arn:aws:iam::631969445205:role/github-action-role` is assumed via the [setup action](../../.github/actions/setup/action.yml) — the role must trust the repository's GitHub Actions OIDC provider

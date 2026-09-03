@@ -1,0 +1,72 @@
+name: Preflight IAM
+description: Fail fast if the deploy role is missing a permission the workflow needs
+
+inputs:
+  role-arn:
+    description: Role to simulate against
+    required: false
+    default: arn:aws:iam::631969445205:role/github-action-role
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        ROLE: ${{ inputs.role-arn }}
+      run: |
+        set -uo pipefail
+
+        # action|resource. simulate-principal-policy defaults to a resource of "*", which
+        # reports implicitDeny for every action scoped to an ARN, so each check names the
+        # resource it will actually touch. Five separate missing grants were found the hard
+        # way during #651, each after minutes of build or run time; this turns that into a
+        # named failure in seconds.
+        CHECKS=(
+          "batch:SubmitJob|arn:aws:batch:us-west-2:631969445205:job-queue/srm-qa"
+          "batch:SubmitJob|arn:aws:batch:us-west-2:631969445205:job-queue/srm-production"
+          "batch:TerminateJob|arn:aws:batch:us-west-2:631969445205:job/preflight"
+          "batch:TagResource|arn:aws:batch:us-west-2:631969445205:job-queue/srm-qa"
+          "batch:TagResource|arn:aws:batch:us-west-2:631969445205:job-definition/srm-downscaling"
+          "batch:RegisterJobDefinition|arn:aws:batch:us-west-2:631969445205:job-definition/srm-downscaling"
+          "ecr:BatchGetImage|arn:aws:ecr:us-west-2:631969445205:repository/srm-downscaling"
+          "ecr:PutImage|arn:aws:ecr:us-west-2:631969445205:repository/srm-downscaling"
+          "logs:FilterLogEvents|arn:aws:logs:us-west-2:631969445205:log-group:/aws/batch/job:*"
+        )
+
+        FAILED=0
+        for entry in "${CHECKS[@]}"; do
+          ACTION="${entry%%|*}"
+          RESOURCE="${entry##*|}"
+          DECISION=$(aws iam simulate-principal-policy \
+            --policy-source-arn "$ROLE" \
+            --action-names "$ACTION" \
+            --resource-arns "$RESOURCE" \
+            --query 'EvaluationResults[0].EvalDecision' --output text 2>/dev/null || echo "ERROR")
+          if [[ "$DECISION" != "allowed" ]]; then
+            echo "::error::$ACTION on $RESOURCE is $DECISION"
+            FAILED=1
+          else
+            echo "  ok  $ACTION"
+          fi
+        done
+
+        # PassRole carries a condition, so it needs the context key to evaluate truthfully.
+        for ROLE_NAME in coiled-carbonplan srm-batch-execution-role; do
+          DECISION=$(aws iam simulate-principal-policy \
+            --policy-source-arn "$ROLE" --action-names iam:PassRole \
+            --resource-arns "arn:aws:iam::631969445205:role/$ROLE_NAME" \
+            --context-entries 'ContextKeyName=iam:PassedToService,ContextKeyValues=ecs-tasks.amazonaws.com,ContextKeyType=string' \
+            --query 'EvaluationResults[0].EvalDecision' --output text 2>/dev/null || echo "ERROR")
+          if [[ "$DECISION" != "allowed" ]]; then
+            echo "::error::iam:PassRole on $ROLE_NAME is $DECISION"
+            FAILED=1
+          else
+            echo "  ok  iam:PassRole $ROLE_NAME"
+          fi
+        done
+
+        if [[ "$FAILED" -ne 0 ]]; then
+          echo "::error::deploy role is missing permissions; see infra/iam/ for the recorded policy documents"
+          exit 1
+        fi
+        echo "All required permissions present."
