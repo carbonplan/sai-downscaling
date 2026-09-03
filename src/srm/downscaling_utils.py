@@ -315,7 +315,7 @@ def detrend(
     # was low, it would go from a positive adjustment for january 31 (and entire month before) to a negative
     #  adjustment for february 1 (and the entire month after). thus, there could be noticeable
     # artificial discontinuities inserted into the timeseries between 1/31 and 2/1.
-    # resample("1D") anchors at midnight; MIROC use noon timestamps.
+    # resample("1D") anchors at midnight; UKESM uses noon timestamps.
     # Floor da.time to midnight for reindex, then restore original coords to fix nan issue in #361
     da_time_midnight = da.time.values.astype("datetime64[D]").astype("datetime64[ns]")
     trend_on_daily_timestep = (
@@ -455,7 +455,7 @@ def _lat_spans_poles(lat_vals: np.ndarray) -> bool:
     """Whether a latitude coordinate reaches both poles.
 
     Cell-center grids stop half a step short of +/-90: UKESM ends at +/-89.375 on a 1.25 deg
-    grid, MIROC-ES2H likewise. "Reaches the pole" therefore means within one grid step, not
+    grid. "Reaches the pole" therefore means within one grid step, not
     exactly 90. CESM2-WACCM, which does land on +/-90, also satisfies this. Axes with fewer
     than ``_MIN_SPAN_TEST_POINTS`` cells are rejected outright, since dlat is not
     trustworthy there.
@@ -625,7 +625,7 @@ def calculate_doy_means(
     da_xr_doy_mean = da.groupby("time.dayofyear").mean("time")
 
     if clim_method == "simple":
-        return da_xr_doy_mean
+        result = da_xr_doy_mean
 
     elif clim_method == "simple_rolling":
         # Note that this rolling mean is used for smoothing the day-of-year climatology in the spatial disaggregation step,
@@ -639,7 +639,7 @@ def calculate_doy_means(
             .isel(dayofyear=slice(rolling_window, -rolling_window))
             .assign_coords(dayofyear=da_xr_doy_mean.dayofyear)
         )
-        return clim_rolling_window
+        result = clim_rolling_window
 
     elif clim_method == "fft":
         # Apply FFT smoothing along the time dimension
@@ -662,14 +662,14 @@ def calculate_doy_means(
             "dayofyear", "lat", "lon"
         )
 
-        # It is possible for the FFT smoothing to introduce small negative artifacts for variables that are strictly positive (e.g., precipitation)
-        # If allow_negative_values is False, we set any negative values to zero here.
-        if not allow_negative_values:
-            obs_fine_doy_means_smoothed = obs_fine_doy_means_smoothed.where(
-                obs_fine_doy_means_smoothed >= 0, 0
-            )
+        result = obs_fine_doy_means_smoothed
 
-    return obs_fine_doy_means_smoothed
+    # It is possible for smoothing to introduce small negative artifacts for variables that are strictly positive (e.g., precipitation), particularly FFT smoothing
+    # If allow_negative_values is False, we set any negative values to zero here.
+    if not allow_negative_values:
+        result = result.where(result >= 0, 0)
+
+    return result
 
 
 def downscale_from_coarse(
@@ -682,7 +682,7 @@ def downscale_from_coarse(
     max_residual: float = 100,
     tiny_threshold: float = 0.0,
     enforce_conservation: bool = False,
-    use_tiny_threshold: bool = False,
+    use_tiny_threshold: bool = True,
 ) -> xr.DataArray:
     """
     Spatially disaggregate bias-corrected coarse data to the fine observation grid.
@@ -708,6 +708,8 @@ def downscale_from_coarse(
         Whether to enforce conservation of the coarse-scale mean after downscaling.
         - True: the downscaled field is adjusted to ensure that its coarse-scale mean matches the debiased, coarse input
         - False: the downscaled field is returned without adjustment, which may result in an added bias at the coarse scale.
+    use_tiny_threshold : bool, default: True
+        Whether to use a variable-specific tiny threshold to avoid division by very small numbers in the multiplicative method
 
     Returns
     -------
@@ -756,7 +758,7 @@ def downscale_from_coarse(
 
         residuals = da.groupby("time.dayofyear") / safe_clim
 
-        # Force ratio to 0 exactly where the coarse climatology was zero.
+        # Force ratio to either replacement_residual (here 1.0) or zero
         # Broadcast the per-DOY zero mask back onto the time axis.
         if use_tiny_threshold:
             tiny_clim_on_time = tiny_clim.sel(dayofyear=da["time"].dt.dayofyear)

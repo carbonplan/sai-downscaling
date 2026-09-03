@@ -583,7 +583,7 @@ def _spread_ds(member_values: dict[str, list[float]], *, start: str = "2015-01-0
 
 
 def _gap_filled_ds() -> xr.Dataset:
-    """MIROC-ES2H ssp245 in miniature: a 3 -> 1 bridge, then distinct native years."""
+    """A gap-filled ssp245 group in miniature: a 3 -> 1 bridge, then distinct native years."""
     ds = _spread_ds(
         {
             "r01": [1.0, 1.0, 10.0, 20.0],
@@ -632,7 +632,7 @@ def test_check_ensemble_spread_still_flags_real_duplication():
 
 
 def test_check_ensemble_spread_splits_a_gap_filled_group_into_two_windows():
-    rows = check_ensemble_spread(_gap_filled_ds(), "MIROC-ES2H ssp245")
+    rows = check_ensemble_spread(_gap_filled_ds(), "CESM2-WACCM ssp245")
 
     assert [r["window"] for r in rows] == ["bridge", "native"]
     bridge, native = rows
@@ -653,7 +653,7 @@ def test_check_ensemble_spread_bridge_fails_when_the_member_map_is_miswired():
     ds = _gap_filled_ds()
     # Data still groups r01+r03+r04; the map now claims r04 came from rB.
     ds.attrs["gap_fill_member_map"] = "r01→rA, r02→rB, r03→rA, r04→rB"
-    bridge, native = check_ensemble_spread(ds, "MIROC-ES2H ssp245")
+    bridge, native = check_ensemble_spread(ds, "CESM2-WACCM ssp245")
 
     assert bridge["ok"] is False
     assert bridge["groups"] == "r01+r03+r04 | r02"
@@ -665,7 +665,7 @@ def test_check_ensemble_spread_checks_the_bridge_rather_than_skipping_it():
     ds = _gap_filled_ds()
     # Broken stitch: r04 should match r01/r03 over the bridge. Mid-record never sees it.
     ds["tas"].loc[{"ensemble_member": "r04", "time": ds.time.values[:2]}] = 9.0
-    bridge, native = check_ensemble_spread(ds, "MIROC-ES2H ssp245")
+    bridge, native = check_ensemble_spread(ds, "CESM2-WACCM ssp245")
 
     assert bridge["ok"] is False
     assert bridge["groups"] == "r01+r03 | r02 | r04"
@@ -673,7 +673,7 @@ def test_check_ensemble_spread_checks_the_bridge_rather_than_skipping_it():
 
 
 def test_check_ensemble_spread_day_index_offsets_within_each_window():
-    rows = check_ensemble_spread(_gap_filled_ds(), "MIROC-ES2H ssp245", day_index=1)
+    rows = check_ensemble_spread(_gap_filled_ds(), "CESM2-WACCM ssp245", day_index=1)
 
     assert [r["day"] for r in rows] == ["2016-01-01", "2018-01-01"]
     assert all(r["ok"] for r in rows)

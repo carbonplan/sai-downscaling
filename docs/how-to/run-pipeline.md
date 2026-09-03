@@ -46,7 +46,7 @@ For quick ad-hoc runs from the command line without writing a config file, `bcsd
 # 2 GCMs × 2 variables × 3 members × 2 scenarios
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --gcm MIROC-ES2H \
+  --gcm CESM2-WACCM --gcm UKESM \
   --variable tas --variable pr \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario ssp245 --scenario G6-1.5K \
