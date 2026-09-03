@@ -12,6 +12,7 @@ on:
                 options:
                     - qa
                     - production
+                    - snapshot
             model:
                 description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm), or a single
                     config file relative to the chosen config root (e.g.
@@ -141,12 +142,19 @@ jobs:
         name: Snapshot baseline run
         timeout-minutes: 120
         runs-on: ubuntu-latest
-        if: github.event_name == 'release'
+        # Dispatchable as well as release-triggered, so a baseline can be produced from a
+        # pull request's head commit without cutting a release. `gh workflow run deploy.yml
+        # --ref <pr-branch> -f environment=snapshot` reaches it, because workflow_dispatch
+        # takes any ref in this repository. Fork pull requests cannot, since their head is
+        # not a ref here.
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
+            == 'snapshot')
         needs: image
         environment:
             name: qa
         env:
             TAG: ${{ github.event.release.tag_name }}
+            BRANCH: ${{ inputs.branch }}
             # The srm-qa queue, not srm-production: this runs alongside the production job
             # on the same release, and the baseline is a small regional run that must not
             # delay the global one. srm-production outranks it on the shared compute
@@ -156,13 +164,26 @@ jobs:
         steps:
             - uses: actions/checkout@v7
               with:
-                  ref: ${{ github.event.release.tag_name }}
+                  ref: ${{ github.event.release.tag_name || github.ref }}
+                  # setuptools_scm names the icechunk branch, and a shallow checkout off a
+                  # non-tag ref resolves to the fallback version 999. A release tag survives
+                  # depth 1 because `git describe` finds the tag on HEAD; a pull request's
+                  # head does not, and the run would write to a branch literally named v999.
+                  fetch-depth: 0
             - uses: ./.github/actions/setup
 
             - name: Run BCSD pipeline (snapshot baseline)
-              # No --branch: at a release tag the default branch is the package version, which
-              # is the name baselines.py cites.
-              run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/ --executor aws-batch
+              # At a release tag the default branch is the package version, which is the name
+              # baselines.py cites, so a release passes nothing. A dispatch off a pull request
+              # resolves to a development version such as v0.13.0.post50, which is isolated
+              # from any release baseline by construction; --branch overrides that when you
+              # want a name you chose.
+              run: |
+                  EXTRA_ARGS=""
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="--branch $BRANCH"
+                  fi
+                  uv run bcsd run --config-path configs/snapshot/cesm2-waccm/ --executor aws-batch $EXTRA_ARGS
 
             - name: Build the output validation command (snapshot baseline)
               id: validate-output-cmd
@@ -171,7 +192,10 @@ jobs:
               # the runner's. They agree at a release tag by coincidence, not by construction.
               run: |
                   set -euo pipefail
-                  RESOLVED=$(uv run bcsd resolve-branch --config-path configs/snapshot/cesm2-waccm/)
+                  RESOLVED="$BRANCH"
+                  if [[ -z "$RESOLVED" ]]; then
+                    RESOLVED=$(uv run bcsd resolve-branch --config-path configs/snapshot/cesm2-waccm/)
+                  fi
                   ARGS=(bcsd validate-output --config-path configs/snapshot/cesm2-waccm/ --no-coiled --branch "$RESOLVED")
                   JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
                   if [[ -z "$JSON" || "$JSON" == "null" ]]; then
@@ -189,6 +213,11 @@ jobs:
                   job-definition: ${{ needs.image.outputs.job_definition }}
 
             - name: Freeze the snapshot baseline under an immutable tag
+              # Releases only. An ad-hoc dispatch must not mint something that looks
+              # blessed: the tag is what makes a baseline citable, and a casual run from a
+              # pull request branch has not been reviewed or pointed at by baselines.py.
+              # It would also have no release tag to name itself after.
+              if: github.event_name == 'release'
               # No Coiled token: `bcsd release` only moves an icechunk ref and opens no
               # cluster at all, so it never needed one.
               # The branch this wrote to stays writable, so a later qa run with a matching

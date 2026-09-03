@@ -120,6 +120,27 @@ The `snapshot` job runs `configs/snapshot/` at the release tag and produces the 
 2. `bcsd validate-output --config-path configs/snapshot/cesm2-waccm/`
 3. `bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag snapshot-<release tag>` — creates an icechunk tag so the state cannot be overwritten by a later run on the same branch.
 
+### Producing an ad-hoc snapshot from a pull request
+
+The `snapshot` job is dispatchable as well as release-triggered, so you can produce a baseline from a pull request's head commit without cutting a release:
+
+```bash
+gh workflow run deploy.yml --ref <pr-branch> -f environment=snapshot
+gh workflow run deploy.yml --ref <pr-branch> -f environment=snapshot -f branch=my-candidate
+```
+
+`workflow_dispatch` accepts any ref in this repository, so a pull request's head branch works. A fork's head does not, since it is not a ref here.
+
+| Aspect | Release | Ad-hoc dispatch |
+| --- | --- | --- |
+| Icechunk branch | the package version, the name `baselines.py` cites | a development version such as `v0.13.0.post50`, or whatever `branch` you pass |
+| Freeze under a tag | yes | **no** — an ad-hoc run must not mint something that looks blessed |
+| Image | built from the release tag | built from the dispatched commit, and the job definition is pinned to it |
+
+Dispatching is preferable to running `bcsd run` locally for the same purpose, because the workflow builds the image from the commit you dispatched and pins the job definition to it. A local run resolves `srm-downscaling` to whatever revision happens to be newest in ECR, which need not be the code you are testing.
+
+The checkout uses `fetch-depth: 0` for this reason: `setuptools_scm` names the icechunk branch, and a shallow checkout off a non-tag ref falls back to version `999`, so the run would write to a branch literally named `v999`. A release tag survives a shallow checkout because `git describe` finds the tag on `HEAD`; a pull request's head does not.
+
 Repointing `CESM2_WACCM_SOUTH_AFRICA` in `src/srm/snapshot/baselines.py` at the new release is manual. The job prints both fields in its workflow summary, the store URI as well as the branch, because a release can move either one. See [How to Compare a Run Against the Snapshot](run-snapshot-tests.md).
 
 ## Adding a new production config
