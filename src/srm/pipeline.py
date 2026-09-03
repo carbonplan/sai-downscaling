@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import logging
+import os
 import time
 import warnings
 from datetime import UTC, datetime
@@ -437,6 +438,45 @@ def stitch_historical_scenario(
 
     _assert_stitched_continuity(result)
     return result
+
+
+#: Environment variable carrying the vCPU a remote task was actually allocated. The
+#: orchestrator sets it on both executors from the same instance sizing table.
+NR_PROCESSES_ENV = "SRM_NR_PROCESSES"
+
+
+def debiaser_processes() -> int:
+    """How many processes ``ibicus.Debiaser.apply`` should fan out over.
+
+    ``dask.system.CPU_COUNT`` is the wrong number under AWS Batch. ECS on EC2 expresses a
+    vCPU request as a cgroup *share* (``cpu.weight``) and leaves ``cpu.max`` unset, so
+    dask finds no quota and falls back to the host's core count: a container allocated 16
+    vCPU on a packed ``r8g.24xlarge`` measures 96. Coiled gives each task a dedicated VM,
+    so there the same call returns the 16 that was asked for.
+
+    That divergence is not only a resource-planning bug. ``nr_processes`` sets how ibicus
+    partitions the grid, and the partitioning is visible in the answers, so the two
+    executors produce different output for identical inputs. Reading the allocation the
+    orchestrator requested makes the two agree by construction.
+
+    Returns
+    -------
+    int
+        The requested vCPU when the orchestrator supplied one, otherwise
+        ``dask.system.CPU_COUNT`` for local runs and anything else unmanaged.
+    """
+    raw = os.environ.get(NR_PROCESSES_ENV)
+    if not raw:
+        return dask.system.CPU_COUNT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; falling back to CPU_COUNT", NR_PROCESSES_ENV, raw)
+        return dask.system.CPU_COUNT
+    if value < 1:
+        logger.warning("%s=%d is not positive; falling back to CPU_COUNT", NR_PROCESSES_ENV, value)
+        return dask.system.CPU_COUNT
+    return value
 
 
 class BCSDPipeline:
@@ -1019,7 +1059,7 @@ class BCSDPipeline:
             time_cm_hist=model_hist["time"].values,
             time_cm_future=model_hist["time"].values,
             parallel=True,
-            nr_processes=dask.system.CPU_COUNT,
+            nr_processes=debiaser_processes(),
             progressbar=False,
             # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
             # distribution fit that fails to converge. Inputs are asserted NaN-free
@@ -1683,7 +1723,7 @@ class BCSDPipeline:
             time_cm_hist=model_hist["time"].values,
             time_cm_future=scenario_detrended["time"].values,
             parallel=True,
-            nr_processes=dask.system.CPU_COUNT,
+            nr_processes=debiaser_processes(),
             progressbar=False,
             # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
             # distribution fit that fails to converge. Inputs are asserted NaN-free

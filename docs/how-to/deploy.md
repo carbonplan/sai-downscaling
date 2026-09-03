@@ -1,14 +1,42 @@
 # Deploy the Pipeline
 
-The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds three jobs:
+The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds six jobs:
 
 | Job | Purpose | Trigger |
 |---|---|---|
+| `image` | Build the arm64 task container and pin a job definition to it | Every deploy |
 | `qa` | Fast regional validation | Manual (`workflow_dispatch` with `environment: qa`) |
 | `snapshot` | Rebuild the regional snapshot baseline, then freeze it under an icechunk tag | Automatic on GitHub release |
+| `models` | Resolve which GCMs the release runs | Whenever `production` would run |
+| `plan` | Write the production cost estimate to the run summary, one job per GCM | Whenever `production` would run |
 | `production` | Full global run, one job per GCM | Automatic on GitHub release, or manual (`workflow_dispatch` with `environment: production`) |
 
-`snapshot` and `production` run in parallel, so the six-hour global run does not hold up the baseline the next pull request compares against. `production` is itself a matrix with one job per GCM, so the models run concurrently and each gets its own six-hour AWS session instead of sharing one.
+`snapshot` and `production` run in parallel, so the six-hour global run does not hold up the baseline the next pull request compares against.
+
+`production` is itself a matrix with one job per GCM, so the models run concurrently and each gets its own six-hour AWS session instead of sharing one.
+
+## Where the tasks run
+
+Every step dispatches to AWS Batch rather than Coiled, which removes Coiled's $0.05 per CPU-hour platform fee. The run jobs pass `--executor aws-batch`; the `validate` and `validate-output` steps go through the [`batch-run`](../../.github/actions/batch-run/action.yml) composite action, which submits one job running the command in the same image and polls it. Nothing in the deploy workflow needs `DASK_COILED__TOKEN` any more.
+
+| Job | AWS Batch queue |
+|---|---|
+| `qa`, `snapshot` | `srm-qa` (priority 1) |
+| `production` | `srm-production` (priority 10) |
+
+Both queues are served by the one `srm-production` compute environment. Splitting them means a qa dispatch that overlaps a release cannot queue ahead of the global run, because AWS Batch schedules the higher-priority queue first.
+
+### The image is a dependency, not a side effect
+
+`qa`, `snapshot`, and `production` all declare `needs: image`. That job builds the container from `uv.lock` and pushes it to the `srm-downscaling` ECR repository, then registers an AWS Batch job definition revision pointing at that exact image and returns its `name:revision`. Each run job passes that value through `BCSD_BATCH_JOB_DEFINITION`.
+
+Every build tags the image with the commit SHA. A release additionally tags it with the package version and moves `latest`. The version tag is what lets you walk backward from data to code: every output store is stamped `srm_downscaling:version` and written to an icechunk branch of that version, so the tag names the image that produced it. Only a release moves `latest`, because the job definition's fallback image is `latest` and a dispatch from a feature branch would otherwise repoint unpinned runs at its code.
+
+The indirection is necessary because AWS Batch `containerOverrides` cannot override a job's image. Building before deploying would not be enough on its own: a concurrent build could replace the `latest` tag mid-run, so a run is bound to a specific revision instead.
+
+### Cost approval
+
+The `plan` job runs `bcsd run --dry-run` and writes the per-stage cost estimate into the workflow run summary. Enabling **required reviewers** on the `production` environment (Settings → Environments → production) pauses the run there, so the reviewer approves against a concrete number rather than a blank prompt. Without that setting the job is informational only, and the run proceeds unattended.
 
 ## Config structure
 
@@ -48,7 +76,7 @@ QA runs execute all configs in `configs/qa/` against a small South Africa spatia
 
 The job runs three steps in order, against `configs/qa/` or the narrower path implied by **model**:
 
-1. `bcsd validate --config-path configs/qa/` — checks input datasets for the GCMs and scenarios referenced by the configs. Exits with code 1 on any blocking failure before Coiled compute is spent.
+1. `bcsd validate --config-path configs/qa/` — checks input datasets for the GCMs and scenarios referenced by the configs. Exits with code 1 on any blocking failure before any compute is spent.
 2. `bcsd run --config-path configs/qa/` — runs the full pipeline.
 3. `bcsd validate-output --config-path configs/qa/` — checks the written output datasets.
 
@@ -92,6 +120,27 @@ The `snapshot` job runs `configs/snapshot/` at the release tag and produces the 
 2. `bcsd validate-output --config-path configs/snapshot/cesm2-waccm/`
 3. `bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag snapshot-<release tag>` — creates an icechunk tag so the state cannot be overwritten by a later run on the same branch.
 
+### Producing an ad-hoc snapshot from a pull request
+
+The `snapshot` job is dispatchable as well as release-triggered, so you can produce a baseline from a pull request's head commit without cutting a release:
+
+```bash
+gh workflow run deploy.yml --ref <pr-branch> -f environment=snapshot
+gh workflow run deploy.yml --ref <pr-branch> -f environment=snapshot -f branch=my-candidate
+```
+
+`workflow_dispatch` accepts any ref in this repository, so a pull request's head branch works. A fork's head does not, since it is not a ref here.
+
+| Aspect | Release | Ad-hoc dispatch |
+| --- | --- | --- |
+| Icechunk branch | the package version, the name `baselines.py` cites | a development version such as `v0.13.0.post50`, or whatever `branch` you pass |
+| Freeze under a tag | yes | **no** — an ad-hoc run must not mint something that looks blessed |
+| Image | built from the release tag | built from the dispatched commit, and the job definition is pinned to it |
+
+Dispatching is preferable to running `bcsd run` locally for the same purpose, because the workflow builds the image from the commit you dispatched and pins the job definition to it. A local run resolves `srm-downscaling` to whatever revision happens to be newest in ECR, which need not be the code you are testing.
+
+The checkout uses `fetch-depth: 0` for this reason: `setuptools_scm` names the icechunk branch, and a shallow checkout off a non-tag ref falls back to version `999`, so the run would write to a branch literally named `v999`. A release tag survives a shallow checkout because `git describe` finds the tag on `HEAD`; a pull request's head does not.
+
 Repointing `CESM2_WACCM_SOUTH_AFRICA` in `src/srm/snapshot/baselines.py` at the new release is manual. The job prints both fields in its workflow summary, the store URI as well as the branch, because a release can move either one. See [How to Compare a Run Against the Snapshot](run-snapshot-tests.md).
 
 ## Adding a new production config
@@ -103,12 +152,70 @@ To add a variable, member, or scenario to a GCM that already runs in production:
 3. Omit `subset_bounds` for a global run.
 4. Open a pull request. The config is picked up on the next release, because each job loads every YAML under its own GCM folder.
 
-To add a **new GCM**, do the same in a new `configs/production/{model}/` folder, then add that folder name to the `strategy.matrix.model` list in `.github/workflows/deploy.yml`. Both steps are required: the matrix is a deliberate allowlist, so a config folder that is not named there is never run.
+To add a **new GCM**, do the same in a new `configs/production/{model}/` folder, then add that folder name to the list emitted by the `models` job in `.github/workflows/deploy.yml`. Both steps are required: that list is a deliberate allowlist, so a config folder not named there is never run. The `plan` and `production` jobs both read it, which keeps the cost estimate covering exactly the models that then run.
+
+Two GCMs are deliberately excluded. `ukesm` is held back by issue #529, which leaves a 0.70 K discontinuity at 2015 between our UKESM1.0 historical and the UKESM1.1 ARISE runs. `miroc-es2h` is out of scope for the deliverable, and its configs are intentionally left without `downscaling_method`, so they no longer load.
 
 ## Prerequisites
 
 The deploy workflow requires the following to be configured in the GitHub repository settings:
 
 - **GitHub environments**: `qa` and `production` must exist (Settings → Environments)
-- **`DASK_COILED__TOKEN` secret**: must be set in both the `qa` and `production` environments
+- **AWS Batch resources** in `us-west-2`: the `srm-qa` and `srm-production` job queues, the `srm-production` compute environment, the `srm-downscaling` ECR repository, and the `srm-batch-execution-role` and `srm-batch-instance-role` IAM roles. None of this is defined in the repository, so it must be recreated by hand if lost.
+- **The job role is `coiled-carbonplan`**, set as `jobRoleArn` when `build-image.yml` registers a revision. It is not the tighter `srm-batch-job-role`, because source.coop grants write on `carbonplan/srm-downscaling` to `coiled-carbonplan` by name, and every production config writes its `output_dir` there. No permission we grant on our own side substitutes for that, since the deny comes from the bucket.
+
+  | Requirement | Why |
+  | --- | --- |
+  | `coiled-carbonplan` trusts `ecs-tasks.amazonaws.com` | a Batch job role is assumed by ECS, and the role originally trusted only `ec2.amazonaws.com` |
+  | It still trusts `ec2.amazonaws.com` | Coiled clusters assume it as an instance role; removing this breaks them |
+  | `github-action-role` can `iam:PassRole` it | the job role is passed at `register-job-definition` time |
+
+  The tradeoff is real: `coiled-carbonplan` carries `AmazonS3FullAccess`, so QA and snapshot jobs run broader than they need to. Registering a second job definition that keeps `srm-batch-job-role` for the non-publishing queues would restore least privilege, at the cost of routing two definitions through the deploy workflow.
+- **Batch permissions on the deploy role**: granted by the `SrmAwsBatchDeployPolicy` inline policy on `github-action-role`. ECR push comes from the role's pre-existing inline policy.
+
+  | Sid | Actions | Resource |
+  | --- | --- | --- |
+  | `SubmitToSrmQueuesOnly` | `batch:SubmitJob` | the `srm-qa` and `srm-production` queues, and `srm-downscaling` job definitions |
+  | `TerminateStalledSrmJobs` | `batch:TerminateJob` | `job/*` in this account and region |
+  | `RegisterSrmJobDefinitionRevisions` | `batch:RegisterJobDefinition` | `srm-downscaling*` |
+  | `ReadBatchStateForPolling` | `batch:DescribeJobs`, `batch:DescribeJobDefinitions`, `batch:ListJobs` | `*` |
+  | `ReadSrmImagesFromEcr` | `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`, `ecr:DescribeImages`, `ecr:ListImages` | the `srm-downscaling` repository |
+  | `TagSrmBatchResources` | `batch:TagResource` | `srm-downscaling*` job definitions, `job/*`, and both `srm-*` queues |
+  | `ReadBatchJobLogs` | `logs:DescribeLogGroups` | `*` |
+  | `ReadBatchJobLogEvents` | `logs:DescribeLogStreams`, `logs:FilterLogEvents`, `logs:GetLogEvents` | the `/aws/batch/job` log group |
+  | `PassOnlyTheSrmTaskRolesToEcs` | `iam:PassRole` | `srm-batch-job-role`, `srm-batch-execution-role` and `coiled-carbonplan`, only when passed to `ecs-tasks.amazonaws.com` |
+
+  `batch:TagResource` is needed because `register-job-definition` and `submit-job` both pass `--tags Project=SRM` with `--propagate-tags`, and tagging on create is a separate authorization from the create itself. The two calls authorize against different resources, which is easy to miss: `register-job-definition` checks the job definition, while `submit-job` checks the **job queue**, since the job it would tag does not exist yet. Granting only the first leaves every submission failing. The log actions let the `batch-run` action tail a job's CloudWatch stream, which is how a validate report reaches the step log and the job summary. That one fails quietly if missed: the action falls back to a placeholder line and the report is simply absent.
+
+  `ReadSrmImagesFromEcr` covers the read half of ECR. The shared `CustomGitHubActionsECRLambdaDeployPolicy` grants push actions only (`PutImage`, `InitiateLayerUpload`, `UploadLayerPart`, `CompleteLayerUpload`, `BatchCheckLayerAvailability`), which is not enough: buildx HEADs the existing manifest while pushing, imports the registry build cache, and the smoke test pulls the image back. Without the read actions the build fails with `not authorized to perform: ecr:BatchGetImage` after the image has already been built.
+
+  `batch:TerminateJob` is required because both poll loops, `_await_batch_job` and the `batch-run` action, terminate a job that never leaves the queue rather than leaving it to start later unattended. Without it the terminate is denied and logged as a warning while the job stays queued. Job ids are unpredictable, so `job/*` is the tightest scope available.
+
+  Verify with the commands below, each of which prints `allowed`. Pass the resource every time: `simulate-principal-policy` defaults to a resource of `*`, and every action above except the read ones is scoped to an ARN, so omitting it reports `implicitDeny` for a policy that is in fact correct.
+
+  ```bash
+  ROLE=arn:aws:iam::631969445205:role/github-action-role
+  DECISION="EvaluationResults[0].EvalDecision"
+
+  aws iam simulate-principal-policy --policy-source-arn "$ROLE" \
+    --action-names batch:SubmitJob \
+    --resource-arns arn:aws:batch:us-west-2:631969445205:job-queue/srm-production \
+    --query "$DECISION" --output text
+
+  aws iam simulate-principal-policy --policy-source-arn "$ROLE" \
+    --action-names batch:TerminateJob \
+    --resource-arns arn:aws:batch:us-west-2:631969445205:job/any-job-id \
+    --query "$DECISION" --output text
+
+  aws iam simulate-principal-policy --policy-source-arn "$ROLE" \
+    --action-names batch:RegisterJobDefinition \
+    --resource-arns arn:aws:batch:us-west-2:631969445205:job-definition/srm-downscaling \
+    --query "$DECISION" --output text
+  ```
+
+  Run these checks by hand after any change to the role. They are not automated: an in-workflow preflight would need `iam:SimulatePrincipalPolicy`, which `github-action-role` does not have and which would be a wider grant than the thing it checks. The policy documents are recorded under [`infra/iam/`](../../infra/iam/); they are a reviewable copy, not applied automatically.
+
+  The `/aws/batch/job` log group is set to 90-day retention. It had none, so job logs accumulated indefinitely. Retention only affects storage at $0.03/GB-month; ingestion at $0.50/GB dominates and is unchanged.
+
+  Note that a local `aws` session usually authenticates as the `github-action` IAM **user**, which is a different principal with a different policy set. A run that works locally says nothing about whether the deploy role can do the same, and the role cannot be assumed from a workstation because its trust policy admits only the GitHub OIDC provider. `simulate-principal-policy` is the way to check it.
 - **AWS OIDC role**: `arn:aws:iam::631969445205:role/github-action-role` is assumed via the [setup action](../../.github/actions/setup/action.yml) — the role must trust the repository's GitHub Actions OIDC provider

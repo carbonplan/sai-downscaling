@@ -21,10 +21,18 @@ class Baseline:
         ``s3://`` URI of the icechunk store.
     branch : str
         icechunk branch holding the approved global run.
+    executor : str
+        Which executor produced it. Recorded because the choice is visible in the
+        answers: a Coiled baseline and an AWS Batch candidate differ on ``dtr``, ``pr``
+        and derived ``tasmin`` by up to 0.00003 K, the smallest gap the stored format
+        can represent at that temperature, with no code change involved. A comparison
+        whose two sides were made by different executors will fail an exact-equality
+        check for that reason alone, so produce candidates with the executor named here.
     """
 
     uri: str
     branch: str
+    executor: str
 
 
 # Bump ``uri``/``branch`` here to start a new baseline version; the comparison notebook
@@ -43,6 +51,7 @@ CESM2_WACCM_GLOBAL = Baseline(
         "/output/production/CESM2-WACCM-ERA5-global.icechunk"
     ),
     branch="v0.12.0",
+    executor="coiled",
 )
 
 # Deliberately still on ``carbonplan-scratch`` while other non-production paths moved to
@@ -57,5 +66,6 @@ CESM2_WACCM_SOUTH_AFRICA = Baseline(
         "s3://carbonplan-srm/scratch/snapshot"
         "/output/qa/CESM2-WACCM-ERA5-lat-38.0to-19.0_lon13.0to36.0.icechunk"
     ),
-    branch="pr-655-run-1",
+    branch="main-9781dac-sep-1",
+    executor="coiled",
 )

@@ -6,6 +6,12 @@ variables: ["tas"]
 ensemble_members: ["r2i1p1f2", "r3i1p1f2", "r12i1p1f2"]
 scenarios: ["SSP245"]
 
+# === Downscaling Methods ===
+# Required: there is no default, so every config states which method produced its output.
+# Production publishes BCSD only for now; QDMSD is exercised in the qa configs, which list
+# both. Adding it here doubles every wave, so it is a deliberate separate decision.
+downscaling_methods: ["BCSD"]
+
 # === Time Periods ===
 train_period_start: 1978
 train_period_end: 2014
