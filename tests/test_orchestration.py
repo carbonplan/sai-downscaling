@@ -1501,6 +1501,33 @@ class TestCoiledCanRunTheBatchImage:
         assert "container" not in fake.batch.run.call_args.kwargs
 
 
+class TestBothExecutorsAgreeOnProcessCount:
+    """The debiaser's fan-out must not depend on which executor started the task."""
+
+    def test_batch_submits_the_requested_vcpu(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        env = {
+            e["name"]: e["value"]
+            for e in client.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+        }
+        expected = orchestrator._resources_for("transform_scenario", multi_configs)["vcpu"]
+        assert env["SRM_NR_PROCESSES"] == str(expected)
+
+    def test_the_two_executors_send_the_same_number(self, orchestrator, multi_configs):
+        from srm.cost import vcpus
+
+        stage = "transform_scenario"
+        assert (
+            vcpus(orchestrator._vm_types_for(stage, multi_configs)[0])
+            == orchestrator._resources_for(stage, multi_configs)["vcpu"]
+        )
+
+
 class TestResourcesDerivedFromOneTable:
     def test_unknown_stage_still_raises(self, orchestrator, config):
         # Deliberately louder than _vm_types_for's default: an unsized stage should fail at

@@ -282,7 +282,13 @@ class BCSDOrchestrator:
                 f"Could not resolve job definition {job_definition!r} to a revision "
                 f"({type(exc).__name__}); AWS will resolve it at submit time."
             )
-        environment: list[dict[str, str]] = []
+        # dask.system.CPU_COUNT is wrong here and, worse, unstable: ECS on EC2 sets a
+        # cgroup share rather than a quota, so a container allocated 16 vCPU measures 96
+        # when packed onto an r8g.24xlarge and 16 when it gets a box to itself. That
+        # sizes ibicus's process pool from queue depth. Send the allocation instead.
+        environment: list[dict[str, str]] = [
+            {"name": "SRM_NR_PROCESSES", "value": str(resources["vcpu"])}
+        ]
 
         if len(configs) == 1:
             environment.append(
@@ -692,8 +698,15 @@ class BCSDOrchestrator:
                     f"→ Retry {attempt}/{max_retries} for {len(remaining)} failed {stage} tasks"
                 )
 
+            # The same number the batch path sends, from the same table, so the two
+            # executors partition identically. vm_type is the candidate list coiled picks
+            # from; its first entry is what _resources_for sizes the batch request against.
             task_var_dicts = [
-                {"CONFIG_JSON": self._config_payload_json(config)} for config in remaining
+                {
+                    "CONFIG_JSON": self._config_payload_json(config),
+                    "SRM_NR_PROCESSES": str(vcpus(vm_type[0])),
+                }
+                for config in remaining
             ]
             job_name = self._job_name(stage, remaining)
 
