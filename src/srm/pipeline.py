@@ -1090,7 +1090,7 @@ class BCSDPipeline:
             clim_method=self.config.variable_config.disaggregation_clim_method,
             allow_negative_values=False,
             tiny_threshold=self.config.variable_config.disaggregation_tiny_threshold,
-            use_tiny_threshold=False,
+            use_tiny_threshold=True,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
