@@ -1811,8 +1811,7 @@ class BCSDPipeline:
                     distribution=None,
                     mapping_type="nonparametric",
                     trend_preservation="relative",
-                    censor_values_to_zero=True,
-                    censoring_threshold=1.0,
+                    censor_values_to_zero=False,
                     **qdm_window_kwargs,
                 )
             elif self.config.variable == "dtr":
@@ -1880,9 +1879,19 @@ class BCSDPipeline:
             debiased_padded_np = debiaser.apply(**qdm_apply_kwargs)
             # remove the padding and take only the part of debiased_padded_np that is from the scenario you're running
             debiased_np = debiased_padded_np[scenario_pad.sizes["time"] :]
-            if self.config.variable in ["rsds", "dtr"]:
+            if self.config.variable in ["dtr"]:
                 # zero out any near-zero/near-zero divide blow-up left over from censor_values_to_zero
                 debiased_np[cm_future_np < debiaser.censoring_threshold] = 0.0
+            elif self.config.variable in ["rsds"]:
+                # we don't set a censoring_threshold for the rsds debiaser 
+                # so instead we set it here. anything below 10 w/m2 (a very dark day!)
+                # is more likely to have been inflated outlandishly. for those days 
+                # we'll replace with the raw climate model output which is more
+                # constrained.
+                # we definitely want the nan checking because in polar regions
+                # this is likely going to introduce nans because of there being
+                # so many zeros in the lower quantiles.
+                debiased_np = np.where(cm_future_np < 10., cm_future_np, debiased_np)
 
         else:
             raise ValueError(
