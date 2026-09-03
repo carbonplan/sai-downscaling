@@ -758,7 +758,7 @@ def downscale_from_coarse(
 
         residuals = da.groupby("time.dayofyear") / safe_clim
 
-        # Force ratio to 0 exactly where the coarse climatology was zero.
+        # Force ratio to either replacement_residual (here 1.0) or zero
         # Broadcast the per-DOY zero mask back onto the time axis.
         if use_tiny_threshold:
             tiny_clim_on_time = tiny_clim.sel(dayofyear=da["time"].dt.dayofyear)
