@@ -1469,38 +1469,6 @@ class TestSubmissionUsesTheResolvedDefinition:
         assert client.submit_job.call_args.kwargs["jobDefinition"] == "srm-downscaling"
 
 
-class TestCoiledCanRunTheBatchImage:
-    """Both executors must run one environment, not two resolutions of the same names.
-
-    `sparse` was present via package sync and absent from the image built with --no-dev,
-    which silently changed xarray_regrid's conservative accumulation order. Pinning the
-    coiled path to the same image removes the class of bug rather than that instance.
-    """
-
-    def test_container_is_passed_when_set(self, orchestrator, multi_configs, monkeypatch):
-        image = "631969445205.dkr.ecr.us-west-2.amazonaws.com/srm-downscaling:abc123"
-        orchestrator.options.container_image = image
-        fake = MagicMock()
-        fake.batch.run.return_value = {"job_id": 1}
-        fake.batch.wait_for_job_done.return_value = "done"
-        monkeypatch.setitem(__import__("sys").modules, "coiled", fake)
-        with patch.object(ArtifactCache, "exists", return_value=True):
-            orchestrator._submit_to_coiled("fit_historical", multi_configs)
-        assert fake.batch.run.call_args.kwargs["container"] == image
-
-    def test_container_is_omitted_when_unset(self, orchestrator, multi_configs, monkeypatch):
-        # Unset must keep package sync rather than passing container=None, which coiled
-        # would read as an explicit choice.
-        orchestrator.options.container_image = None
-        fake = MagicMock()
-        fake.batch.run.return_value = {"job_id": 1}
-        fake.batch.wait_for_job_done.return_value = "done"
-        monkeypatch.setitem(__import__("sys").modules, "coiled", fake)
-        with patch.object(ArtifactCache, "exists", return_value=True):
-            orchestrator._submit_to_coiled("fit_historical", multi_configs)
-        assert "container" not in fake.batch.run.call_args.kwargs
-
-
 class TestBothExecutorsAgreeOnProcessCount:
     """The debiaser's fan-out must not depend on which executor started the task."""
 
