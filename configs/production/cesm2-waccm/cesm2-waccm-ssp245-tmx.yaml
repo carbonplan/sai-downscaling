@@ -19,7 +19,7 @@ scenarios: ["SSP245"]
 # Required: there is no default, so every config states which method produced its output.
 # Production publishes BCSD only for now; QDMSD is exercised in the qa configs, which list
 # both. Adding it here doubles every wave, so it is a deliberate separate decision.
-downscaling_methods: ["BCSD"]
+downscaling_methods: ["BCSD", "QDMSD"]
 
 train_period_start: 1978
 train_period_end: 2014
