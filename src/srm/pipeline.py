@@ -65,6 +65,7 @@ logger = logging.getLogger(__name__)
 
 _RSDS_QDM_DARK_DAY_FLOOR_WM2 = 10.0
 
+
 class _WeibullMinZeroBounded(type(scipy.stats.weibull_min)):
     """Subclass of weibull_min_gen that constrains loc=0 during fitting.
 
@@ -1065,9 +1066,9 @@ class BCSDPipeline:
             # assertion below catches it (issue #517).
             failsafe=True,
         )
-        if self.config.variable in ["rsds"] and debias_approach == 'qdm':
+        if self.config.variable in ["rsds"] and debias_approach == "qdm":
             # for the rsds implementaiton of qdm, we control for days when rsds is
-            # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2 in the 
+            # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2 in the
             # raw climate model. see the apply_bias_correction_scenario for the
             # exact implementation. for consistency with that we add the same
             # control to the historical as well.
