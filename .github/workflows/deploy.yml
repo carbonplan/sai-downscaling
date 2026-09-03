@@ -12,11 +12,13 @@ on:
                 options:
                     - qa
                     - production
+                    - snapshot
             model:
                 description: "GCM subfolder to run (e.g. cesm2-waccm, miroc-es2h, ukesm), or a single
                     config file relative to the chosen config root (e.g.
                     cesm2-waccm/cesm2-waccm-g6-southafrica.yaml). Leave blank to run every model
-                    for that environment."
+                    for that environment. Production accepts only the models on the allowlist in
+                    the `models` job, currently cesm2-waccm; qa accepts any subfolder."
                 required: false
                 default: ""
                 type: string
@@ -48,14 +50,27 @@ permissions:
     contents: read
 
 jobs:
+    image:
+        # Builds the container the AWS Batch tasks run and pins a job definition revision to
+        # it. Both run jobs depend on this, so a deploy cannot execute a stale image: the
+        # revision it submits against was built from this very commit.
+        name: Build task image
+        uses: ./.github/workflows/build-image.yml
+        permissions:
+            id-token: write
+            contents: read
+
     qa:
         name: QA run (${{ inputs.model || 'all models' }})
         timeout-minutes: 120
         runs-on: ubuntu-latest
         if: github.event_name == 'workflow_dispatch' && inputs.environment == 'qa'
+        needs: image
         environment:
             name: qa
         env:
+            BCSD_BATCH_JOB_QUEUE: srm-qa
+            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
             QA_CONFIG_PATH: ${{ inputs.model == '' && 'configs/qa/' || endsWith(inputs.model, '.yaml') && format('configs/qa/{0}', inputs.model) || format('configs/qa/{0}/', inputs.model) }}
             FORCE: ${{ inputs.force }}
             BRANCH: ${{ inputs.branch }}
@@ -66,13 +81,16 @@ jobs:
             - uses: ./.github/actions/setup
 
             - name: Validate input datasets (QA)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate --config-path "$QA_CONFIG_PATH"
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-input-qa
+                  command: '["bcsd","validate","--config-path","${{ env.QA_CONFIG_PATH }}","--no-coiled"]'
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
 
             - name: Run BCSD pipeline (QA)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # No Coiled token anywhere in this job: the pipeline tasks and both validate
+              # steps all run on AWS Batch under the OIDC role the setup action assumes.
               run: |
                   EXTRA_ARGS=""
                   if [[ "$FORCE" == "true" ]]; then
@@ -81,17 +99,40 @@ jobs:
                   if [[ -n "$BRANCH" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
-                  uv run bcsd run --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
+                  uv run bcsd run --config-path "$QA_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
+
+            - name: Build the output validation command (QA)
+              id: validate-output-cmd
+              # jq builds the array so an optional --branch cannot be word-split into it.
+              # One argument per line rather than jq --args: --args does not stop jq from
+              # parsing a value like --config-path as one of its own options, and the
+              # failure is silent, since the command substitution still exits 0 and hands
+              # the next step an empty string.
+              run: |
+                  set -euo pipefail
+                  # Resolve the branch here rather than letting the container default it.
+                  # PipelineOptions.branch falls back to the installed package version, and
+                  # the container's copy is baked at image build time, so leaving it
+                  # implicit means the writer and the reader derive it separately.
+                  RESOLVED="$BRANCH"
+                  if [[ -z "$RESOLVED" ]]; then
+                    RESOLVED=$(uv run bcsd resolve-branch --config-path "$QA_CONFIG_PATH")
+                  fi
+                  ARGS=(bcsd validate-output --config-path "$QA_CONFIG_PATH" --no-coiled --branch "$RESOLVED")
+                  JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
+                  if [[ -z "$JSON" || "$JSON" == "null" ]]; then
+                    echo "::error::failed to build the validate-output command array"
+                    exit 1
+                  fi
+                  echo "json=$JSON" >> "$GITHUB_OUTPUT"
 
             - name: Validate output datasets (QA)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: |
-                  EXTRA_ARGS=""
-                  if [[ -n "$BRANCH" ]]; then
-                    EXTRA_ARGS="--branch $BRANCH"
-                  fi
-                  uv run bcsd validate-output --config-path "$QA_CONFIG_PATH" $EXTRA_ARGS
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-output-qa
+                  command: ${{ steps.validate-output-cmd.outputs.json }}
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
 
     snapshot:
         # Produces the regional baseline the per-PR snapshot check compares against. It has
@@ -101,32 +142,84 @@ jobs:
         name: Snapshot baseline run
         timeout-minutes: 120
         runs-on: ubuntu-latest
-        if: github.event_name == 'release'
+        # Dispatchable as well as release-triggered, so a baseline can be produced from a
+        # pull request's head commit without cutting a release. `gh workflow run deploy.yml
+        # --ref <pr-branch> -f environment=snapshot` reaches it, because workflow_dispatch
+        # takes any ref in this repository. Fork pull requests cannot, since their head is
+        # not a ref here.
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
+            == 'snapshot')
+        needs: image
         environment:
             name: qa
         env:
             TAG: ${{ github.event.release.tag_name }}
+            BRANCH: ${{ inputs.branch }}
+            # The srm-qa queue, not srm-production: this runs alongside the production job
+            # on the same release, and the baseline is a small regional run that must not
+            # delay the global one. srm-production outranks it on the shared compute
+            # environment.
+            BCSD_BATCH_JOB_QUEUE: srm-qa
+            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
         steps:
             - uses: actions/checkout@v7
               with:
-                  ref: ${{ github.event.release.tag_name }}
+                  ref: ${{ github.event.release.tag_name || github.ref }}
+                  # setuptools_scm names the icechunk branch, and a shallow checkout off a
+                  # non-tag ref resolves to the fallback version 999. A release tag survives
+                  # depth 1 because `git describe` finds the tag on HEAD; a pull request's
+                  # head does not, and the run would write to a branch literally named v999.
+                  fetch-depth: 0
             - uses: ./.github/actions/setup
 
             - name: Run BCSD pipeline (snapshot baseline)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              # No --branch: at a release tag the default branch is the package version, which
-              # is the name baselines.py cites.
-              run: uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
+              # At a release tag the default branch is the package version, which is the name
+              # baselines.py cites, so a release passes nothing. A dispatch off a pull request
+              # resolves to a development version such as v0.13.0.post50, which is isolated
+              # from any release baseline by construction; --branch overrides that when you
+              # want a name you chose.
+              run: |
+                  EXTRA_ARGS=""
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="--branch $BRANCH"
+                  fi
+                  uv run bcsd run --config-path configs/snapshot/cesm2-waccm/ --executor aws-batch $EXTRA_ARGS
+
+            - name: Build the output validation command (snapshot baseline)
+              id: validate-output-cmd
+              # The snapshot job never passes a branch, so without this the container would
+              # derive it from its own baked package version while the run derived it from
+              # the runner's. They agree at a release tag by coincidence, not by construction.
+              run: |
+                  set -euo pipefail
+                  RESOLVED="$BRANCH"
+                  if [[ -z "$RESOLVED" ]]; then
+                    RESOLVED=$(uv run bcsd resolve-branch --config-path configs/snapshot/cesm2-waccm/)
+                  fi
+                  ARGS=(bcsd validate-output --config-path configs/snapshot/cesm2-waccm/ --no-coiled --branch "$RESOLVED")
+                  JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
+                  if [[ -z "$JSON" || "$JSON" == "null" ]]; then
+                    echo "::error::failed to build the validate-output command array"
+                    exit 1
+                  fi
+                  echo "json=$JSON" >> "$GITHUB_OUTPUT"
 
             - name: Validate output datasets (snapshot baseline)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate-output --config-path configs/snapshot/cesm2-waccm/
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-output-snapshot
+                  command: ${{ steps.validate-output-cmd.outputs.json }}
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
 
             - name: Freeze the snapshot baseline under an immutable tag
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # Releases only. An ad-hoc dispatch must not mint something that looks
+              # blessed: the tag is what makes a baseline citable, and a casual run from a
+              # pull request branch has not been reviewed or pointed at by baselines.py.
+              # It would also have no release tag to name itself after.
+              if: github.event_name == 'release'
+              # No Coiled token: `bcsd release` only moves an icechunk ref and opens no
+              # cluster at all, so it never needed one.
               # The branch this wrote to stays writable, so a later qa run with a matching
               # BCSD_BRANCH could overwrite the baseline in place and a comparison would then
               # diff a candidate against itself. The tag pins the snapshot id.
@@ -161,12 +254,114 @@ jobs:
                       echo '```'
                   } >> "$GITHUB_STEP_SUMMARY"
 
+    models:
+        # Single source of truth for which GCMs a release runs. Both the cost plan and the
+        # run itself consume it, so an estimate can never cover a different set of models
+        # than the matrix that follows it.
+        name: Resolve model list
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
+            == 'production')
+        runs-on: ubuntu-latest
+        outputs:
+            list: ${{ steps.resolve.outputs.list }}
+        steps:
+            - id: resolve
+              env:
+                  MODEL: ${{ inputs.model }}
+                  # The allowlist itself. A dispatch is checked against it too, so the
+                  # comment below holds for every trigger rather than releases alone.
+                  ALLOWED: cesm2-waccm
+              # The release list is explicit rather than derived from the directory listing,
+              # so adding a folder under configs/production/ cannot silently start a global
+              # run at the next release.
+              #
+              # ukesm is absent because issue #529 leaves a 0.70 K discontinuity at 2015
+              # between our UKESM1.0 historical and the UKESM1.1 ARISE runs, so it is not fit
+              # to publish. miroc-es2h is absent because the deliverable is CESM and UKESM
+              # only; its configs are deliberately left without downscaling_method and no
+              # longer load.
+              run: |
+                  if [[ -n "$MODEL" ]]; then
+                    # A model may name a folder or a single config file beneath it.
+                    ROOT="${MODEL%%/*}"
+                    if ! grep -qxF "$ROOT" <<<"$(tr ' ' '\n' <<<"$ALLOWED")"; then
+                      echo "::error::model '$MODEL' is not in the production allowlist ($ALLOWED)."
+                      exit 1
+                    fi
+                    LIST=$(jq -cn --arg m "$MODEL" '[$m]')
+                  else
+                    LIST=$(tr ' ' '\n' <<<"$ALLOWED" | jq -Rcn '[inputs | select(. != "")]')
+                  fi
+                  echo "list=$LIST" >> "$GITHUB_OUTPUT"
+                  echo "Models to run: $LIST" >> "$GITHUB_STEP_SUMMARY"
+
+    plan:
+        # Renders the cost estimate into the job summary so the reviewer who releases the
+        # production environment is approving a number rather than a blank prompt. Enable
+        # the gate itself under Settings > Environments > production > required reviewers;
+        # without it this job is informational only.
+        name: Cost plan (${{ matrix.model }})
+        # Informational only. Without this a transient S3 error while probing the cache
+        # would skip the production run entirely, because `needs` treats a failed
+        # dependency as a skip no matter what the dependent job's `if` says.
+        continue-on-error: true
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
+            == 'production')
+        needs: [models, image]
+        runs-on: ubuntu-latest
+        # Generous: the step syncs the dev dependency group and then probes the cache for
+        # every stage of every production leaf. Timing out here is indistinguishable from
+        # success at the approval screen, because the job is continue-on-error.
+        timeout-minutes: 30
+        strategy:
+            matrix:
+                model: ${{ fromJSON(needs.models.outputs.list) }}
+        env:
+            PLAN_CONFIG_PATH: ${{ endsWith(matrix.model, '.yaml') && format('configs/production/{0}', matrix.model) || format('configs/production/{0}/', matrix.model) }}
+            # The same pinned revision production submits against, so the image the
+            # reviewer approves is the image that runs.
+            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
+            FORCE: ${{ inputs.force }}
+            BRANCH: ${{ inputs.branch }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  ref: ${{ github.event.release.tag_name || github.ref }}
+                  fetch-depth: 0
+            - uses: ./.github/actions/setup
+
+            - name: Estimate cost
+              run: |
+                  EXTRA_ARGS=""
+                  if [[ "$FORCE" == "true" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --force"
+                  fi
+                  if [[ -n "$BRANCH" ]]; then
+                    EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
+                  fi
+                  set +e
+                  uv run bcsd run --config-path "$PLAN_CONFIG_PATH" \
+                    --executor aws-batch --dry-run $EXTRA_ARGS >plan.txt 2>&1
+                  STATUS=$?
+                  set -e
+
+                  cat plan.txt
+                  {
+                    echo "### Production cost estimate: ${{ matrix.model }}"
+                    echo
+                    echo '```'
+                    cat plan.txt
+                    echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
+                  exit $STATUS
+
     production:
         name: Production run (${{ matrix.model }})
         timeout-minutes: 360
         runs-on: ubuntu-latest
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.environment
             == 'production')
+        needs: [image, plan, models]
         environment:
             name: production
         strategy:
@@ -181,21 +376,19 @@ jobs:
             # which is what a sequential run would exhaust: the CESM2-WACCM run alone
             # takes ~4h.
             #
-            # The release list is explicit rather than derived from the directory listing
-            # so that adding a folder under configs/production/ cannot silently start a
-            # global run at the next release. ukesm is deliberately absent: issue #529
-            # leaves a 0.70 K discontinuity at 2015 between our UKESM1.0 historical and
-            # the UKESM1.1 ARISE runs, so it is not fit to publish yet.
+            # Which models run, and why the list is an explicit allowlist, is decided by the
+            # `models` job above.
             fail-fast: false
             matrix:
-                model: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.model != '' && format('["{0}"]',
-                    inputs.model) || '["cesm2-waccm","miroc-es2h"]') }}
+                model: ${{ fromJSON(needs.models.outputs.list) }}
         env:
             # Mirrors the QA job: a value ending in .yaml is a single config file, anything
             # else is a subfolder of every config in it.
             PROD_CONFIG_PATH: ${{ endsWith(matrix.model, '.yaml') && format('configs/production/{0}', matrix.model) || format('configs/production/{0}/', matrix.model) }}
             FORCE: ${{ inputs.force }}
             BRANCH: ${{ inputs.branch }}
+            BCSD_BATCH_JOB_QUEUE: srm-production
+            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
         steps:
             - uses: actions/checkout@v7
               with:
@@ -208,13 +401,19 @@ jobs:
             - uses: ./.github/actions/setup
 
             - name: Validate input datasets (production)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: uv run bcsd validate --config-path "$PROD_CONFIG_PATH"
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-input-production
+                  command: '["bcsd","validate","--config-path","${{ env.PROD_CONFIG_PATH }}","--no-coiled"]'
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
+                  # Global stores, so twice the regional default on both axes.
+                  vcpu: "32"
+                  memory: "245760"
 
             - name: Run BCSD pipeline (production)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
+              # No Coiled token anywhere in this job: the pipeline tasks and both validate
+              # steps all run on AWS Batch under the OIDC role the setup action assumes.
               run: |
                   EXTRA_ARGS=""
                   if [[ "$FORCE" == "true" ]]; then
@@ -223,14 +422,40 @@ jobs:
                   if [[ -n "$BRANCH" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
-                  uv run bcsd run --config-path "$PROD_CONFIG_PATH" $EXTRA_ARGS
+                  uv run bcsd run --config-path "$PROD_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
+
+            - name: Build the output validation command (production)
+              id: validate-output-cmd
+              # jq builds the array so an optional --branch cannot be word-split into it.
+              # One argument per line rather than jq --args: --args does not stop jq from
+              # parsing a value like --config-path as one of its own options, and the
+              # failure is silent, since the command substitution still exits 0 and hands
+              # the next step an empty string.
+              run: |
+                  set -euo pipefail
+                  # Resolve the branch here rather than letting the container default it.
+                  # PipelineOptions.branch falls back to the installed package version, and
+                  # the container's copy is baked at image build time, so leaving it
+                  # implicit means the writer and the reader derive it separately.
+                  RESOLVED="$BRANCH"
+                  if [[ -z "$RESOLVED" ]]; then
+                    RESOLVED=$(uv run bcsd resolve-branch --config-path "$PROD_CONFIG_PATH")
+                  fi
+                  ARGS=(bcsd validate-output --config-path "$PROD_CONFIG_PATH" --no-coiled --branch "$RESOLVED")
+                  JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
+                  if [[ -z "$JSON" || "$JSON" == "null" ]]; then
+                    echo "::error::failed to build the validate-output command array"
+                    exit 1
+                  fi
+                  echo "json=$JSON" >> "$GITHUB_OUTPUT"
 
             - name: Validate output datasets (production)
-              env:
-                  DASK_COILED__TOKEN: ${{ secrets.DASK_COILED__TOKEN }}
-              run: |
-                  EXTRA_ARGS=""
-                  if [[ -n "$BRANCH" ]]; then
-                    EXTRA_ARGS="--branch $BRANCH"
-                  fi
-                  uv run bcsd validate-output --config-path "$PROD_CONFIG_PATH" $EXTRA_ARGS
+              uses: ./.github/actions/batch-run
+              with:
+                  name: validate-output-production
+                  command: ${{ steps.validate-output-cmd.outputs.json }}
+                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-definition: ${{ needs.image.outputs.job_definition }}
+                  # Global stores, so twice the regional default on both axes.
+                  vcpu: "32"
+                  memory: "245760"

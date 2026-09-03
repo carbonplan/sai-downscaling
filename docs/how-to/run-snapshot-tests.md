@@ -9,10 +9,13 @@ Every command below runs through `uv`, and the produce step needs access to S3 a
 The comparison reads existing output stores; it does not produce them. Run the South Africa snapshot configs first, which write the `qa` output for the G6-1.5K and SSP245 legs over the small South Africa subset, so the check is cheap to produce and cheap to diff. These configs run over a domain with a ~3° **halo** around the region of interest, because BCSD's regridding and spatial disaggregation have edge effects at a truncated domain boundary; the comparison trims that halo away (Step 2). The baseline shares the halo, so trimming is a carry-over from the global-baseline era and only narrows coverage; see issue #592 review notes.
 
 ```bash
-uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
+uv run bcsd run --config-path configs/snapshot/cesm2-waccm/ \
+  --executor "$(uv run python -c 'from srm.snapshot.baselines import CESM2_WACCM_SOUTH_AFRICA as b; print(b.executor)')"
 ```
 
-This runs on Coiled by default and finishes quickly because the subset is small. Add `--no-coiled` only if you have local source-data access and enough memory. The run writes to the icechunk branch `bcsd run` uses — the installed package version by default, or `BCSD_BRANCH` if you set it — which Step 2 needs as `candidate_branch`.
+**Match the baseline's executor.** `PipelineOptions.executor` defaults to `coiled`, and the snapshot configs do not override it, so running without the flag produces a Coiled candidate whatever the baseline is. That matters: the executor is visible in the answers. A Coiled run and an AWS Batch run of identical code differ on `dtr`, `pr` and derived `tasmin` by up to 0.00003 K, the smallest gap the stored format can represent at that temperature. Under the default exact-equality verdict those 22 leaves fail on their own, with no code change involved, and a gate that fails for a reason unrelated to your work is one people learn to skim past. `baselines.py` records the executor for each baseline so you can read it rather than guess; the command above reads it directly.
+
+The run finishes quickly because the subset is small. Add `--executor local` only if you have local source-data access and enough memory, and expect the same class of difference against either remote baseline. The run writes to the icechunk branch `bcsd run` uses — the installed package version by default, or `BCSD_BRANCH` if you set it — which Step 2 needs as `candidate_branch`.
 
 ## Step 2 — Run the comparison notebook
 

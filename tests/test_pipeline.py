@@ -2978,3 +2978,31 @@ class TestQuantileMappingReproducibility:
         np.random.seed(43)
         second = self._apply(_SeededQuantileMapping, nr_processes=1, parallel=False)
         np.testing.assert_array_equal(first, second)
+
+
+class TestDebiaserProcesses:
+    """nr_processes comes from the allocation, not from what the container can see."""
+
+    def test_uses_the_env_var_when_set(self, monkeypatch):
+        from srm.pipeline import NR_PROCESSES_ENV, debiaser_processes
+
+        monkeypatch.setenv(NR_PROCESSES_ENV, "16")
+        assert debiaser_processes() == 16
+
+    def test_falls_back_to_cpu_count_when_unset(self, monkeypatch):
+        import dask.system
+
+        from srm.pipeline import NR_PROCESSES_ENV, debiaser_processes
+
+        monkeypatch.delenv(NR_PROCESSES_ENV, raising=False)
+        assert debiaser_processes() == dask.system.CPU_COUNT
+
+    @pytest.mark.parametrize("bad", ["", "not-a-number", "0", "-4"])
+    def test_falls_back_rather_than_raising_on_a_bad_value(self, monkeypatch, bad):
+        # A malformed value must not kill a multi-hour task partway through.
+        import dask.system
+
+        from srm.pipeline import NR_PROCESSES_ENV, debiaser_processes
+
+        monkeypatch.setenv(NR_PROCESSES_ENV, bad)
+        assert debiaser_processes() == dask.system.CPU_COUNT

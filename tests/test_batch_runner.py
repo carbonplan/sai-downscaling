@@ -20,7 +20,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from srm.batch_runner import run_stage
+from srm.batch_manifest import write_manifest
+from srm.batch_runner import _load_config_dict, run_stage
 from srm.bcsd_config import BCSDConfig
 
 # ---------------------------------------------------------------------------
@@ -44,15 +45,19 @@ def valid_config_json() -> str:
     return json.dumps(_MINIMAL_CONFIG)
 
 
+_CONFIG_ENV_VARS = ("CONFIG_JSON", "CONFIG_MANIFEST_URI", "AWS_BATCH_JOB_ARRAY_INDEX")
+
+
 @pytest.fixture(autouse=True)
 def clean_env():
-    """Ensure CONFIG_JSON is not leaked between tests."""
-    old = os.environ.pop("CONFIG_JSON", None)
+    """Ensure config delivery variables are not leaked between tests."""
+    old = {name: os.environ.pop(name, None) for name in _CONFIG_ENV_VARS}
     yield
-    if old is not None:
-        os.environ["CONFIG_JSON"] = old
-    else:
-        os.environ.pop("CONFIG_JSON", None)
+    for name, value in old.items():
+        if value is not None:
+            os.environ[name] = value
+        else:
+            os.environ.pop(name, None)
 
 
 # ---------------------------------------------------------------------------
@@ -62,12 +67,12 @@ def clean_env():
 
 class TestConfigJsonReading:
     def test_raises_when_config_json_not_set(self):
-        with pytest.raises(ValueError, match="CONFIG_JSON environment variable not set"):
+        with pytest.raises(ValueError, match="CONFIG_JSON"):
             run_stage("prepare_observations")
 
     def test_raises_when_config_json_is_empty_string(self):
         os.environ["CONFIG_JSON"] = ""
-        with pytest.raises(ValueError, match="CONFIG_JSON environment variable not set"):
+        with pytest.raises(ValueError, match="CONFIG_JSON"):
             run_stage("prepare_observations")
 
     def test_raises_on_invalid_json(self):
@@ -232,3 +237,45 @@ class TestReturnValue:
             result = run_stage("transform_scenario")
 
         assert result == "s3://bucket/ssp245.icechunk"
+
+
+# ---------------------------------------------------------------------------
+# Config delivery: CONFIG_JSON or manifest + array index
+# ---------------------------------------------------------------------------
+
+
+class TestLoadConfigDict:
+    def test_prefers_config_json_when_set(self, monkeypatch):
+        monkeypatch.setenv("CONFIG_JSON", json.dumps({"variable": "tas"}))
+        monkeypatch.delenv("CONFIG_MANIFEST_URI", raising=False)
+        assert _load_config_dict() == {"variable": "tas"}
+
+    def test_reads_manifest_entry_by_array_index(self, monkeypatch, tmp_path):
+        uri = str(tmp_path / "manifest.json")
+        write_manifest(uri, "fit_historical", [{"variable": "tas"}, {"variable": "pr"}])
+        monkeypatch.delenv("CONFIG_JSON", raising=False)
+        monkeypatch.setenv("CONFIG_MANIFEST_URI", uri)
+        monkeypatch.setenv("AWS_BATCH_JOB_ARRAY_INDEX", "1")
+        assert _load_config_dict() == {"variable": "pr"}
+
+    def test_config_json_wins_over_manifest(self, monkeypatch, tmp_path):
+        uri = str(tmp_path / "manifest.json")
+        write_manifest(uri, "fit_historical", [{"variable": "pr"}])
+        monkeypatch.setenv("CONFIG_JSON", json.dumps({"variable": "tas"}))
+        monkeypatch.setenv("CONFIG_MANIFEST_URI", uri)
+        monkeypatch.setenv("AWS_BATCH_JOB_ARRAY_INDEX", "0")
+        assert _load_config_dict() == {"variable": "tas"}
+
+    def test_raises_when_neither_source_present(self, monkeypatch):
+        monkeypatch.delenv("CONFIG_JSON", raising=False)
+        monkeypatch.delenv("CONFIG_MANIFEST_URI", raising=False)
+        monkeypatch.delenv("AWS_BATCH_JOB_ARRAY_INDEX", raising=False)
+        with pytest.raises(ValueError, match="CONFIG_JSON"):
+            _load_config_dict()
+
+    def test_raises_when_manifest_uri_set_without_index(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("CONFIG_JSON", raising=False)
+        monkeypatch.setenv("CONFIG_MANIFEST_URI", str(tmp_path / "manifest.json"))
+        monkeypatch.delenv("AWS_BATCH_JOB_ARRAY_INDEX", raising=False)
+        with pytest.raises(ValueError, match="AWS_BATCH_JOB_ARRAY_INDEX"):
+            _load_config_dict()
