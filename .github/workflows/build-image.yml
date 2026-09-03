@@ -50,11 +50,6 @@ jobs:
                   # cold build has spent most of that hour compiling cartopy.
                   role-duration-seconds: 7200
 
-            # This job configures its own credentials rather than using ./setup, so it
-            # needs the check explicitly. Its ECR and RegisterJobDefinition grants are the
-            # two the deploy jobs never exercise.
-            - uses: ./.github/actions/preflight-iam
-
             - id: login-ecr
               uses: aws-actions/amazon-ecr-login@v2
 

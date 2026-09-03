@@ -26,8 +26,10 @@ aws iam update-assume-role-policy --role-name coiled-carbonplan \
 ## Keeping them honest
 
 A file here can drift from the account without anything failing, which is the main risk of
-recording rather than managing. The `preflight-iam` action the deploy workflow runs checks
-the permissions these grant before any job is submitted, so a missing grant fails in
-seconds with a named action rather than an hour into a run. Refresh a file with
+recording rather than managing. There is no automated check: verifying these in-workflow
+would need `iam:SimulatePrincipalPolicy` on `github-action-role`, which it does not have,
+and granting it would be a wider permission than any it verifies. Run the
+`simulate-principal-policy` commands in deploy.md by hand after changing the role. Refresh
+a file with
 `aws iam get-role-policy ... --query PolicyDocument`, and see
 [deploy.md](../../docs/how-to/deploy.md) for what each statement is for.

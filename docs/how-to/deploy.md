@@ -213,7 +213,7 @@ The deploy workflow requires the following to be configured in the GitHub reposi
     --query "$DECISION" --output text
   ```
 
-  The [`preflight-iam`](../../.github/actions/preflight-iam/action.yml) action runs these checks automatically before any job is submitted, from both `./.github/actions/setup` and the image build, so a missing grant fails in seconds with the action named rather than an hour into a run. The policy documents themselves are recorded under [`infra/iam/`](../../infra/iam/); they are a reviewable copy, not applied automatically.
+  Run these checks by hand after any change to the role. They are not automated: an in-workflow preflight would need `iam:SimulatePrincipalPolicy`, which `github-action-role` does not have and which would be a wider grant than the thing it checks. The policy documents are recorded under [`infra/iam/`](../../infra/iam/); they are a reviewable copy, not applied automatically.
 
   The `/aws/batch/job` log group is set to 90-day retention. It had none, so job logs accumulated indefinitely. Retention only affects storage at $0.03/GB-month; ingestion at $0.50/GB dominates and is unchanged.
 
