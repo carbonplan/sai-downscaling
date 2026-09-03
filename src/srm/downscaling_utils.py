@@ -708,6 +708,8 @@ def downscale_from_coarse(
         Whether to enforce conservation of the coarse-scale mean after downscaling.
         - True: the downscaled field is adjusted to ensure that its coarse-scale mean matches the debiased, coarse input
         - False: the downscaled field is returned without adjustment, which may result in an added bias at the coarse scale.
+    use_tiny_threshold : bool, default: True
+        Whether to use a variable-specific tiny threshold to avoid division by very small numbers in the multiplicative method
 
     Returns
     -------
