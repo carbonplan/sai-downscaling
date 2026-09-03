@@ -187,7 +187,7 @@ class VariableConfig(BaseModel):
                 "detrend_method": "multiplicative",
                 "do_windowing": True,
                 "disaggregation_method": "multiplicative",
-                "disaggregation_clim_method": "simple_rolling",
+                "disaggregation_clim_method": "fft",
                 "disaggregation_tiny_threshold": 1.0e-6,  # kg m-2 s-1, ~0.086 mm/day
                 "running_window_length": 91,
                 "running_window_step_length": 31,
