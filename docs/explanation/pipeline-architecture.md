@@ -174,11 +174,33 @@ current published outputs live at
 on branch `v0.13.0`. See [How to Access Downscaled Output Data](../access-data.md) for reading
 published stores.
 
-## Coiled Execution
+## Distributed Execution
 
-By default, the pipeline uses [Coiled](https://coiled.io) batch API for distributed, cloud-based execution.
+Every stage task is one `(gcm, scenario, member, variable)` leaf that reads a config, runs a stage, writes to S3, and exits. The tasks never talk to each other, so the pipeline needs task placement rather than a distributed scheduler.
 
-### Architecture
+`BCSDOrchestrator.submit_stage` dispatches through an executor seam, and all three executors share the signature `(stage, configs) -> list[str]`. Everything upstream of that seam is executor-agnostic.
+
+| Executor | Mechanism | Cost per vCPU-hour |
+| --- | --- | --- |
+| `aws-batch` | AWS Batch array jobs on Graviton instances | $0.0589 (EC2 only) |
+| `coiled` | [Coiled](https://coiled.io) batch API | $0.1089 (EC2 plus a $0.05 platform fee) |
+| `local` | Sequential, in the current process | none |
+
+Deploys use `aws-batch`. The output is identical either way, because both remote executors run the same `srm.batch_runner` entry point against the same config payload.
+
+### Config delivery differs between the two
+
+Coiled Batch sets a distinct `CONFIG_JSON` per task through `map_over_task_var_dicts`. AWS Batch array jobs cannot vary the environment per child, since every child shares one job definition and one set of container overrides, and only `AWS_BATCH_JOB_ARRAY_INDEX` differs.
+
+The AWS Batch path therefore writes one manifest to S3 per submission and has each child read its own entry by index. Manifest entries are byte-identical to the `CONFIG_JSON` payload, so `batch_runner` needs a new way to obtain the dict, not a new way to parse it. A wave of exactly one task skips the manifest and carries `CONFIG_JSON` directly, because `arrayProperties.size` must be at least 2.
+
+### Success is decided by the cache, never the exit code
+
+A task can exit zero without producing output, so both remote executors sweep `ArtifactCache` after the job finishes and raise if any config is missing its artifact. Cache presence is proof only for artifacts the run itself created, which is every one of them unless `--force` is set. Under `--force` the artifacts found may predate the job, so those additionally require the job to have reported success.
+
+### Coiled architecture
+
+The sequence below is the Coiled path specifically. The AWS Batch path differs only in how a task receives its config, described above, and in submitting an array job in place of a set of per-task VMs.
 
 ```mermaid
 sequenceDiagram
@@ -221,13 +243,15 @@ sequenceDiagram
 
 ### VM Configuration
 
-VM types are selected per pipeline stage to match resource requirements:
+VM types are selected per pipeline stage to match resource requirements. A spatially subset run uses a smaller ladder, because every stage applies `subset_space` before any heavy compute, so the box size rather than the source grid sets the working set:
 
-| Stage | Instance type | Notes |
-| --- | --- | --- |
-| `prepare_observations` | `r8g.4xlarge` | Light data processing |
-| `fit_historical` | `r8g.12xlarge` | Memory-intensive QM fitting |
-| `transform_scenario` | `r8g.24xlarge` | 768GB RAM, 96 vCPUs, AWS Graviton |
+| Stage | Global | Regional | Notes |
+| --- | --- | --- | --- |
+| `prepare_observations` | `r8g.4xlarge` | `r8g.2xlarge` | Light data processing |
+| `fit_historical` | `r8g.12xlarge` | `r8g.2xlarge` | Memory-intensive QM fitting |
+| `transform_scenario` | `r8g.24xlarge` | `r8g.4xlarge` | 768GB RAM, 96 vCPUs, AWS Graviton |
+
+AWS Batch takes resource requirements rather than instance types and picks the instance itself. `_resources_for` derives those requirements from this same table, asking for the vCPU count of the chosen instance and 7680 MiB per vCPU, which fills the instance while leaving the ECS agent and the OS their share. Deriving rather than tabulating keeps the Batch request and the cost estimate from drifting apart.
 
 - **region**: `us-west-2` (same as S3 data)
 - **keepalive**: VMs stay alive briefly after task completion for follow-up work
@@ -274,9 +298,9 @@ The CLI is built on several key components:
    - configuration loading and validation
    - orchestrator coordination
 
-## Batch Execution Flow
+## Batch Execution Flow (Coiled)
 
-Detailed flow when running `uv run bcsd run --config-path configs/ --coiled`:
+Detailed flow when running `uv run bcsd run --config-path configs/ --executor coiled`. Under `--executor aws-batch` the middle of this flow changes shape: the orchestrator writes one S3 manifest instead of per-task variables, submits a single array job instead of N VMs, and each child reads its entry by `AWS_BATCH_JOB_ARRAY_INDEX`. The cache verification at the end is identical.
 
 ```mermaid
 flowchart TD

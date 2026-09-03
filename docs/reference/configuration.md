@@ -53,7 +53,7 @@ The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a pe
 
 007–010 each have a single stray non-NaN day on 2070-01-01 in the raw GCM input, with the rest of 2070 NaN; that one day does not extend their valid extent past 2069.
 
-MIROC-ES2H SSP245 and G6-1.5K members all end 2084, and UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios can technically start before their own data, because the pipeline bridges the gap: for `G6-1.5K` that bridge is SSP245, and for the `G6-1.5K-END` termination run, whose store begins in 2085, it is SSP245 through 2034 followed by the parent `G6-1.5K` member 002 for 2035–2084. Those bridge years are another scenario's data, so publishing them under this scenario's label is what issue #448 hit, where pre-2035 `g6_1p5k` output drew `tas` and `tasmax` from different SSP245 realizations and produced `tas > tasmax`.
+UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios can technically start before their own data, because the pipeline bridges the gap: for `G6-1.5K` that bridge is SSP245, and for the `G6-1.5K-END` termination run, whose store begins in 2085, it is SSP245 through 2034 followed by the parent `G6-1.5K` member 002 for 2035–2084. Those bridge years are another scenario's data, so publishing them under this scenario's label is what issue #448 hit, where pre-2035 `g6_1p5k` output drew `tas` and `tasmax` from different SSP245 realizations and produced `tas > tasmax`.
 
 `config_time_domain` therefore enforces the start bound for every scenario, SAI included, and set `predict_period_start` to the scenario's own data start: 2035 for `G6-1.5K` and 2085 for `G6-1.5K-END`. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
 
@@ -162,6 +162,12 @@ output_dir: "s3://bucket/path"         # Directory for final downscaled outputs 
 environment: "qa"                      # Environment: qa, production (default: "qa")
 # branch: "v1.0.post12"              # Override to pin a specific cache namespace (default: installed package version)
 
+# Execution
+executor: "coiled"                     # Where stage tasks run: aws-batch, coiled, local (default: "coiled")
+batch_job_queue: "srm-production"      # AWS Batch job queue (default: "srm-production")
+batch_job_definition: "srm-downscaling"  # AWS Batch job definition, optionally name:revision (default: "srm-downscaling")
+batch_region: "us-west-2"              # Region for the AWS Batch control plane (default: "us-west-2")
+
 # Runtime flags
 verbose: true                          # Enable verbose logging (default: true)
 rechunk_workflow: true                 # Enable strategic rechunking between stages (default: true)
@@ -177,6 +183,20 @@ clip_bounds:                           # Per-variable [min, max] bounds applied 
 ```
 
 All `PipelineOptions` fields are optional — defaults are suitable for most runs. Override `scratch_dir` and `output_dir` to point at your own storage.
+
+### Choosing an executor
+
+`executor` selects where a stage's tasks run. The choice affects cost and nothing else: all three produce identical output, because each task runs the same `srm.batch_runner` entry point.
+
+| Value | Where tasks run | Cost per vCPU-hour |
+| --- | --- | --- |
+| `aws-batch` | AWS Batch array jobs on Graviton instances | $0.0589 (EC2 only) |
+| `coiled` | Coiled Batch VMs | $0.1089 (EC2 plus Coiled's $0.05 platform fee) |
+| `local` | Sequentially, in the current process | none |
+
+The `batch_*` fields apply only to `aws-batch` and are usually left at their defaults. Deploy jobs override `batch_job_queue` to separate qa from production traffic, and set `batch_job_definition` to a pinned `name:revision` so a run cannot execute an image built from a different commit.
+
+The removed `use_coiled` boolean is rejected rather than ignored. Because `PipelineOptions` sets `extra = "ignore"`, a stale `use_coiled` key would otherwise be silently dropped and quietly change which executor runs.
 
 ## Branch Defaulting
 

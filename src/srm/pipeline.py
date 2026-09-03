@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import logging
+import os
 import time
 import warnings
 from datetime import UTC, datetime
@@ -434,6 +435,45 @@ def stitch_historical_scenario(
 
     _assert_stitched_continuity(result)
     return result
+
+
+#: Environment variable carrying the vCPU a remote task was actually allocated. The
+#: orchestrator sets it on both executors from the same instance sizing table.
+NR_PROCESSES_ENV = "SRM_NR_PROCESSES"
+
+
+def debiaser_processes() -> int:
+    """How many processes ``ibicus.Debiaser.apply`` should fan out over.
+
+    ``dask.system.CPU_COUNT`` is the wrong number under AWS Batch. ECS on EC2 expresses a
+    vCPU request as a cgroup *share* (``cpu.weight``) and leaves ``cpu.max`` unset, so
+    dask finds no quota and falls back to the host's core count: a container allocated 16
+    vCPU on a packed ``r8g.24xlarge`` measures 96. Coiled gives each task a dedicated VM,
+    so there the same call returns the 16 that was asked for.
+
+    That divergence is not only a resource-planning bug. ``nr_processes`` sets how ibicus
+    partitions the grid, and the partitioning is visible in the answers, so the two
+    executors produce different output for identical inputs. Reading the allocation the
+    orchestrator requested makes the two agree by construction.
+
+    Returns
+    -------
+    int
+        The requested vCPU when the orchestrator supplied one, otherwise
+        ``dask.system.CPU_COUNT`` for local runs and anything else unmanaged.
+    """
+    raw = os.environ.get(NR_PROCESSES_ENV)
+    if not raw:
+        return dask.system.CPU_COUNT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; falling back to CPU_COUNT", NR_PROCESSES_ENV, raw)
+        return dask.system.CPU_COUNT
+    if value < 1:
+        logger.warning("%s=%d is not positive; falling back to CPU_COUNT", NR_PROCESSES_ENV, value)
+        return dask.system.CPU_COUNT
+    return value
 
 
 class BCSDPipeline:
@@ -1016,7 +1056,7 @@ class BCSDPipeline:
             time_cm_hist=model_hist["time"].values,
             time_cm_future=model_hist["time"].values,
             parallel=True,
-            nr_processes=dask.system.CPU_COUNT,
+            nr_processes=debiaser_processes(),
             progressbar=False,
             # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
             # distribution fit that fails to converge. Inputs are asserted NaN-free
@@ -1050,7 +1090,7 @@ class BCSDPipeline:
             clim_method=self.config.variable_config.disaggregation_clim_method,
             allow_negative_values=False,
             tiny_threshold=self.config.variable_config.disaggregation_tiny_threshold,
-            use_tiny_threshold=False,
+            use_tiny_threshold=True,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
@@ -1360,11 +1400,11 @@ class BCSDPipeline:
     def _load_ssp245_segment(self) -> xr.DataArray:
         """Load the SSP245 portion of the bridge.
 
-        For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
-        G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
-        When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap before the
-        GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
-        dataset is converted via to_proleptic_gregorian before concat.
+        For most GCMs, returns the primary SSP245 dataset directly. A GCM whose primary
+        SSP245 run starts after the historical period ends leaves a gap at the front of
+        the scenario. When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap
+        before the primary data begins. The primary is already in proleptic_gregorian;
+        the ESGF dataset is converted via to_proleptic_gregorian before concat.
         """
         primary = get_experiment(self.config.gcm, "SSP245", self.config.variable)
         primary = primary.sel(ensemble_member=self._ssp245_member)
@@ -1459,8 +1499,8 @@ class BCSDPipeline:
         model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
         model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
-        # Non-SAI scenarios whose primary dataset starts after predict_period_start
-        # (e.g. MIROC-ES2H GeoMIP SSP245 starts 2020) need ESGF data prepended to close the gap.
+        # Non-SAI scenarios whose primary dataset starts after predict_period_start need
+        # ESGF data prepended to close the gap.
         if not self.config.is_sai_scenario and self._ssp245_esgf_member is not None:
             scenario_start_year = int(model_scenario.time.dt.year.min())
             if scenario_start_year > self.config.predict_period_start:
@@ -1680,7 +1720,7 @@ class BCSDPipeline:
             time_cm_hist=model_hist["time"].values,
             time_cm_future=scenario_detrended["time"].values,
             parallel=True,
-            nr_processes=dask.system.CPU_COUNT,
+            nr_processes=debiaser_processes(),
             progressbar=False,
             # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
             # distribution fit that fails to converge. Inputs are asserted NaN-free

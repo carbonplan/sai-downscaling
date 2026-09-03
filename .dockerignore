@@ -1,0 +1,26 @@
+# The build context BuildKit uploads before any COPY runs. Without this file the context
+# is the whole working tree: .venv, .git, docs/ and notebooks/ come to roughly 3.5 GB
+# locally and 1.3 GB on a fresh CI checkout, and no layer in the Dockerfile reads any of
+# it.
+#
+# The Dockerfile copies four paths and nothing else, so this excludes everything and
+# re-includes exactly those. A COPY added later without a matching entry here fails the
+# build outright rather than quietly shipping whatever happened to be on disk. Excluding
+# .git is deliberate and already assumed: the Dockerfile takes the version through the
+# SRM_VERSION build arg precisely because git metadata is not copied in.
+*
+
+!pyproject.toml
+!uv.lock
+!README.md
+!src
+!configs
+
+# COPY src/ ./src/ takes the tree as it is on disk, so local build artifacts ship in the
+# image and change that layer's hash after any local test run. The bytecode is the worst
+# of it, since a developer machine leaves cpython-314 .pyc files in a tree the runtime
+# reads with Python 3.13, and UV_COMPILE_BYTECODE regenerates what is actually needed.
+src/**/__pycache__
+src/**/*.py[cod]
+src/**/.ipynb_checkpoints
+src/*.egg-info

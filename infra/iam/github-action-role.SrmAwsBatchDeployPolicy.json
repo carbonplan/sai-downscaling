@@ -1,0 +1,94 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "SubmitToSrmQueuesOnly",
+            "Effect": "Allow",
+            "Action": "batch:SubmitJob",
+            "Resource": [
+                "arn:aws:batch:us-west-2:631969445205:job-queue/srm-qa",
+                "arn:aws:batch:us-west-2:631969445205:job-queue/srm-production",
+                "arn:aws:batch:us-west-2:631969445205:job-definition/srm-downscaling",
+                "arn:aws:batch:us-west-2:631969445205:job-definition/srm-downscaling:*"
+            ]
+        },
+        {
+            "Sid": "TerminateStalledSrmJobs",
+            "Effect": "Allow",
+            "Action": "batch:TerminateJob",
+            "Resource": "arn:aws:batch:us-west-2:631969445205:job/*"
+        },
+        {
+            "Sid": "RegisterSrmJobDefinitionRevisions",
+            "Effect": "Allow",
+            "Action": "batch:RegisterJobDefinition",
+            "Resource": "arn:aws:batch:us-west-2:631969445205:job-definition/srm-downscaling*"
+        },
+        {
+            "Sid": "ReadBatchStateForPolling",
+            "Effect": "Allow",
+            "Action": [
+                "batch:DescribeJobs",
+                "batch:DescribeJobDefinitions",
+                "batch:ListJobs"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "PassOnlyTheSrmTaskRolesToEcs",
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": [
+                "arn:aws:iam::631969445205:role/srm-batch-job-role",
+                "arn:aws:iam::631969445205:role/srm-batch-execution-role",
+                "arn:aws:iam::631969445205:role/coiled-carbonplan"
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "iam:PassedToService": "ecs-tasks.amazonaws.com"
+                }
+            }
+        },
+        {
+            "Sid": "ReadSrmImagesFromEcr",
+            "Effect": "Allow",
+            "Action": [
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:DescribeImages",
+                "ecr:ListImages"
+            ],
+            "Resource": "arn:aws:ecr:us-west-2:631969445205:repository/srm-downscaling"
+        },
+        {
+            "Sid": "TagSrmBatchResources",
+            "Effect": "Allow",
+            "Action": "batch:TagResource",
+            "Resource": [
+                "arn:aws:batch:us-west-2:631969445205:job-definition/srm-downscaling*",
+                "arn:aws:batch:us-west-2:631969445205:job/*",
+                "arn:aws:batch:us-west-2:631969445205:job-queue/srm-qa",
+                "arn:aws:batch:us-west-2:631969445205:job-queue/srm-production"
+            ]
+        },
+        {
+            "Sid": "ReadBatchJobLogs",
+            "Effect": "Allow",
+            "Action": "logs:DescribeLogGroups",
+            "Resource": "*"
+        },
+        {
+            "Sid": "ReadBatchJobLogEvents",
+            "Effect": "Allow",
+            "Action": [
+                "logs:DescribeLogStreams",
+                "logs:FilterLogEvents",
+                "logs:GetLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:us-west-2:631969445205:log-group:/aws/batch/job",
+                "arn:aws:logs:us-west-2:631969445205:log-group:/aws/batch/job:*"
+            ]
+        }
+    ]
+}

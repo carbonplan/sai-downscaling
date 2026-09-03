@@ -188,6 +188,9 @@ cython_debug/
 *.png
 !docs/assets/*.png
 *.json
+# Recorded IAM policy documents: the deploy role's grants are not managed as code,
+# so these are the only reviewable copy of what the account must have.
+!infra/iam/*.json
 
 # *input_data_old/
 qa_plots/
