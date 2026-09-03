@@ -96,7 +96,7 @@ class TestDatasetValidatorConstruction:
     def test_frozen(self):
         v = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245")
         with pytest.raises(pydantic.ValidationError):
-            v.gcm = "MIROC-ES2H"  # type: ignore[misc]
+            v.gcm = "UKESM"  # type: ignore[misc]
 
 
 # ── check_ensemble_member_dim ─────────────────────────────────────────────────
@@ -411,9 +411,9 @@ class TestValidate:
         assert "g6_not_identical_to_ssp245" in check_ids
 
     def test_all_results_have_correct_gcm_scenario(self, mock_datasets):
-        results = DatasetValidator(gcm="MIROC-ES2H", scenario="historical").run_checks()
+        results = DatasetValidator(gcm="UKESM", scenario="historical").run_checks()
         for r in results:
-            assert r.gcm == "MIROC-ES2H"
+            assert r.gcm == "UKESM"
             assert r.scenario == "historical"
 
 
@@ -728,9 +728,9 @@ class TestCheckConfigTimeDomain:
         from srm.validation import check_config_time_domain
 
         cfg = BCSDConfig(
-            gcm="MIROC-ES2H",
+            gcm="UKESM",
             variable="tas",
-            ensemble_member="r1i1p4f2",
+            ensemble_member="r2i1p1f2",
             scenario=None,
             downscaling_method="BCSD",
         )

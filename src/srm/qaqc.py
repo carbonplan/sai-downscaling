@@ -648,8 +648,8 @@ def check_units_and_range(
 # ---------------------------------------------------------------------------
 #
 # Stitched groups put the gap-filled block at the front of the time axis, so day
-# 0 lands in it. MIROC-ES2H `ssp245` fills 2015-2019 from ESGF through a 10 -> 3
-# member map, making r01/r04/r07/r10 identical there by construction.
+# 0 lands in it. A store whose `ssp245` group fills its opening years from ESGF through
+# a many -> few member map has those members identical there by construction.
 #
 # Mid-record sampling would dodge that silently and never check 2015-2019, which
 # feeds the training period. So split on the gap-fill attrs instead: check the
@@ -780,7 +780,7 @@ def check_ensemble_spread(
     ds : xarray.Dataset
         Group dataset, with `ensemble_member`, `time`, `lat` and `lon` dims.
     label : str
-        Row label, e.g. ``"MIROC-ES2H ssp245"``.
+        Row label, e.g. ``"CESM2-WACCM ssp245"``.
     var : str, default "tas"
         Variable to take the global mean of.
     day_index : int, default 0

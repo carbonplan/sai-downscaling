@@ -87,34 +87,6 @@ def g6_002_tasmax_config() -> BCSDConfig:
     )
 
 
-@pytest.fixture
-def miroc_g6_r01_tas_config() -> BCSDConfig:
-    """MIROC G6-1.5K member r01, tas — lineage: hist=r1i1p4f2, ssp245=r01, esgf=r1i1p4f2."""
-    return BCSDConfig(
-        gcm="MIROC-ES2H",
-        downscaling_method="BCSD",
-        variable="tas",
-        ensemble_member="r01",
-        scenario="G6-1.5K",
-        predict_period_start=2035,
-        predict_period_end=2084,
-    )
-
-
-@pytest.fixture
-def miroc_g6_r04_tas_config() -> BCSDConfig:
-    """MIROC G6-1.5K member r04, tas — shares hist=r1i1p4f2 with r01."""
-    return BCSDConfig(
-        gcm="MIROC-ES2H",
-        downscaling_method="BCSD",
-        variable="tas",
-        ensemble_member="r04",
-        scenario="G6-1.5K",
-        predict_period_start=2035,
-        predict_period_end=2084,
-    )
-
-
 def _make_mock_da(name: str = "data") -> MagicMock:
     """Return a MagicMock that behaves enough like a DataArray for pipeline loading."""
     da = MagicMock()
@@ -380,35 +352,3 @@ class TestBuildOutputAttrs:
         attrs = pipeline._build_output_attrs()
         assert attrs["srm_downscaling:historical_ensemble_member"] == "001"
         assert attrs["srm_downscaling:ssp245_ensemble_member"] == "007"
-
-
-# ---------------------------------------------------------------------------
-# MIROC-ES2H G6-1.5K lineage wiring
-# ---------------------------------------------------------------------------
-
-
-class TestMirocG6Wiring:
-    """MIROC-ES2H G6-1.5K lineage wiring through BCSDPipeline."""
-
-    def test_hist_member_resolved(self, miroc_g6_r01_tas_config, pipeline_options):
-        pipeline = BCSDPipeline(miroc_g6_r01_tas_config, pipeline_options)
-        assert pipeline._hist_member == "r1i1p4f2"
-
-    def test_ssp245_member_is_geomip_member(self, miroc_g6_r01_tas_config, pipeline_options):
-        pipeline = BCSDPipeline(miroc_g6_r01_tas_config, pipeline_options)
-        assert pipeline._ssp245_member == "r01"
-
-    def test_ssp245_esgf_member_set(self, miroc_g6_r01_tas_config, pipeline_options):
-        pipeline = BCSDPipeline(miroc_g6_r01_tas_config, pipeline_options)
-        assert pipeline._ssp245_esgf_member == "r1i1p4f2"
-
-    def test_r04_shares_hist_member_with_r01(
-        self, miroc_g6_r01_tas_config, miroc_g6_r04_tas_config, pipeline_options
-    ):
-        """r01 and r04 share historical parent r1i1p4f2 — same cache path."""
-        p1 = BCSDPipeline(miroc_g6_r01_tas_config, pipeline_options)
-        p4 = BCSDPipeline(miroc_g6_r04_tas_config, pipeline_options)
-        assert p1._hist_member == p4._hist_member == "r1i1p4f2"
-        loc_r01 = p1.cache.historical_loc(p1._hist_member)
-        loc_r04 = p4.cache.historical_loc(p4._hist_member)
-        assert loc_r01 == loc_r04

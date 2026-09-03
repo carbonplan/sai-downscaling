@@ -5,9 +5,10 @@ daily datasets. They require no S3 access and no Coiled, making them the
 first-pass check when debugging detrending regressions.
 
 Scenarios covered:
-- MIROC-ES2H G6-1.5K: hist=r1i1p4f2, bridge=r01 (GeoMIP SSP245), scenario=r01
-  This is the case that triggered the MergeError on conflicting ensemble_member coords.
-- CESM2-WACCM G6-1.5K: hist=r1i1p1f1, bridge=001, scenario=001
+- CESM2-WACCM G6-1.5K standard variables: hist=r1i1p1f1, bridge=001, scenario=001
+- CESM2-WACCM G6-1.5K tasmax: hist=001, bridge=009, scenario=001, so all three differ.
+  Members disagreeing across the three inputs is what triggered the MergeError on
+  conflicting ensemble_member coords.
 """
 
 from __future__ import annotations
@@ -53,11 +54,11 @@ def _daily_da(start_year: int, end_year: int, member: str | None = None) -> xr.D
 @pytest.mark.parametrize(
     "hist_member,bridge_member,scenario_member",
     [
-        ("r1i1p4f2", "r01", "r01"),  # MIROC G6-1.5K: the previously-broken case
-        ("r1i1p1f1", "001", "001"),  # CESM2-WACCM G6-1.5K
+        ("001", "009", "001"),  # CESM2-WACCM G6-1.5K tasmax: all three members differ
+        ("r1i1p1f1", "001", "001"),  # CESM2-WACCM G6-1.5K standard variables
         (None, None, None),  # no ensemble_member coord at all
     ],
-    ids=["miroc_g6", "cesm_g6", "no_member_coord"],
+    ids=["cesm_g6_tasmax", "cesm_g6", "no_member_coord"],
 )
 def test_stitch_no_gap_and_no_merge_error(hist_member, bridge_member, scenario_member):
     """Stitched timeseries is continuous regardless of ensemble_member coord values."""
@@ -89,20 +90,20 @@ def test_stitch_no_gap_and_no_merge_error(hist_member, bridge_member, scenario_m
 # ---------------------------------------------------------------------------
 
 
-def test_detrend_miroc_g6_local():
-    """Full stitch+detrend for a MIROC G6-1.5K-style config with mismatched members.
+def test_detrend_g6_local_with_mismatched_members():
+    """Full stitch+detrend for a G6-1.5K config whose three inputs carry different members.
 
     This is the real computation path that was failing on Coiled with
     'Stitched timeseries has year-level gap(s): [(2014, 2020)]'.
     """
-    # Historical: ends 2014, member r1i1p4f2
-    model_hist = _daily_da(1990, 2014, "r1i1p4f2")
+    # Historical: ends 2014, member 001 (the corrected tasmax/tasmin run)
+    model_hist = _daily_da(1990, 2014, "001")
 
-    # SSP245 bridge covers 2015-2034, member r01 (GeoMIP-style)
-    ssp_bridge = _daily_da(2015, 2034, "r01")
+    # SSP245 bridge covers 2015-2034, member 009
+    ssp_bridge = _daily_da(2015, 2034, "009")
 
-    # G6-1.5K scenario: starts 2035, member r01
-    model_scenario = _daily_da(2035, 2040, "r01")
+    # G6-1.5K scenario: starts 2035, member 001
+    model_scenario = _daily_da(2035, 2040, "001")
 
     stitched = stitch_historical_scenario(
         model_hist=model_hist,
