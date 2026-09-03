@@ -19,7 +19,9 @@ uv run bcsd run --config-path PATH [OPTIONS]
 - `--config-path TEXT` (required, repeatable): path to YAML config file or directory of configs (can be specified multiple times)
 - `--stage TEXT`: run specific stage. Accepts either short (`obs`/`historical`/`scenario`) or long (`prepare_observations`/`fit_historical`/`transform_scenario`) names, or `all` (default: `all`)
 - `--force`: force recompute even if cached
-- `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
+- `--executor TEXT`: where tasks run, one of `aws-batch`, `coiled`, or `local`. Defaults to the config's `executor` field, which itself defaults to `coiled`.
+- `--yes / -y`: skip the cost confirmation prompt
+- `--dry-run`: print the cost estimate and exit without submitting anything
 - `--branch TEXT`: override the output icechunk branch (e.g. `v2`). Defaults to the branch resolved from the config (the installed package version).
 - `--save-intermediate`: save and display intermediate artifacts
 
@@ -30,7 +32,10 @@ uv run bcsd run --config-path PATH [OPTIONS]
 uv run bcsd run --config-path configs/example.yaml
 
 # Run only observation regridding stage locally
-uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --no-coiled
+uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --executor local
+
+# Estimate what a run will cost without submitting anything
+uv run bcsd run --config-path configs/production/cesm2-waccm/ --executor aws-batch --dry-run
 
 # Force recompute of historical stage (ignores cache)
 uv run bcsd run --config-path configs/example.yaml --stage fit_historical --force
@@ -81,8 +86,9 @@ uv run bcsd run-matrix [OPTIONS]
 - `--debias-approach TEXT`: bias-correction approach, one of `parametric`, `nonparametric`, `nonparametric_hybrid`, `nonparametric_hybrid_2sided`, `qdm`. Applies to every variable in the matrix; omit to use each variable's own default. Cannot be combined with more than one `--downscaling-method`, because `qdm` requires `QDMSD` and `QDMSD` requires `qdm`.
 - `--stage TEXT`: run specific stage (`obs`/`historical`/`scenario`/`all`, default: `all`)
 - `--force`: force recompute even if cached
-- `--coiled/--no-coiled`: use Coiled for distributed execution (default: `--coiled`)
-- `--dry-run`: print the generated configs in a table without executing
+- `--executor TEXT`: where tasks run, one of `aws-batch`, `coiled`, or `local` (default: the config's `executor`)
+- `--yes / -y`: skip the cost confirmation prompt
+- `--dry-run`: print the generated configs in a table without executing. This does not read the cache, so it works without AWS credentials.
 - `--save-intermediate`: save intermediate artifacts (detrended, debiased, etc.) to cache
 - `--verbose / -v`: enable verbose logging
 
@@ -241,7 +247,7 @@ When `--config-path` is given, `bcsd validate` extracts the unique GCMs and scen
 
 ## `bcsd validate-output` — Validate Output Stores
 
-Validate downscaled **output** datatree store(s), one leaf (scenario / variable / member) at a time, and render a table per store. Exits with code 1 if any blocking check fails in any store. When `$GITHUB_STEP_SUMMARY` is set, a markdown report is appended there in addition to the console tables.
+Validate downscaled **output** datatree store(s), one leaf (scenario / variable / member) at a time, and render a table per store. Exits with code 1 if any blocking check fails in any store. A store with no populated leaves is itself a blocking failure, whether or not `--scenario` or `--variable` narrowed the read, since an empty result means the run wrote nothing or the wrong branch was read. When `$GITHUB_STEP_SUMMARY` is set, a markdown report is appended there in addition to the console tables.
 
 ```bash
 uv run bcsd validate-output [STORE_URIS...] [OPTIONS]
@@ -279,6 +285,20 @@ uv run bcsd validate-output --config-path configs/qa/ --scenario SSP245 --variab
 ```
 
 ---
+
+## `bcsd resolve-branch` — Print the Branch a Config Resolves To
+
+Print the icechunk branch a config set writes to, and nothing else, so a caller can pass it on as `--branch`.
+
+```bash
+uv run bcsd resolve-branch --config-path configs/qa/cesm2-waccm/
+```
+
+`PipelineOptions.branch` defaults to the installed package version, so the value depends on which interpreter asks. That is harmless while one process both writes and reads. It stops being harmless once they are split: the deploy workflow runs the pipeline from the runner and `validate-output` inside a container whose package version was baked at image build time. Resolving the branch once on the runner and passing it explicitly leaves a single derivation instead of two that merely tend to agree.
+
+**Options**
+
+- `--config-path`, `-c` TEXT: path to a YAML config or a directory of configs (required)
 
 ## `bcsd status` — Check Cache Status
 

@@ -643,6 +643,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/5b/ba933f896d9b0b07608d575a8501e2b4e32166b60d84c430a4a7285ebe64/cloudpathlib-0.24.0-py3-none-any.whl", hash = "sha256:b1c51e2d2ec7dc4fed6538991f4aea849d6cf11a7e6b9069f86e461aa1f9b5b4", size = 63214, upload-time = "2026-04-30T00:54:42.06Z" },
 ]
 
+[package.optional-dependencies]
+s3 = [
+    { name = "boto3" },
+]
+
 [[package]]
 name = "cloudpickle"
 version = "3.1.2"
@@ -847,6 +852,9 @@ complete = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow" },
+]
+distributed = [
+    { name = "distributed" },
 ]
 
 [[package]]
@@ -2901,7 +2909,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "ptyprocess" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [
@@ -4120,10 +4128,11 @@ wheels = [
 name = "srm"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "cartopy" },
     { name = "cf-xarray" },
     { name = "cftime" },
-    { name = "cloudpathlib" },
+    { name = "cloudpathlib", extra = ["s3"] },
     { name = "dask", extra = ["complete"] },
     { name = "dask-array" },
     { name = "distributed" },
@@ -4146,7 +4155,7 @@ dependencies = [
     { name = "tabulate" },
     { name = "typer" },
     { name = "xarray", extra = ["accel"] },
-    { name = "xarray-regrid" },
+    { name = "xarray-regrid", extra = ["accel"] },
     { name = "zarr" },
 ]
 
@@ -4187,7 +4196,6 @@ dev = [
     { name = "rasterio" },
     { name = "s3fs" },
     { name = "seaborn" },
-    { name = "sparse" },
     { name = "virtualizarr" },
     { name = "xclim" },
 ]
@@ -4223,7 +4231,6 @@ qa = [
     { name = "pooch" },
     { name = "rasterio" },
     { name = "seaborn" },
-    { name = "sparse" },
 ]
 test = [
     { name = "ipdb" },
@@ -4235,10 +4242,11 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.42.22" },
     { name = "cartopy", specifier = ">=0.25.0" },
     { name = "cf-xarray", specifier = ">=0.10.10" },
     { name = "cftime", specifier = ">=1.6.5" },
-    { name = "cloudpathlib", specifier = ">=0.23.0" },
+    { name = "cloudpathlib", extras = ["s3"], specifier = ">=0.23.0" },
     { name = "dask", extras = ["complete"], specifier = ">=2026.7.1" },
     { name = "dask-array", specifier = ">=0.7.1" },
     { name = "distributed", specifier = ">=2025.12.0" },
@@ -4261,7 +4269,7 @@ requires-dist = [
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "typer", specifier = ">=0.21.2" },
     { name = "xarray", extras = ["accel"], specifier = ">=2026.7.0" },
-    { name = "xarray-regrid", specifier = ">=0.4.2" },
+    { name = "xarray-regrid", extras = ["accel"], specifier = ">=0.4.2" },
     { name = "zarr", specifier = ">=3.1.5" },
 ]
 
@@ -4302,7 +4310,6 @@ dev = [
     { name = "rasterio", specifier = ">=1.5.0" },
     { name = "s3fs", specifier = ">=2026.1.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "sparse", specifier = ">=0.17.0" },
     { name = "virtualizarr", specifier = ">=2.6.1" },
     { name = "xclim", specifier = ">=0.59.1" },
 ]
@@ -4338,7 +4345,6 @@ qa = [
     { name = "pooch", specifier = ">=1.8.2" },
     { name = "rasterio", specifier = ">=1.5.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "sparse", specifier = ">=0.17.0" },
 ]
 test = [
     { name = "ipdb", specifier = ">=0.13.13" },
@@ -4887,6 +4893,13 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/98/9e/f3b0a63917a6bd4b7e2b290cebc447c8db8e6ff63b4125e30fdcd1e378e1/xarray_regrid-0.4.2.tar.gz", hash = "sha256:96525d39b0290efa59e0255cebd35be028052f1b347bfb10fd259b4380289673", size = 67694872, upload-time = "2026-02-06T09:52:54.567Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4a/94/e7f02068c654a1d94e0d01dd0f6a35730a7284dd0dc3277c45b1ec3a48a6/xarray_regrid-0.4.2-py3-none-any.whl", hash = "sha256:85c575fd5683b296b18a333038f743617d06c1994cd52562e7cfae4a5b8d862f", size = 22781, upload-time = "2026-02-06T09:52:52.853Z" },
+]
+
+[package.optional-dependencies]
+accel = [
+    { name = "dask", extra = ["distributed"] },
+    { name = "opt-einsum" },
+    { name = "sparse" },
 ]
 
 [[package]]

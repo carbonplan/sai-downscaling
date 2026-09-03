@@ -14,6 +14,8 @@ BCSDPipeline is always mocked so no real compute or S3 access is required.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -211,7 +213,7 @@ class TestDeduplicateObsIsMethodBlind:
 
 class TestSubmitStage:
     def test_returns_empty_for_empty_configs(self, orchestrator):
-        result = orchestrator.submit_stage("prepare_observations", [], use_coiled=False)
+        result = orchestrator.submit_stage("prepare_observations", [], executor="local")
         assert result == []
 
     def test_skips_all_when_all_cached(self, orchestrator, config):
@@ -220,7 +222,7 @@ class TestSubmitStage:
         _make_icechunk_group(loc, branch=cache.branch)
 
         with patch.object(orchestrator, "_run_local") as mock_local:
-            result = orchestrator.submit_stage("prepare_observations", [config], use_coiled=False)
+            result = orchestrator.submit_stage("prepare_observations", [config], executor="local")
 
         mock_local.assert_not_called()
         assert result == [f"{loc.store_path}::{loc.group}"]
@@ -228,16 +230,16 @@ class TestSubmitStage:
     def test_calls_run_local_for_uncached_task(self, orchestrator, config):
         computed_path = "computed_obs_path"
         with patch.object(orchestrator, "_run_local", return_value=[computed_path]) as mock_local:
-            result = orchestrator.submit_stage("prepare_observations", [config], use_coiled=False)
+            result = orchestrator.submit_stage("prepare_observations", [config], executor="local")
 
         mock_local.assert_called_once_with("prepare_observations", [config])
         assert result == [computed_path]
 
-    def test_calls_submit_to_coiled_when_use_coiled(self, orchestrator, config):
+    def test_calls_submit_to_coiled_when_selected(self, orchestrator, config):
         with patch.object(
             orchestrator, "_submit_to_coiled", return_value=["coiled_path"]
         ) as mock_coiled:
-            result = orchestrator.submit_stage("prepare_observations", [config], use_coiled=True)
+            result = orchestrator.submit_stage("prepare_observations", [config], executor="coiled")
 
         mock_coiled.assert_called_once_with("prepare_observations", [config])
         assert result == ["coiled_path"]
@@ -249,7 +251,7 @@ class TestSubmitStage:
 
         with patch.object(orchestrator, "_run_local", return_value=[loc.store_path]) as mock_local:
             orchestrator.submit_stage(
-                "prepare_observations", [config], force=True, use_coiled=False
+                "prepare_observations", [config], force=True, executor="local"
             )
 
         mock_local.assert_called_once()
@@ -271,7 +273,7 @@ class TestSubmitStage:
             result = orchestrator.submit_stage(
                 "prepare_observations",
                 [cfg_cached, cfg_uncached],
-                use_coiled=False,
+                executor="local",
             )
 
         # cached config returns its qualified path; uncached goes through _run_local
@@ -303,7 +305,7 @@ class TestTasminOrdering:
         ]
         calls: list[list[str]] = []
         with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
-            orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+            orchestrator.submit_stage("transform_scenario", configs, executor="local")
 
         assert len(calls) == 2, "tasmin should be submitted in a separate, later wave"
         assert "tasmin" not in calls[0]
@@ -317,7 +319,7 @@ class TestTasminOrdering:
         ]
         calls: list[list[str]] = []
         with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
-            orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+            orchestrator.submit_stage("transform_scenario", configs, executor="local")
 
         assert len(calls) == 1
         assert set(calls[0]) == {"tasmax", "dtr"}
@@ -331,7 +333,7 @@ class TestTasminOrdering:
         ]
         calls: list[list[str]] = []
         with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder(calls)):
-            orchestrator.submit_stage("prepare_observations", configs, use_coiled=False)
+            orchestrator.submit_stage("prepare_observations", configs, executor="local")
 
         assert len(calls) == 1
         assert set(calls[0]) == {"tasmax", "tasmin"}
@@ -342,7 +344,7 @@ class TestTasminOrdering:
             _make_config(variable="tasmax", ensemble_member="008"),
         ]
         with patch.object(orchestrator, "_run_local", side_effect=self._run_local_recorder([])):
-            result = orchestrator.submit_stage("transform_scenario", configs, use_coiled=False)
+            result = orchestrator.submit_stage("transform_scenario", configs, executor="local")
 
         # result[i] must correspond to configs[i] even though tasmin ran last
         assert "tasmin" in result[0]
@@ -384,7 +386,7 @@ class TestCoarseOnlyStageLoc:
         _make_icechunk_group(coarse_loc, branch=cache.branch)
 
         with patch.object(orchestrator, "_run_local") as mock_local:
-            result = orchestrator.submit_stage("transform_scenario", [config], use_coiled=False)
+            result = orchestrator.submit_stage("transform_scenario", [config], executor="local")
 
         mock_local.assert_not_called()
         assert result == [f"{coarse_loc.store_path}::{coarse_loc.group}"]
@@ -397,7 +399,7 @@ class TestCoarseOnlyStageLoc:
         _make_icechunk_group(cache.scenario_loc, branch=cache.branch)
 
         with patch.object(orchestrator, "_run_local", return_value=["computed"]) as mock_local:
-            orchestrator.submit_stage("transform_scenario", [config], use_coiled=False)
+            orchestrator.submit_stage("transform_scenario", [config], executor="local")
 
         mock_local.assert_called_once()
 
@@ -470,7 +472,8 @@ class TestSubmitToCoiled:
 
         mock_coiled = MagicMock()
         mock_coiled.batch.run.side_effect = fake_run
-        mock_coiled.batch.wait_for_job_done.return_value = "done (errors)"
+        # The retry, which loses no task, reports a clean "done".
+        mock_coiled.batch.wait_for_job_done.side_effect = ["done (errors)", "done"]
 
         with patch.dict("sys.modules", {"coiled": mock_coiled}):
             result = orchestrator._submit_to_coiled(
@@ -486,6 +489,22 @@ class TestSubmitToCoiled:
         assert all(c["variable"] == cfg_fail.variable for c in retry_configs)
         assert f"{loc_ok.store_path}::{loc_ok.group}" in result
         assert f"{loc_fail.store_path}::{loc_fail.group}" in result
+
+    def test_failed_job_does_not_pass_on_preexisting_artifacts(self, orchestrator, config):
+        """An artifact that predates the run cannot clear a job that reported errors.
+
+        submit_stage resubmits every config when force is set, so the cache may still hold
+        the previous run's output and its presence proves nothing about this one.
+        """
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        mock_coiled = self._make_coiled_mock(["done (errors)"])
+
+        with patch.dict("sys.modules", {"coiled": mock_coiled}):
+            with pytest.raises(RuntimeError, match="already existed"):
+                orchestrator._submit_to_coiled("prepare_observations", [config])
 
     def test_raises_after_max_retries_exhausted(self, orchestrator, config):
         """RuntimeError is raised when all retries are exhausted."""
@@ -627,7 +646,7 @@ class TestRunLocal:
 class TestRunFullWorkflow:
     def test_calls_all_three_stages(self, orchestrator, config):
         with patch.object(orchestrator, "submit_stage", return_value=["path"]) as mock_submit:
-            orchestrator.run_full_workflow([config], use_coiled=False)
+            orchestrator.run_full_workflow([config], executor="local")
 
         assert mock_submit.call_count == 3
 
@@ -639,7 +658,7 @@ class TestRunFullWorkflow:
             return ["path"]
 
         with patch.object(orchestrator, "submit_stage", side_effect=record_stage):
-            orchestrator.run_full_workflow([config], use_coiled=False)
+            orchestrator.run_full_workflow([config], executor="local")
 
         assert call_order == ["prepare_observations", "fit_historical", "transform_scenario"]
 
@@ -651,7 +670,7 @@ class TestRunFullWorkflow:
             return ["path"] * len(configs)
 
         with patch.object(orchestrator, "submit_stage", side_effect=capture):
-            orchestrator.run_full_workflow(multi_configs, use_coiled=False)
+            orchestrator.run_full_workflow(multi_configs, executor="local")
 
         # 4 configs → 3 unique (gcm, variable) pairs for obs
         assert len(submitted["prepare_observations"]) == 3
@@ -664,7 +683,7 @@ class TestRunFullWorkflow:
             return ["path"] * len(configs)
 
         with patch.object(orchestrator, "submit_stage", side_effect=capture):
-            orchestrator.run_full_workflow(multi_configs, use_coiled=False)
+            orchestrator.run_full_workflow(multi_configs, executor="local")
 
         # 4 configs → 4 unique (gcm, variable, ensemble) combinations
         assert len(submitted["fit_historical"]) == 4
@@ -677,7 +696,7 @@ class TestRunFullWorkflow:
             return ["path"] * len(configs)
 
         with patch.object(orchestrator, "submit_stage", side_effect=capture):
-            orchestrator.run_full_workflow(multi_configs, use_coiled=False)
+            orchestrator.run_full_workflow(multi_configs, executor="local")
 
         assert len(submitted["transform_scenario"]) == len(multi_configs)
 
@@ -686,7 +705,7 @@ class TestRunFullWorkflow:
             return [f"{stage}_path_{i}" for i in range(len(configs))]
 
         with patch.object(orchestrator, "submit_stage", side_effect=mock_submit):
-            result = orchestrator.run_full_workflow([config], use_coiled=False)
+            result = orchestrator.run_full_workflow([config], executor="local")
 
         assert isinstance(result, dict)
         assert set(result) == {"prepare_observations", "fit_historical", "transform_scenario"}
@@ -700,7 +719,7 @@ class TestRunFullWorkflow:
             return ["path"] * len(configs)
 
         with patch.object(orchestrator, "submit_stage", side_effect=capture):
-            orchestrator.run_full_workflow([config], force=True, use_coiled=False)
+            orchestrator.run_full_workflow([config], force=True, executor="local")
 
         for stage in ("prepare_observations", "fit_historical", "transform_scenario"):
             with subtests.test(stage=stage):
@@ -852,3 +871,689 @@ class TestVmSizing:
                 assert BCSDOrchestrator._vm_types_for("no_such_stage", configs) == (
                     BCSDOrchestrator._DEFAULT_VM_TYPE
                 )
+
+
+# ---------------------------------------------------------------------------
+# AWS Batch: resource sizing and job submission
+# ---------------------------------------------------------------------------
+
+
+class TestAwsBatchResources:
+    def test_global_transform_scenario_fills_r8g_24xlarge(self, orchestrator, config):
+        res = orchestrator._resources_for("transform_scenario", [config])
+        assert res == {"vcpu": 96, "memory_mib": 737280}
+
+    def test_regional_batch_uses_smaller_resources(self, orchestrator):
+        regional = _make_config(subset_bounds=_SA_BOUNDS)
+        res = orchestrator._resources_for("transform_scenario", [regional])
+        assert res == {"vcpu": 16, "memory_mib": 122880}
+
+    def test_mixed_batch_is_treated_as_global(self, orchestrator, config):
+        regional = _make_config(subset_bounds=_SA_BOUNDS)
+        res = orchestrator._resources_for("fit_historical", [config, regional])
+        assert res == {"vcpu": 48, "memory_mib": 368640}
+
+
+class TestSubmitBatchJob:
+    def test_multi_task_wave_submits_an_array_job(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            job_id = orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        assert job_id == "abc-123"
+        kwargs = client.submit_job.call_args.kwargs
+        assert kwargs["arrayProperties"] == {"size": len(multi_configs)}
+        env = {e["name"]: e["value"] for e in kwargs["containerOverrides"]["environment"]}
+        assert env["CONFIG_MANIFEST_URI"] == "s3://bucket/manifest.json"
+        assert "CONFIG_JSON" not in env
+
+    def test_single_task_wave_submits_a_plain_job_with_config_json(self, orchestrator, config):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "solo-1"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job("fit_historical", [config], None)
+        kwargs = client.submit_job.call_args.kwargs
+        assert "arrayProperties" not in kwargs
+        env = {e["name"]: e["value"] for e in kwargs["containerOverrides"]["environment"]}
+        assert json.loads(env["CONFIG_JSON"])["variable"] == config.variable
+
+    def test_submission_carries_retries_and_project_tag(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        kwargs = client.submit_job.call_args.kwargs
+        assert kwargs["retryStrategy"] == {"attempts": 3}
+        assert kwargs["tags"] == {"Project": "SRM"}
+        assert kwargs["propagateTags"] is True
+
+    def test_command_override_names_the_full_invocation(self, orchestrator, multi_configs):
+        # containerOverrides.command replaces CMD, and Batch has no entryPoint field to
+        # replace, so the command must spell out the interpreter the image's bare
+        # `uv run --no-sync` entrypoint expects.
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        overrides = client.submit_job.call_args.kwargs["containerOverrides"]
+        assert overrides["command"] == [
+            "python",
+            "-m",
+            "srm.batch_runner",
+            "transform_scenario",
+        ]
+
+    def test_the_command_matches_the_image_entrypoint(self, orchestrator, multi_configs):
+        # The two halves live in different files and only meet on a task VM, where a
+        # mismatch shows up as every child dying on argument parsing. Assert the
+        # Dockerfile still ends where this command expects to begin.
+        dockerfile = (Path(__file__).parent.parent / "Dockerfile").read_text()
+        entrypoint = next(line for line in dockerfile.splitlines() if line.startswith("ENTRYPOINT"))
+        assert json.loads(entrypoint.removeprefix("ENTRYPOINT").strip()) == [
+            "uv",
+            "run",
+            "--no-sync",
+        ]
+
+    def test_submission_requests_stage_resources(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        reqs = {
+            r["type"]: r["value"]
+            for r in client.submit_job.call_args.kwargs["containerOverrides"][
+                "resourceRequirements"
+            ]
+        }
+        assert reqs == {"VCPU": "96", "MEMORY": "737280"}
+
+
+class TestAwaitBatchJob:
+    def test_returns_terminal_status(self, orchestrator):
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [{"status": "RUNNING"}]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            assert orchestrator._await_batch_job(client, "abc-123", poll_seconds=0) == "SUCCEEDED"
+        assert client.describe_jobs.call_count == 2
+
+    def test_returns_failed_without_raising(self, orchestrator):
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [{"status": "FAILED"}]}
+        with patch("time.sleep"):
+            assert orchestrator._await_batch_job(client, "abc-123", poll_seconds=0) == "FAILED"
+
+
+class TestAwaitBatchJobQueueStall:
+    """A job that never places must fail loudly rather than poll until CI gives up."""
+
+    def test_gives_up_and_terminates_when_the_job_never_starts(self, orchestrator):
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [{"status": "RUNNABLE"}]}
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="RUNNABLE"):
+                orchestrator._await_batch_job(
+                    client, "stuck-1", poll_seconds=0, max_queued_seconds=0
+                )
+        # Abandoning it would leave a job that can still start hours later and write output
+        # the next run's cache check would credit to itself.
+        assert client.terminate_job.call_args.kwargs["jobId"] == "stuck-1"
+
+    def test_names_the_queue_to_check(self, orchestrator):
+        # A RUNNABLE stall is a queue or capacity problem, so the message has to say which
+        # queue; the job id alone sends the reader to the wrong console page.
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [{"status": "RUNNABLE"}]}
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match=orchestrator.options.batch_job_queue):
+                orchestrator._await_batch_job(
+                    client, "stuck-1", poll_seconds=0, max_queued_seconds=0
+                )
+
+    def test_a_running_job_is_never_cut_off(self, orchestrator):
+        # A global transform_scenario has run for 17 hours. The cap is on the queue, not on
+        # the work, so an already-started job outlives the deadline.
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [{"status": "RUNNING"}]},
+            {"jobs": [{"status": "RUNNING"}]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            status = orchestrator._await_batch_job(
+                client, "long-1", poll_seconds=0, max_queued_seconds=0
+            )
+        assert status == "SUCCEEDED"
+        client.terminate_job.assert_not_called()
+
+    def test_a_job_that_queues_then_starts_is_not_cut_off(self, orchestrator):
+        # The deadline is only checked while the job has never started, so passing through
+        # RUNNABLE on the way to RUNNING must not arm it retroactively.
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [{"status": "RUNNABLE"}]},
+            {"jobs": [{"status": "RUNNING"}]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            status = orchestrator._await_batch_job(
+                client, "slow-start-1", poll_seconds=0, max_queued_seconds=10_000
+            )
+        assert status == "SUCCEEDED"
+        client.terminate_job.assert_not_called()
+
+    def test_a_failed_terminate_does_not_replace_the_real_error(self, orchestrator):
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [{"status": "RUNNABLE"}]}
+        client.terminate_job.side_effect = RuntimeError("AccessDenied")
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="without starting"):
+                orchestrator._await_batch_job(
+                    client, "stuck-1", poll_seconds=0, max_queued_seconds=0
+                )
+
+
+class TestSubmitToAwsBatch:
+    def test_returns_paths_when_cache_confirms_every_task(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", return_value=True),
+            patch("time.sleep"),
+        ):
+            paths = orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
+        assert len(paths) == len(multi_configs)
+        assert all("::" in p for p in paths)
+
+    def test_raises_when_cache_is_missing_output(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", return_value=False),
+            patch("time.sleep"),
+        ):
+            with pytest.raises(RuntimeError, match="did not produce output"):
+                orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
+
+    def test_single_config_skips_manifest_write(self, orchestrator, config):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "solo-1"}
+        client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest") as mock_write,
+            patch.object(ArtifactCache, "exists", return_value=True),
+            patch("time.sleep"),
+        ):
+            orchestrator._submit_to_aws_batch("fit_historical", [config])
+        mock_write.assert_not_called()
+
+
+class TestExecutorRouting:
+    def test_routes_to_aws_batch_when_selected(self, pipeline_options, config):
+        pipeline_options.executor = "aws-batch"
+        orchestrator = BCSDOrchestrator(pipeline_options)
+        with patch.object(
+            orchestrator, "_submit_to_aws_batch", return_value=["s3://x::g"]
+        ) as mock_batch:
+            orchestrator.submit_stage("prepare_observations", [config])
+        mock_batch.assert_called_once_with("prepare_observations", [config])
+
+    def test_explicit_executor_argument_overrides_options(self, pipeline_options, config):
+        pipeline_options.executor = "coiled"
+        orchestrator = BCSDOrchestrator(pipeline_options)
+        with patch.object(orchestrator, "_run_local", return_value=["s3://x::g"]) as mock_local:
+            orchestrator.submit_stage("prepare_observations", [config], executor="local")
+        mock_local.assert_called_once()
+
+
+class _NameStub:
+    """Minimal stand-in exposing only the fields ``_job_name`` reads."""
+
+    def __init__(self, gcm: str, variable: str, config_hash: str):
+        self.gcm = gcm
+        self.variable = variable
+        self.config_hash = config_hash
+
+
+class TestJobName:
+    def test_stays_within_the_aws_batch_limit(self, orchestrator):
+        configs = [
+            _NameStub(f"SOME-VERY-LONG-MODEL-NAME-{i:02d}", f"variable_{i:02d}", f"hash{i:04d}")
+            for i in range(20)
+        ]
+        name = orchestrator._job_name("transform_scenario", configs)
+        assert len(name) <= 128
+
+    def test_truncated_name_keeps_the_batch_hash(self, orchestrator):
+        configs = [
+            _NameStub(f"SOME-VERY-LONG-MODEL-NAME-{i:02d}", f"variable_{i:02d}", f"hash{i:04d}")
+            for i in range(20)
+        ]
+        import hashlib
+
+        expected = hashlib.sha256(
+            "".join(sorted(c.config_hash for c in configs)).encode()
+        ).hexdigest()[:8]
+        assert orchestrator._job_name("transform_scenario", configs).endswith(expected)
+
+    def test_short_name_is_left_alone(self, orchestrator, config):
+        name = orchestrator._job_name("fit_historical", [config])
+        assert name.startswith("bcsd-fit_historical-CESM2-WACCM-tas-")
+        assert len(name) < 128
+
+
+class TestAwaitBatchJobMissingRecord:
+    def test_reports_a_dropped_job_record_as_unknown(self, orchestrator):
+        # Distinct from FAILED: an aged-out record says nothing about the outcome, so the
+        # cache sweep must be allowed to decide rather than the run being failed outright.
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": []}
+        with patch("time.sleep"):
+            assert orchestrator._await_batch_job(client, "gone-1", poll_seconds=0) == "UNKNOWN"
+
+
+class TestFailedJobIsNotMaskedByStaleCache:
+    def _run(self, orchestrator, configs, status):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": [{"status": status}]}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", return_value=True),
+            patch("time.sleep"),
+        ):
+            return orchestrator._submit_to_aws_batch("transform_scenario", configs)
+
+    def test_failed_job_raises_even_when_every_artifact_is_present(
+        self, orchestrator, multi_configs
+    ):
+        # With force=True every config is resubmitted regardless of cache, so a populated
+        # cache may hold the previous run's output. Trusting it would report a failed
+        # recompute as success.
+        with pytest.raises(RuntimeError, match="FAILED"):
+            self._run(orchestrator, multi_configs, "FAILED")
+
+    def test_succeeded_job_with_present_artifacts_is_fine(self, orchestrator, multi_configs):
+        assert len(self._run(orchestrator, multi_configs, "SUCCEEDED")) == len(multi_configs)
+
+    def test_unknown_status_also_raises_when_artifacts_predate_the_run(
+        self, orchestrator, multi_configs
+    ):
+        # A lost job record is no more able to clear stale artifacts than a FAILED one.
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": []}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", return_value=True),
+            patch("time.sleep"),
+        ):
+            with pytest.raises(RuntimeError, match="UNKNOWN"):
+                orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
+
+    def test_unknown_status_is_fine_when_artifacts_appeared_during_the_run(
+        self, orchestrator, multi_configs
+    ):
+        # The normal path: submit_stage only queues uncached configs, so an artifact absent
+        # before and present after was necessarily written by this run.
+        n = len(multi_configs)
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_jobs.return_value = {"jobs": []}
+        with (
+            patch("boto3.client", return_value=client),
+            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch.object(ArtifactCache, "exists", side_effect=[False] * n + [True] * (2 * n)),
+            patch("time.sleep"),
+        ):
+            paths = orchestrator._submit_to_aws_batch("transform_scenario", multi_configs)
+        assert len(paths) == n
+
+
+class TestPlan:
+    """plan() must predict exactly what submit_stage would run."""
+
+    def test_counts_every_stage_when_nothing_is_cached(self, orchestrator, multi_configs):
+        plans = {p.stage: p for p in orchestrator.plan(multi_configs)}
+        assert set(plans) == {"prepare_observations", "fit_historical", "transform_scenario"}
+        assert plans["transform_scenario"].to_run == len(multi_configs)
+        assert plans["transform_scenario"].cached == 0
+
+    def test_matches_the_stage_deduplication(self, orchestrator, multi_configs):
+        plans = {p.stage: p for p in orchestrator.plan(multi_configs)}
+        assert plans["prepare_observations"].to_run == len(
+            orchestrator._deduplicate_obs_configs(multi_configs)
+        )
+        assert plans["fit_historical"].to_run == len(
+            orchestrator._deduplicate_historical_configs(multi_configs)
+        )
+
+    def test_cached_artifacts_move_out_of_to_run(self, orchestrator, config):
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        plans = {p.stage: p for p in orchestrator.plan([config])}
+        assert plans["transform_scenario"].to_run == 0
+        assert plans["transform_scenario"].cached == 1
+
+    def test_force_ignores_the_cache(self, orchestrator, config):
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        plans = {p.stage: p for p in orchestrator.plan([config], force=True)}
+        assert plans["transform_scenario"].to_run == 1
+        assert plans["transform_scenario"].cached == 0
+
+    def test_carries_the_vm_type_and_extent(self, orchestrator, config):
+        plans = {p.stage: p for p in orchestrator.plan([config])}
+        assert plans["transform_scenario"].vm_type == "r8g.24xlarge"
+        assert plans["transform_scenario"].regional is False
+
+        regional = _make_config(subset_bounds=_SA_BOUNDS)
+        rplans = {p.stage: p for p in orchestrator.plan([regional])}
+        assert rplans["transform_scenario"].vm_type == "r8g.4xlarge"
+        assert rplans["transform_scenario"].regional is True
+
+    def test_agrees_with_what_submit_stage_actually_runs(self, orchestrator, multi_configs):
+        # Cache one config's scenario output; plan and submit_stage must agree on the rest.
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", multi_configs[0])
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        planned = {p.stage: p for p in orchestrator.plan(multi_configs)}["transform_scenario"]
+
+        with patch.object(orchestrator, "_run_local", return_value=[]) as mock_local:
+            orchestrator.submit_stage("transform_scenario", multi_configs, executor="local")
+
+        # Summed over waves: tasmin, when present, is dispatched separately.
+        submitted = sum(len(call.args[1]) for call in mock_local.call_args_list)
+        assert planned.to_run == submitted
+
+
+class TestExecutorValidation:
+    def test_unknown_executor_raises_even_when_everything_is_cached(self, orchestrator, config):
+        # The all-cached short circuit used to return before the name was ever checked, so
+        # a typo reported success instead of failing.
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "prepare_observations", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+
+        with pytest.raises(ValueError, match="aws_batch"):
+            orchestrator.submit_stage("prepare_observations", [config], executor="aws_batch")
+
+    def test_unknown_executor_raises_when_work_is_pending(self, orchestrator, config):
+        with pytest.raises(ValueError, match="aws_batch"):
+            orchestrator.submit_stage("prepare_observations", [config], executor="aws_batch")
+
+
+class TestPlanStage:
+    """A single-stage estimate must mirror submit_stage, which does not deduplicate."""
+
+    def test_counts_every_config_not_the_deduplicated_set(self, orchestrator, multi_configs):
+        # run --stage obs hands submit_stage the full list, so the estimate must too.
+        deduped = len(orchestrator._deduplicate_obs_configs(multi_configs))
+        assert deduped < len(multi_configs)
+
+        plan = orchestrator.plan_stage("prepare_observations", multi_configs)
+        assert plan.to_run == len(multi_configs)
+        assert plan.stage == "prepare_observations"
+
+    def test_matches_what_submit_stage_dispatches(self, orchestrator, multi_configs):
+        planned = orchestrator.plan_stage("prepare_observations", multi_configs)
+        with patch.object(orchestrator, "_run_local", return_value=[]) as mock_local:
+            orchestrator.submit_stage("prepare_observations", multi_configs, executor="local")
+        submitted = sum(len(call.args[1]) for call in mock_local.call_args_list)
+        assert planned.to_run == submitted
+
+    def test_cached_configs_are_excluded(self, orchestrator, config):
+        cache = orchestrator._get_cache()
+        loc = orchestrator._stage_loc(cache, "transform_scenario", config)
+        _make_icechunk_group(loc, branch=cache.branch)
+        plan = orchestrator.plan_stage("transform_scenario", [config])
+        assert (plan.to_run, plan.cached) == (0, 1)
+
+
+class TestResolveJobDefinition:
+    """The estimate names the image a run will actually execute."""
+
+    def test_pinned_revision_is_described_directly(self, pipeline_options):
+        pipeline_options.batch_job_definition = "srm-downscaling:7"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.return_value = {
+            "jobDefinitions": [
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 7,
+                    "containerProperties": {"image": "ecr/srm-downscaling:abc123"},
+                }
+            ]
+        }
+        with patch("boto3.client", return_value=client):
+            assert orch.resolve_job_definition() == {
+                "job_definition": "srm-downscaling:7",
+                "image": "ecr/srm-downscaling:abc123",
+            }
+        assert client.describe_job_definitions.call_args.kwargs["jobDefinitions"] == [
+            "srm-downscaling:7"
+        ]
+
+    def test_bare_name_resolves_to_the_highest_active_revision(self, pipeline_options):
+        # AWS resolves a bare name to the highest ACTIVE revision at submit time, so the
+        # preview has to do the same or it would name the wrong image.
+        pipeline_options.batch_job_definition = "srm-downscaling"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.return_value = {
+            "jobDefinitions": [
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 2,
+                    "containerProperties": {"image": "ecr/img:old"},
+                },
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 5,
+                    "containerProperties": {"image": "ecr/img:new"},
+                },
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 3,
+                    "containerProperties": {"image": "ecr/img:mid"},
+                },
+            ]
+        }
+        with patch("boto3.client", return_value=client):
+            resolved = orch.resolve_job_definition()
+        assert resolved == {"job_definition": "srm-downscaling:5", "image": "ecr/img:new"}
+        assert client.describe_job_definitions.call_args.kwargs["status"] == "ACTIVE"
+
+    def test_arn_resolves_to_the_bare_name(self, pipeline_options):
+        # An ARN is colon-separated, so trimming the configured value at the first colon
+        # would submit against "arn:9" and every job would fail to place.
+        arn = "arn:aws:batch:us-west-2:123456789012:job-definition/srm-downscaling:9"
+        pipeline_options.batch_job_definition = arn
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.return_value = {
+            "jobDefinitions": [
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 9,
+                    "containerProperties": {"image": "ecr/img:sha9"},
+                }
+            ]
+        }
+        with patch("boto3.client", return_value=client):
+            resolved = orch.resolve_job_definition()
+        assert resolved == {"job_definition": "srm-downscaling:9", "image": "ecr/img:sha9"}
+
+    def test_missing_definition_raises(self, pipeline_options):
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.return_value = {"jobDefinitions": []}
+        with patch("boto3.client", return_value=client):
+            with pytest.raises(ValueError, match="srm-downscaling"):
+                orch.resolve_job_definition()
+
+
+class TestSubmissionUsesTheResolvedDefinition:
+    """What the cost prompt showed must be what the submission runs."""
+
+    def _client(self):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        client.describe_job_definitions.return_value = {
+            "jobDefinitions": [
+                {
+                    "jobDefinitionName": "srm-downscaling",
+                    "revision": 4,
+                    "containerProperties": {"image": "ecr/img:sha4"},
+                },
+            ]
+        }
+        return client
+
+    def test_submits_against_the_pinned_revision(self, pipeline_options, config):
+        pipeline_options.batch_job_definition = "srm-downscaling"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = self._client()
+        with patch("boto3.client", return_value=client):
+            orch._submit_batch_job("fit_historical", [config], None)
+        # Not the bare name: AWS would re-resolve it, and a revision registered between
+        # the preview and the submission would run code the confirmation never showed.
+        assert client.submit_job.call_args.kwargs["jobDefinition"] == "srm-downscaling:4"
+
+    def test_resolution_is_reused_across_a_run(self, pipeline_options, config):
+        orch = BCSDOrchestrator(pipeline_options)
+        client = self._client()
+        with patch("boto3.client", return_value=client):
+            orch.resolve_job_definition()
+            orch._submit_batch_job("fit_historical", [config], None)
+            orch._submit_batch_job("transform_scenario", [config], None)
+        # One resolution per orchestrator, so every stage of a multi-hour run pins the
+        # same image rather than drifting if a revision lands mid-run.
+        assert client.describe_job_definitions.call_count == 1
+
+    def test_falls_back_to_the_configured_name_when_resolution_fails(
+        self, pipeline_options, config
+    ):
+        pipeline_options.batch_job_definition = "srm-downscaling"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = self._client()
+        client.describe_job_definitions.side_effect = RuntimeError("denied")
+        with patch("boto3.client", return_value=client):
+            orch._submit_batch_job("fit_historical", [config], None)
+        assert client.submit_job.call_args.kwargs["jobDefinition"] == "srm-downscaling"
+
+
+class TestBothExecutorsAgreeOnProcessCount:
+    """The debiaser's fan-out must not depend on which executor started the task."""
+
+    def test_batch_submits_the_requested_vcpu(self, orchestrator, multi_configs):
+        client = MagicMock()
+        client.submit_job.return_value = {"jobId": "abc-123"}
+        with patch("boto3.client", return_value=client):
+            orchestrator._submit_batch_job(
+                "transform_scenario", multi_configs, "s3://bucket/manifest.json"
+            )
+        env = {
+            e["name"]: e["value"]
+            for e in client.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+        }
+        expected = orchestrator._resources_for("transform_scenario", multi_configs)["vcpu"]
+        assert env["SRM_NR_PROCESSES"] == str(expected)
+
+    def test_the_two_executors_send_the_same_number(self, orchestrator, multi_configs):
+        from srm.cost import vcpus
+
+        stage = "transform_scenario"
+        assert (
+            vcpus(orchestrator._vm_types_for(stage, multi_configs)[0])
+            == orchestrator._resources_for(stage, multi_configs)["vcpu"]
+        )
+
+
+class TestResourcesDerivedFromOneTable:
+    def test_unknown_stage_still_raises(self, orchestrator, config):
+        # Deliberately louder than _vm_types_for's default: an unsized stage should fail at
+        # submission rather than run a long job on a guessed instance.
+        with pytest.raises(KeyError):
+            orchestrator._resources_for("polish_the_output", [config])
+
+    def test_matches_the_instance_the_coiled_path_would_pick(self, orchestrator, config):
+        from srm.cost import memory_mib, vcpus
+
+        vm_type = orchestrator._vm_types_for("transform_scenario", [config])[0]
+        assert orchestrator._resources_for("transform_scenario", [config]) == {
+            "vcpu": vcpus(vm_type),
+            "memory_mib": memory_mib(vm_type),
+        }
+
+
+class TestJobDefinitionPagination:
+    def test_follows_next_token(self, pipeline_options):
+        # describe_job_definitions caps a page at 100, and a revision is registered per
+        # deploy, so reading only the first page would eventually pin a stale revision.
+        pipeline_options.batch_job_definition = "srm-downscaling"
+        orch = BCSDOrchestrator(pipeline_options)
+        client = MagicMock()
+        client.describe_job_definitions.side_effect = [
+            {
+                "jobDefinitions": [
+                    {
+                        "jobDefinitionName": "srm-downscaling",
+                        "revision": 1,
+                        "containerProperties": {"image": "ecr/img:old"},
+                    }
+                ],
+                "nextToken": "page2",
+            },
+            {
+                "jobDefinitions": [
+                    {
+                        "jobDefinitionName": "srm-downscaling",
+                        "revision": 102,
+                        "containerProperties": {"image": "ecr/img:new"},
+                    }
+                ]
+            },
+        ]
+        with patch("boto3.client", return_value=client):
+            resolved = orch.resolve_job_definition()
+        assert resolved == {"job_definition": "srm-downscaling:102", "image": "ecr/img:new"}
+        assert client.describe_job_definitions.call_count == 2
+        assert client.describe_job_definitions.call_args.kwargs["nextToken"] == "page2"
+
+
+class TestEmptyStageStillValidatesExecutor:
+    def test_typo_raises_even_with_no_configs(self, orchestrator):
+        # Otherwise a mistyped executor reports success on a stage that had nothing to do,
+        # and the typo only surfaces at whichever stage happens to have work.
+        with pytest.raises(ValueError, match="aws_batch"):
+            orchestrator.submit_stage("prepare_observations", [], executor="aws_batch")
+
+    def test_valid_executor_with_no_configs_is_a_no_op(self, orchestrator):
+        assert orchestrator.submit_stage("prepare_observations", [], executor="local") == []

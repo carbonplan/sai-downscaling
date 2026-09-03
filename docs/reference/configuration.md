@@ -162,6 +162,12 @@ output_dir: "s3://bucket/path"         # Directory for final downscaled outputs 
 environment: "qa"                      # Environment: qa, production (default: "qa")
 # branch: "v1.0.post12"              # Override to pin a specific cache namespace (default: installed package version)
 
+# Execution
+executor: "coiled"                     # Where stage tasks run: aws-batch, coiled, local (default: "coiled")
+batch_job_queue: "srm-production"      # AWS Batch job queue (default: "srm-production")
+batch_job_definition: "srm-downscaling"  # AWS Batch job definition, optionally name:revision (default: "srm-downscaling")
+batch_region: "us-west-2"              # Region for the AWS Batch control plane (default: "us-west-2")
+
 # Runtime flags
 verbose: true                          # Enable verbose logging (default: true)
 rechunk_workflow: true                 # Enable strategic rechunking between stages (default: true)
@@ -177,6 +183,20 @@ clip_bounds:                           # Per-variable [min, max] bounds applied 
 ```
 
 All `PipelineOptions` fields are optional — defaults are suitable for most runs. Override `scratch_dir` and `output_dir` to point at your own storage.
+
+### Choosing an executor
+
+`executor` selects where a stage's tasks run. The choice affects cost and nothing else: all three produce identical output, because each task runs the same `srm.batch_runner` entry point.
+
+| Value | Where tasks run | Cost per vCPU-hour |
+| --- | --- | --- |
+| `aws-batch` | AWS Batch array jobs on Graviton instances | $0.0589 (EC2 only) |
+| `coiled` | Coiled Batch VMs | $0.1089 (EC2 plus Coiled's $0.05 platform fee) |
+| `local` | Sequentially, in the current process | none |
+
+The `batch_*` fields apply only to `aws-batch` and are usually left at their defaults. Deploy jobs override `batch_job_queue` to separate qa from production traffic, and set `batch_job_definition` to a pinned `name:revision` so a run cannot execute an image built from a different commit.
+
+The removed `use_coiled` boolean is rejected rather than ignored. Because `PipelineOptions` sets `extra = "ignore"`, a stale `use_coiled` key would otherwise be silently dropped and quietly change which executor runs.
 
 ## Branch Defaulting
 

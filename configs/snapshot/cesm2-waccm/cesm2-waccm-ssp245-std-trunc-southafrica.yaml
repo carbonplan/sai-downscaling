@@ -5,7 +5,7 @@
 # valid extent.
 # Full-length member 003 lives in cesm2-waccm-ssp245-std-southafrica.yaml (2099).
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs"]
+variables: ["tas", "pr", "rsds"]
 ensemble_members: ["008"]
 scenarios: ["SSP245"]
 
@@ -17,7 +17,7 @@ predict_period_end: 2069
 # === Downscaling Method ===
 # "BCSD" (detrend + quantile mapping) or "QDMSD" (quantile delta mapping). Required:
 # there is no default, so every config states which method produced its output.
-downscaling_method: "BCSD"
+downscaling_method: ["BCSD","QDMSD"]
 
 # Run over a ~3 deg halo beyond the region of interest ([-35, -22, 16, 33]) so BCSD's
 # regrid + spatial disaggregation edge effects fall outside it. The comparison notebook

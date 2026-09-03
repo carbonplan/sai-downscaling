@@ -11,6 +11,7 @@ import itertools
 import json
 import logging
 import os
+import sys
 from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
@@ -24,8 +25,10 @@ from rich.logging import RichHandler
 from rich.table import Table
 from rich.tree import Tree
 
+from srm import __version__
 from srm.bcsd_config import BCSDConfig, DownscalingMethod, PipelineOptions, VariableConfig
 from srm.cache import ArtifactCache
+from srm.cost import RATES_AS_OF, estimate_workflow
 from srm.orchestration import BCSDOrchestrator
 from srm.validation import CheckResult, CheckStatus
 
@@ -777,6 +780,167 @@ def configs_from_matrix(
     return configs, options
 
 
+#: CLI stage aliases mapped to pipeline stage names. "all"/None means every stage.
+_STAGE_ALIASES: dict[str, str] = {
+    "obs": "prepare_observations",
+    "prepare_observations": "prepare_observations",
+    "historical": "fit_historical",
+    "fit_historical": "fit_historical",
+    "scenario": "transform_scenario",
+    "transform_scenario": "transform_scenario",
+}
+
+
+def _resolve_stage(stage: str | None) -> str | None:
+    """Map a ``--stage`` value to a pipeline stage name, or None for the whole workflow.
+
+    Raises
+    ------
+    typer.BadParameter
+        For an unrecognized value. The dispatch below is an if/elif chain with no else,
+        so an unknown stage used to run nothing and exit zero.
+    """
+    if stage is None or stage == "all":
+        return None
+    try:
+        return _STAGE_ALIASES[stage]
+    except KeyError:
+        raise typer.BadParameter(
+            f"Unknown stage {stage!r}; expected one of {sorted(set(_STAGE_ALIASES) | {'all'})}"
+        ) from None
+
+
+def _confirm_cost(
+    orchestrator: BCSDOrchestrator,
+    configs: list[BCSDConfig],
+    executor: str | None,
+    force: bool,
+    assume_yes: bool,
+    stage: str | None = None,
+) -> bool:
+    """Show what a run will cost and, when a human is watching, ask before dispatching.
+
+    The prompt is skipped when stdin is not a terminal, because every deploy job runs
+    non-interactively and would otherwise block until its timeout. The plan is still
+    logged there, so the estimate lands in the job output either way.
+
+    Returns
+    -------
+    bool
+        True to proceed with the run.
+    """
+    if (executor or orchestrator.options.executor) == "local":
+        return True
+    if not _render_cost_plan(orchestrator, configs, executor, force, stage=stage):
+        return True
+
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        logger.info("Non-interactive session; proceeding without confirmation.")
+        return True
+    return typer.confirm("Submit these tasks?", default=False)
+
+
+def _render_run_environment(orchestrator: BCSDOrchestrator, executor_name: str) -> None:
+    """Print where a run will execute and, for AWS Batch, which image it will run.
+
+    The image answers "am I about to run the code I think I am", and the cost prompt is the
+    right moment to ask it. Resolving it costs one AWS call, so a failure is reported in the
+    table rather than silently omitted.
+    """
+    options = orchestrator.options
+    rows = [("executor", executor_name)]
+
+    if executor_name == "aws-batch":
+        rows.append(("job queue", options.batch_job_queue))
+        try:
+            resolved = orchestrator.resolve_job_definition()
+            rows.append(("job definition", resolved["job_definition"]))
+            rows.append(("image", resolved["image"]))
+        except Exception as exc:  # noqa: BLE001 - surfaced in the table, not swallowed
+            rows.append(("job definition", options.batch_job_definition))
+            rows.append(("image", f"[red]unresolved: {type(exc).__name__}[/red]"))
+
+    rows.append(("branch", options.branch))
+    rows.append(("environment", options.environment))
+    rows.append(("output", options.output_dir))
+
+    table = Table(title="Run environment", box=box.SIMPLE, title_justify="left", show_header=False)
+    table.add_column("", style="cyan", no_wrap=True)
+    table.add_column("", overflow="fold")
+    for key, value in rows:
+        table.add_row(key, str(value))
+    console.print(table)
+
+
+def _render_cost_plan(
+    orchestrator: BCSDOrchestrator,
+    configs: list[BCSDConfig],
+    executor: str | None,
+    force: bool,
+    stage: str | None = None,
+) -> bool:
+    """Print the per-stage cost table. Returns False when there is nothing to submit.
+
+    ``stage`` restricts the estimate to a single stage, matching ``run --stage``; pricing
+    all three would overstate what the invocation is about to spend.
+    """
+    executor_name = executor or orchestrator.options.executor
+
+    only = _resolve_stage(stage)
+    if only is None:
+        plans = [p for p in orchestrator.plan(configs, force=force) if p.to_run]
+    else:
+        # submit_stage receives the caller's list untouched, so price it the same way.
+        plans = [p for p in [orchestrator.plan_stage(only, configs, force=force)] if p.to_run]
+    if not plans:
+        console.print("[green]Everything is already cached; nothing to submit.[/green]")
+        return False
+
+    estimate = estimate_workflow(
+        [(p.stage, p.to_run, p.vm_type, p.regional) for p in plans], executor_name
+    )
+
+    _render_run_environment(orchestrator, executor_name)
+
+    table = Table(title=f"Cost estimate ({executor_name})", box=box.SIMPLE, title_justify="left")
+    table.add_column("Stage", style="cyan", no_wrap=True)
+    table.add_column("Tasks", justify="right")
+    table.add_column("Instance", style="magenta", no_wrap=True)
+    table.add_column("$/h", justify="right", style="yellow")
+    table.add_column("Hours", justify="right")
+    table.add_column("Cost", justify="right", style="yellow")
+    for plan, wave in zip(plans, estimate.waves):
+        skipped = f" (+{plan.cached} cached)" if plan.cached else ""
+        table.add_row(
+            plan.stage,
+            f"{plan.to_run}{skipped}",
+            plan.vm_type,
+            f"${wave.burn_rate:,.2f}",
+            f"{wave.low_hours:.2g}-{wave.high_hours:.2g}",
+            f"${wave.low_cost:,.0f}-${wave.high_cost:,.0f}",
+        )
+    console.print(table)
+    console.print(
+        f"  Peak burn [yellow]${estimate.peak_burn_rate:,.2f}/hour[/yellow] while running "
+        "[dim](exact)[/dim]"
+    )
+    console.print(
+        f"  Total     [yellow]${estimate.low_cost:,.0f}-${estimate.high_cost:,.0f}[/yellow] "
+        "[dim](rough: duration estimated from past runs)[/dim]"
+    )
+    # Every rate and duration is hardcoded, so an estimate is only as current as the table
+    # it came from. Stamping the version and date lets a reader judge that without
+    # reading the source, and points them at it when they want to.
+    console.print(
+        f"  [dim]Rough estimate only. Rates and durations are hardcoded in src/srm/cost.py "
+        f"(srm {__version__}, last checked {RATES_AS_OF}); actual cost varies with AWS "
+        f"pricing and runtime.[/dim]"
+    )
+    return True
+
+
 @app.command()
 def run(
     config_path: list[str] = typer.Option(
@@ -784,7 +948,20 @@ def run(
     ),
     stage: str = typer.Option(None, help="Run specific stage: obs, historical, scenario, or all"),
     force: bool = typer.Option(False, help="Force recompute even if cached"),
-    coiled: bool = typer.Option(True, help="Use Coiled for execution"),
+    executor: str = typer.Option(
+        None,
+        "--executor",
+        help="Where tasks run: coiled, aws-batch, or local. Defaults to the config value.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the cost confirmation prompt.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show the cost plan and exit without submitting anything"
+    ),
     branch: str | None = typer.Option(
         None, "--branch", help="Override the output icechunk branch (e.g. 'v2')"
     ),
@@ -804,6 +981,7 @@ def run(
     if save_intermediate:
         updates["save_intermediate"] = True
     options = options.model_copy(update=updates)
+    _resolve_stage(stage)
     logger.info("Loaded %d configuration(s)", len(configs))
     _print_lineage_summary(configs)
     _validate_lineage_members(configs)
@@ -811,16 +989,24 @@ def run(
 
     orchestrator = BCSDOrchestrator(options)
 
+    if dry_run:
+        _render_cost_plan(orchestrator, configs, executor, force, stage=stage)
+        return
+
+    if not _confirm_cost(orchestrator, configs, executor, force, yes, stage=stage):
+        console.print("[yellow]Aborted; nothing was submitted.[/yellow]")
+        raise typer.Exit(1)
+
     cache = orchestrator._get_cache()
 
     if stage == "obs" or stage == "prepare_observations":
         paths = orchestrator.submit_stage(
-            "prepare_observations", configs, force=force, use_coiled=coiled
+            "prepare_observations", configs, force=force, executor=executor
         )
         _print_paths_summary(paths, configs, "prepare_observations", cache)
 
     elif stage == "historical" or stage == "fit_historical":
-        paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage("fit_historical", configs, force=force, executor=executor)
         _print_paths_summary(paths, configs, "fit_historical", cache)
         _print_paths_summary(
             _coarse_hist_paths(configs, cache), configs, "debiased_coarse_historical", cache
@@ -828,7 +1014,7 @@ def run(
 
     elif stage == "scenario" or stage == "transform_scenario":
         paths = orchestrator.submit_stage(
-            "transform_scenario", configs, force=force, use_coiled=coiled
+            "transform_scenario", configs, force=force, executor=executor
         )
         _print_paths_summary(paths, configs, "transform_scenario", cache)
         _print_paths_summary(
@@ -836,7 +1022,7 @@ def run(
         )
 
     elif stage == "all" or stage is None:
-        all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        all_paths = orchestrator.run_full_workflow(configs, force=force, executor=executor)
         obs_configs = orchestrator._deduplicate_obs_configs(configs)
         hist_configs = orchestrator._deduplicate_historical_configs(configs)
         _print_paths_summary(
@@ -997,7 +1183,17 @@ def run_matrix(
         None, help="Run specific stage: obs, historical, scenario, or all"
     ),
     force: bool = typer.Option(False, help="Force recompute even if cached"),
-    coiled: bool = typer.Option(True, help="Use Coiled for distributed execution"),
+    executor: str = typer.Option(
+        None,
+        "--executor",
+        help="Where tasks run: coiled, aws-batch, or local. Defaults to the config value.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the cost confirmation prompt.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show configs without executing"),
     save_intermediate: bool = typer.Option(
         False,
@@ -1165,6 +1361,7 @@ def run_matrix(
         logger.error(str(exc))
         raise typer.Exit(1)
 
+    _resolve_stage(stage)
     _validate_lineage_members(configs)
     _validate_predict_periods(configs)
 
@@ -1203,21 +1400,25 @@ def run_matrix(
 
     orchestrator = BCSDOrchestrator(options)
 
+    if not _confirm_cost(orchestrator, configs, executor, force, yes, stage=stage):
+        console.print("[yellow]Aborted; nothing was submitted.[/yellow]")
+        raise typer.Exit(1)
+
     if stage == "obs" or stage == "prepare_observations":
         paths = orchestrator.submit_stage(
-            "prepare_observations", configs, force=force, use_coiled=coiled
+            "prepare_observations", configs, force=force, executor=executor
         )
         _print_paths_summary(paths, configs, "prepare_observations")
     elif stage == "historical" or stage == "fit_historical":
-        paths = orchestrator.submit_stage("fit_historical", configs, force=force, use_coiled=coiled)
+        paths = orchestrator.submit_stage("fit_historical", configs, force=force, executor=executor)
         _print_paths_summary(paths, configs, "fit_historical")
     elif stage == "scenario" or stage == "transform_scenario":
         paths = orchestrator.submit_stage(
-            "transform_scenario", configs, force=force, use_coiled=coiled
+            "transform_scenario", configs, force=force, executor=executor
         )
         _print_paths_summary(paths, configs, "transform_scenario")
     elif stage == "all" or stage is None:
-        all_paths = orchestrator.run_full_workflow(configs, force=force, use_coiled=coiled)
+        all_paths = orchestrator.run_full_workflow(configs, force=force, executor=executor)
         obs_configs = orchestrator._deduplicate_obs_configs(configs)
         hist_configs = orchestrator._deduplicate_historical_configs(configs)
         _print_paths_summary(all_paths["prepare_observations"], obs_configs, "prepare_observations")
@@ -1377,6 +1578,26 @@ def cache_list(
         table.add_row(artifact)
 
     console.print(table)
+
+
+@app.command()
+def resolve_branch(
+    config_path: str = typer.Option(
+        ..., "--config-path", "-c", help="Path to YAML config or directory of configs"
+    ),
+):
+    """Print the icechunk branch a config set resolves to.
+
+    ``PipelineOptions.branch`` defaults to the installed package version, so the value
+    depends on which interpreter asks. That is fine while one process both writes and
+    reads, and wrong once they are split: the deploy workflow runs the pipeline on the
+    runner and ``validate-output`` inside a container built separately, and the two
+    resolve the default independently. Printing it here lets the runner resolve it once
+    and pass ``--branch`` explicitly, so there is a single derivation rather than two
+    that merely tend to agree.
+    """
+    _, options = load_configs(config_path)
+    print(options.branch)
 
 
 @app.command()
@@ -1705,7 +1926,6 @@ def validate_output(
     # already canonical). parse_* raise on unknown values.
     scenarios = [SCENARIO_TO_GROUP[parse_scenario(s)] for s in scenario] if scenario else None
     variables = [parse_variable(v) for v in variable] if variable else None
-    filtered = bool(scenarios or variables)
 
     summary_lines: list[str] = []
     any_blocking = False
@@ -1723,11 +1943,14 @@ def validate_output(
                 variables=variables,
             )
             if not results:
-                # An explicit filter matching nothing is an error, not an empty success.
-                log = logger.error if filtered else logger.warning
-                log("No populated leaves found in %s", store_uri)
-                if filtered:
-                    any_blocking = True
+                # Blocking whether or not a filter is set. An explicit filter matching
+                # nothing is an error, and so is an unfiltered read of an empty store:
+                # this command runs immediately after `bcsd run` over the same configs, so
+                # nothing to validate means the run wrote nothing, or that this process
+                # resolved a different branch than the writer did. Reporting either as a
+                # warning exits 0 and passes a deploy gate that checked nothing.
+                logger.error("No populated leaves found in %s", store_uri)
+                any_blocking = True
                 continue
 
             console.rule(f"[bold]{store_uri}[/bold]")
