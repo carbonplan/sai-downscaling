@@ -38,7 +38,7 @@ class TestConfigsFromMatrix:
 
     def test_cartesian_product_count(self):
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM", "MIROC"],
+            gcms=["CESM2-WACCM", "UKESM"],
             downscaling_methods=["BCSD"],
             variables=["tas", "pr"],
             members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
@@ -70,7 +70,7 @@ class TestConfigsFromMatrix:
         assert all(c.scenario is None for c in configs)
 
     def test_all_combinations_present(self):
-        gcms = ["CESM2-WACCM", "MIROC"]
+        gcms = ["CESM2-WACCM", "UKESM"]
         variables = ["tas", "pr"]
         members = ["r1i1p1f1", "r2i1p1f1"]
         scenarios = ["ssp245"]
@@ -89,7 +89,7 @@ class TestConfigsFromMatrix:
 
     def test_shared_params_applied_to_all_configs(self):
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM", "MIROC"],
+            gcms=["CESM2-WACCM", "UKESM"],
             downscaling_methods=["BCSD"],
             variables=["tas"],
             members=["r1i1p1f1"],

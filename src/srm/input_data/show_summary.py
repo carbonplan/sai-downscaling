@@ -8,7 +8,6 @@ from srm.datasets import catalog
 
 _GCM_TO_KEY: dict[str, str] = {
     "CESM2-WACCM": "CESM2-WACCM-unified-icechunk",
-    "MIROC-ES2H": "MIROC-ES2H-unified-icechunk",
     "UKESM": "UKESM-unified-icechunk",
 }
 

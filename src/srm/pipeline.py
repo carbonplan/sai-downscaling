@@ -161,9 +161,6 @@ class _SeededQuantileMapping(_SeededLocationMixin, QuantileMapping):
     """
 
 
-
-
-
 def _make_debiaser(variable: str, distribution=None, **kwargs):
     if distribution is None:
         if variable in ["tas", "tasmax"]:
@@ -1103,7 +1100,7 @@ class BCSDPipeline:
             clim_method=self.config.variable_config.disaggregation_clim_method,
             allow_negative_values=False,
             tiny_threshold=self.config.variable_config.disaggregation_tiny_threshold,
-            use_tiny_threshold=False,
+            use_tiny_threshold=True,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
@@ -1413,11 +1410,11 @@ class BCSDPipeline:
     def _load_ssp245_segment(self) -> xr.DataArray:
         """Load the SSP245 portion of the bridge.
 
-        For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
-        G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
-        When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap before the
-        GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
-        dataset is converted via to_proleptic_gregorian before concat.
+        For most GCMs, returns the primary SSP245 dataset directly. A GCM whose primary
+        SSP245 run starts after the historical period ends leaves a gap at the front of
+        the scenario. When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap
+        before the primary data begins. The primary is already in proleptic_gregorian;
+        the ESGF dataset is converted via to_proleptic_gregorian before concat.
         """
         primary = get_experiment(self.config.gcm, "SSP245", self.config.variable)
         primary = primary.sel(ensemble_member=self._ssp245_member)
@@ -1512,8 +1509,8 @@ class BCSDPipeline:
         model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
         model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
-        # Non-SAI scenarios whose primary dataset starts after predict_period_start
-        # (e.g. MIROC-ES2H GeoMIP SSP245 starts 2020) need ESGF data prepended to close the gap.
+        # Non-SAI scenarios whose primary dataset starts after predict_period_start need
+        # ESGF data prepended to close the gap.
         if not self.config.is_sai_scenario and self._ssp245_esgf_member is not None:
             scenario_start_year = int(model_scenario.time.dt.year.min())
             if scenario_start_year > self.config.predict_period_start:
@@ -1936,12 +1933,12 @@ class BCSDPipeline:
                 # zero out any near-zero/near-zero divide blow-up left over from censor_values_to_zero
                 debiased_np[cm_future_np < debiaser.censoring_threshold] = 0.0
             elif self.config.variable in ["rsds"]:
-                # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2, 
+                # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2,
                 # rsds's scenario QDM debiaser (trend_preservation="relative")
                 # divides by a modeled-historical quantile that can be arbitrarily close to zero,
                 # producing an outlandish multiplicative blow-up. Instead, we cast any instances
                 # of the scenario below the _RSDS_QDM_DARK_DAY_FLOOR_WM2 threshold in the raw gcm scenario
-                # to fall back to the raw (undebiased) climate-model value, which is more 
+                # to fall back to the raw (undebiased) climate-model value, which is more
                 # physically constrained than a runaway ratio. Note: still need the asser no nans below
                 # because in polar regions nans could still slip through!!
                 debiased_np = np.where(

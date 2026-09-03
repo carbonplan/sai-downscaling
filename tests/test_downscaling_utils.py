@@ -588,14 +588,16 @@ def test_interpolate_coarse_to_fine_grid_regional_edge_stays_nan():
 
 # --- issue #554: real GCM grids must regrid to full global coverage --------------------
 #
-# Coordinates below are the real ones, read from the input stores. They are hardcoded so
-# the tests stay offline. CESM2-WACCM is the grid that hid this bug for a long time: it is
-# the only one whose lat includes +/-90 and whose lon includes exactly -180.
+# The named-GCM coordinates below are the real ones, read from the input stores. They are
+# hardcoded so the tests stay offline. CESM2-WACCM is the grid that hid this bug for a long
+# time: it is the only one whose lat includes +/-90 and whose lon includes exactly -180.
 
 _GCM_GRIDS: dict[str, tuple[np.ndarray, np.ndarray]] = {
     "CESM2-WACCM": (np.linspace(-90.0, 90.0, 192), np.arange(-180.0, 180.0, 1.25)),
-    # Gaussian T85 latitudes: unevenly spaced and stopping ~1.07 deg short of the poles.
-    "MIROC-ES2H": (
+    # Gaussian T85 latitudes: unevenly spaced and stopping ~1.07 deg short of the poles. No
+    # current input store uses this grid, but it is the only entry here with a non-uniform
+    # latitude axis, so it stays as the regression case for pole padding on one.
+    "gaussian-t85": (
         np.degrees(np.arcsin(np.polynomial.legendre.leggauss(128)[0])),
         np.arange(-180.0, 180.0, 1.40625),
     ),
@@ -628,7 +630,7 @@ def _make_gcm_coarse(gcm: str) -> xr.DataArray:
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
 def test_real_gcm_grid_covers_full_globe(gcm: str, dtype: str):
     # The direct guard against issue #554. Fails on the pre-fix implementation for UKESM
-    # (polar caps + a strip down the -180 seam) and MIROC-ES2H (polar caps). Both dtypes,
+    # (polar caps + a strip down the -180 seam) and Gaussian T85 (polar caps). Both dtypes,
     # because the stores hold float32 and the padding decisions come from the coordinates.
     lat, lon = (a.astype(dtype) for a in _GCM_GRIDS[gcm])
     data = np.cos(np.deg2rad(lat.astype("float64")))[:, None] * np.ones(lon.size)[None, :] + 2.0
@@ -673,7 +675,7 @@ def test_interpolate_ukesm_west_seam_is_finite_and_periodic():
     )
 
 
-@pytest.mark.parametrize("gcm", ["MIROC-ES2H", "UKESM"])
+@pytest.mark.parametrize("gcm", ["gaussian-t85", "UKESM"])
 def test_interpolate_pole_row_is_zonally_constant(gcm: str):
     # Poles are filled with the zonal mean of the outermost coarse row (ESMF Pole="all"),
     # so the pole is single-valued rather than carrying each meridian's own value inward.
@@ -806,7 +808,6 @@ def test_bypassing_regrid_linear_is_equivalent(gcm: str):
     [
         ("CESM2-WACCM", "r1i1p1f1"),
         ("CESM2-WACCM", "001"),
-        ("MIROC-ES2H", "r1i1p4f2"),
         ("UKESM", "r2i1p1f2"),
     ],
 )
@@ -1022,7 +1023,7 @@ def _regional_grids(n_time: int = 40) -> tuple[xr.DataArray, xr.DataArray, xr.Da
 def _pole_gap_global_grids() -> tuple[xr.DataArray, xr.DataArray]:
     """Global coarse grid whose cell centers stop half a step short of the boundary.
 
-    This is the UKESM and MIROC-ES2H geometry at test scale. UKESM stores lat centers at
+    This is the UKESM geometry at test scale. UKESM stores lat centers at
     +/-89.375 on a 1.25 deg grid and lon centers from -179.0625 on a 1.875 deg grid, so the
     outermost ERA5 fine rows and columns used to fall outside the interpolation domain and
     come back NaN. CESM2-WACCM does not, which is why the hole went unnoticed for so long

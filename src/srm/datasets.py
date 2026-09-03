@@ -245,10 +245,6 @@ class Catalog:
                 name="CESM2-WACCM",
                 path="s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk",
             ),
-            "MIROC-ES2H": Datatree(
-                name="MIROC-ES2H",
-                path="s3://carbonplan-srm/input/processed/miroc-es2h.icechunk",
-            ),
             "UKESM": Datatree(
                 name="UKESM",
                 path="s3://carbonplan-srm/input/processed/ukesm.icechunk",
