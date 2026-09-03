@@ -4,11 +4,13 @@ import itertools
 from unittest.mock import patch
 
 import pytest
+import typer
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from srm.cli import (
+    _confirm_cost,
     _expand_matrix_config,
     _is_matrix_config,
     _parse_variable_overrides,
@@ -326,6 +328,82 @@ class TestResolveVariableConfig:
             _resolve_variable_config(
                 "tas", "BCSD", None, {"tas": {"disaggregation_method": "bogus"}}
             )
+
+
+class TestEmptyStoreIsBlocking:
+    """An unfiltered read that finds nothing must fail, not warn."""
+
+    _CONFIG_YAML = TestValidateOutputConfigPath._CONFIG_YAML
+
+    def _write_config(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(self._CONFIG_YAML)
+        return config_file
+
+    def test_no_leaves_without_a_filter_exits_nonzero(self, tmp_path):
+        # validate-output runs right after `bcsd run` over the same configs, so an empty
+        # read means the run wrote nothing or this process resolved a different branch
+        # than the writer. Warning and exiting 0 passes a deploy gate that checked nothing.
+        config_file = self._write_config(tmp_path)
+        with patch("srm.validation.validate_output_store", return_value=[]):
+            result = CliRunner().invoke(
+                app, ["validate-output", "--config-path", str(config_file), "--no-coiled"]
+            )
+        assert result.exit_code == 1, result.output
+
+    def test_no_leaves_with_a_filter_still_exits_nonzero(self, tmp_path):
+        config_file = self._write_config(tmp_path)
+        with patch("srm.validation.validate_output_store", return_value=[]):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "validate-output",
+                    "--config-path",
+                    str(config_file),
+                    "--variable",
+                    "tas",
+                    "--no-coiled",
+                ],
+            )
+        assert result.exit_code == 1, result.output
+
+    def test_populated_store_still_passes(self, tmp_path):
+        config_file = self._write_config(tmp_path)
+        passing = CheckResult(
+            check_id="lat_valid",
+            gcm="CESM2-WACCM",
+            scenario="ssp245/tas/001",
+            status=CheckStatus.PASS,
+        )
+        with patch("srm.validation.validate_output_store", return_value=[passing]):
+            result = CliRunner().invoke(
+                app, ["validate-output", "--config-path", str(config_file), "--no-coiled"]
+            )
+        assert result.exit_code == 0, result.output
+
+
+class TestResolveBranch:
+    """The runner resolves the branch once so the container cannot derive a second one."""
+
+    def test_prints_the_branch_the_config_resolves_to(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(TestValidateOutputConfigPath._CONFIG_YAML)
+        result = CliRunner().invoke(app, ["resolve-branch", "--config-path", str(config_file)])
+        assert result.exit_code == 0, result.output
+        assert result.output.strip() == "v9"
+
+    def test_falls_back_to_the_package_version(self, tmp_path):
+        # With no branch in the config, the printed value must be the same default
+        # validate-output would have used, or passing it through changes behavior.
+        from srm.bcsd_config import PipelineOptions
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            TestValidateOutputConfigPath._CONFIG_YAML.replace('branch: "v9"\n', "")
+        )
+        result = CliRunner().invoke(app, ["resolve-branch", "--config-path", str(config_file)])
+        assert result.exit_code == 0, result.output
+        assert result.output.strip() == PipelineOptions().branch
 
 
 class TestValidateVariableOverrides:
@@ -891,3 +969,227 @@ branch: "v9"
                 app, ["release", "--config-path", str(config_file), "--tag", "snapshot-v1.0.0"]
             )
         assert result.exit_code == 1, result.output
+
+
+# ---------------------------------------------------------------------------
+# Cost confirmation gate
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmCost:
+    """The gate must protect humans without ever blocking CI."""
+
+    @pytest.fixture
+    def orchestrator(self, tmp_path):
+        from srm.orchestration import BCSDOrchestrator
+
+        return BCSDOrchestrator(
+            PipelineOptions(
+                scratch_dir=str(tmp_path / "cache"),
+                output_dir=str(tmp_path / "out"),
+                verbose=False,
+            )
+        )
+
+    @pytest.fixture
+    def configs(self):
+        return [
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                scenario="SSP245",
+                predict_period_start=2015,
+                predict_period_end=2100,
+            )
+        ]
+
+    def test_local_executor_skips_the_gate_entirely(self, orchestrator, configs):
+        # Nothing is spent locally, so there is nothing to confirm.
+        with patch("srm.cli._render_cost_plan") as mock_render:
+            assert _confirm_cost(orchestrator, configs, "local", False, False) is True
+        mock_render.assert_not_called()
+
+    def test_non_interactive_proceeds_without_prompting(self, orchestrator, configs):
+        # Every deploy job is non-interactive; a prompt would hang it until timeout.
+        with (
+            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("sys.stdin.isatty", return_value=False),
+            patch("typer.confirm") as mock_confirm,
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, False) is True
+        mock_confirm.assert_not_called()
+
+    def test_yes_flag_skips_the_prompt(self, orchestrator, configs):
+        with (
+            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("sys.stdin.isatty", return_value=True),
+            patch("typer.confirm") as mock_confirm,
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, True) is True
+        mock_confirm.assert_not_called()
+
+    def test_interactive_prompts_and_honors_a_refusal(self, orchestrator, configs):
+        with (
+            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("sys.stdin.isatty", return_value=True),
+            patch("typer.confirm", return_value=False) as mock_confirm,
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, False) is False
+        mock_confirm.assert_called_once()
+
+    def test_interactive_prompts_and_honors_acceptance(self, orchestrator, configs):
+        with (
+            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("sys.stdin.isatty", return_value=True),
+            patch("typer.confirm", return_value=True),
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, False) is True
+
+    def test_nothing_to_submit_does_not_prompt(self, orchestrator, configs):
+        with (
+            patch("srm.cli._render_cost_plan", return_value=False),
+            patch("sys.stdin.isatty", return_value=True),
+            patch("typer.confirm") as mock_confirm,
+        ):
+            assert _confirm_cost(orchestrator, configs, "aws-batch", False, False) is True
+        mock_confirm.assert_not_called()
+
+
+class TestStageScopedCostPlan:
+    """`run --stage historical` must not price the other two stages."""
+
+    @pytest.fixture
+    def orchestrator(self, tmp_path):
+        from srm.orchestration import BCSDOrchestrator
+
+        return BCSDOrchestrator(
+            PipelineOptions(
+                scratch_dir=str(tmp_path / "cache"),
+                output_dir=str(tmp_path / "out"),
+                verbose=False,
+            )
+        )
+
+    @pytest.fixture
+    def configs(self):
+        return [
+            BCSDConfig(
+                gcm="CESM2-WACCM",
+                downscaling_method="BCSD",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                scenario="SSP245",
+                predict_period_start=2015,
+                predict_period_end=2100,
+            )
+        ]
+
+    def _priced_stages(self, orchestrator, configs, stage):
+        from srm.cli import _render_cost_plan
+
+        with patch("srm.cli.estimate_workflow", side_effect=ValueError) as mock_est:
+            with pytest.raises(ValueError):
+                _render_cost_plan(orchestrator, configs, "aws-batch", False, stage=stage)
+        return [entry[0] for entry in mock_est.call_args.args[0]]
+
+    def test_all_stages_priced_when_unscoped(self, orchestrator, configs):
+        assert self._priced_stages(orchestrator, configs, None) == [
+            "prepare_observations",
+            "fit_historical",
+            "transform_scenario",
+        ]
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [
+            ("obs", "prepare_observations"),
+            ("historical", "fit_historical"),
+            ("scenario", "transform_scenario"),
+            ("transform_scenario", "transform_scenario"),
+        ],
+    )
+    def test_only_the_selected_stage_is_priced(self, orchestrator, configs, alias, expected):
+        assert self._priced_stages(orchestrator, configs, alias) == [expected]
+
+
+class TestStageValidation:
+    """An unrecognized --stage used to prompt for cost and then silently do nothing."""
+
+    def test_unknown_stage_is_rejected(self, tmp_path):
+        from srm.cli import _resolve_stage
+
+        with pytest.raises(typer.BadParameter, match="foo"):
+            _resolve_stage("foo")
+
+    @pytest.mark.parametrize(
+        "given,expected",
+        [
+            (None, None),
+            ("all", None),
+            ("obs", "prepare_observations"),
+            ("historical", "fit_historical"),
+            ("scenario", "transform_scenario"),
+            ("transform_scenario", "transform_scenario"),
+        ],
+    )
+    def test_known_stages_resolve(self, given, expected):
+        from srm.cli import _resolve_stage
+
+        assert _resolve_stage(given) == expected
+
+
+class TestRunEnvironmentTable:
+    """The estimate names the image a run will execute, or says why it cannot."""
+
+    @pytest.fixture
+    def orchestrator(self, tmp_path):
+        from srm.orchestration import BCSDOrchestrator
+
+        return BCSDOrchestrator(
+            PipelineOptions(
+                scratch_dir=str(tmp_path / "cache"),
+                output_dir=str(tmp_path / "out"),
+                verbose=False,
+            )
+        )
+
+    def _render(self, orchestrator, executor):
+        from srm.cli import _render_run_environment, console
+
+        with console.capture() as cap:
+            _render_run_environment(orchestrator, executor)
+        return cap.get()
+
+    def test_aws_batch_names_the_queue_and_image(self, orchestrator):
+        with patch.object(
+            orchestrator,
+            "resolve_job_definition",
+            return_value={"job_definition": "srm-downscaling:7", "image": "ecr/img:abc123"},
+        ):
+            out = self._render(orchestrator, "aws-batch")
+        assert "srm-downscaling:7" in out
+        assert "abc123" in out
+        assert "srm-production" in out  # the default queue
+
+    def test_unresolvable_definition_is_reported_not_hidden(self, orchestrator):
+        with patch.object(
+            orchestrator, "resolve_job_definition", side_effect=RuntimeError("no creds")
+        ):
+            out = self._render(orchestrator, "aws-batch")
+        assert "unresolved" in out
+        assert "RuntimeError" in out
+
+    @pytest.mark.parametrize("executor", ["coiled", "local"])
+    def test_non_batch_executors_omit_batch_rows(self, orchestrator, executor):
+        with patch.object(orchestrator, "resolve_job_definition") as mock_resolve:
+            out = self._render(orchestrator, executor)
+        mock_resolve.assert_not_called()
+        assert "job definition" not in out
+        assert "job queue" not in out
+        assert executor in out
+
+    def test_always_names_the_output_branch(self, orchestrator):
+        out = self._render(orchestrator, "local")
+        assert "branch" in out and "environment" in out
