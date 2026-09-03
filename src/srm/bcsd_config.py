@@ -609,6 +609,14 @@ class PipelineOptions(pydantic_settings.BaseSettings):
         "srm-downscaling", description="AWS Batch job definition name"
     )
     batch_region: str = Field("us-west-2", description="Region for the AWS Batch control plane")
+    container_image: str | None = Field(
+        None,
+        description=(
+            "Container image remote tasks run in. Set it and the coiled executor runs this "
+            "image instead of package-syncing the caller's environment, so both executors "
+            "are byte-identical. Left unset, coiled falls back to package sync."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod

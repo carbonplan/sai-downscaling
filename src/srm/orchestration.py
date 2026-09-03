@@ -697,9 +697,21 @@ class BCSDOrchestrator:
             ]
             job_name = self._job_name(stage, remaining)
 
+            # Running the same image as the batch executor rather than package-syncing
+            # this process's environment. Two independent resolutions of "the same"
+            # environment are not the same environment: the image installs with --no-dev
+            # while package sync mirrors a local venv built with --all-groups, and a
+            # package present in one and absent in the other silently changed the
+            # conservative regrid's accumulation order. The image's ENTRYPOINT is
+            # `uv run --no-sync`, which is exactly the prefix `command` expects, so the
+            # invocation is identical on both paths.
+            container_kwargs = (
+                {"container": self.options.container_image} if self.options.container_image else {}
+            )
             job_result = coiled.batch.run(
                 command=command,
                 name=job_name,
+                **container_kwargs,
                 vm_type=vm_type,
                 scheduler_vm_type=vm_type,
                 region="us-west-2",

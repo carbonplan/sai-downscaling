@@ -853,6 +853,9 @@ complete = [
     { name = "pandas" },
     { name = "pyarrow" },
 ]
+distributed = [
+    { name = "distributed" },
+]
 
 [[package]]
 name = "dask-array"
@@ -4152,7 +4155,7 @@ dependencies = [
     { name = "tabulate" },
     { name = "typer" },
     { name = "xarray", extra = ["accel"] },
-    { name = "xarray-regrid" },
+    { name = "xarray-regrid", extra = ["accel"] },
     { name = "zarr" },
 ]
 
@@ -4193,7 +4196,6 @@ dev = [
     { name = "rasterio" },
     { name = "s3fs" },
     { name = "seaborn" },
-    { name = "sparse" },
     { name = "virtualizarr" },
     { name = "xclim" },
 ]
@@ -4229,7 +4231,6 @@ qa = [
     { name = "pooch" },
     { name = "rasterio" },
     { name = "seaborn" },
-    { name = "sparse" },
 ]
 test = [
     { name = "ipdb" },
@@ -4268,7 +4269,7 @@ requires-dist = [
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "typer", specifier = ">=0.21.2" },
     { name = "xarray", extras = ["accel"], specifier = ">=2026.7.0" },
-    { name = "xarray-regrid", specifier = ">=0.4.2" },
+    { name = "xarray-regrid", extras = ["accel"], specifier = ">=0.4.2" },
     { name = "zarr", specifier = ">=3.1.5" },
 ]
 
@@ -4309,7 +4310,6 @@ dev = [
     { name = "rasterio", specifier = ">=1.5.0" },
     { name = "s3fs", specifier = ">=2026.1.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "sparse", specifier = ">=0.17.0" },
     { name = "virtualizarr", specifier = ">=2.6.1" },
     { name = "xclim", specifier = ">=0.59.1" },
 ]
@@ -4345,7 +4345,6 @@ qa = [
     { name = "pooch", specifier = ">=1.8.2" },
     { name = "rasterio", specifier = ">=1.5.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "sparse", specifier = ">=0.17.0" },
 ]
 test = [
     { name = "ipdb", specifier = ">=0.13.13" },
@@ -4894,6 +4893,13 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/98/9e/f3b0a63917a6bd4b7e2b290cebc447c8db8e6ff63b4125e30fdcd1e378e1/xarray_regrid-0.4.2.tar.gz", hash = "sha256:96525d39b0290efa59e0255cebd35be028052f1b347bfb10fd259b4380289673", size = 67694872, upload-time = "2026-02-06T09:52:54.567Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4a/94/e7f02068c654a1d94e0d01dd0f6a35730a7284dd0dc3277c45b1ec3a48a6/xarray_regrid-0.4.2-py3-none-any.whl", hash = "sha256:85c575fd5683b296b18a333038f743617d06c1994cd52562e7cfae4a5b8d862f", size = 22781, upload-time = "2026-02-06T09:52:52.853Z" },
+]
+
+[package.optional-dependencies]
+accel = [
+    { name = "dask", extra = ["distributed"] },
+    { name = "opt-einsum" },
+    { name = "sparse" },
 ]
 
 [[package]]
