@@ -160,9 +160,6 @@ class _SeededQuantileMapping(_SeededLocationMixin, QuantileMapping):
     """
 
 
-
-
-
 def _make_debiaser(variable: str, distribution=None, **kwargs):
     if distribution is None:
         if variable in ["tas", "tasmax"]:
@@ -1926,12 +1923,12 @@ class BCSDPipeline:
                 # zero out any near-zero/near-zero divide blow-up left over from censor_values_to_zero
                 debiased_np[cm_future_np < debiaser.censoring_threshold] = 0.0
             elif self.config.variable in ["rsds"]:
-                # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2, 
+                # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2,
                 # rsds's scenario QDM debiaser (trend_preservation="relative")
                 # divides by a modeled-historical quantile that can be arbitrarily close to zero,
                 # producing an outlandish multiplicative blow-up. Instead, we cast any instances
                 # of the scenario below the _RSDS_QDM_DARK_DAY_FLOOR_WM2 threshold in the raw gcm scenario
-                # to fall back to the raw (undebiased) climate-model value, which is more 
+                # to fall back to the raw (undebiased) climate-model value, which is more
                 # physically constrained than a runaway ratio. Note: still need the asser no nans below
                 # because in polar regions nans could still slip through!!
                 _RSDS_QDM_DARK_DAY_FLOOR_WM2 = 10.0
