@@ -583,6 +583,15 @@ class BCSDPipeline:
             "stage": stage,
         }
 
+    def _gcm_description(self) -> str | None:
+        """Model description from the catalog entry for ``config.gcm``, if there is one.
+
+        Lenient on purpose: unit tests build pipelines for names with no catalog entry, and a
+        real run with an unknown ``gcm`` already fails loudly at data load.
+        """
+        entry = _catalog.datasets.get(self.config.gcm)
+        return None if entry is None else entry.description
+
     def _build_output_attrs(self) -> dict:
         """Build dataset-level attributes for pipeline output artifacts."""
         version = importlib.metadata.version("srm")
@@ -615,6 +624,9 @@ class BCSDPipeline:
             "srm_downscaling:config_json": self.config.model_dump_json(),
             "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
+        description = self._gcm_description()
+        if description is not None:
+            attrs["srm_downscaling:gcm_description"] = description
         # Only present on scenarios that continue an earlier SAI run, so readers can tell
         # which run supplied the pre-scenario years of the bridge.
         if self._sai_parent is not None:
@@ -643,7 +655,7 @@ class BCSDPipeline:
             Dataset-level attributes for the ``obs/{variable}`` group.
         """
         version = importlib.metadata.version("srm")
-        return {
+        attrs = {
             # CF-standard — flat
             "Conventions": "CF-1.8",
             "institution": "CarbonPlan",
@@ -658,6 +670,10 @@ class BCSDPipeline:
             "srm_downscaling:observation_dataset": self.config.obs_dataset,
             "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
+        description = self._gcm_description()
+        if description is not None:
+            attrs["srm_downscaling:gcm_description"] = description
+        return attrs
 
     def _write_to_icechunk(
         self,

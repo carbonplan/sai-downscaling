@@ -2527,6 +2527,33 @@ class TestObservationAttrs:
         attrs = self._pipeline("QDMSD", "r1i1p1f1", "SSP245")._build_output_attrs()
         assert attrs["srm_downscaling:downscaling_method"] == "QDMSD"
 
+    def test_obs_attrs_carry_gcm_description(self):
+        attrs = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_obs_attrs()
+        assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM6"
+        assert attrs["srm_downscaling:gcm_description"] == "CESM2.1.5-WACCM6(TSMLT)"
+
+    def test_output_attrs_carry_gcm_description(self):
+        attrs = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_output_attrs()
+        assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM6"
+        assert attrs["srm_downscaling:gcm_description"] == "CESM2.1.5-WACCM6(TSMLT)"
+
+    def test_attrs_omit_description_for_unknown_gcm(self):
+        """A name with no catalog entry gets no description key, and no KeyError."""
+        pipeline = BCSDPipeline(
+            BCSDConfig(
+                gcm="SOME-OTHER-GCM",
+                downscaling_method="BCSD",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                scenario="SSP245",
+                predict_period_start=2015,
+                predict_period_end=2100,
+            ),
+            PipelineOptions(),
+        )
+        assert "srm_downscaling:gcm_description" not in pipeline._build_obs_attrs()
+        assert "srm_downscaling:gcm_description" not in pipeline._build_output_attrs()
+
 
 # ---------------------------------------------------------------------------
 # QDM scenario branch: seasonal window wiring and lead-in pad completeness

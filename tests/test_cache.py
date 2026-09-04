@@ -241,6 +241,12 @@ class TestStorePaths:
     def test_scratch_store_encodes_gcm_obs_subset(self, bound_cache):
         assert "CESM2-WACCM6-ERA5-global.icechunk" in bound_cache._scratch_store
 
+    def test_regional_store_encodes_new_ukesm_name(self, local_cache, regional_config):
+        local_cache.config = regional_config
+        assert (
+            "UKESM1-1-LL-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk" in local_cache._scratch_store
+        )
+
     def test_output_store_uses_output_dir_when_set(self, bound_cache_with_output):
         assert bound_cache_with_output.output_dir in bound_cache_with_output._output_store
         assert bound_cache_with_output.scratch_dir not in bound_cache_with_output._output_store
