@@ -66,6 +66,6 @@ CESM2_WACCM_SOUTH_AFRICA = Baseline(
         "s3://carbonplan-srm/scratch/snapshot"
         "/output/qa/CESM2-WACCM-ERA5-lat-38.0to-19.0_lon13.0to36.0.icechunk"
     ),
-    branch="main-23bd9be-sep-2",
+    branch="spatial-disaggregation-mods-test005",
     executor="aws-batch",
 )

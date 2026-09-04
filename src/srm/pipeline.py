@@ -63,6 +63,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_RSDS_QDM_DARK_DAY_FLOOR_WM2 = 10.0
+
 
 class _WeibullMinZeroBounded(type(scipy.stats.weibull_min)):
     """Subclass of weibull_min_gen that constrains loc=0 during fitting.
@@ -1064,6 +1066,15 @@ class BCSDPipeline:
             # assertion below catches it (issue #517).
             failsafe=True,
         )
+        if self.config.variable in ["rsds"] and debias_approach == "qdm":
+            # for the rsds implementaiton of qdm, we control for days when rsds is
+            # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2 in the
+            # raw climate model. see the apply_bias_correction_scenario for the
+            # exact implementation. for consistency with that we add the same
+            # control to the historical as well.
+            debiased_np = np.where(
+                cm_hist_np < _RSDS_QDM_DARK_DAY_FLOOR_WM2, cm_hist_np, debiased_np
+            )
         assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)
 
         return xr.DataArray(
@@ -1851,8 +1862,7 @@ class BCSDPipeline:
                     distribution=None,
                     mapping_type="nonparametric",
                     trend_preservation="relative",
-                    censor_values_to_zero=True,
-                    censoring_threshold=1.0,
+                    censor_values_to_zero=False,
                     **qdm_window_kwargs,
                 )
             elif self.config.variable == "dtr":
@@ -1920,9 +1930,21 @@ class BCSDPipeline:
             debiased_padded_np = debiaser.apply(**qdm_apply_kwargs)
             # remove the padding and take only the part of debiased_padded_np that is from the scenario you're running
             debiased_np = debiased_padded_np[scenario_pad.sizes["time"] :]
-            if self.config.variable in ["rsds", "dtr"]:
+            if self.config.variable in ["dtr"]:
                 # zero out any near-zero/near-zero divide blow-up left over from censor_values_to_zero
                 debiased_np[cm_future_np < debiaser.censoring_threshold] = 0.0
+            elif self.config.variable in ["rsds"]:
+                # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2,
+                # rsds's scenario QDM debiaser (trend_preservation="relative")
+                # divides by a modeled-historical quantile that can be arbitrarily close to zero,
+                # producing an outlandish multiplicative blow-up. Instead, we cast any instances
+                # of the scenario below the _RSDS_QDM_DARK_DAY_FLOOR_WM2 threshold in the raw gcm scenario
+                # to fall back to the raw (undebiased) climate-model value, which is more
+                # physically constrained than a runaway ratio. Note: still need the asser no nans below
+                # because in polar regions nans could still slip through!!
+                debiased_np = np.where(
+                    cm_future_np < _RSDS_QDM_DARK_DAY_FLOOR_WM2, cm_future_np, debiased_np
+                )
 
         else:
             raise ValueError(
