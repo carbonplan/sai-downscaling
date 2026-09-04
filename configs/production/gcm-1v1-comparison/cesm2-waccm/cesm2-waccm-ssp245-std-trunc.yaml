@@ -31,7 +31,7 @@ predict_period_end: 2069
 scratch_dir: "s3://carbonplan-srm/scratch/cache"
 output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
 
-environment: "qa"
+environment: "production"
 # version intentionally unset — derived from the installed package version at runtime
 verbose: true
 save_intermediate: true

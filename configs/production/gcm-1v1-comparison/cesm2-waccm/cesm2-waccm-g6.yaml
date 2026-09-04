@@ -1,17 +1,14 @@
-# Termination shock: SAI stops after 2084 and G6-1.5K member 002 runs on to 2100. Member
-# 002 is the only run continued to termination, which is why cesm2-waccm-g6.yaml also
-# publishes 002 — the terminated and continued legs have to be the same realization for a
-# comparison between them to mean anything.
-#
-# predict_period_start is 2085 because the g6_1p5k_end store holds only 2085-2100. The
-# 2015-2084 years are still read, as the bridge the detrend stitch needs (SSP245 through
-# 2034, then G6-1.5K 002 for 2035-2084), and trimmed from the output afterwards.
+
+# Member 002 is published alongside 003 because it is the realization the termination
+# run continues (see cesm2-waccm-g6-end.yaml). Without it, the only way to compare SAI
+# continuing against SAI stopping would cross realizations, which is the ensemble-level
+# version of the per-variable mismatch issue #448 hit.
 
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002"]
-scenarios: ["G6-1.5K-END"]
+scenarios: ["G6-1.5K"]
 
 # === Downscaling Methods ===
 # Required: there is no default, so every config states which method produced its output.
@@ -21,14 +18,14 @@ downscaling_methods: ["BCSD", "QDMSD"]
 
 train_period_start: 1978
 train_period_end: 2014
-predict_period_start: 2085
-predict_period_end: 2100
+predict_period_start: 2035
+predict_period_end: 2084
 
 # === PipelineOptions: Operational Settings ===
 scratch_dir: "s3://carbonplan-srm/scratch/cache"
 output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
 
-environment: "qa"
+environment: "production"
 # version intentionally unset — derived from the installed package version at runtime
 verbose: true
 save_intermediate: true
