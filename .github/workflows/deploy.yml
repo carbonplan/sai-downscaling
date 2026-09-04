@@ -275,10 +275,8 @@ jobs:
               # so adding a folder under configs/production/ cannot silently start a global
               # run at the next release.
               #
-              # ukesm1-1-ll is absent because issue #529 leaves a 0.70 K discontinuity at 2015
-              # between our UKESM1.0 historical and the UKESM1.1 ARISE runs, so it is not fit
-              # to publish. miroc-es2h is absent because the deliverable is CESM and UKESM
-              # only; its configs have been removed outright rather than left unloadable.
+              # miroc-es2h is absent because the deliverable is CESM and UKESM only; its
+              # configs have been removed outright rather than left unloadable.
               run: |
                   if [[ -n "$MODEL" ]]; then
                     # A model may name a folder or a single config file beneath it.

@@ -250,12 +250,7 @@ class Catalog:
             ),
             "UKESM1-1-LL": Datatree(
                 name="UKESM1-1-LL",
-                # The scenarios are UKESM1.1 ARISE-SAI runs, but the historical they train
-                # against is still CMIP6 UKESM1-0-LL (#529). Say so instead of hiding it.
-                description=(
-                    "UKESM1.1-LL ARISE-SAI runs; historical training data from CMIP6 "
-                    "UKESM1-0-LL (issue #529)"
-                ),
+                description="UKESM1.1-LL",
                 path="s3://carbonplan-srm/input/processed/ukesm.icechunk",
             ),
             "ERA5": Dataset(

@@ -27,7 +27,7 @@ class TestGcmCatalogNames:
     def test_ukesm_key_and_description(self):
         entry = catalog.get("UKESM1-1-LL")
         assert entry.name == "UKESM1-1-LL"
-        assert "UKESM1-0-LL" in entry.description
+        assert entry.description == "UKESM1.1-LL"
         assert str(entry.path) == "s3://carbonplan-srm/input/processed/ukesm.icechunk"
 
     @pytest.mark.parametrize("legacy", ["CESM2-WACCM", "UKESM"])

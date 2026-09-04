@@ -87,7 +87,7 @@ The matrix is an explicit list in `deploy.yml` rather than a directory listing, 
 | GCM | In the release matrix | Reason |
 | --- | --- | --- |
 | `cesm2-waccm6` | Yes | |
-| `ukesm1-1-ll` | No | Issue #529 leaves a 0.70 K discontinuity at 2015 between the UKESM1.0 historical and the UKESM1.1 ARISE runs |
+| `ukesm1-1-ll` | No | |
 
 **To run every model in the matrix:**
 
@@ -151,7 +151,7 @@ To add a variable, member, or scenario to a GCM that already runs in production:
 
 To add a **new GCM**, do the same in a new `configs/production/{model}/` folder, then add that folder name to the list emitted by the `models` job in `.github/workflows/deploy.yml`. Both steps are required: that list is a deliberate allowlist, so a config folder not named there is never run. The `plan` and `production` jobs both read it, which keeps the cost estimate covering exactly the models that then run.
 
-Two GCMs are deliberately excluded. `ukesm1-1-ll` is held back by issue #529, which leaves a 0.70 K discontinuity at 2015 between our UKESM1.0 historical and the UKESM1.1 ARISE runs. `miroc-es2h` is out of scope for the deliverable and its configs have been removed outright.
+Two GCMs are deliberately excluded. `ukesm1-1-ll` is not in the matrix yet. `miroc-es2h` is out of scope for the deliverable and its configs have been removed outright.
 
 ## Prerequisites
 

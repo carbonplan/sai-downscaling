@@ -149,7 +149,7 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
 
     _all = _std + _tmx
 
-    # UKESM1-1-LL (code gcm name: "UKESM1-1-LL")
+    # UKESM1-1-LL
     # Every file from this delivery is UKESM1-1-LL: source metadata and filenames that say
     # UKESM1-0-LL / UKESM1-1 are supplier labelling typos (confirmed by email), corrected on
     # ingest in srm.input_data.ukesm.
@@ -213,6 +213,7 @@ def all_lineage_keys() -> list[tuple[str, str, str, str]]:
 # verbatim re-export.
 PROVENANCE_GCM_ALIASES: dict[str, str] = {
     "CESM2(WACCM)": "CESM2-WACCM6",
+    # Identity, kept so the sheet's UKESM rows are reconciled instead of skipped.
     "UKESM1-1-LL": "UKESM1-1-LL",
 }
 PROVENANCE_SCENARIO_ALIASES: dict[str, str] = {
