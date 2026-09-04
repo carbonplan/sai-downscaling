@@ -18,7 +18,8 @@ on:
                     config file relative to the chosen config root (e.g.
                     cesm2-waccm6/cesm2-waccm6-g6-southafrica.yaml). Leave blank to run every model
                     for that environment. Production accepts only the models on the allowlist in
-                    the `models` job, currently cesm2-waccm6; qa accepts any subfolder."
+                    the `models` job, currently cesm2-waccm6 and ukesm1-1-ll; qa accepts any
+                    subfolder."
                 required: false
                 default: ""
                 type: string
@@ -270,7 +271,7 @@ jobs:
                   MODEL: ${{ inputs.model }}
                   # The allowlist itself. A dispatch is checked against it too, so the
                   # comment below holds for every trigger rather than releases alone.
-                  ALLOWED: cesm2-waccm6
+                  ALLOWED: cesm2-waccm6 ukesm1-1-ll
               # The release list is explicit rather than derived from the directory listing,
               # so adding a folder under configs/production/ cannot silently start a global
               # run at the next release.
