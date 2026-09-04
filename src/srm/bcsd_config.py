@@ -298,6 +298,24 @@ class BCSDConfig(pydantic_settings.BaseSettings):
         """Uppercase scenario so 'ssp245' and 'SSP245' are equivalent."""
         return v.upper() if v is not None else v
 
+    # Names retired by #598. ``gcm`` is a real field, so a stale spelling would otherwise load
+    # fine, get a store path under the old name, and only fail at catalog.get inside a Batch task.
+    _LEGACY_GCM_NAMES: ClassVar[dict[str, str]] = {
+        "CESM2-WACCM": "CESM2-WACCM6",
+        "UKESM": "UKESM1-1-LL",
+    }
+
+    @field_validator("gcm")
+    @classmethod
+    def _reject_legacy_gcm_name(cls, v: str) -> str:
+        """Fail on a pre-#598 model name instead of building a store path under it."""
+        replacement = cls._LEGACY_GCM_NAMES.get(v)
+        if replacement is not None:
+            raise ValueError(
+                f"gcm {v!r} was renamed to {replacement!r} (issue #598). Update the config."
+            )
+        return v
+
     # Time periods.
     # Ensure that the train period end and start fall between 1950 and 2014
     # The predict period can be anywhere from 1950 to 2100 because the

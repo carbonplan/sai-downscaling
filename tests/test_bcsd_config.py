@@ -851,3 +851,30 @@ class TestExecutorOption:
     def test_rejects_legacy_use_coiled_key(self, tmp_path):
         with pytest.raises(ValueError, match="use_coiled"):
             PipelineOptions(scratch_dir=str(tmp_path), output_dir=str(tmp_path), use_coiled=True)
+
+
+class TestLegacyGcmNames:
+    """Issue #598: pre-rename model names fail at load, not inside a Batch task."""
+
+    @pytest.mark.parametrize(
+        "legacy, replacement",
+        [("CESM2-WACCM", "CESM2-WACCM6"), ("UKESM", "UKESM1-1-LL")],
+    )
+    def test_rejects_legacy_gcm_name(self, legacy, replacement):
+        with pytest.raises(ValueError, match=replacement):
+            BCSDConfig(
+                downscaling_method="BCSD",
+                gcm=legacy,
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+            )
+
+    def test_unknown_name_is_not_rejected_here(self):
+        """Only the two legacy spellings are mapped; catalog lookup handles the rest."""
+        config = BCSDConfig(
+            downscaling_method="BCSD",
+            gcm="SOME-OTHER-GCM",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
+        )
+        assert config.gcm == "SOME-OTHER-GCM"
