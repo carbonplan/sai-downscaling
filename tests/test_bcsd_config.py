@@ -62,7 +62,7 @@ def sai_config() -> BCSDConfig:
 def regional_config() -> BCSDConfig:
     """BCSDConfig with a spatial subset (South Africa region)."""
     return BCSDConfig(
-        gcm="MIROC-ES2H",
+        gcm="UKESM",
         downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="01",
@@ -415,7 +415,7 @@ class TestBCSDConfigConstruction:
                 assert cfg.variable == var
 
     def test_all_supported_gcms_construct(self, subtests):
-        for gcm in ("CESM2-WACCM", "MIROC-ES2H", "UKESM"):
+        for gcm in ("CESM2-WACCM", "UKESM"):
             with subtests.test(gcm=gcm):
                 cfg = BCSDConfig(
                     downscaling_method="BCSD", gcm=gcm, variable="tas", ensemble_member="r1i1p1f1"
@@ -817,3 +817,28 @@ class TestUsageExamples:
         block = self._example_block()
         _, _, yaml_example = block.partition("# Config file: configs/cesm_tas.yaml")
         assert "downscaling_method:" in yaml_example.split('"""')[1]
+
+
+# ---------------------------------------------------------------------------
+# PipelineOptions.executor
+# ---------------------------------------------------------------------------
+
+
+class TestExecutorOption:
+    def test_defaults_to_coiled(self, tmp_path):
+        options = PipelineOptions(scratch_dir=str(tmp_path), output_dir=str(tmp_path))
+        assert options.executor == "coiled"
+
+    def test_accepts_aws_batch(self, tmp_path):
+        options = PipelineOptions(
+            scratch_dir=str(tmp_path), output_dir=str(tmp_path), executor="aws-batch"
+        )
+        assert options.executor == "aws-batch"
+
+    def test_rejects_unknown_executor(self, tmp_path):
+        with pytest.raises(ValidationError):
+            PipelineOptions(scratch_dir=str(tmp_path), output_dir=str(tmp_path), executor="slurm")
+
+    def test_rejects_legacy_use_coiled_key(self, tmp_path):
+        with pytest.raises(ValueError, match="use_coiled"):
+            PipelineOptions(scratch_dir=str(tmp_path), output_dir=str(tmp_path), use_coiled=True)

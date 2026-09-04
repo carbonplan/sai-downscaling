@@ -9,8 +9,10 @@ GCM/variable), ``fit_historical`` (once per GCM/variable/ensemble), and
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import logging
+import os
 import time
 import warnings
 from datetime import UTC, datetime
@@ -79,6 +81,85 @@ class _WeibullMinZeroBounded(type(scipy.stats.weibull_min)):
 _weibull_min_zero_bounded = _WeibullMinZeroBounded(a=0.0, name="weibull_min_floc0")
 
 
+def _location_seed(*arrays: np.ndarray) -> int:
+    """Derive a deterministic RNG seed from the data at a single grid cell.
+
+    Parameters
+    ----------
+    *arrays : np.ndarray
+        The per-location timeseries handed to ``apply_location``.
+
+    Returns
+    -------
+    int
+        A seed in the range accepted by :func:`numpy.random.seed`, stable across
+        processes, machines and worker counts for the same input values.
+    """
+    digest = hashlib.blake2b(digest_size=4)
+    for array in arrays:
+        digest.update(np.ascontiguousarray(array, dtype=np.float64).tobytes())
+    return int.from_bytes(digest.digest(), "little")
+
+
+class _SeededLocationMixin:
+    """Make a debiaser's stochastic draws reproducible by seeding per location.
+
+    Several ibicus code paths draw from numpy's process-global legacy RandomState:
+    quantile delta mapping censors values at or below ``censoring_threshold`` by
+    replacing them with ``np.random.rand() * censoring_threshold``
+    (``_quantile_delta_mapping.py``), and the precipitation hurdle and left-censored
+    gamma models randomize their ``cdf`` below the threshold (``utils/_math_utils.py``).
+
+    ``Debiaser.apply`` fans locations out over a ``multiprocessing.Pool``, so that
+    global state is per worker and the position each cell lands at in its worker's
+    stream depends on how the pool happened to schedule tasks, and on ``nr_processes``
+    (which follows instance size). Seeding in the parent before ``apply`` therefore
+    cannot make a run reproducible: under the fork start method every worker inherits
+    the same seeded state but consumes it in a scheduling-dependent order, and under
+    spawn the workers are seeded from entropy and ignore the parent entirely
+    (issue #627).
+
+    Seeding here instead, from the cell's own data, makes every draw a function of the
+    inputs alone. Runs are then bit-identical across repeats, worker counts and start
+    methods, while keeping ibicus's per-window redraw semantics unchanged. The seed is
+    per location rather than one constant for the whole grid so that neighboring cells
+    do not receive identical jitter, which would put spatially coherent structure into
+    what is meant to be tie-breaking noise.
+
+    Mixed in ahead of the debiaser class so this ``apply_location`` wins and ``super()``
+    reaches ibicus's. Subclasses are defined at module level so multiprocessing can
+    pickle them, for the same reason as :class:`_WeibullMinZeroBounded` above.
+    """
+
+    def apply_location(self, obs, cm_hist, cm_future, **kwargs):
+        np.random.seed(_location_seed(obs, cm_hist, cm_future))
+        return super().apply_location(obs, cm_hist, cm_future, **kwargs)
+
+
+class _SeededQuantileDeltaMapping(_SeededLocationMixin, QuantileDeltaMapping):
+    """Reproducible quantile delta mapping. See :class:`_SeededLocationMixin`.
+
+    The draws come from censoring, so this bites on ``pr`` (via
+    :meth:`QuantileDeltaMapping.for_precipitation`) plus ``rsds`` and ``dtr``, which set
+    ``censor_values_to_zero`` explicitly, and on ``tasmin``, which is derived as
+    ``tasmax - dtr``. ``tas``, ``tasmax`` and ``hurs`` do not censor and were already
+    deterministic.
+    """
+
+
+class _SeededQuantileMapping(_SeededLocationMixin, QuantileMapping):
+    """Reproducible quantile mapping. See :class:`_SeededLocationMixin`.
+
+    No configured BCSD path draws today: the tables reach ``QuantileMapping`` only with
+    ``mapping_type="nonparametric"``, or parametrically with distributions that do not
+    randomize (Weibull, Gumbel, norm, beta). The exposure is latent rather than absent,
+    though, because ``_make_debiaser`` falls back to ``PrecipitationHurdleModelGamma``
+    for ``pr``, whose ``cdf`` randomizes; setting ``debias_approach="parametric"`` for
+    ``pr`` would reach it. Seeding here keeps that from silently reintroducing
+    issue #627 rather than fixing anything currently broken.
+    """
+
+
 def _make_debiaser(variable: str, distribution=None, **kwargs):
     if distribution is None:
         if variable in ["tas", "tasmax"]:
@@ -87,7 +168,7 @@ def _make_debiaser(variable: str, distribution=None, **kwargs):
             distribution = scipy.stats.beta
         elif variable == "pr":
             distribution = PrecipitationHurdleModelGamma
-    return QuantileMapping(distribution=distribution, **kwargs)
+    return _SeededQuantileMapping(distribution=distribution, **kwargs)
 
 
 def calculate_out_of_range_mask(
@@ -354,6 +435,45 @@ def stitch_historical_scenario(
 
     _assert_stitched_continuity(result)
     return result
+
+
+#: Environment variable carrying the vCPU a remote task was actually allocated. The
+#: orchestrator sets it on both executors from the same instance sizing table.
+NR_PROCESSES_ENV = "SRM_NR_PROCESSES"
+
+
+def debiaser_processes() -> int:
+    """How many processes ``ibicus.Debiaser.apply`` should fan out over.
+
+    ``dask.system.CPU_COUNT`` is the wrong number under AWS Batch. ECS on EC2 expresses a
+    vCPU request as a cgroup *share* (``cpu.weight``) and leaves ``cpu.max`` unset, so
+    dask finds no quota and falls back to the host's core count: a container allocated 16
+    vCPU on a packed ``r8g.24xlarge`` measures 96. Coiled gives each task a dedicated VM,
+    so there the same call returns the 16 that was asked for.
+
+    That divergence is not only a resource-planning bug. ``nr_processes`` sets how ibicus
+    partitions the grid, and the partitioning is visible in the answers, so the two
+    executors produce different output for identical inputs. Reading the allocation the
+    orchestrator requested makes the two agree by construction.
+
+    Returns
+    -------
+    int
+        The requested vCPU when the orchestrator supplied one, otherwise
+        ``dask.system.CPU_COUNT`` for local runs and anything else unmanaged.
+    """
+    raw = os.environ.get(NR_PROCESSES_ENV)
+    if not raw:
+        return dask.system.CPU_COUNT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; falling back to CPU_COUNT", NR_PROCESSES_ENV, raw)
+        return dask.system.CPU_COUNT
+    if value < 1:
+        logger.warning("%s=%d is not positive; falling back to CPU_COUNT", NR_PROCESSES_ENV, value)
+        return dask.system.CPU_COUNT
+    return value
 
 
 class BCSDPipeline:
@@ -936,7 +1056,7 @@ class BCSDPipeline:
             time_cm_hist=model_hist["time"].values,
             time_cm_future=model_hist["time"].values,
             parallel=True,
-            nr_processes=dask.system.CPU_COUNT,
+            nr_processes=debiaser_processes(),
             progressbar=False,
             # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
             # distribution fit that fails to converge. Inputs are asserted NaN-free
@@ -970,7 +1090,7 @@ class BCSDPipeline:
             clim_method=self.config.variable_config.disaggregation_clim_method,
             allow_negative_values=False,
             tiny_threshold=self.config.variable_config.disaggregation_tiny_threshold,
-            use_tiny_threshold=False,
+            use_tiny_threshold=True,
         )
         return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
 
@@ -1280,11 +1400,11 @@ class BCSDPipeline:
     def _load_ssp245_segment(self) -> xr.DataArray:
         """Load the SSP245 portion of the bridge.
 
-        For most GCMs, returns the primary SSP245 dataset directly. For MIROC-ES2H
-        G6-1.5K, the primary (GeoMIP) SSP245 starts in 2020, leaving a 2015–2019 gap.
-        When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap before the
-        GeoMIP data begins. The primary is already in proleptic_gregorian; the ESGF
-        dataset is converted via to_proleptic_gregorian before concat.
+        For most GCMs, returns the primary SSP245 dataset directly. A GCM whose primary
+        SSP245 run starts after the historical period ends leaves a gap at the front of
+        the scenario. When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap
+        before the primary data begins. The primary is already in proleptic_gregorian;
+        the ESGF dataset is converted via to_proleptic_gregorian before concat.
         """
         primary = get_experiment(self.config.gcm, "SSP245", self.config.variable)
         primary = primary.sel(ensemble_member=self._ssp245_member)
@@ -1379,8 +1499,8 @@ class BCSDPipeline:
         model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
         model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
 
-        # Non-SAI scenarios whose primary dataset starts after predict_period_start
-        # (e.g. MIROC-ES2H GeoMIP SSP245 starts 2020) need ESGF data prepended to close the gap.
+        # Non-SAI scenarios whose primary dataset starts after predict_period_start need
+        # ESGF data prepended to close the gap.
         if not self.config.is_sai_scenario and self._ssp245_esgf_member is not None:
             scenario_start_year = int(model_scenario.time.dt.year.min())
             if scenario_start_year > self.config.predict_period_start:
@@ -1600,7 +1720,7 @@ class BCSDPipeline:
             time_cm_hist=model_hist["time"].values,
             time_cm_future=scenario_detrended["time"].values,
             parallel=True,
-            nr_processes=dask.system.CPU_COUNT,
+            nr_processes=debiaser_processes(),
             progressbar=False,
             # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
             # distribution fit that fails to converge. Inputs are asserted NaN-free
@@ -1609,6 +1729,10 @@ class BCSDPipeline:
             failsafe=True,
         )
 
+        # No np.random.seed() here. It cannot make a run reproducible, because
+        # debiaser.apply() draws its random values inside multiprocessing workers that
+        # do not share this process's RNG state. Reproducibility comes from
+        # _SeededQuantileDeltaMapping, which seeds per location inside the worker.
         if debias_approach in ["parametric", "nonparametric"]:
             debiaser = _make_debiaser(mapping_type=debias_approach, **common_kwargs)
             logger.debug("[_apply_bias_correction_scenario] %s", debiaser)
@@ -1710,7 +1834,7 @@ class BCSDPipeline:
                 running_window_step_length=self.config.variable_config.running_window_step_length,
             )
             if self.config.variable == "pr":
-                debiaser = QuantileDeltaMapping.for_precipitation(**qdm_window_kwargs)
+                debiaser = _SeededQuantileDeltaMapping.for_precipitation(**qdm_window_kwargs)
             elif self.config.variable == "rsds":
                 # ibicus has no built-in QDM defaults for rsds: "standard" defaults
                 # only cover tas/pr, and "experimental" defaults cover
@@ -1721,7 +1845,7 @@ class BCSDPipeline:
                 # bound (it also mirrors the multiplicative disaggregation used for rsds).
                 # censor_values_to_zero guards against a 0/0 divide in polar-night
                 # windows, where obs/cm_hist/cm_future can all be genuinlely zero.
-                debiaser = QuantileDeltaMapping(
+                debiaser = _SeededQuantileDeltaMapping(
                     variable="rsds",
                     reasonable_physical_range=[0, 1000],
                     distribution=None,
@@ -1732,7 +1856,7 @@ class BCSDPipeline:
                     **qdm_window_kwargs,
                 )
             elif self.config.variable == "dtr":
-                debiaser = QuantileDeltaMapping(
+                debiaser = _SeededQuantileDeltaMapping(
                     variable="dtr",
                     reasonable_physical_range=[0, 100],
                     distribution=None,
@@ -1743,7 +1867,7 @@ class BCSDPipeline:
                     **qdm_window_kwargs,
                 )
             else:
-                debiaser = QuantileDeltaMapping.from_variable(
+                debiaser = _SeededQuantileDeltaMapping.from_variable(
                     self.config.variable, **qdm_window_kwargs
                 )
 

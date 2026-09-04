@@ -1,0 +1,175 @@
+name: build image
+
+# Builds the arm64 container the AWS Batch executor runs, then registers a job definition
+# revision pinned to that exact image. Deploy calls this and submits against the returned
+# revision, so a run can only ever execute the code it was built from.
+on:
+    workflow_call:
+        outputs:
+            job_definition:
+                description: "Job definition pinned to this commit's image, as name:revision."
+                value: ${{ jobs.build.outputs.job_definition }}
+            image:
+                description: "Full ECR image URI built for this commit."
+                value: ${{ jobs.build.outputs.image }}
+    workflow_dispatch:
+
+permissions:
+    id-token: write
+    contents: read
+
+env:
+    ECR_REPOSITORY: srm-downscaling
+    JOB_DEFINITION: srm-downscaling
+    AWS_REGION: us-west-2
+
+jobs:
+    build:
+        name: Build and push srm-downscaling
+        # Native arm64 runner: emulating Graviton under QEMU on x86 makes the uv sync step,
+        # which compiles cartopy from source, take tens of minutes.
+        runs-on: ubuntu-24.04-arm
+        timeout-minutes: 60
+        outputs:
+            job_definition: ${{ steps.register.outputs.job_definition }}
+            image: ${{ steps.meta.outputs.image }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  # setuptools_scm derives the version from history, and that version is
+                  # stamped into every output store as srm_downscaling:version.
+                  fetch-depth: 0
+
+            - uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  role-to-assume: arn:aws:iam::631969445205:role/github-action-role
+                  role-session-name: srm-build-image
+                  aws-region: ${{ env.AWS_REGION }}
+                  # Above this job's 60-minute timeout: the credentials are static for the
+                  # job, and the register-job-definition step at the end needs them after a
+                  # cold build has spent most of that hour compiling cartopy.
+                  role-duration-seconds: 7200
+
+            - id: login-ecr
+              uses: aws-actions/amazon-ecr-login@v2
+
+            - uses: astral-sh/setup-uv@v7
+
+            - name: Resolve version and image tag
+              id: meta
+              run: |
+                  VERSION=$(uvx --from setuptools-scm python -m setuptools_scm)
+                  IMAGE="${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}"
+                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+                  echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+                  # image-manifest/oci-mediatypes make the cache manifest one ECR accepts;
+                  # ignore-error keeps a cache export failure from failing the build.
+                  CACHE_REF="${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:buildcache"
+                  echo "cache_ref=$CACHE_REF" >> "$GITHUB_OUTPUT"
+                  if [[ "${{ github.event_name }}" == "release" ]]; then
+                    echo "cache_to=type=registry,ref=$CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "cache_to=" >> "$GITHUB_OUTPUT"
+                  fi
+
+                  # Only a release moves :latest or claims a version tag. Any dispatch can
+                  # build this workflow, and the job definition's default image is :latest,
+                  # so tagging it every time would silently repoint unpinned runs at
+                  # feature-branch code.
+                  #
+                  # The version tag closes the trace from data back to image: every output
+                  # store is stamped srm_downscaling:version and written to an icechunk
+                  # branch of that version, so the tag lets you go straight from a store to
+                  # the image that produced it. "+" is legal in a version but not in a
+                  # Docker tag.
+                  TAGS="$IMAGE"
+                  if [[ "${{ github.event_name }}" == "release" ]]; then
+                    REPO="${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY"
+                    TAGS="$TAGS
+                  $REPO:${VERSION//+/_}
+                  $REPO:latest"
+                  fi
+                  {
+                    echo "tags<<__TAGS__"
+                    echo "$TAGS"
+                    echo "__TAGS__"
+                  } >> "$GITHUB_OUTPUT"
+
+            - uses: docker/setup-buildx-action@v3
+
+            - uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  platforms: linux/arm64
+                  push: true
+                  build-args: SRM_VERSION=${{ steps.meta.outputs.version }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  cache-from: type=registry,ref=${{ steps.meta.outputs.cache_ref }}
+                  cache-to: ${{ steps.meta.outputs.cache_to }}
+
+            - name: Smoke-test the pushed image
+              # A job definition is registered from this image in the next step, and these
+              # are the only two forms anything ever asks it to run. Batch has no entryPoint
+              # field, so the image's ENTRYPOINT and the caller's command are two halves of
+              # one string that meet only on a task VM, where a mismatch is every job dying
+              # on argument parsing an hour into a run. Testing the pushed artifact rather
+              # than the local build is deliberate: that is what the revision will pin.
+              # This runner is native arm64, so the image runs without emulation.
+              env:
+                  IMAGE: ${{ steps.meta.outputs.image }}
+              run: |
+                  docker pull "$IMAGE"
+
+                  EXPECTED='["uv","run","--no-sync"]'
+                  ACTUAL=$(docker inspect --format '{{json .Config.Entrypoint}}' "$IMAGE")
+                  if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+                    echo "::error::image ENTRYPOINT is $ACTUAL, expected $EXPECTED. Callers in orchestration.py and the batch-run action name the rest of the command themselves and will not line up."
+                    exit 1
+                  fi
+
+                  # The stage form, as BCSDOrchestrator._submit_batch_job sends it.
+                  docker run --rm "$IMAGE" python -m srm.batch_runner --help >/dev/null
+
+                  # The validate form, as the deploy workflow's batch-run action sends it.
+                  docker run --rm "$IMAGE" bcsd validate-output --help >/dev/null
+
+                  # Both validate steps pass --config-path, so the configs have to be aboard.
+                  docker run --rm --entrypoint sh "$IMAGE" -c 'test -d configs/qa && test -d configs/production && test -d configs/snapshot'
+
+                  echo "Image runs both command forms and carries configs" >> "$GITHUB_STEP_SUMMARY"
+
+            - name: Register a job definition revision for this image
+              id: register
+              # containerOverrides cannot override the image, so pinning a run to a commit
+              # means a revision per image. vCPU and memory here are placeholders that
+              # _submit_batch_job always overrides from its per-stage table.
+              #
+              # jobRoleArn is coiled-carbonplan, not the tighter srm-batch-job-role, because
+              # source.coop grants write on carbonplan/srm-downscaling to that principal by
+              # name. Production configs write output there, so any other identity is denied
+              # no matter what we allow on our side. Its trust policy carries
+              # ecs-tasks.amazonaws.com alongside ec2.amazonaws.com for this reason; the ec2
+              # entry is what Coiled clusters still use, so do not remove it.
+              run: |
+                  REVISION=$(aws batch register-job-definition \
+                    --region "$AWS_REGION" \
+                    --job-definition-name "$JOB_DEFINITION" \
+                    --type container \
+                    --platform-capabilities EC2 \
+                    --propagate-tags \
+                    --tags Project=SRM \
+                    --retry-strategy '{"attempts":3,"evaluateOnExit":[{"onStatusReason":"Job attempt duration exceeded timeout","action":"EXIT"}]}' \
+                    --timeout '{"attemptDurationSeconds":21600}' \
+                    --container-properties "$(jq -n --arg image "${{ steps.meta.outputs.image }}" '{
+                        image: $image,
+                        jobRoleArn: "arn:aws:iam::631969445205:role/coiled-carbonplan",
+                        executionRoleArn: "arn:aws:iam::631969445205:role/srm-batch-execution-role",
+                        resourceRequirements: [
+                          {type: "VCPU", value: "8"},
+                          {type: "MEMORY", value: "61440"}
+                        ],
+                        logConfiguration: {logDriver: "awslogs"}
+                      }')" \
+                    --query 'revision' --output text)
+                  echo "job_definition=$JOB_DEFINITION:$REVISION" >> "$GITHUB_OUTPUT"
+                  echo "Pinned job definition: $JOB_DEFINITION:$REVISION" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,130 @@
+name: Batch run
+description: Submit one AWS Batch job, wait for it, and surface its output in the step log and summary
+
+inputs:
+  name:
+    description: Job name, and the heading the output appears under in the step summary
+    required: true
+  command:
+    description: >-
+      Command to run, as a JSON array. The image's ENTRYPOINT is `uv run --no-sync`, so
+      this names the rest of the invocation, e.g. ["bcsd","validate","--config-path","configs/qa/"].
+    required: true
+  job-queue:
+    description: AWS Batch job queue to submit to
+    required: true
+  job-definition:
+    description: Job definition, pinned to a revision by the image job
+    required: true
+  vcpu:
+    description: vCPUs to request. The job definition's value is a placeholder.
+    required: false
+    default: "16"
+  memory:
+    description: Memory to request in MiB, at 7680 per vCPU to leave the ECS agent room
+    required: false
+    default: "122880"
+  max-queued-seconds:
+    description: >-
+      How long the job may sit before it starts. A job that never leaves RUNNABLE is
+      waiting on capacity, not working, and would otherwise poll until the job's own
+      timeout-minutes with nothing to read.
+    required: false
+    default: "3600"
+  poll-seconds:
+    description: Delay between describe-jobs calls
+    required: false
+    default: "20"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        JOB_NAME: ${{ inputs.name }}
+        COMMAND: ${{ inputs.command }}
+        JOB_QUEUE: ${{ inputs.job-queue }}
+        JOB_DEFINITION: ${{ inputs.job-definition }}
+        VCPU: ${{ inputs.vcpu }}
+        MEMORY: ${{ inputs.memory }}
+        MAX_QUEUED_SECONDS: ${{ inputs.max-queued-seconds }}
+        POLL_SECONDS: ${{ inputs.poll-seconds }}
+      run: |
+        set -euo pipefail
+
+        # A caller that built this array with a failing command substitution hands us an
+        # empty string, which would otherwise surface as a bare jq parse error.
+        if [[ -z "${COMMAND// /}" ]]; then
+          echo "::error::command input is empty; the caller failed to build the command array"
+          exit 1
+        fi
+        if ! printf '%s' "$COMMAND" | jq -e 'type == "array" and length > 0' >/dev/null; then
+          echo "::error::command input is not a non-empty JSON array: $COMMAND"
+          exit 1
+        fi
+
+        # Batch rejects a job name with anything but alphanumerics, hyphen and underscore.
+        SAFE_NAME=$(printf '%s' "$JOB_NAME" | tr -c '[:alnum:]_-' '-' | cut -c1-128)
+
+        OVERRIDES=$(jq -n \
+          --argjson cmd "$COMMAND" --arg vcpu "$VCPU" --arg mem "$MEMORY" \
+          '{command: $cmd,
+            resourceRequirements: [{type: "VCPU", value: $vcpu}, {type: "MEMORY", value: $mem}]}')
+
+        JOB_ID=$(aws batch submit-job \
+          --job-name "$SAFE_NAME" \
+          --job-queue "$JOB_QUEUE" \
+          --job-definition "$JOB_DEFINITION" \
+          --container-overrides "$OVERRIDES" \
+          --tags Project=SRM --propagate-tags \
+          --query jobId --output text)
+        echo "Submitted $SAFE_NAME as $JOB_ID to $JOB_QUEUE"
+
+        # There is no waiter for Batch in the AWS CLI, so poll. The deadline applies only
+        # while the job has never started: a validate pass over a global store legitimately
+        # runs for a long time, and capping that would fire on the wrong thing.
+        QUEUED_DEADLINE=$(( $(date +%s) + MAX_QUEUED_SECONDS ))
+        STARTED=false
+        while true; do
+          DESC=$(aws batch describe-jobs --jobs "$JOB_ID" \
+            --query 'jobs[0].[status,container.logStreamName]' --output text)
+          STATUS=$(printf '%s' "$DESC" | cut -f1)
+          STREAM=$(printf '%s' "$DESC" | cut -f2)
+          case "$STATUS" in
+            SUCCEEDED|FAILED) break ;;
+            SUBMITTED|PENDING|RUNNABLE) ;;
+            *) STARTED=true ;;
+          esac
+          if [[ "$STARTED" == "false" && "$(date +%s)" -ge "$QUEUED_DEADLINE" ]]; then
+            # Terminated rather than abandoned: a job left queued can still start later,
+            # spend money with nobody watching, and write output a later run would read.
+            aws batch terminate-job --job-id "$JOB_ID" \
+              --reason "never started within ${MAX_QUEUED_SECONDS}s" || true
+            echo "::error::$SAFE_NAME sat in $STATUS for $((MAX_QUEUED_SECONDS / 60)) minutes without starting. Check that $JOB_QUEUE has capacity for ${VCPU} vCPU / ${MEMORY} MiB."
+            exit 1
+          fi
+          sleep "$POLL_SECONDS"
+        done
+
+        # The container's stdout is the report: bcsd validate-output renders the same
+        # tables it renders locally, and its markdown summary is a subset of them.
+        LOG=$(mktemp)
+        if [[ -n "$STREAM" && "$STREAM" != "None" ]]; then
+          aws logs tail /aws/batch/job --log-stream-names "$STREAM" \
+            --since 24h --format short > "$LOG" || echo "(could not read $STREAM)" > "$LOG"
+        else
+          echo "(job reported no log stream)" > "$LOG"
+        fi
+        cat "$LOG"
+        {
+          echo "### $JOB_NAME"
+          echo ""
+          echo '```'
+          cat "$LOG"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [[ "$STATUS" != "SUCCEEDED" ]]; then
+          echo "::error::$SAFE_NAME finished with status $STATUS (job $JOB_ID)"
+          exit 1
+        fi

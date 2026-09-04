@@ -3,15 +3,16 @@
 The UKESM T/PR source files begin before the G6-1.5K window opens, so taking the first
 ``_DRY_RUN_STEPS`` steps of the file and clipping to ``TIME_RANGE`` afterwards leaves an empty
 time axis. The dry-run then dies in the summary table with ``ValueError: zero-size array to
-reduction operation fmin which has no identity``. ``cesm2_waccm`` and ``miroc`` already clip
-before they sample; these tests pin that ordering for every module.
+reduction operation fmin which has no identity``. ``cesm2_waccm`` already clips before it
+samples; these tests pin that ordering for every module that takes a scenario-only
+preprocess signature.
 """
 
 import numpy as np
 import pytest
 import xarray as xr
 
-from srm.input_data import cesm2_waccm, miroc, ukesm
+from srm.input_data import cesm2_waccm, ukesm
 
 
 def _sample_dataset(start: str, n_steps: int) -> xr.Dataset:
@@ -37,8 +38,6 @@ def _sample_dataset(start: str, n_steps: int) -> xr.Dataset:
     "module, preprocess, scenario",
     [
         (ukesm, ukesm._preprocess_ukesm, "G6-1.5K"),
-        # MIROC clips only its two CMIP6 scenarios; G6-1.5K has no TIME_RANGE entry.
-        (miroc, miroc._preprocess_miroc, "esgf-ssp245"),
     ],
 )
 def test_dry_run_sample_falls_inside_scenario_window(module, preprocess, scenario):

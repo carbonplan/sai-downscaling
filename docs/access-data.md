@@ -29,7 +29,7 @@ s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production
 
 | Component | Values | Example |
 | --- | --- | --- |
-| `gcm` | `CESM2-WACCM`, `MIROC-ES2H`, `UKESM` | `CESM2-WACCM` |
+| `gcm` | `CESM2-WACCM`, `UKESM` | `CESM2-WACCM` |
 | `obs_dataset` | `ERA5`, `GDEX-GMF` | `ERA5` |
 | `subset_id` | `global` or `lat{min}to{max}_lon{min}to{max}` | `global` |
 

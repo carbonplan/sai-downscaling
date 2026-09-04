@@ -316,52 +316,6 @@ class TestUKESMG6Lineage:
 
 
 # ---------------------------------------------------------------------------
-# resolve_member_lineage: MIROC-ES2H G6-1.5K
-# ---------------------------------------------------------------------------
-
-
-class TestMirocLineage:
-    """MIROC-ES2H lineage: ssp245_esgf_member set for both G6-1.5K and SSP245."""
-
-    _MIROC_G6_LINEAGE = [
-        ("r01", "r1i1p4f2"),
-        ("r02", "r2i1p4f2"),
-        ("r03", "r3i1p4f2"),
-        ("r04", "r1i1p4f2"),
-        ("r05", "r2i1p4f2"),
-        ("r06", "r3i1p4f2"),
-        ("r07", "r1i1p4f2"),
-        ("r08", "r2i1p4f2"),
-        ("r09", "r3i1p4f2"),
-        ("r10", "r1i1p4f2"),
-    ]
-
-    @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
-    def test_g6_hist_member(self, member, expected_hist):
-        entry = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
-        assert entry.historical == expected_hist
-
-    @pytest.mark.parametrize("member", [m for m, _ in _MIROC_G6_LINEAGE])
-    def test_g6_ssp245_member_equals_geomip_member(self, member):
-        entry = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
-        assert entry.ssp245_bridge == member
-
-    @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
-    def test_g6_esgf_bridge_equals_hist_member(self, member, expected_hist):
-        entry = resolve_member_lineage("MIROC-ES2H", "G6-1.5K", member, "tas")
-        assert entry.ssp245_esgf_bridge == expected_hist
-
-    @pytest.mark.parametrize(("member", "expected_hist"), _MIROC_G6_LINEAGE)
-    def test_ssp245_no_sai_bridge_but_has_esgf_bridge(self, member, expected_hist):
-        # SSP245 is not an SAI scenario so ssp245 (SAI bridge) is None.
-        # ssp245_esgf is set because the GeoMIP SSP245 dataset starts in 2020;
-        # ESGF SSP245 fills the 2015–2019 gap.
-        entry = resolve_member_lineage("MIROC-ES2H", "SSP245", member, "tas")
-        assert entry.ssp245_bridge is None
-        assert entry.ssp245_esgf_bridge == expected_hist
-
-
-# ---------------------------------------------------------------------------
 # diff_against_provenance: reconciliation with docs/srm-provenance.csv
 # ---------------------------------------------------------------------------
 

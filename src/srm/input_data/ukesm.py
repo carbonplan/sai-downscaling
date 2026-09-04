@@ -119,7 +119,7 @@ ENSEMBLE_MEMBERS: dict[str, list[str]] = {
 # T_PR files span 2015-2100; clip G6-1.5K to match hurs/rsds time range.
 # Historical is already 1850-2014; the entry is a guard, not a real trim.
 # The 2026 SSP245 delivery runs to 2100-12-30, but ssp245 is clipped to 2099 project-wide
-# (cesm2_waccm.py, miroc.py) so the scenario shares one time axis across GCMs. The extra
+# (cesm2_waccm.py) so the scenario shares one time axis across GCMs. The extra
 # year stays in the raw drop on S3 if that convention is ever revisited for all three.
 TIME_RANGE: dict[str, str] = {
     "historical": "1850-2014",

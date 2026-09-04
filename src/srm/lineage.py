@@ -52,8 +52,9 @@ class LineageEntry:
     ssp245_bridge : str or None
         SSP245 member bridging the pre-SAI years. ``None`` for non-SAI scenarios.
     ssp245_esgf_bridge : str or None
-        ESGF SSP245 member filling a gap before the primary bridge starts. Set only for
-        MIROC, whose GeoMIP SSP245 starts in 2020 and leaves a 2015-2019 gap.
+        ESGF SSP245 member filling a gap before the primary bridge starts, for a GCM whose
+        scenario data begins after the historical period ends. No registered GCM sets this
+        today; it is left in place for the next dataset that needs the gap filled.
     sai_parent : ScenarioMember or None
         Earlier SAI run this scenario continues rather than branching off SSP245. Set only
         for CESM G6-1.5K-END, which resumes G6-1.5K 002 in 2085, so its bridge needs the
@@ -160,28 +161,6 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
         add("UKESM", "SSP245", _m, _ukesm_ssp245, _UKESM_HIST)
         add("UKESM", "G6-1.5K", _m, _all, _UKESM_HIST, _m)
 
-    # MIROC-ES2H GeoMIP runs (r01–r10, abbreviated IDs, not CMIP6 ripf format).
-    # SSP245 = paired SSP245-continuation runs (formerly "baseline"); these serve as
-    # both the G6-1.5K bridge and the standalone SSP245 output product.
-    # Historical parent cycles: r01/r04/r07/r10→r1i1p4f2, r02/r05/r08→r2i1p4f2, r03/r06/r09→r3i1p4f2.
-    # Source: JAMSTEC GeoMIP server (Shingo Watanabe).
-    _miroc_g6_lineage = [
-        ("r01", "r1i1p4f2"),
-        ("r02", "r2i1p4f2"),
-        ("r03", "r3i1p4f2"),
-        ("r04", "r1i1p4f2"),
-        ("r05", "r2i1p4f2"),
-        ("r06", "r3i1p4f2"),
-        ("r07", "r1i1p4f2"),
-        ("r08", "r2i1p4f2"),
-        ("r09", "r3i1p4f2"),
-        ("r10", "r1i1p4f2"),
-    ]
-    for member, hist in _miroc_g6_lineage:
-        # GeoMIP SSP245 ("baseline") starts 2020; ESGF SSP245 (hist-format member IDs) fills 2015–2019.
-        add("MIROC-ES2H", "SSP245", member, _all, hist, ssp245_esgf=hist)
-        add("MIROC-ES2H", "G6-1.5K", member, _all, hist, member, hist)
-
     return table
 
 
@@ -197,8 +176,8 @@ def resolve_member_lineage(
     """Return the :class:`LineageEntry` for one lineage key.
 
     ``ssp245_bridge`` is None for non-SAI scenarios. ``ssp245_esgf_bridge`` is set when an
-    ESGF SSP245 dataset is needed to fill a gap before the primary SSP245 bridge starts
-    (MIROC G6-1.5K only). ``sai_parent`` is a :class:`ScenarioMember` when this scenario
+    ESGF SSP245 dataset is needed to fill a gap before the primary SSP245 bridge starts;
+    no registered GCM needs that today. ``sai_parent`` is a :class:`ScenarioMember` when this scenario
     continues an earlier SAI run whose years the bridge must also cover (CESM G6-1.5K-END
     only). Raises KeyError if the combination has no registered lineage.
     """
@@ -229,9 +208,11 @@ def all_lineage_keys() -> list[tuple[str, str, str, str]]:
 
 # The provenance sheet labels GCMs and one scenario differently from the code. These maps
 # are only for reconciling the two; nothing in the pipeline reads the sheet at runtime.
+# A GCM absent from this map has its sheet rows skipped entirely, which is how the
+# sheet's MIROC-ES2H rows stay out of the reconciliation without being deleted from a
+# verbatim re-export.
 PROVENANCE_GCM_ALIASES: dict[str, str] = {
     "CESM2(WACCM)": "CESM2-WACCM",
-    "MIROC-ES2H": "MIROC-ES2H",
     "UKESM1-1-LL": "UKESM",
 }
 PROVENANCE_SCENARIO_ALIASES: dict[str, str] = {

@@ -4,7 +4,7 @@
 
 # === Model and Scenario ===
 gcm: "UKESM"
-variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["r2i1p1f2", "r3i1p1f2", "r12i1p1f2"]
 scenarios: ["SSP245"]
 

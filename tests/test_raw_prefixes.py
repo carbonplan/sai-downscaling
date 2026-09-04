@@ -4,7 +4,7 @@ import obstore as obs
 import pytest
 from obstore.store import from_url
 
-from srm.input_data import cesm2_waccm, miroc, ukesm
+from srm.input_data import cesm2_waccm, ukesm
 from srm.input_data.etl_utils import RAW_ROOT, get_aws_creds, raw_netcdf_prefix
 
 
@@ -19,12 +19,11 @@ class TestRawNetcdfPrefix:
 
     def test_rooted_at_raw_root(self):
         assert RAW_ROOT == "input/raw"
-        assert raw_netcdf_prefix("MIROC-ES2H", "baseline").startswith(f"{RAW_ROOT}/")
+        assert raw_netcdf_prefix("UKESM", "g6-1p5k").startswith(f"{RAW_ROOT}/")
 
 
 ALL_PREFIXES = [
     *cesm2_waccm.NETCDF_PREFIX.values(),
-    *miroc.NETCDF_PREFIX.values(),
     *ukesm.S3_INPUT_PREFIX.values(),
     *ukesm.T_PR_INPUT_PREFIX.values(),
 ]
@@ -54,10 +53,6 @@ class TestRawPrefixesOnS3:
             (cesm2_waccm, "SSP245"),
             (cesm2_waccm, "G6-1.5K"),
             (cesm2_waccm, "G6-1.5K-END"),
-            (miroc, "historical"),
-            (miroc, "esgf-ssp245"),
-            (miroc, "ssp245"),
-            (miroc, "G6-1.5K"),
             (ukesm, "SSP245"),
         ],
     )

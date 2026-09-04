@@ -284,7 +284,7 @@ def write_individual_flags(
     )
 
 
-def plot_flags(flags, time_varying: bool = True, separate_low_high=True):
+def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=None):
     if separate_low_high:
         low_flag = flags[0]
         high_flag = flags[1]
@@ -306,13 +306,25 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True):
 
             ax1 = plt.subplot(1, 2, 1, projection=ccrs.PlateCarree())
             if contains_low_flags:
-                count_low_flag.where(count_low_flag > 0).plot(ax=ax1, transform=ccrs.PlateCarree())
+                if vlims is not None:
+                    count_low_flag.where(count_low_flag > 0).plot(
+                        ax=ax1, transform=ccrs.PlateCarree(), vmin=vlims[0], vmax=vlims[1]
+                    )
+                else:
+                    count_low_flag.where(count_low_flag > 0).plot(
+                        ax=ax1, transform=ccrs.PlateCarree()
+                    )
                 ax1.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
             ax2 = plt.subplot(1, 2, 2, projection=ccrs.PlateCarree())
             if contains_high_flags:
-                count_high_flag.where(count_high_flag > 0).plot(
-                    ax=ax2, transform=ccrs.PlateCarree()
-                )
+                if vlims is not None:
+                    count_low_flag.where(count_low_flag > 0).plot(
+                        ax=ax1, transform=ccrs.PlateCarree(), vmin=vlims[0], vmax=vlims[1]
+                    )
+                else:
+                    count_high_flag.where(count_high_flag > 0).plot(
+                        ax=ax2, transform=ccrs.PlateCarree()
+                    )
                 ax2.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
             plt.tight_layout()
             plt.show()
@@ -330,7 +342,12 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True):
         plt.figure(figsize=(5, 3))
         ax1 = plt.subplot(1, 1, 1, projection=ccrs.PlateCarree())
         limits = {} if contains_flags else {"vmin": 0, "vmax": 1}
-        count_flag.where(count_flag > 0).plot(ax=ax1, transform=ccrs.PlateCarree(), **limits)
+        if vlims is not None:
+            count_flag.where(count_flag > 0).plot(
+                ax=ax1, transform=ccrs.PlateCarree(), vmin=vlims[0], vmax=vlims[1]
+            )
+        else:
+            count_flag.where(count_flag > 0).plot(ax=ax1, transform=ccrs.PlateCarree(), **limits)
         ax1.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
         unit = "cell-days" if time_varying else "cells"
         ax1.set_title(f"{count_flag.name}: {float(contains_flags):,.0f} flagged {unit}")

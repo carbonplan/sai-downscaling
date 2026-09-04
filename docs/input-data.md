@@ -24,7 +24,6 @@ s3://carbonplan-srm/
 ├── input/                    # permanent, never removed by a cleanup sweep
 │   ├── raw/                  # source NetCDF exactly as fetched from the modeling centers
 │   │   ├── CESM2-WACCM/netcdf/{historical,ssp245,g6-1p5k,g6-1p5k-end}/
-│   │   ├── MIROC-ES2H/netcdf/{historical,esgf-ssp245,baseline,g6-1p5k}/
 │   │   ├── UKESM/netcdf/{historical,ssp245,g6-1p5k,ssp245-t-pr,g6-1p5k-t-pr}/
 │   │   └── UKESM1-1LL/netcdf/ssp245/ # 09-2026 data provider update
 │   ├── processed/            # unified per-GCM icechunk stores with scenario zarr groups
@@ -66,10 +65,6 @@ maps each drop directory to the key the ETL modules use to request it:
 | `CESM2-WACCM` | `ssp245` | `SSP245` | SSP2-4.5, 2015-2099 |
 | `CESM2-WACCM` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI, 2035-2084 |
 | `CESM2-WACCM` | `g6-1p5k-end` | `G6-1.5K-END` | G6-1.5K termination run, 2085-2100 |
-| `MIROC-ES2H` | `historical` | `historical` | CMIP6 historical, 1850-2014 |
-| `MIROC-ES2H` | `esgf-ssp245` | `esgf-ssp245` | ESGF SSP2-4.5, 2015-2100 |
-| `MIROC-ES2H` | `baseline` | `ssp245` | GeoMIP baseline (SSP245 continuation), from 2020 |
-| `MIROC-ES2H` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI |
 | `UKESM` | `historical` | `historical` | CMIP6 historical |
 | `UKESM` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI, primary source |
 | `UKESM` | `g6-1p5k-t-pr` | `G6-1.5K` | source for `pr`/`tas`/`tasmin`/`tasmax` |
@@ -92,7 +87,6 @@ catalog.list()
 | Name | Type | S3 path |
 | --- | --- | --- |
 | `CESM2-WACCM` | `Datatree` | `s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk` |
-| `MIROC-ES2H` | `Datatree` | `s3://carbonplan-srm/input/processed/miroc-es2h.icechunk` |
 | `UKESM` | `Datatree` | `s3://carbonplan-srm/input/processed/ukesm.icechunk` |
 | `ERA5` | `Dataset` | `s3://carbonplan-srm/input/processed/era5.icechunk` |
 | `NASA-NEX-SSP245` | `VirtualDataset` | `s3://carbonplan-srm/input/processed/nasa-nex/ssp245/virtual.icechunk` |
@@ -100,7 +94,7 @@ catalog.list()
 | `GDEX-GMF` | `Dataset` | `s3://carbonplan-srm/input/processed/gdex-gmf.icechunk` |
 | `ocean-mask` | `VectorDataset` | `s3://carbonplan-srm/input/vector/GSHHS/GSHHS.parquet` |
 
-## Opening a Datatree dataset (CESM2-WACCM, MIROC-ES2H, UKESM)
+## Opening a Datatree dataset (CESM2-WACCM, UKESM)
 
 `Datatree` entries hold multiple scenarios as zarr group nodes within a single icechunk store.
 Calling `.to_xarray()` with no arguments returns the full `xr.DataTree`; passing a `group`

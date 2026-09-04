@@ -1,4 +1,10 @@
-"""Unit tests for BCSDPipeline._load_ssp245_bridge gap-fill logic."""
+"""Unit tests for BCSDPipeline._load_ssp245_bridge gap-fill logic.
+
+No registered GCM sets ``ssp245_esgf_bridge`` in the lineage table any more, so the
+gap-fill tests below inject ``_ssp245_esgf_member`` onto the pipeline directly. That keeps
+the prepend path covered for the next dataset whose scenario run starts after the
+historical period ends.
+"""
 
 from __future__ import annotations
 
@@ -14,10 +20,10 @@ from srm.pipeline import BCSDPipeline
 
 def _make_config(**overrides) -> BCSDConfig:
     defaults = dict(
-        gcm="MIROC-ES2H",
+        gcm="CESM2-WACCM",
         downscaling_method="BCSD",
         variable="tas",
-        ensemble_member="r01",
+        ensemble_member="001",
         scenario="G6-1.5K",
         predict_period_start=2015,
         predict_period_end=2100,
@@ -57,15 +63,27 @@ def _make_annual_ds(start_year: int, end_year: int, member: str, var: str = "tas
 
 
 def _mock_catalog_get(
-    key: str, *, geomip_start: int, esgf_start: int, primary_member: str = "r01"
+    key: str, *, geomip_start: int, esgf_start: int, primary_member: str = "001"
 ) -> MagicMock:
     """Return a mock catalog entry whose to_xarray() returns the right dataset."""
     mock_entry = MagicMock()
     if "esgf" in key:
-        mock_entry.to_xarray.return_value = _make_annual_ds(esgf_start, 2084, "r1i1p4f2")
+        mock_entry.to_xarray.return_value = _make_annual_ds(esgf_start, 2084, _ESGF_MEMBER)
     else:
         mock_entry.to_xarray.return_value = _make_annual_ds(geomip_start, 2084, primary_member)
     return mock_entry
+
+
+# The ESGF member the gap-fill tests inject. Any member the ESGF dataset carries works;
+# what matters is that it differs from the primary member so a wrong selection would raise.
+_ESGF_MEMBER = "r1i1p1f1"
+
+
+def _esgf_pipeline(tmp_path) -> BCSDPipeline:
+    """Pipeline for a scenario whose primary SSP245 run starts after the historical period."""
+    pipeline = BCSDPipeline(_make_config(), _make_options(tmp_path))
+    pipeline._ssp245_esgf_member = _ESGF_MEMBER
+    return pipeline
 
 
 def test_bridge_returns_primary_when_esgf_member_none(tmp_path):
@@ -88,9 +106,8 @@ def test_bridge_returns_primary_when_esgf_member_none(tmp_path):
 
 def test_bridge_returns_primary_when_no_gap(tmp_path):
     """When primary starts at or before train_period_end+1 (2015), no ESGF prepend."""
-    config = _make_config()  # MIROC G6-1.5K r01
-    pipeline = BCSDPipeline(config, _make_options(tmp_path))
-    assert pipeline._ssp245_esgf_member == "r1i1p4f2"
+    pipeline = _esgf_pipeline(tmp_path)
+    assert pipeline._ssp245_esgf_member == _ESGF_MEMBER
 
     with patch("srm.pipeline._catalog") as mock_cat:
         mock_cat.get.side_effect = lambda k: _mock_catalog_get(
@@ -105,17 +122,16 @@ def test_bridge_returns_primary_when_no_gap(tmp_path):
 
 def test_bridge_prepends_esgf_when_gap_detected(tmp_path):
     """When GeoMIP SSP245 starts at 2020, ESGF data fills 2015–2019."""
-    config = _make_config()  # MIROC G6-1.5K r01
-    pipeline = BCSDPipeline(config, _make_options(tmp_path))
-    assert pipeline._ssp245_member == "r01"
-    assert pipeline._ssp245_esgf_member == "r1i1p4f2"
+    pipeline = _esgf_pipeline(tmp_path)
+    assert pipeline._ssp245_member == "001"
+    assert pipeline._ssp245_esgf_member == _ESGF_MEMBER
 
-    # Primary (GeoMIP) SSP245 starts at 2020; ESGF fills the 2015-2019 gap.
+    # Primary SSP245 starts at 2020; ESGF fills the 2015-2019 gap.
     # get_experiment now uses downscaling_utils.catalog (separate from _catalog),
     # so patch it directly to control the primary start year.
-    geomip_da = _make_annual_ds(2020, 2084, "r01")["tas"]
+    geomip_da = _make_annual_ds(2020, 2084, "001")["tas"]
     esgf_mock_entry = MagicMock()
-    esgf_mock_entry.to_xarray.return_value = _make_annual_ds(2015, 2084, "r1i1p4f2")
+    esgf_mock_entry.to_xarray.return_value = _make_annual_ds(2015, 2084, _ESGF_MEMBER)
 
     with (
         patch("srm.pipeline.get_experiment", return_value=geomip_da),
@@ -132,26 +148,25 @@ def test_bridge_prepends_esgf_when_gap_detected(tmp_path):
     assert len(years) == len(set(years)), "No duplicate years"
 
     # ESGF data is now fetched via catalog.get(gcm).to_xarray(group="esgf_ssp245")
-    mock_cat.get.assert_called_with(config.gcm)
+    mock_cat.get.assert_called_with(pipeline.config.gcm)
     esgf_mock_entry.to_xarray.assert_called_with(group="esgf_ssp245")
 
     # Provenance attrs
     assert result.attrs["bridge_type"] == "esgf_geomip_stitch"
-    assert result.attrs["bridge_esgf_member"] == "r1i1p4f2"
+    assert result.attrs["bridge_esgf_member"] == _ESGF_MEMBER
     assert result.attrs["bridge_esgf_years"] == "2015-2019"
-    assert result.attrs["bridge_geomip_member"] == "r01"
+    assert result.attrs["bridge_geomip_member"] == "001"
     assert result.attrs["bridge_geomip_years"] == "2020-2084"
-    assert result.attrs["bridge_gcm"] == "MIROC-ES2H"
+    assert result.attrs["bridge_gcm"] == "CESM2-WACCM"
     assert result.attrs["bridge_variable"] == "tas"
 
 
 def test_bridge_esgf_uses_correct_member(tmp_path):
-    """ESGF bridge selects ssp245_esgf_member (r1i1p4f2), not the GeoMIP member (r01)."""
-    config = _make_config()
-    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+    """ESGF bridge selects ssp245_esgf_member, not the primary SSP245 member."""
+    pipeline = _esgf_pipeline(tmp_path)
 
-    esgf_ds = _make_annual_ds(2015, 2084, "r1i1p4f2")  # r1i1p4f2 only
-    geomip_ds = _make_annual_ds(2020, 2084, "r01")
+    esgf_ds = _make_annual_ds(2015, 2084, _ESGF_MEMBER)  # the ESGF member only
+    geomip_ds = _make_annual_ds(2020, 2084, "001")
 
     def _side_effect(key):
         m = MagicMock()
@@ -165,17 +180,16 @@ def test_bridge_esgf_uses_correct_member(tmp_path):
         mock_cat.get.side_effect = _side_effect
         result = pipeline._load_ssp245_bridge()
 
-    # If selection used "r01" on the ESGF ds (which only has r1i1p4f2), it would raise.
+    # If selection used "001" on the ESGF ds, which does not carry it, it would raise.
     assert result is not None
     assert int(result.time.dt.year.min()) == 2015
 
 
 def test_bridge_calendar_aligned_to_primary(tmp_path):
     """ESGF data with a different calendar is converted to match the primary before concat."""
-    config = _make_config()
-    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+    pipeline = _esgf_pipeline(tmp_path)
 
-    # Use two different cftime calendars (noleap for GeoMIP, 360_day for ESGF).
+    # Use two different cftime calendars (noleap for the primary, 360_day for ESGF).
     # to_proleptic_gregorian converts both to numpy datetime64 (proleptic_gregorian),
     # ensuring no calendar mismatch at concat time.
     def _make_cftime_ds(start: str, end: str, calendar: str, member: str) -> xr.Dataset:
@@ -193,8 +207,8 @@ def test_bridge_calendar_aligned_to_primary(tmp_path):
         )
         return xr.Dataset({"tas": da})
 
-    geomip_ds = _make_annual_ds(2020, 2084, "r01")  # numpy datetime64, already proleptic_gregorian
-    esgf_ds = _make_cftime_ds("2015", "2084", "360_day", "r1i1p4f2")
+    geomip_ds = _make_annual_ds(2020, 2084, "001")  # numpy datetime64, already proleptic_gregorian
+    esgf_ds = _make_cftime_ds("2015", "2084", "360_day", _ESGF_MEMBER)
 
     def _side_effect(key):
         m = MagicMock()
@@ -217,13 +231,12 @@ def test_bridge_calendar_aligned_to_primary(tmp_path):
 
 def test_bridge_empty_esgf_gap_returns_primary(tmp_path):
     """When the ESGF dataset has no data before primary_start_year, return primary with a warning."""
-    config = _make_config()
-    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+    pipeline = _esgf_pipeline(tmp_path)
 
-    # GeoMIP SSP245 starts at 2020; ESGF also starts at 2020 → no gap data → return primary.
-    geomip_da = _make_annual_ds(2020, 2084, "r01")["tas"]
+    # Primary SSP245 starts at 2020; ESGF also starts at 2020 → no gap data → return primary.
+    geomip_da = _make_annual_ds(2020, 2084, "001")["tas"]
     esgf_mock_entry = MagicMock()
-    esgf_mock_entry.to_xarray.return_value = _make_annual_ds(2020, 2084, "r1i1p4f2")
+    esgf_mock_entry.to_xarray.return_value = _make_annual_ds(2020, 2084, _ESGF_MEMBER)
 
     with (
         patch("srm.pipeline.get_experiment", return_value=geomip_da),
@@ -408,12 +421,12 @@ def _make_da_with_member(start_year: int, end_year: int, member: str) -> xr.Data
 
 def test_stitch_historical_scenario_mismatched_ensemble_member():
     """stitch_historical_scenario must not raise MergeError when hist/bridge/scenario
-    carry different ensemble_member scalar coords (the MIROC G6-1.5K case)."""
+    carry different ensemble_member scalar coords."""
     from srm.pipeline import stitch_historical_scenario
 
-    model_hist = _make_da_with_member(1950, 2014, "r1i1p4f2")
-    ssp_bridge = _make_da_with_member(2015, 2034, "r01")
-    model_scenario = _make_da_with_member(2035, 2060, "r01")
+    model_hist = _make_da_with_member(1950, 2014, "r1i1p1f1")
+    ssp_bridge = _make_da_with_member(2015, 2034, "001")
+    model_scenario = _make_da_with_member(2035, 2060, "001")
 
     result = stitch_historical_scenario(
         model_hist=model_hist,
@@ -431,4 +444,4 @@ def test_stitch_historical_scenario_mismatched_ensemble_member():
     assert gaps == [], f"Unexpected gaps: {gaps}"
     # ensemble_member must be a scalar coord from model_scenario, not a dim
     assert "ensemble_member" not in result.dims
-    assert result.coords["ensemble_member"].values.item() == "r01"
+    assert result.coords["ensemble_member"].values.item() == "001"

@@ -10,7 +10,7 @@
 # one-sided rather than in or out of tolerance. That is the expected reading, not a
 # failure; the leaf inventory still confirms the candidate wrote everything configured.
 gcm: "CESM2-WACCM"
-variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002"]
 scenarios: ["G6-1.5K-END"]
 
@@ -22,7 +22,7 @@ predict_period_end: 2100
 # === Downscaling Method ===
 # "BCSD" (detrend + quantile mapping) or "QDMSD" (quantile delta mapping). Required:
 # there is no default, so every config states which method produced its output.
-downscaling_method: "BCSD"
+downscaling_method: ["BCSD","QDMSD"]
 
 
 # Run over a ~3 deg halo beyond the region of interest ([-35, -22, 16, 33]) so BCSD's
