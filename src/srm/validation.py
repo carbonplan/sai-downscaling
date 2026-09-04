@@ -119,10 +119,9 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "r2i1p1f2": ("2015-01-01", "2099-12-31"),
             "r3i1p1f2": ("2015-01-01", "2099-12-31"),
         },
+        # Single UM suite (not a ripf realization); parent of all three scenario members.
         "historical": {
-            "r12i1p1f2": ("1850-01-01", "2014-12-31"),
-            "r2i1p1f2": ("1850-01-01", "2014-12-31"),
-            "r3i1p1f2": ("1850-01-01", "2014-12-31"),
+            "u-by791": ("1850-01-01", "2014-12-31"),
         },
     },
 }
@@ -142,7 +141,7 @@ def resolve_member_time_bounds(
     return _SCENARIO_TIME_BOUNDS.get(gcm, {}).get(scenario)
 
 
-_FAST: dict = {"isel_kwargs": {"time": slice(0, 5)}}
+_FAST: dict = {"isel_kwargs": {"time": slice(0, 10)}}
 
 _DS_CHECKER_CHECKS: list[tuple[str, str, dict]] = [
     ("ensemble_member_dim", "validate_ensemble_member_dim", {}),

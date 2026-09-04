@@ -70,6 +70,10 @@ class LineageEntry:
 # The one SAI run that another scenario continues.
 _G6_002 = ScenarioMember(scenario="G6-1.5K", member="002")
 
+# UKESM historical is a single UM suite, not a CMIP6 realization, so its ID is the suite name
+# rather than a ripf label. Every UKESM scenario member and variable branches from this one run.
+_UKESM_HIST = "u-by791"
+
 
 def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     table: dict[tuple[str, str, str, str], LineageEntry] = {}
@@ -145,14 +149,17 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
 
     _all = _std + _tmx
 
-    # UKESM1-0-LL (code gcm name: "UKESM")
-    # As of #355, SSP245 and G6-1.5K are each consolidated into a single icechunk
-    # store keyed by ripf members (r2/r3/r12i1p1f2) covering all variables, matching
-    # the historical store's member IDs. Lineage is therefore self-referential:
-    # hist=self for both scenarios, ssp245_bridge=self for the G6-1.5K SAI bridge.
+    # UKESM1-1-LL (code gcm name: "UKESM")
+    # Every file from this delivery is UKESM1-1-LL: source metadata and filenames that say
+    # UKESM1-0-LL / UKESM1-1 are supplier labelling typos (confirmed by email), corrected on
+    # ingest in srm.input_data.ukesm.
+    # SSP245 and G6-1.5K are each a single icechunk (r2/r3/r12i1p1f2) covering all variables.
+    # The Historical scenario has a single ensemble_member: u-by791, so scenario members share that single historical parent.
+    # SSP245 has no hurs.
+    _ukesm_ssp245 = tuple(v for v in _all if v != "hurs")
     for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):
-        add("UKESM", "SSP245", _m, _all, _m)
-        add("UKESM", "G6-1.5K", _m, _all, _m, _m)
+        add("UKESM", "SSP245", _m, _ukesm_ssp245, _UKESM_HIST)
+        add("UKESM", "G6-1.5K", _m, _all, _UKESM_HIST, _m)
 
     return table
 
@@ -206,7 +213,7 @@ def all_lineage_keys() -> list[tuple[str, str, str, str]]:
 # verbatim re-export.
 PROVENANCE_GCM_ALIASES: dict[str, str] = {
     "CESM2(WACCM)": "CESM2-WACCM",
-    "UKESM1-0-LL": "UKESM",
+    "UKESM1-1-LL": "UKESM",
 }
 PROVENANCE_SCENARIO_ALIASES: dict[str, str] = {
     "G6-1.5K-end": "G6-1.5K-END",
@@ -227,23 +234,16 @@ def diff_against_provenance(
     re-export and must not be hand-patched: an edit there is clobbered by the next export
     and hides the very disagreement this function exists to surface.
 
-    Returns a dict with five keys. ``only_in_code`` and ``only_in_sheet`` hold
+    Returns a dict with four keys. ``only_in_code`` and ``only_in_sheet`` hold
     ``(gcm, scenario, member, variable)`` keys present on one side alone,
     ``parent_mismatch`` holds human-readable descriptions of keys both sides carry but
-    disagree about, ``uncertain`` lists keys whose sheet entry is prefixed ``???``, and
-    ``malformed`` lists cells the sheet writes in a form that cannot be parsed.
-    ``historical`` rows in the sheet are ignored, since the lineage table registers
-    scenarios only.
-
-    The ``???`` prefix is the sheet's own marker for a parent nobody has confirmed. Those
-    rows are still compared, because a flagged row that disagrees with the code is exactly
-    what needs resolving, but they are reported separately so an unconfirmed value is never
-    mistaken for a verified one.
+    disagree about, and ``malformed`` lists cells the sheet writes in a form that cannot
+    be parsed. ``historical`` rows in the sheet are ignored, since the lineage table
+    registers scenarios only.
     """
     import csv as _csv
 
     sheet: dict[tuple[str, str, str, str], dict[str, str]] = {}
-    uncertain: list[tuple[str, str, str, str]] = []
     malformed: list[str] = []
     with open(csv_path, newline="") as handle:
         for row in _csv.DictReader(handle):
@@ -256,9 +256,6 @@ def diff_against_provenance(
             member = (row["ensemble_id"] or "").strip()
             variable = (row["variable"] or "").strip()
             key = (gcm, scenario, member, variable)
-            if parents_raw.startswith("???"):
-                uncertain.append(key)
-                parents_raw = parents_raw.removeprefix("???").strip()
             try:
                 parents = dict(ast.literal_eval(parents_raw))
             except (SyntaxError, ValueError):
@@ -293,6 +290,5 @@ def diff_against_provenance(
         "only_in_code": only_in_code,
         "only_in_sheet": only_in_sheet,
         "parent_mismatch": parent_mismatch,
-        "uncertain": sorted(uncertain),
         "malformed": sorted(malformed),
     }

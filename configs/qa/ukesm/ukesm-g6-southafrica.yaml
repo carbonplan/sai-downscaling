@@ -1,5 +1,6 @@
 # BCSD configuration: UKESM / all variables / G6-1.5K / all members / South Africa (QA)
-# All 7 variables available for all members under the consolidated ripf-keyed G6-1.5K store.
+# All 7 variables available for all members under the ripf-keyed G6-1.5K store.
+# Historical is a single ensemble_member, so all three members share one historical fit.
 
 # === Model and Scenario ===
 gcm: "UKESM"

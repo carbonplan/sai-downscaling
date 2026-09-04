@@ -24,7 +24,8 @@ s3://carbonplan-srm/
 ├── input/                    # permanent, never removed by a cleanup sweep
 │   ├── raw/                  # source NetCDF exactly as fetched from the modeling centers
 │   │   ├── CESM2-WACCM/netcdf/{historical,ssp245,g6-1p5k,g6-1p5k-end}/
-│   │   └── UKESM/netcdf/{historical,ssp245,g6-1p5k,ssp245-t-pr,g6-1p5k-t-pr}/
+│   │   ├── UKESM/netcdf/{historical,ssp245,g6-1p5k,ssp245-t-pr,g6-1p5k-t-pr}/
+│   │   └── UKESM1-1LL/netcdf/ssp245/ # 09-2026 data provider update
 │   ├── processed/            # unified per-GCM icechunk stores with scenario zarr groups
 │   └── vector/               # vector assets (ocean mask)
 └── scratch/                  # transient pipeline data, cleaned as a single prefix
@@ -65,10 +66,9 @@ maps each drop directory to the key the ETL modules use to request it:
 | `CESM2-WACCM` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI, 2035-2084 |
 | `CESM2-WACCM` | `g6-1p5k-end` | `G6-1.5K-END` | G6-1.5K termination run, 2085-2100 |
 | `UKESM` | `historical` | `historical` | CMIP6 historical |
-| `UKESM` | `ssp245` | `SSP245` | SSP2-4.5, primary source |
 | `UKESM` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI, primary source |
-| `UKESM` | `ssp245-t-pr` | `SSP245` | private T/PR archive, source for `pr`/`tas`/`tasmin`/`tasmax` |
-| `UKESM` | `g6-1p5k-t-pr` | `G6-1.5K` | private T/PR archive, source for `pr`/`tas`/`tasmin`/`tasmax` |
+| `UKESM` | `g6-1p5k-t-pr` | `G6-1.5K` | source for `pr`/`tas`/`tasmin`/`tasmax` |
+| `UKESM1-1LL` | `ssp245` | `SSP245` | SSP2-4.5, 2015-2100, 09-2026 update |
 
 ERA5, GDEX-GMF and NASA-NEX have no raw copy in this bucket. Their ETLs stream directly from
 ARCO-ERA5 on GCS, from OSDF/DTN over HTTPS, and by virtual reference into `s3://nex-gddp-cmip6`

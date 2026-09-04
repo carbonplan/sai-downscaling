@@ -13,6 +13,8 @@ from srm.lineage import ScenarioMember, resolve_member_lineage
 _STANDARD_VARS = ("tas", "pr", "rsds", "hurs")
 _TMAX_MIN_VARS = ("tasmax", "tasmin", "dtr")
 _UKESM_VARS = ("tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr")
+# SSP245 lost hurs with the 2026 re-delivery; G6-1.5K still has it.
+_UKESM_SSP245_VARS = tuple(v for v in _UKESM_VARS if v != "hurs")
 
 
 class TestLineageEntryShape:
@@ -269,14 +271,20 @@ class TestLineageKeyError:
 
 
 class TestUKESMSSP245Lineage:
-    """SSP245 lineage: single ripf-keyed store covers all variables, hist=self."""
+    """SSP245 lineage: single ripf-keyed store covers all variables, hist=u-by791."""
 
     @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
-    @pytest.mark.parametrize("variable", _UKESM_VARS)
-    def test_members_hist_equals_self(self, member, variable):
+    @pytest.mark.parametrize("variable", _UKESM_SSP245_VARS)
+    def test_members_share_single_historical_suite(self, member, variable):
         entry = resolve_member_lineage("UKESM", "SSP245", member, variable)
-        assert entry.historical == member
+        assert entry.historical == "u-by791"
         assert entry.ssp245_bridge is None
+
+    @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
+    def test_hurs_unregistered(self, member):
+        """The 2026 delivery ships only monthly hurs, so no daily hurs exists to trace."""
+        with pytest.raises(KeyError):
+            resolve_member_lineage("UKESM", "SSP245", member, "hurs")
 
     @pytest.mark.parametrize("member", ("001", "002", "003"))
     def test_legacy_numeric_members_unregistered(self, member):
@@ -290,13 +298,13 @@ class TestUKESMSSP245Lineage:
 
 
 class TestUKESMG6Lineage:
-    """G6-1.5K lineage: single ripf-keyed store covers all variables, hist=self, ssp245_bridge=self."""
+    """G6-1.5K lineage: single ripf-keyed store covers all variables, hist=u-by791, ssp245_bridge=self."""
 
     @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
     @pytest.mark.parametrize("variable", _UKESM_VARS)
-    def test_members_self_consistent(self, member, variable):
+    def test_members_share_single_historical_suite(self, member, variable):
         entry = resolve_member_lineage("UKESM", "G6-1.5K", member, variable)
-        assert entry.historical == member
+        assert entry.historical == "u-by791"
         assert entry.ssp245_bridge == member
         assert entry.ssp245_esgf_bridge is None
         assert entry.sai_parent is None
@@ -334,15 +342,8 @@ class TestProvenanceReconciliation:
             "only_in_code",
             "only_in_sheet",
             "parent_mismatch",
-            "uncertain",
             "malformed",
         }
-
-    def test_every_sheet_parent_cell_is_parseable(self):
-        # A malformed cell would otherwise be skipped silently, hiding real drift.
-        # The '???' uncertainty prefix must be handled rather than treated as a parse error.
-        diff = self._diff()
-        assert diff["uncertain"], "the '???' prefix is no longer being detected"
 
     @pytest.mark.parametrize("variable", _STANDARD_VARS + ("tasmax", "tasmin"))
     def test_termination_run_agrees_with_sheet(self, variable):

@@ -4,7 +4,6 @@
 
 import dataclasses
 import logging
-import subprocess
 
 import dask
 import icechunk
@@ -24,7 +23,6 @@ from srm.input_data.etl_utils import (
     determine_write_mode,
     get_aws_creds,
     group_paths_by_member,
-    open_netcdf_from_s3,
     raw_netcdf_prefix,
     setup_logging,
     trim_negative_precipitation,
@@ -40,39 +38,57 @@ dask.config.set(scheduler="threads")
 
 setup_logging()
 log = logging.getLogger(__name__)
+logging.getLogger("fsspec").setLevel(logging.WARNING)
 
 
-# Variables that may come from the private T/PR NetCDF archive instead of S3_INPUT_PREFIX
 T_PR_VARS: list[str] = ["pr", "tas", "tasmin", "tasmax"]
 
-UKESM_VARIABLES = ["tas", "rsds", "hurs", "pr", "tasmax", "tasmin"]
+UKESM_VARIABLES = ["tas", "rsds", "pr", "tasmax", "tasmin"]
 
 BUCKET = "carbonplan-srm"
 UNIFIED_PREFIX = "input/processed/ukesm.icechunk"
 
 
-# Raw NetCDF prefixes on S3 — primary source for each scenario
+# Raw NetCDF prefixes on S3
 S3_INPUT_PREFIX: dict[str, str] = {
     "historical": raw_netcdf_prefix("UKESM", "historical"),
-    "SSP245": raw_netcdf_prefix("UKESM", "ssp245"),
+    # SSP245 source updated 09-2026: https://gws-access.jasmin.ac.uk/public/macloud/
+    "SSP245": raw_netcdf_prefix("UKESM1-1LL", "ssp245"),
     "G6-1.5K": raw_netcdf_prefix("UKESM", "g6-1p5k"),
 }
 
-# Private T/PR NetCDF prefixes — secondary source for pr/tas/tasmin/tasmax
+# T/PR NetCDF prefixes for G6-1.5K
 T_PR_INPUT_PREFIX: dict[str, str] = {
-    "SSP245": raw_netcdf_prefix("UKESM", "ssp245-t-pr"),
     "G6-1.5K": raw_netcdf_prefix("UKESM", "g6-1p5k-t-pr"),
 }
 
-# Filename prefixes to look for in T_PR_INPUT_PREFIX, per variable
+# --- 2026 SSP245 ssp245 update (JASMIN) ---
+# In 09-2026, we received updated the ssp245 source files from (https://gws-access.jasmin.ac.uk/public/macloud/).
+# These files are all genuinely UKESM1-1-LL. Landed under a separate UKESM1-1LL/ raw dir so the old UKESM/
+# drops stay intact for comparison and rollback if needed.
+# Delivered at https://gws-access.jasmin.ac.uk/public/macloud/SSP245_ukesm1p1/{suite}/,
+# one directory per UM suite, and copied verbatim into
+# s3://carbonplan-srm/input/raw/UKESM1-1LL/netcdf/ssp245/ (9 files, ~51 GB).
+SSP245_SUITE_TO_MEMBER: dict[str, str] = {
+    "u-dp902": "r2i1p1f2",
+    "u-dp903": "r3i1p1f2",
+    "u-dp904": "r12i1p1f2",
+}
+
+SSP245_FILE_TEMPLATE = "{stem}_UKESM1-1-LL_SSP245_{suite}_201501-210012.nc"
+
+# Which file each variable is read from. tas/tasmin/tasmax share one file and are
+# separated by cell_methods (see _um_var_rename).
+SSP245_VAR_TO_STEM: dict[str, str] = {
+    "tas": "tas_mean_min_max_day",
+    "tasmin": "tas_mean_min_max_day",
+    "tasmax": "tas_mean_min_max_day",
+    "pr": "pr_day",
+    "rsds": "rsds_day",
+}
+
+# Filename prefixes to look for in G6-1.5K T_PR_INPUT_PREFIX, per variable
 T_PR_VAR_LOOKUP: dict[str, dict[str, list[str]]] = {
-    "SSP245": {
-        "pr": ["pr_day_"],
-        # r2 member has tas/tasmin/tasmax combined in one file
-        "tas": ["tas_day_", "tas_mean_min_max_day_"],
-        "tasmin": ["tasmin_day_", "tas_mean_min_max_day_"],
-        "tasmax": ["tasmax_day_", "tas_mean_min_max_day_"],
-    },
     "G6-1.5K": {
         # tas_day files contain tas, tasmin, and tasmax
         "pr": ["pr_day_"],
@@ -82,26 +98,8 @@ T_PR_VAR_LOOKUP: dict[str, dict[str, list[str]]] = {
     },
 }
 
-# T_PR files use legacy UM variable names; map to CMIP6 names.
-# air_temperature cell_methods: max=tasmax, min=tasmin, mean=tas
-T_PR_VAR_RENAME: dict[str, dict[str, str]] = {
-    "SSP245": {
-        "precipitation_flux": "pr",
-        "air_temperature": "tasmax",
-        "air_temperature_0": "tasmin",
-        "air_temperature_1": "tas",
-    },
-    "G6-1.5K": {
-        "precipitation_flux": "pr",
-        "air_temperature": "tasmax",
-        "air_temperature_0": "tasmin",
-        "air_temperature_1": "tas",
-    },
-}
-
 # UM suite ID / legacy member ID -> CMIP6 ripf mapping for T_PR files
 T_PR_MEMBER_RENAME: dict[str, dict[str, str]] = {
-    "SSP245": {"r2i1p1f1": "r2i1p1f2"},
     "G6-1.5K": {
         "u-dp583": "r2i1p1f2",
         "u-dp690": "r3i1p1f2",
@@ -109,31 +107,74 @@ T_PR_MEMBER_RENAME: dict[str, dict[str, str]] = {
     },
 }
 
+# Historical is a single UM suite; the suite ID is the member ID (no CMIP6 ripf exists).
+HISTORICAL_MEMBER = "u-by791"
+
 ENSEMBLE_MEMBERS: dict[str, list[str]] = {
-    "historical": ["r2i1p1f2", "r3i1p1f2", "r12i1p1f2"],
+    "historical": [HISTORICAL_MEMBER],
     "SSP245": ["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"],
     "G6-1.5K": ["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"],
 }
 
-# T_PR files span 2015-2100; clip G6-1.5K to match hurs/rsds time range
+# T_PR files span 2015-2100; clip G6-1.5K to match hurs/rsds time range.
+# Historical is already 1850-2014; the entry is a guard, not a real trim.
+# The 2026 SSP245 delivery runs to 2100-12-30, but ssp245 is clipped to 2099 project-wide
+# (cesm2_waccm.py) so the scenario shares one time axis across GCMs. The extra
+# year stays in the raw drop on S3 if that convention is ever revisited for all three.
 TIME_RANGE: dict[str, str] = {
+    "historical": "1850-2014",
     "SSP245": "2015-2099",
     "G6-1.5K": "2035-2084",
 }
 
 ALL_SCENARIOS = list(ENSEMBLE_MEMBERS.keys())
 
-# --- Historical fetch (CEDA -> S3) ---
-
-HISTORICAL_SOURCE_BASE_URL = (
-    "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/MOHC/UKESM1-0-LL/historical"
+# --- Model identity ---
+# Every UKESM file delivered by this supplier is UKESM1-1-LL, across all scenarios.
+# Some source NetCDFs carry source_id/model_id/parent_source_id = "UKESM1-0-LL" and some
+# filenames say "UKESM1-1" instead of "UKESM1-1-LL". The data provider confirmed these are
+# typos in the file metadata, not a different model. We therefore overwrite the stale
+# identity attrs rather than trust them, and record the overwrite in MODEL_ATTR_NOTE so
+# the correction stays auditable downstream.
+#
+# The updated SSP245 NetCDFs (https://gws-access.jasmin.ac.uk/public/macloud/)
+#  don't have any model identity attrs, so nothing there contradicts the filename.
+MODEL = "UKESM1-1-LL"
+_MODEL_IDENTITY_ATTRS = ("source_id", "model_id", "parent_source_id")
+MODEL_ATTR_NOTE = (
+    f"Model identity attrs from the source files were overwritten with {MODEL}; the data "
+    "supplier confirmed the source_id/filename model labels are typos and that all files "
+    f"from this delivery are {MODEL}."
 )
-HISTORICAL_TIME_SLICES: list[str] = ["18500101-19491230", "19500101-20141230"]
-HISTORICAL_ENSEMBLE_DATES: dict[str, str] = {
-    "r2i1p1f2": "d20190708",
-    "r3i1p1f2": "d20190708",
-    "r12i1p1f2": "d20191210",
+
+# --- Historical (single UM suite, delivered directly to S3) ---
+
+_HIST_STEM = f"daily_UKESM1-1-LL_historical_{HISTORICAL_MEMBER}_185001-201512.nc"
+# tas/tasmin/tasmax share one combined file
+_HIST_TEMP_FILE = f"tas-min-mn-max_{_HIST_STEM}"
+HISTORICAL_FILES: dict[str, str] = {
+    "hurs": f"hurs_{_HIST_STEM}",
+    "pr": f"pr_{_HIST_STEM}",
+    "rsds": f"rsds_{_HIST_STEM}",
+    "tas": _HIST_TEMP_FILE,
+    "tasmin": _HIST_TEMP_FILE,
+    "tasmax": _HIST_TEMP_FILE,
 }
+
+# UM-native files use UM/CF standard names; map to CMIP6 names.
+HISTORICAL_VAR_RENAME: dict[str, str] = {
+    "relative_humidity": "hurs",
+    "precipitation_flux": "pr",
+    "surface_downwelling_shortwave_flux_in_air": "rsds",
+}
+
+# The combined temperature file yields air_temperature, air_temperature_0, air_temperature_1
+_UM_CELL_METHOD_TO_VAR: dict[str, str] = {
+    "maximum": "tasmax",
+    "minimum": "tasmin",
+    "mean": "tas",
+}
+
 
 OUTPUT_CHUNKS: dict[str, int] = {"ensemble_member": 1, "time": 60, "lat": 144, "lon": 192}
 OUTPUT_SHARDS: dict[str, int] = {"ensemble_member": 1, "time": 960, "lat": 144, "lon": 192}
@@ -151,48 +192,96 @@ _DRY_RUN_STEPS = 360
 # ---------------------------------------------------------------------------
 
 
-def _get_netcdf_urls(scenario: str, variable: str) -> list[tuple[str, str]]:
-    """Return (member_id, s3_path) pairs for one variable."""
+def _list_netcdfs(prefix: str) -> list[str]:
+    """List every .nc object directly under an S3 prefix."""
     aws = get_aws_creds()
     region = aws.pop("region")
     store = from_url(f"s3://{BUCKET}", region=region, **aws)
+    stream = obs.list_with_delimiter(store, prefix=prefix, return_arrow=True)
+    return [str(p) for p in stream["objects"]["path"].to_numpy() if str(p).endswith(".nc")]
 
-    if variable in T_PR_VARS and scenario in T_PR_INPUT_PREFIX:
-        fname_prefixes = T_PR_VAR_LOOKUP[scenario].get(variable, [f"{variable}_day_"])
-        stream = obs.list_with_delimiter(
-            store, prefix=T_PR_INPUT_PREFIX[scenario], return_arrow=True
-        )
-        paths = list(stream["objects"]["path"].to_numpy())
-        result = []
-        for path in paths:
-            fname = path.split("/")[-1]
-            if not (fname.endswith(".nc") and any(fname.startswith(p) for p in fname_prefixes)):
-                continue
-            member = (
-                fname.split("_gn_")[0].split("_")[-1]
-                if "_gn_" in fname
-                else fname.split(".nc")[0].split("_")[-2]
+
+def _get_netcdf_urls(scenario: str, variable: str) -> list[tuple[str, str]]:
+    """Return (member_id, s3_path) pairs for one variable."""
+    if scenario == "historical":
+        # Single ensemble, known filenames.
+        if variable not in HISTORICAL_FILES:
+            return []
+        return [
+            (HISTORICAL_MEMBER, f"{S3_INPUT_PREFIX['historical']}/{HISTORICAL_FILES[variable]}")
+        ]
+
+    if scenario == "SSP245":
+        # Filenames are fully determined by suite x stem, so build them rather than listing
+        # and parsing: the member comes from SSP245_SUITE_TO_MEMBER by construction, and the
+        # suite ID in the filename is never mistaken for the date range.
+        if variable not in SSP245_VAR_TO_STEM:
+            return []
+        stem = SSP245_VAR_TO_STEM[variable]
+        return [
+            (
+                member,
+                f"{S3_INPUT_PREFIX['SSP245']}/"
+                + SSP245_FILE_TEMPLATE.format(stem=stem, suite=suite),
             )
-            result.append((member, path))
-        return result
+            for suite, member in SSP245_SUITE_TO_MEMBER.items()
+        ]
 
-    members = ENSEMBLE_MEMBERS[scenario]
-    stream = obs.list_with_delimiter(store, prefix=S3_INPUT_PREFIX[scenario], return_arrow=True)
-    paths = list(stream["objects"]["path"].to_numpy())
+    # G6-1.5K is the one scenario still fed by two drops: rsds comes from the ARISE-CMOR
+    # set, while pr/tas/tasmin/tasmax come from the private T/PR archive, whose filenames
+    # carry UM suite ids that T_PR_MEMBER_RENAME maps to ripf downstream of discovery.
+    if variable in T_PR_VARS:
+        prefix = T_PR_INPUT_PREFIX[scenario]
+        fname_prefixes = T_PR_VAR_LOOKUP[scenario].get(variable, [f"{variable}_day_"])
+        members: list[str] = []
+    else:
+        prefix = S3_INPUT_PREFIX[scenario]
+        fname_prefixes = [f"{variable}_"]
+        members = ENSEMBLE_MEMBERS[scenario]
+
     result = []
-    for path in paths:
-        if not path.endswith(".nc"):
+    for path in _list_netcdfs(prefix):
+        fname = path.split("/")[-1]
+        if not any(fname.startswith(p) for p in fname_prefixes):
             continue
-        if f"{variable}_".lower() not in path.lower():
+        if members and not any(f"_{m}_" in fname for m in members):
             continue
-        if members and not any(f"_{m}_" in path for m in members):
-            continue
-        try:
-            member = path.split(".nc")[0].split("_gn")[0].split("_")[-1]
-        except IndexError:
-            member = "unknown"
+        # CMOR names end ..._<member>_gn_<dates>.nc; raw UM ones end ..._<suite>_<dates>.nc.
+        member = (
+            fname.split("_gn_")[0].split("_")[-1]
+            if "_gn_" in fname
+            else fname.split(".nc")[0].split("_")[-2]
+        )
         result.append((member, path))
     return result
+
+
+def _um_var_rename(ds: xr.Dataset) -> dict[str, str]:
+    """Map UM/CF standard names to CMIP6 names.
+
+    Used by every drop written straight out of the Unified Model — the historical files and
+    the 2026 SSP245 delivery, which share this layout.
+
+    ``air_temperature*`` vars are resolved by their ``cell_methods`` statistic rather than by
+    the order h5netcdf assigned the ``_0``/``_1`` suffixes, so a file that writes the three
+    temperatures in a different order still maps correctly.
+    """
+    rename: dict[str, str] = {}
+    for name in ds.data_vars:
+        name = str(name)
+        if name in HISTORICAL_VAR_RENAME:
+            rename[name] = HISTORICAL_VAR_RENAME[name]
+        elif name.startswith("air_temperature"):
+            cell_methods = ds[name].attrs.get("cell_methods", "")
+            matched = [v for m, v in _UM_CELL_METHOD_TO_VAR.items() if m in cell_methods]
+            if len(matched) != 1:
+                raise ValueError(
+                    f"cannot resolve {name!r} to tas/tasmin/tasmax from "
+                    f"cell_methods={cell_methods!r}"
+                )
+            rename[name] = matched[0]
+    log.info("UM var rename: %s", rename)
+    return rename
 
 
 def _preprocess_ukesm(ds: xr.Dataset, scenario: str, subset: bool = False) -> xr.Dataset:
@@ -250,17 +339,22 @@ def _preprocess_ukesm(ds: xr.Dataset, scenario: str, subset: bool = False) -> xr
 
 
 def _derivation_logic(scenario: str, variable: str | None = None) -> str:
-    if variable in T_PR_VARS and scenario in T_PR_INPUT_PREFIX:
-        member_rename = T_PR_MEMBER_RENAME.get(scenario, {})
-        if member_rename:
-            mapping_str = ", ".join(f"{k}->{v}" for k, v in member_rename.items())
-            return (
-                f"UM suite IDs extracted from filename and remapped to CMIP6 ripf: {mapping_str}. "
-                "Source files are private T/PR NetCDFs."
-            )
+    if scenario == "historical":
         return (
-            "Extracted from filename position index: filename.split('_')[1] "
-            "(e.g. '001'). Positional ID stored under 'ensemble_member' dim. "
+            f"Single ensemble_member {HISTORICAL_MEMBER}; the ID is stored as the "
+            "'ensemble_member' value because the source files carry no CMIP6 ripf ID."
+        )
+    if scenario == "SSP245":
+        mapping_str = ", ".join(f"{k}->{v}" for k, v in SSP245_SUITE_TO_MEMBER.items())
+        return (
+            "Filenames are constructed from the UM suite ID, which is mapped to its CMIP6 "
+            f"ripf: {mapping_str}. Single-source 2026 delivery; no member ID is parsed out "
+            "of the filename."
+        )
+    if variable in T_PR_VARS and scenario in T_PR_INPUT_PREFIX:
+        mapping_str = ", ".join(f"{k}->{v}" for k, v in T_PR_MEMBER_RENAME[scenario].items())
+        return (
+            f"UM suite IDs extracted from filename and remapped to CMIP6 ripf: {mapping_str}. "
             "Source files are private T/PR NetCDFs."
         )
     return "Extracted from CMIP6 filename: path.split('.nc')[0].split('_gn')[0].split('_')[-1]."
@@ -273,10 +367,17 @@ def _update_attrs(
     ds.attrs.update(
         {
             "scenario": scenario,
-            "model": "UKESM1-0-LL",
+            "model": MODEL,
             "Conventions": "CF-1.8",
         }
     )
+    # See MODEL_ATTR_NOTE: the identity attrs carried in from the source NetCDFs are not
+    # trusted, so any that are present are overwritten and the overwrite is recorded.
+    overwritten = [key for key in _MODEL_IDENTITY_ATTRS if key in ds.attrs]
+    if overwritten:
+        for key in overwritten:
+            ds.attrs[key] = MODEL
+        ds.attrs["model_id_correction"] = MODEL_ATTR_NOTE
     return apply_ensemble_provenance(ds, _derivation_logic(scenario, variable))
 
 
@@ -323,6 +424,7 @@ def _process_single_variable(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     group = SCENARIO_TO_GROUP[scenario]
     log.info("variable=%s group=%s start", variable, group)
@@ -331,13 +433,11 @@ def _process_single_variable(
     # avoids reading/concatenating the full time series just to truncate it later.
     subset = subset or dry_run
 
-    var_in_store = variable_in_store(repo, variable, group=group)
+    var_in_store = variable_in_store(repo, variable, group=group, branch=branch)
     if not dry_run and not overwrite and var_in_store:
         log.info("variable=%s skip: already in store (use --overwrite to replace)", variable)
         return
 
-    aws = get_aws_creds()
-    obstore_inst = from_url(f"s3://{BUCKET}", region=aws.pop("region"), **aws)
     url_pairs = _get_netcdf_urls(scenario, variable)
     if not url_pairs:
         log.warning("variable=%s no files found, skipping", variable)
@@ -352,30 +452,30 @@ def _process_single_variable(
     if member_rename:
         member_paths = {member_rename.get(m, m): paths for m, paths in member_paths.items()}
 
-    var_rename = T_PR_VAR_RENAME.get(scenario, {})
-
     member_datasets = []
     for member, paths in sorted(member_paths.items()):
         log.info("variable=%s member=%s opening %d file(s)", variable, member, len(paths))
-        time_slices = [open_netcdf_from_s3(obstore_inst, p) for p in sorted(paths)]
+        time_slices = [
+            xr.open_dataset(f"s3://{BUCKET}/{path}", engine="h5netcdf", chunks={})
+            for path in sorted(paths)
+        ]
         member_ds = (
             xr.concat(time_slices, dim="time", data_vars="minimal")
             if len(time_slices) > 1
             else time_slices[0]
         )
+        member_ds = member_ds.rename(_um_var_rename(member_ds))[[variable]]
+        if scenario == "historical":
+            member_ds = member_ds.chunk({"time": OUTPUT_SHARDS["time"]})
         member_ds = _preprocess_ukesm(member_ds, scenario, subset=subset)
-        # Rename per-member before concat so members with mixed naming conventions
-        # (e.g. UM legacy names vs CMIP6 standard) align on the same variable names.
-        if var_rename:
-            member_ds = member_ds.rename({k: v for k, v in var_rename.items() if k in member_ds})
         member_ds = member_ds.expand_dims({"ensemble_member": [member]})
         member_datasets.append(member_ds)
-        log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.dims))
+        log.info("variable=%s member=%s shape=%s", variable, member, dict(member_ds.sizes))
 
     ds = xr.concat(member_datasets, dim="ensemble_member")
     if variable in ds:
         ds = ds[[variable]]
-    log.info("variable=%s concat done shape=%s", variable, dict(ds.dims))
+    log.info("variable=%s concat done shape=%s", variable, dict(ds.sizes))
 
     ds = _update_attrs(ds, var_specs, scenario, variable)
 
@@ -394,6 +494,7 @@ def _process_single_variable(
         var_in_store=var_in_store,
         group=group,
         commit_message=commit_message,
+        branch=branch,
     )
     log.info("variable=%s done", variable)
 
@@ -407,6 +508,7 @@ def _run_process(
     dry_run: bool = False,
     dry_run_output: str | None = None,
     commit_message: str | None = None,
+    branch: str = "main",
 ) -> None:
     log.info(
         "scenario=%s group=%s variables=%s overwrite=%s subset=%s dry_run=%s",
@@ -417,7 +519,7 @@ def _run_process(
         subset,
         dry_run,
     )
-    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False)
+    repo, _ = init_repo(BUCKET, store_prefix or UNIFIED_PREFIX, readonly=False, branch=branch)
     for var in variables:
         _process_single_variable(
             scenario,
@@ -429,62 +531,9 @@ def _run_process(
             dry_run=dry_run,
             dry_run_output=dry_run_output,
             commit_message=commit_message,
+            branch=branch,
         )
     log.info("scenario=%s all variables complete", scenario)
-
-
-# ---------------------------------------------------------------------------
-# Fetch helpers
-# ---------------------------------------------------------------------------
-
-
-def _fetch_ukesm_historical(variables: list[str]) -> None:
-    import warnings
-
-    warnings.warn(
-        "This fetches raw netcdf files from CEDA and moves them to s3. "
-        "You must have rclone installed and configured."
-    )
-
-    urls = []
-    for ens in ENSEMBLE_MEMBERS["historical"]:
-        date_str = HISTORICAL_ENSEMBLE_DATES[ens]
-        for var in variables:
-            for t_range in HISTORICAL_TIME_SLICES:
-                folder_path = f"{HISTORICAL_SOURCE_BASE_URL}/{ens}/day/{var}/gn/files/{date_str}"
-                file_name = f"{var}_day_UKESM1-0-LL_historical_{ens}_gn_{t_range}.nc"
-                urls.append(f"{folder_path}/{file_name}")
-
-    urls_file = "UKESM-historical-urls.txt"
-    with open(urls_file, "w") as f:
-        f.write("\n".join(urls))
-
-    target_remote = f"aws:{BUCKET}/{S3_INPUT_PREFIX['historical']}/"
-    command = [
-        "rclone",
-        "copyurl",
-        "--urls",
-        urls_file,
-        target_remote,
-        "--progress",
-        "--no-clobber",
-        "--transfers",
-        "4",
-        "--s3-upload-concurrency",
-        "8",
-        "--s3-chunk-size",
-        "64M",
-        "--buffer-size",
-        "32M",
-        "--s3-no-check-bucket",
-        "--disable-http2",
-        "--retries",
-        "3",
-        "--low-level-retries",
-        "10",
-    ]
-    log.info("running rclone command:\n%s", " \\\n    ".join(command))
-    subprocess.run(command)
 
 
 # ---------------------------------------------------------------------------
@@ -494,15 +543,9 @@ def _fetch_ukesm_historical(variables: list[str]) -> None:
 app = typer.Typer()
 
 
-@app.command()
-def fetch(
-    variable: list[str] = typer.Option(..., "--variable", help="UKESM variables to fetch"),
-    scenario: str = typer.Option(..., "--scenario", help=f"Choices: {ALL_SCENARIOS}"),
-) -> None:
-    """Fetch raw UKESM NetCDF files and copy to S3 (historical only)."""
-    if scenario != "historical":
-        raise typer.BadParameter(f"fetch not implemented for scenario: {scenario!r}")
-    _fetch_ukesm_historical(list(variable))
+@app.callback()
+def cli() -> None:
+    """UKESM input-data ETL. Keeps 'process' as an explicit subcommand."""
 
 
 @app.command()
@@ -545,6 +588,16 @@ def process(
     commit_message: str | None = typer.Option(
         None, "--commit-message", help="Override the default icechunk commit message."
     ),
+    branch: str = typer.Option(
+        "main",
+        "--branch",
+        help=(
+            "icechunk branch to write to. Use a branch cut from the repository's root snapshot "
+            "to regenerate a store whose time axis changed: the groups must be absent for a "
+            "fresh write, and promotion is then repo.reset_branch('main', tip) rather than a "
+            "copy of the whole store."
+        ),
+    ),
 ) -> None:
     """Open NetCDF files from S3, concat, rechunk, and write to the unified per-GCM
     icechunk store under each scenario's zarr group. One variable at a time.
@@ -568,6 +621,7 @@ def process(
             dry_run=dry_run,
             dry_run_output=dry_run_output,
             commit_message=commit_message,
+            branch=branch,
         )
 
 
