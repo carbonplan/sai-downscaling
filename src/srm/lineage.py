@@ -154,8 +154,10 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     # ingest in srm.input_data.ukesm.
     # SSP245 and G6-1.5K are each a single icechunk (r2/r3/r12i1p1f2) covering all variables.
     # The Historical scenario has a single ensemble_member: u-by791, so scenario members share that single historical parent.
+    # SSP245 has no hurs.
+    _ukesm_ssp245 = tuple(v for v in _all if v != "hurs")
     for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):
-        add("UKESM", "SSP245", _m, _all, _UKESM_HIST)
+        add("UKESM", "SSP245", _m, _ukesm_ssp245, _UKESM_HIST)
         add("UKESM", "G6-1.5K", _m, _all, _UKESM_HIST, _m)
 
     # MIROC-ES2H GeoMIP runs (r01–r10, abbreviated IDs, not CMIP6 ripf format).

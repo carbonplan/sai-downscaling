@@ -58,12 +58,13 @@ class TestRawPrefixesOnS3:
             (miroc, "esgf-ssp245"),
             (miroc, "ssp245"),
             (miroc, "G6-1.5K"),
+            (ukesm, "SSP245"),
         ],
     )
     def test_all_configured_members_discovered(self, module, scenario):
-        # UKESM is excluded: its T/PR drops carry raw source member ids
-        # (u-dp583, r2i1p1f1) that only become CMIP6 ripf labels after
-        # T_PR_MEMBER_RENAME is applied downstream of discovery.
+        # UKESM G6-1.5K is excluded: its T/PR drop carries raw source member ids
+        # (u-dp583) that only become CMIP6 ripf labels after T_PR_MEMBER_RENAME is
+        # applied downstream of discovery.
         expected = set(module.ENSEMBLE_MEMBERS[scenario])
         found = {m for m, _ in module._get_netcdf_urls(scenario, "tas")}
         assert expected <= found, f"missing members for {scenario}: {expected - found}"
@@ -77,7 +78,9 @@ class TestRawPrefixesOnS3:
             # neither the sibling's objects nor its child prefix are reachable today;
             # these rows pin that behavior against a future listing-semantics change.
             (cesm2_waccm, "G6-1.5K", ["tas", "pr"], "/netcdf/g6-1p5k-end/"),
-            (ukesm, "SSP245", ["hurs", "rsds"], "/netcdf/ssp245-t-pr/"),
+            # SSP245 no longer lists S3 at all — paths are built from a filename
+            # template — so this row now pins that the template stays off the old drop.
+            (ukesm, "SSP245", ["rsds", "pr"], "/netcdf/ssp245-t-pr/"),
             (ukesm, "G6-1.5K", ["hurs", "rsds"], "/netcdf/g6-1p5k-t-pr/"),
         ],
     )

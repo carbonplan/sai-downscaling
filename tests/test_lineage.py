@@ -13,6 +13,8 @@ from srm.lineage import ScenarioMember, resolve_member_lineage
 _STANDARD_VARS = ("tas", "pr", "rsds", "hurs")
 _TMAX_MIN_VARS = ("tasmax", "tasmin", "dtr")
 _UKESM_VARS = ("tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr")
+# SSP245 lost hurs with the 2026 re-delivery; G6-1.5K still has it.
+_UKESM_SSP245_VARS = tuple(v for v in _UKESM_VARS if v != "hurs")
 
 
 class TestLineageEntryShape:
@@ -272,11 +274,17 @@ class TestUKESMSSP245Lineage:
     """SSP245 lineage: single ripf-keyed store covers all variables, hist=u-by791."""
 
     @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
-    @pytest.mark.parametrize("variable", _UKESM_VARS)
+    @pytest.mark.parametrize("variable", _UKESM_SSP245_VARS)
     def test_members_share_single_historical_suite(self, member, variable):
         entry = resolve_member_lineage("UKESM", "SSP245", member, variable)
         assert entry.historical == "u-by791"
         assert entry.ssp245_bridge is None
+
+    @pytest.mark.parametrize("member", ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"))
+    def test_hurs_unregistered(self, member):
+        """The 2026 delivery ships only monthly hurs, so no daily hurs exists to trace."""
+        with pytest.raises(KeyError):
+            resolve_member_lineage("UKESM", "SSP245", member, "hurs")
 
     @pytest.mark.parametrize("member", ("001", "002", "003"))
     def test_legacy_numeric_members_unregistered(self, member):
