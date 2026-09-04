@@ -1,0 +1,36 @@
+
+# Members 006-010's data ends in 2069 (per srm.validation._MEMBER_TIME_BOUNDS: 007-010 on
+# 2069-12-31, 006 a day earlier), so predict_period_end is 2069. These were previously
+# mis-truncated at 2070 in a separate cesm2-waccm-ssp245-tas-global-trunc-2070.yaml config
+# now folded in here: the raw input's apparent extra day at 2070-01-01 was the last 2069
+# daily mean carrying an end-of-interval stamp, which issue #521 corrected at the ETL.
+# Full-length members 001-005 reach 2099.
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM"
+variables: ["tas"]
+ensemble_members: ["008"]
+scenarios: ["SSP245"]
+
+# === Downscaling Methods ===
+# Required: there is no default, so every config states which method produced its output.
+# Production publishes BCSD only for now; QDMSD is exercised in the qa configs, which list
+# both. Adding it here doubles every wave, so it is a deliberate separate decision.
+downscaling_methods: ["BCSD", "QDMSD"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2069
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-srm/scratch/cache"
+output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
+
+environment: "qa"
+# version intentionally unset — derived from the installed package version at runtime
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true
