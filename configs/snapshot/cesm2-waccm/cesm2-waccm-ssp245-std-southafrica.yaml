@@ -1,9 +1,9 @@
-# Snapshot proxy: CESM2-WACCM / SSP245 / standard variables / full-length member 003 / South Africa.
+# Snapshot proxy: CESM2-WACCM6 / SSP245 / standard variables / full-length member 003 / South Africa.
 # Mirrors configs/production/cesm2-waccm/cesm2-waccm-ssp245-std.yaml with SA bounds + qa env.
 # Member 003 is the std bridge for G6-1.5K/003 and its SSP245 data runs to 2099. Truncated
 # member 008 (data ends 2069) lives in cesm2-waccm-ssp245-std-trunc-southafrica.yaml; temperature
 # extremes are in cesm2-waccm-ssp245-tmx-southafrica.yaml.
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds"]
 ensemble_members: ["003"]
 scenarios: ["SSP245"]

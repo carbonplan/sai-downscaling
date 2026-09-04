@@ -29,7 +29,7 @@ from srm.bcsd_config import BCSDConfig
 # ---------------------------------------------------------------------------
 
 _MINIMAL_CONFIG = {
-    "gcm": "CESM2-WACCM",
+    "gcm": "CESM2-WACCM6",
     "downscaling_method": "BCSD",
     "variable": "tas",
     "ensemble_member": "r1i1p1f1",
@@ -101,7 +101,7 @@ class TestConfigJsonReading:
                 run_stage("prepare_observations")
 
         assert isinstance(captured["config"], BCSDConfig)
-        assert captured["config"].gcm == "CESM2-WACCM"
+        assert captured["config"].gcm == "CESM2-WACCM6"
         assert captured["config"].variable == "tas"
         assert captured["config"].ensemble_member == "r1i1p1f1"
 
@@ -183,7 +183,7 @@ class TestPipelineConstruction:
         # Should be called with a BCSDConfig instance as the only positional arg
         config_arg = constructor_call.args[0]
         assert isinstance(config_arg, BCSDConfig)
-        assert config_arg.gcm == "CESM2-WACCM"
+        assert config_arg.gcm == "CESM2-WACCM6"
 
     def test_pipeline_created_exactly_once(self, valid_config_json):
         os.environ["CONFIG_JSON"] = valid_config_json

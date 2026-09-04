@@ -1,4 +1,4 @@
-# BCSD configuration: CESM2-WACCM / SSP245 / standard variables (production)
+# BCSD configuration: CESM2-WACCM6 / SSP245 / standard variables (production)
 #
 # Standard variables (tas/pr/rsds/hurs) for full-length SSP245 member 003, which
 # reaches 2099. Truncated member 008 (data ends 2069) is downscaled in
@@ -11,7 +11,7 @@
 #   uv run bcsd run --config-path configs/production/
 
 # === BCSDConfig: Run Identity ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["rsds"]
 ensemble_members: ["003"]
 scenarios: ["SSP245"]

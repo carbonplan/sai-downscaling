@@ -48,7 +48,7 @@ def orchestrator(pipeline_options) -> BCSDOrchestrator:
 
 
 def _make_config(
-    gcm="CESM2-WACCM",
+    gcm="CESM2-WACCM6",
     variable="tas",
     ensemble_member="r1i1p1f1",
     scenario="SSP245",
@@ -76,10 +76,10 @@ def config() -> BCSDConfig:
 def multi_configs() -> list[BCSDConfig]:
     """Three configs covering two GCMs and two variables for deduplication tests."""
     return [
-        _make_config(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"),
-        _make_config(gcm="CESM2-WACCM", variable="tas", ensemble_member="r2i1p1f1"),
-        _make_config(gcm="CESM2-WACCM", variable="pr", ensemble_member="r1i1p1f1"),
-        _make_config(gcm="UKESM", variable="tas", ensemble_member="01"),
+        _make_config(gcm="CESM2-WACCM6", variable="tas", ensemble_member="r1i1p1f1"),
+        _make_config(gcm="CESM2-WACCM6", variable="tas", ensemble_member="r2i1p1f1"),
+        _make_config(gcm="CESM2-WACCM6", variable="pr", ensemble_member="r1i1p1f1"),
+        _make_config(gcm="UKESM1-1-LL", variable="tas", ensemble_member="01"),
     ]
 
 
@@ -121,22 +121,22 @@ class TestGetCache:
 
 class TestDeduplicateObs:
     def test_same_gcm_variable_deduplicates(self, orchestrator, multi_configs):
-        # multi_configs has CESM2-WACCM/tas ensemble 0 and 1 → should deduplicate to 1
-        cesm_tas = [c for c in multi_configs if c.gcm == "CESM2-WACCM" and c.variable == "tas"]
+        # multi_configs has CESM2-WACCM6/tas ensemble 0 and 1 → should deduplicate to 1
+        cesm_tas = [c for c in multi_configs if c.gcm == "CESM2-WACCM6" and c.variable == "tas"]
         result = orchestrator._deduplicate_obs_configs(cesm_tas)
         assert len(result) == 1
 
     def test_preserves_first_config_of_duplicate_group(self, orchestrator, multi_configs):
-        cesm_tas = [c for c in multi_configs if c.gcm == "CESM2-WACCM" and c.variable == "tas"]
+        cesm_tas = [c for c in multi_configs if c.gcm == "CESM2-WACCM6" and c.variable == "tas"]
         result = orchestrator._deduplicate_obs_configs(cesm_tas)
         assert result[0] is cesm_tas[0]
 
     def test_different_gcm_not_deduplicated(self, orchestrator, multi_configs):
         result = orchestrator._deduplicate_obs_configs(multi_configs)
         gcm_var_pairs = [(c.gcm, c.variable) for c in result]
-        assert ("CESM2-WACCM", "tas") in gcm_var_pairs
-        assert ("CESM2-WACCM", "pr") in gcm_var_pairs
-        assert ("UKESM", "tas") in gcm_var_pairs
+        assert ("CESM2-WACCM6", "tas") in gcm_var_pairs
+        assert ("CESM2-WACCM6", "pr") in gcm_var_pairs
+        assert ("UKESM1-1-LL", "tas") in gcm_var_pairs
 
     def test_four_configs_produce_three_unique_obs_tasks(self, orchestrator, multi_configs):
         result = orchestrator._deduplicate_obs_configs(multi_configs)
@@ -163,7 +163,7 @@ class TestDeduplicateHistorical:
 
     def test_different_ensemble_not_deduplicated(self, orchestrator, multi_configs):
         result = orchestrator._deduplicate_historical_configs(multi_configs)
-        # two CESM2-WACCM/tas (ens 0 and 1) + one CESM2-WACCM/pr + one UKESM/tas = 4
+        # two CESM2-WACCM6/tas (ens 0 and 1) + one CESM2-WACCM6/pr + one UKESM1-1-LL/tas = 4
         assert len(result) == 4
 
     def test_all_unique_combinations_preserved(self, orchestrator, multi_configs, subtests):
@@ -259,7 +259,7 @@ class TestSubmitStage:
     def test_mixed_cached_and_uncached(self, orchestrator, multi_configs):
         """Cached tasks return paths directly; uncached tasks go to _run_local."""
         # Use configs with DIFFERENT variables so their obs paths are distinct.
-        # multi_configs[0] = CESM2-WACCM/tas, multi_configs[2] = CESM2-WACCM/pr
+        # multi_configs[0] = CESM2-WACCM6/tas, multi_configs[2] = CESM2-WACCM6/pr
         cfg_cached = multi_configs[0]  # tas
         cfg_uncached = multi_configs[2]  # pr
 
@@ -1156,7 +1156,7 @@ class TestJobName:
 
     def test_short_name_is_left_alone(self, orchestrator, config):
         name = orchestrator._job_name("fit_historical", [config])
-        assert name.startswith("bcsd-fit_historical-CESM2-WACCM-tas-")
+        assert name.startswith("bcsd-fit_historical-CESM2-WACCM6-tas-")
         assert len(name) < 128
 
 

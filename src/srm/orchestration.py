@@ -51,8 +51,8 @@ class BCSDOrchestrator:
     Example
     -------
     >>> configs = [
-    ...     BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=0, scenario="ssp245", ...),
-    ...     BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member=1, scenario="ssp245", ...),
+    ...     BCSDConfig(gcm="CESM2-WACCM6", variable="tas", ensemble_member=0, scenario="ssp245", ...),
+    ...     BCSDConfig(gcm="CESM2-WACCM6", variable="tas", ensemble_member=1, scenario="ssp245", ...),
     ... ]
     >>> orchestrator = BCSDOrchestrator()
     >>> output_paths = orchestrator.run_full_workflow(configs, executor="aws-batch")
@@ -1116,7 +1116,7 @@ class BCSDOrchestrator:
         Returns
         -------
         str
-            Resolved historical member (e.g. ``"r1i1p1f1"`` for CESM2-WACCM ``"001"``)
+            Resolved historical member (e.g. ``"r1i1p1f1"`` for CESM2-WACCM6 ``"001"``)
         """
         if config.scenario is None:
             return config.ensemble_member

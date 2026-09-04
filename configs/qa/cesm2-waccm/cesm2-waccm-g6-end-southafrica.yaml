@@ -1,4 +1,4 @@
-# BCSD configuration: CESM2-WACCM / all variables / G6-1.5K-END / member 002 / South Africa (QA)
+# BCSD configuration: CESM2-WACCM6 / all variables / G6-1.5K-END / member 002 / South Africa (QA)
 # Termination-shock continuation of G6-1.5K member 002: SAI stops after 2084 and the run
 # continues to 2100. Only member 002 was run to termination, so this is a single-member config.
 #
@@ -9,7 +9,7 @@
 # earlier start is a blocking validation failure, not a silently mislabelled output.
 
 # === Model and Scenario ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002"]
 scenarios: ["G6-1.5K-END"]

@@ -1,7 +1,7 @@
-# BCSD configuration: CESM2-WACCM / all variables / G6-1.5K / all members / South Africa (QA)
+# BCSD configuration: CESM2-WACCM6 / all variables / G6-1.5K / all members / South Africa (QA)
 
 # === Model and Scenario ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["001", "002", "003"]
 scenarios: ["G6-1.5K"]

@@ -1,4 +1,4 @@
-# BCSD configuration: CESM2-WACCM / SSP245 / temperature extremes (production)
+# BCSD configuration: CESM2-WACCM6 / SSP245 / temperature extremes (production)
 #
 # tasmax/tasmin (and derived dtr) use the corrected historical run and only exist
 # for SSP245 members 006-010; members 001-005 are standard-vars-only due to the
@@ -10,7 +10,7 @@
 #   uv run bcsd run --config-path configs/production/
 
 # === BCSDConfig: Run Identity ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tasmax", "tasmin", "dtr"]
 ensemble_members: ["008"]
 scenarios: ["SSP245"]

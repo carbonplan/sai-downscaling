@@ -1,4 +1,4 @@
-# BCSD configuration: CESM2-WACCM / SSP245 / standard variables / truncated member 008 (production)
+# BCSD configuration: CESM2-WACCM6 / SSP245 / standard variables / truncated member 008 (production)
 #
 # Standard variables (pr/rsds/hurs) for truncated SSP245 member 008, whose data ends
 # 2069-12-31; predict_period_end is clamped to 2069 so the member is not downscaled past
@@ -12,7 +12,7 @@
 #   uv run bcsd run --config-path configs/production/
 
 # === BCSDConfig: Run Identity ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["pr", "rsds"]
 ensemble_members: ["008"]
 scenarios: ["SSP245"]

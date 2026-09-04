@@ -252,7 +252,7 @@ def calculate_out_of_range_mask(
 def _assert_stitched_continuity(result: xr.DataArray) -> None:
     """Raise ValueError if the stitched timeseries has duplicate timestamps or year-level gaps.
 
-    Day-level gaps within a year are tolerated (some GCMs, e.g. UKESM, are
+    Day-level gaps within a year are tolerated (some GCMs, e.g. UKESM1-1-LL, are
     missing a single day at the historical boundary). The checks are:
 
     1. No duplicate timestamps – the same calendar day must not appear twice.
@@ -504,7 +504,7 @@ class BCSDPipeline:
     Example
     -------
     >>> config = BCSDConfig(
-    ...     gcm="CESM2-WACCM",
+    ...     gcm="CESM2-WACCM6",
     ...     variable="tas",
     ...     ensemble_member=0,
     ...     scenario="ssp245",

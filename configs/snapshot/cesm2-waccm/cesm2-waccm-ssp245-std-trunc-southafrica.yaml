@@ -1,10 +1,10 @@
-# Snapshot proxy: CESM2-WACCM / SSP245 / standard variables / truncated member 008 / South Africa.
+# Snapshot proxy: CESM2-WACCM6 / SSP245 / standard variables / truncated member 008 / South Africa.
 # Mirrors configs/production/cesm2-waccm/cesm2-waccm-ssp245-std-trunc.yaml with SA bounds + qa env.
 # Member 008 is the std bridge for G6-1.5K/003; its SSP245 data ends 2069-12-31 (CMIP6 truncation
 # of members 006-010), so predict_period_end is clamped to 2069 to avoid downscaling past the
 # valid extent.
 # Full-length member 003 lives in cesm2-waccm-ssp245-std-southafrica.yaml (2099).
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds"]
 ensemble_members: ["008"]
 scenarios: ["SSP245"]

@@ -26,7 +26,7 @@ from srm.bcsd_config import (
 def minimal_config() -> BCSDConfig:
     """Minimal valid BCSDConfig for a historical-only run (no scenario)."""
     return BCSDConfig(
-        downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+        downscaling_method="BCSD", gcm="CESM2-WACCM6", variable="tas", ensemble_member="r1i1p1f1"
     )
 
 
@@ -34,7 +34,7 @@ def minimal_config() -> BCSDConfig:
 def scenario_config() -> BCSDConfig:
     """BCSDConfig with a standard (non-SAI) scenario."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r1i1p1f1",
@@ -48,7 +48,7 @@ def scenario_config() -> BCSDConfig:
 def sai_config() -> BCSDConfig:
     """BCSDConfig with a G6-SAI scenario."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="pr",
         ensemble_member="r2i1p1f1",
@@ -62,7 +62,7 @@ def sai_config() -> BCSDConfig:
 def regional_config() -> BCSDConfig:
     """BCSDConfig with a spatial subset (South Africa region)."""
     return BCSDConfig(
-        gcm="UKESM",
+        gcm="UKESM1-1-LL",
         downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="01",
@@ -216,7 +216,7 @@ class TestBCSDConfigConstruction:
     """BCSDConfig is valid for a range of realistic inputs."""
 
     def test_minimal_historical_config(self, minimal_config):
-        assert minimal_config.gcm == "CESM2-WACCM"
+        assert minimal_config.gcm == "CESM2-WACCM6"
         assert minimal_config.variable == "tas"
         assert minimal_config.ensemble_member == "r1i1p1f1"
         assert minimal_config.scenario is None
@@ -266,7 +266,7 @@ class TestBCSDConfigConstruction:
         """A moved key must fail loudly. extra='ignore' would otherwise drop it silently."""
         with pytest.raises(ValidationError, match="variable_overrides"):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -275,7 +275,7 @@ class TestBCSDConfigConstruction:
 
     def test_variable_config_carries_debias_approach(self):
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="dtr",
             ensemble_member="r1i1p1f1",
@@ -289,7 +289,7 @@ class TestBCSDConfigConstruction:
         """A qdm debias_approach under BCSD would detrend around a trend-carrying method."""
         with pytest.raises(ValidationError, match="incompatible with debias_approach"):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -300,7 +300,7 @@ class TestBCSDConfigConstruction:
         """QDMSD without qdm is not quantile delta mapping at all."""
         with pytest.raises(ValidationError, match="incompatible with debias_approach"):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="QDMSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -311,7 +311,7 @@ class TestBCSDConfigConstruction:
         for method, approach in (("BCSD", "nonparametric_hybrid_2sided"), ("QDMSD", "qdm")):
             with subtests.test(method=method):
                 cfg = BCSDConfig(
-                    gcm="CESM2-WACCM",
+                    gcm="CESM2-WACCM6",
                     downscaling_method=method,
                     variable="tas",
                     ensemble_member="r1i1p1f1",
@@ -321,13 +321,13 @@ class TestBCSDConfigConstruction:
     def test_missing_downscaling_method_raises(self):
         """There is no default: a config that omits the method must fail loudly."""
         with pytest.raises(ValidationError, match="'downscaling_method' is required"):
-            BCSDConfig(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1")
+            BCSDConfig(gcm="CESM2-WACCM6", variable="tas", ensemble_member="r1i1p1f1")
 
     def test_renamed_mapping_type_key_raises(self):
         """The pre-rename ``mapping_type`` key must fail loudly, not be silently ignored."""
         with pytest.raises(ValidationError, match="renamed to 'debias_approach'"):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -346,7 +346,7 @@ class TestBCSDConfigConstruction:
         with pytest.raises(ValidationError, match="variable_overrides"):
             BCSDConfig(
                 downscaling_method="BCSD",
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
             )
@@ -357,7 +357,7 @@ class TestBCSDConfigConstruction:
         with pytest.raises(ValidationError, match="variable_overrides"):
             BCSDConfig(
                 downscaling_method="BCSD",
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
             )
@@ -373,7 +373,10 @@ class TestBCSDConfigConstruction:
             ),
         )
         cfg = BCSDConfig(
-            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+            downscaling_method="BCSD",
+            gcm="CESM2-WACCM6",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
         )
         assert cfg.variable_config.debias_approach == "parametric"
 
@@ -391,7 +394,7 @@ class TestBCSDConfigConstruction:
             debias_approach="nonparametric_hybrid_2sided",
         )
         cfg = BCSDConfig(
-            gcm="UKESM",
+            gcm="UKESM1-1-LL",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r2i1p1f2",
@@ -408,14 +411,14 @@ class TestBCSDConfigConstruction:
             with subtests.test(variable=var):
                 cfg = BCSDConfig(
                     downscaling_method="BCSD",
-                    gcm="CESM2-WACCM",
+                    gcm="CESM2-WACCM6",
                     variable=var,
                     ensemble_member="r1i1p1f1",
                 )
                 assert cfg.variable == var
 
     def test_all_supported_gcms_construct(self, subtests):
-        for gcm in ("CESM2-WACCM", "UKESM"):
+        for gcm in ("CESM2-WACCM6", "UKESM1-1-LL"):
             with subtests.test(gcm=gcm):
                 cfg = BCSDConfig(
                     downscaling_method="BCSD", gcm=gcm, variable="tas", ensemble_member="r1i1p1f1"
@@ -500,7 +503,7 @@ class TestConfigJsonRoundTrip:
 
     def test_resolved_debias_approach_survives_round_trip(self):
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="dtr",
             ensemble_member="r1i1p1f1",
@@ -528,10 +531,10 @@ class TestBCSDConfigComputedFields:
     """run_id, config_hash, and is_sai_scenario computed fields."""
 
     def test_run_id_historical_only(self, minimal_config):
-        assert minimal_config.run_id == "CESM2-WACCM_tas_r1i1p1f1"
+        assert minimal_config.run_id == "CESM2-WACCM6_tas_r1i1p1f1"
 
     def test_run_id_with_scenario(self, scenario_config):
-        assert scenario_config.run_id == "CESM2-WACCM_tas_r1i1p1f1_SSP245"
+        assert scenario_config.run_id == "CESM2-WACCM6_tas_r1i1p1f1_SSP245"
 
     def test_run_id_includes_subset_marker(self, regional_config):
         assert "subset" in regional_config.run_id
@@ -541,7 +544,7 @@ class TestBCSDConfigComputedFields:
             with subtests.test(label=label):
                 cfg = BCSDConfig(
                     downscaling_method="BCSD",
-                    gcm="CESM2-WACCM",
+                    gcm="CESM2-WACCM6",
                     variable="tas",
                     ensemble_member=label,
                 )
@@ -554,10 +557,16 @@ class TestBCSDConfigComputedFields:
 
     def test_config_hash_is_stable(self):
         cfg_a = BCSDConfig(
-            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+            downscaling_method="BCSD",
+            gcm="CESM2-WACCM6",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
         )
         cfg_b = BCSDConfig(
-            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+            downscaling_method="BCSD",
+            gcm="CESM2-WACCM6",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
         )
         assert cfg_a.config_hash == cfg_b.config_hash
 
@@ -584,7 +593,7 @@ class TestBCSDConfigComputedFields:
 
     def test_is_sai_true_for_sai_keyword(self):
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -612,7 +621,7 @@ class TestBCSDConfigValidation:
     def test_scenario_with_explicit_null_predict_start_raises(self):
         with pytest.raises(ValidationError):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -624,7 +633,7 @@ class TestBCSDConfigValidation:
     def test_scenario_with_explicit_null_predict_end_raises(self):
         with pytest.raises(ValidationError):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -636,7 +645,7 @@ class TestBCSDConfigValidation:
     def test_train_period_end_before_start_raises(self):
         with pytest.raises(ValidationError):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -647,7 +656,7 @@ class TestBCSDConfigValidation:
     def test_predict_period_end_before_start_raises(self):
         with pytest.raises(ValidationError):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -660,7 +669,7 @@ class TestBCSDConfigValidation:
         with pytest.raises(ValidationError):
             BCSDConfig(
                 downscaling_method="BCSD",
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 variable="sfcWind",
                 ensemble_member="r1i1p1f1",
             )
@@ -668,7 +677,7 @@ class TestBCSDConfigValidation:
     def test_subset_bounds_lat_min_ge_max_raises(self):
         with pytest.raises(ValidationError, match="lat_min"):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -678,7 +687,7 @@ class TestBCSDConfigValidation:
     def test_subset_bounds_lon_min_ge_max_raises(self):
         with pytest.raises(ValidationError, match="lon_min"):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -694,7 +703,7 @@ class TestBCSDConfigValidation:
             with subtests.test(desc=desc):
                 with pytest.raises(ValidationError, match="Latitude"):
                     BCSDConfig(
-                        gcm="CESM2-WACCM",
+                        gcm="CESM2-WACCM6",
                         downscaling_method="BCSD",
                         variable="tas",
                         ensemble_member="r1i1p1f1",

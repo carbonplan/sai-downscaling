@@ -1,8 +1,8 @@
-# BCSD comparison config: CESM2-WACCM / tasmax+tasmin / GDEX-GMF obs
+# BCSD comparison config: CESM2-WACCM6 / tasmax+tasmin / GDEX-GMF obs
 # tasmax/tasmin/dtr require corrected run: members 006-010 only (001-005 have CMIP6 bug).
 # Member 006, truncated end 2069.
 
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variable: ["tasmax", "tasmin"]
 ensemble_member: "006"
 scenario: "SSP245"

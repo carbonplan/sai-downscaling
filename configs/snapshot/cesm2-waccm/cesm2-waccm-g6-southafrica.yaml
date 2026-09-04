@@ -1,10 +1,10 @@
-# Snapshot proxy: CESM2-WACCM / G6-1.5K / members 002 and 003 / all variables / South Africa.
+# Snapshot proxy: CESM2-WACCM6 / G6-1.5K / members 002 and 003 / all variables / South Africa.
 # Mirrors configs/production/cesm2-waccm/cesm2-waccm-g6.yaml with SA bounds + qa env.
 #
 # 002 tracks the production config, which publishes it as the continued-SAI counterpart to
 # the termination run. Its leaves have no baseline counterpart until a production run
 # writes them, so the comparison reports them one-sided in the meantime; 003 is unaffected.
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002", "003"]
 scenarios: ["G6-1.5K"]

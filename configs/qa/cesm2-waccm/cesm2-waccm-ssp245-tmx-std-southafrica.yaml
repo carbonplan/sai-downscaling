@@ -1,4 +1,4 @@
-# BCSD configuration: CESM2-WACCM / all variables / SSP245 / truncated members 006-010 / South Africa (QA)
+# BCSD configuration: CESM2-WACCM6 / all variables / SSP245 / truncated members 006-010 / South Africa (QA)
 # Members 006-010's data ends in 2069 (per srm.validation._MEMBER_TIME_BOUNDS: 007-010 on
 # 2069-12-31, 006 a day earlier), so predict_period_end is clamped; see the note above it
 # for why it lands on 2068 rather than 2069. Two configs are folded in here:
@@ -10,7 +10,7 @@
 # in cesm2-waccm-ssp245-std-southafrica.yaml.
 
 # === Model and Scenario ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tasmax", "tasmin", "dtr", "tas", "pr", "rsds"]
 ensemble_members: ["006", "007", "008", "009", "010"]
 scenarios: ["SSP245"]

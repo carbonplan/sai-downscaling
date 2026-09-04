@@ -20,7 +20,7 @@ from srm.cache import ArtifactCache
 @pytest.fixture
 def config() -> BCSDConfig:
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r1i1p1f1",

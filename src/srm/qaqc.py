@@ -479,7 +479,7 @@ class DatasetChecker:
             return ValidationResult(True, [])
 
         n = self.ds.sizes["time"]
-        # Start at day 0.  CESM2-WACCM, #424 give an invalid first day (tasmax == tasmin == tas).
+        # Start at day 0.  CESM2-WACCM6, #424 give an invalid first day (tasmax == tasmin == tas).
         window = slice(0, min(n, _N_TIME_SAMPLES))
         ds_sample = self.ds.isel(time=window)
 
@@ -780,7 +780,7 @@ def check_ensemble_spread(
     ds : xarray.Dataset
         Group dataset, with `ensemble_member`, `time`, `lat` and `lon` dims.
     label : str
-        Row label, e.g. ``"CESM2-WACCM ssp245"``.
+        Row label, e.g. ``"CESM2-WACCM6 ssp245"``.
     var : str, default "tas"
         Variable to take the global mean of.
     day_index : int, default 0
@@ -1461,7 +1461,7 @@ def enumerate_scenario_comparisons(
 
     The baseline member comes from :func:`srm.lineage.resolve_member_lineage`, which is what makes
     this safe to run across variables. For the ``g6_ssp`` family the correct SSP245 bridge member
-    varies by variable on CESM2-WACCM: ``tas``/``pr``/``rsds``/``hurs`` bridge member ``003`` while
+    varies by variable on CESM2-WACCM6: ``tas``/``pr``/``rsds``/``hurs`` bridge member ``003`` while
     ``tasmax``/``tasmin``/``dtr`` bridge ``008`` (issue #448). A hand-written member therefore cannot
     be reused across variables, and pairing on one would compare different realizations.
 

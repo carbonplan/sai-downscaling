@@ -1,4 +1,4 @@
-# BCSD configuration: CESM2-WACCM / G6-1.5K-END / all variables / global (production)
+# BCSD configuration: CESM2-WACCM6 / G6-1.5K-END / all variables / global (production)
 #
 # Equivalent CLI command:
 #   uv run bcsd run --config-path configs/production/cesm2-waccm/cesm2-waccm-g6-end.yaml
@@ -13,7 +13,7 @@
 # 2034, then G6-1.5K 002 for 2035-2084), and trimmed from the output afterwards.
 
 # === BCSDConfig: Run Identity ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002"]
 scenarios: ["G6-1.5K-END"]

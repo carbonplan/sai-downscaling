@@ -1,4 +1,4 @@
-# BCSD configuration: CESM2-WACCM / tas / SSP245 / truncated members 006-010 / global (production)
+# BCSD configuration: CESM2-WACCM6 / tas / SSP245 / truncated members 006-010 / global (production)
 # Members 006-010's data ends in 2069 (per srm.validation._MEMBER_TIME_BOUNDS: 007-010 on
 # 2069-12-31, 006 a day earlier), so predict_period_end is 2069. These were previously
 # mis-truncated at 2070 in a separate cesm2-waccm-ssp245-tas-global-trunc-2070.yaml config
@@ -7,7 +7,7 @@
 # Full-length members 001-005 reach 2099.
 
 # === Model and Scenario ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas"]
 ensemble_members: ["008"]
 scenarios: ["SSP245"]

@@ -1,4 +1,4 @@
-# BCSD configuration: CESM2-WACCM / G6-1.5K / all variables / global (production)
+# BCSD configuration: CESM2-WACCM6 / G6-1.5K / all variables / global (production)
 #
 # Equivalent CLI command:
 #   uv run bcsd run --config-path configs/production/cesm2-waccm-g6.yaml
@@ -9,7 +9,7 @@
 # version of the per-variable mismatch issue #448 hit.
 
 # === BCSDConfig: Run Identity ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002", "003"]
 scenarios: ["G6-1.5K"]

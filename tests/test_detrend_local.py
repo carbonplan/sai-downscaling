@@ -5,8 +5,8 @@ daily datasets. They require no S3 access and no Coiled, making them the
 first-pass check when debugging detrending regressions.
 
 Scenarios covered:
-- CESM2-WACCM G6-1.5K standard variables: hist=r1i1p1f1, bridge=001, scenario=001
-- CESM2-WACCM G6-1.5K tasmax: hist=001, bridge=009, scenario=001, so all three differ.
+- CESM2-WACCM6 G6-1.5K standard variables: hist=r1i1p1f1, bridge=001, scenario=001
+- CESM2-WACCM6 G6-1.5K tasmax: hist=001, bridge=009, scenario=001, so all three differ.
   Members disagreeing across the three inputs is what triggered the MergeError on
   conflicting ensemble_member coords.
 """
@@ -54,8 +54,8 @@ def _daily_da(start_year: int, end_year: int, member: str | None = None) -> xr.D
 @pytest.mark.parametrize(
     "hist_member,bridge_member,scenario_member",
     [
-        ("001", "009", "001"),  # CESM2-WACCM G6-1.5K tasmax: all three members differ
-        ("r1i1p1f1", "001", "001"),  # CESM2-WACCM G6-1.5K standard variables
+        ("001", "009", "001"),  # CESM2-WACCM6 G6-1.5K tasmax: all three members differ
+        ("r1i1p1f1", "001", "001"),  # CESM2-WACCM6 G6-1.5K standard variables
         (None, None, None),  # no ensemble_member coord at all
     ],
     ids=["cesm_g6_tasmax", "cesm_g6", "no_member_coord"],

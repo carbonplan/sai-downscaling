@@ -1,4 +1,4 @@
-# Snapshot proxy: CESM2-WACCM / G6-1.5K-END / member 002 / all variables / South Africa.
+# Snapshot proxy: CESM2-WACCM6 / G6-1.5K-END / member 002 / all variables / South Africa.
 # Mirrors configs/production/cesm2-waccm/cesm2-waccm-g6-end.yaml with SA bounds + qa env.
 #
 # Member 002 is the only run continued to termination, which is also why the g6-1.5k
@@ -9,7 +9,7 @@
 # it, these leaves have no counterpart in the baseline and the comparison reports them as
 # one-sided rather than in or out of tolerance. That is the expected reading, not a
 # failure; the leaf inventory still confirms the candidate wrote everything configured.
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002"]
 scenarios: ["G6-1.5K-END"]
