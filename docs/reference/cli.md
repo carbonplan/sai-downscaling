@@ -35,7 +35,7 @@ uv run bcsd run --config-path configs/example.yaml
 uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --executor local
 
 # Estimate what a run will cost without submitting anything
-uv run bcsd run --config-path configs/production/cesm2-waccm/ --executor aws-batch --dry-run
+uv run bcsd run --config-path configs/production/cesm2-waccm6/ --executor aws-batch --dry-run
 
 # Force recompute of historical stage (ignores cache)
 uv run bcsd run --config-path configs/example.yaml --stage fit_historical --force
@@ -291,7 +291,7 @@ uv run bcsd validate-output --config-path configs/qa/ --scenario SSP245 --variab
 Print the icechunk branch a config set writes to, and nothing else, so a caller can pass it on as `--branch`.
 
 ```bash
-uv run bcsd resolve-branch --config-path configs/qa/cesm2-waccm/
+uv run bcsd resolve-branch --config-path configs/qa/cesm2-waccm6/
 ```
 
 `PipelineOptions.branch` defaults to the installed package version, so the value depends on which interpreter asks. That is harmless while one process both writes and reads. It stops being harmless once they are split: the deploy workflow runs the pipeline from the runner and `validate-output` inside a container whose package version was baked at image build time. Resolving the branch once on the runner and passing it explicitly leaves a single derivation instead of two that merely tend to agree.

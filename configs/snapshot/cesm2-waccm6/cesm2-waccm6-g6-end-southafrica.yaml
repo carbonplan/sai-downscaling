@@ -1,5 +1,5 @@
 # Snapshot proxy: CESM2-WACCM6 / G6-1.5K-END / member 002 / all variables / South Africa.
-# Mirrors configs/production/cesm2-waccm/cesm2-waccm-g6-end.yaml with SA bounds + qa env.
+# Mirrors configs/production/cesm2-waccm6/cesm2-waccm6-g6-end.yaml with SA bounds + qa env.
 #
 # Member 002 is the only run continued to termination, which is also why the g6-1.5k
 # proxy alongside this one carries 002 as well as 003: the terminated and continued legs

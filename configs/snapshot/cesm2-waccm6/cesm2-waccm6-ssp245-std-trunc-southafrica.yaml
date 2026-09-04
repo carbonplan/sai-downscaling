@@ -1,18 +1,18 @@
-# Snapshot proxy: CESM2-WACCM6 / G6-1.5K / members 002 and 003 / all variables / South Africa.
-# Mirrors configs/production/cesm2-waccm/cesm2-waccm-g6.yaml with SA bounds + qa env.
-#
-# 002 tracks the production config, which publishes it as the continued-SAI counterpart to
-# the termination run. Its leaves have no baseline counterpart until a production run
-# writes them, so the comparison reports them one-sided in the meantime; 003 is unaffected.
+# Snapshot proxy: CESM2-WACCM6 / SSP245 / standard variables / truncated member 008 / South Africa.
+# Mirrors configs/production/cesm2-waccm6/cesm2-waccm6-ssp245-std-trunc.yaml with SA bounds + qa env.
+# Member 008 is the std bridge for G6-1.5K/003; its SSP245 data ends 2069-12-31 (CMIP6 truncation
+# of members 006-010), so predict_period_end is clamped to 2069 to avoid downscaling past the
+# valid extent.
+# Full-length member 003 lives in cesm2-waccm6-ssp245-std-southafrica.yaml (2099).
 gcm: "CESM2-WACCM6"
-variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
-ensemble_members: ["002", "003"]
-scenarios: ["G6-1.5K"]
+variables: ["tas", "pr", "rsds"]
+ensemble_members: ["008"]
+scenarios: ["SSP245"]
 
 train_period_start: 1978
 train_period_end: 2014
-predict_period_start: 2035
-predict_period_end: 2084
+predict_period_start: 2015
+predict_period_end: 2069
 
 # === Downscaling Method ===
 # "BCSD" (detrend + quantile mapping) or "QDMSD" (quantile delta mapping). Required:

@@ -1,10 +1,10 @@
 # BCSD configuration: CESM2-WACCM6 / G6-1.5K-END / all variables / global (production)
 #
 # Equivalent CLI command:
-#   uv run bcsd run --config-path configs/production/cesm2-waccm/cesm2-waccm-g6-end.yaml
+#   uv run bcsd run --config-path configs/production/cesm2-waccm6/cesm2-waccm6-g6-end.yaml
 #
 # Termination shock: SAI stops after 2084 and G6-1.5K member 002 runs on to 2100. Member
-# 002 is the only run continued to termination, which is why cesm2-waccm-g6.yaml also
+# 002 is the only run continued to termination, which is why cesm2-waccm6-g6.yaml also
 # publishes 002 — the terminated and continued legs have to be the same realization for a
 # comparison between them to mean anything.
 #

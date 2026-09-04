@@ -32,7 +32,7 @@ downscaling_methods: ["BCSD", "QDMSD"]
 # All of South Africa ([-35, -22, 16, 33]) plus a ~3 deg halo. subset_space applies a hard
 # slice with no padding, so the regrid and spatial disaggregation edge effects land on the
 # box boundary; the halo keeps them outside the region of interest. Matches the bounds used
-# by configs/snapshot/cesm2-waccm/.
+# by configs/snapshot/cesm2-waccm6/.
 subset_bounds: [-38, -19, 13, 36]
 
 # === Storage ===

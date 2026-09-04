@@ -1,20 +1,16 @@
-# BCSD configuration: CESM2-WACCM6 / standard variables / SSP245 / full-length members 001-005 / South Africa (QA)
-# Standard variables (tas, pr, rsds, hurs) are available for all 10 members, but this config
-# covers only the full-length members 001-005. Truncated members 006-010 live in
-# cesm2-waccm-ssp245-tmx-std-southafrica.yaml, which carries their standard variables
-# alongside the tasmax/tasmin/dtr that only the corrected run provides.
+# BCSD configuration: CESM2-WACCM6 / all variables / G6-1.5K / all members / South Africa (QA)
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM6"
-variables: ["tas", "pr", "rsds", "hurs"]
-ensemble_members: ["001", "002", "003", "004", "005"]
-scenarios: ["SSP245"]
+variables: ["tas", "pr", "rsds", "hurs", "tasmax", "tasmin", "dtr"]
+ensemble_members: ["001", "002", "003"]
+scenarios: ["G6-1.5K"]
 
 # === Time Periods ===
 train_period_start: 1978
 train_period_end: 2014
-predict_period_start: 2015
-predict_period_end: 2099
+predict_period_start: 2035
+predict_period_end: 2084
 
 # === Downscaling Methods ===
 # "BCSD" (detrend + quantile mapping) and "QDMSD" (quantile delta mapping). Required:
@@ -28,7 +24,7 @@ downscaling_methods: ["BCSD", "QDMSD"]
 # All of South Africa ([-35, -22, 16, 33]) plus a ~3 deg halo. subset_space applies a hard
 # slice with no padding, so the regrid and spatial disaggregation edge effects land on the
 # box boundary; the halo keeps them outside the region of interest. Matches the bounds used
-# by configs/snapshot/cesm2-waccm/.
+# by configs/snapshot/cesm2-waccm6/.
 subset_bounds: [-38, -19, 13, 36]
 
 # === Storage ===

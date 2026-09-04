@@ -240,7 +240,7 @@ import yaml
 from srm.bcsd_config import BCSDConfig
 
 # Reconstruct BCSDConfig from the YAML you intend to run
-with open("configs/production/cesm2-waccm/cesm2-waccm-ssp245-std.yaml") as f:
+with open("configs/production/cesm2-waccm6/cesm2-waccm6-ssp245-std.yaml") as f:
     yaml_config = BCSDConfig(**yaml.safe_load(f))
 
 # Reconstruct BCSDConfig from what was actually written

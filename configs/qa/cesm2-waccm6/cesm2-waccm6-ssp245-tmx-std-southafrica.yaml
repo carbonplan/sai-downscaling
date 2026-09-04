@@ -2,12 +2,12 @@
 # Members 006-010's data ends in 2069 (per srm.validation._MEMBER_TIME_BOUNDS: 007-010 on
 # 2069-12-31, 006 a day earlier), so predict_period_end is clamped; see the note above it
 # for why it lands on 2068 rather than 2069. Two configs are folded in here:
-# cesm2-waccm-ssp245-std-trunc-2070-southafrica.yaml, whose 2070 end was the last 2069 daily
+# cesm2-waccm6-ssp245-std-trunc-2070-southafrica.yaml, whose 2070 end was the last 2069 daily
 # mean carrying an end-of-interval stamp (corrected at the ETL by issue #521), and
-# cesm2-waccm-ssp245-tmx-2069-southafrica.yaml, which covered tasmax/tasmin/dtr.
+# cesm2-waccm6-ssp245-tmx-2069-southafrica.yaml, which covered tasmax/tasmin/dtr.
 # tasmax/tasmin/dtr exist only for members 006-010, via the corrected historical run ("001").
 # Full-length members 001-005 carry the CMIP6 tasmax/tasmin bug and are standard-variables-only
-# in cesm2-waccm-ssp245-std-southafrica.yaml.
+# in cesm2-waccm6-ssp245-std-southafrica.yaml.
 
 # === Model and Scenario ===
 gcm: "CESM2-WACCM6"
@@ -35,7 +35,7 @@ downscaling_methods: ["BCSD", "QDMSD"]
 # All of South Africa ([-35, -22, 16, 33]) plus a ~3 deg halo. subset_space applies a hard
 # slice with no padding, so the regrid and spatial disaggregation edge effects land on the
 # box boundary; the halo keeps them outside the region of interest. Matches the bounds used
-# by configs/snapshot/cesm2-waccm/.
+# by configs/snapshot/cesm2-waccm6/.
 subset_bounds: [-38, -19, 13, 36]
 
 # === Storage ===

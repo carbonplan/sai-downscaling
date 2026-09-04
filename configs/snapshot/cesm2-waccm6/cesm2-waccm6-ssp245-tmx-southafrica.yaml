@@ -1,17 +1,19 @@
-# Snapshot proxy: CESM2-WACCM6 / SSP245 / standard variables / full-length member 003 / South Africa.
-# Mirrors configs/production/cesm2-waccm/cesm2-waccm-ssp245-std.yaml with SA bounds + qa env.
-# Member 003 is the std bridge for G6-1.5K/003 and its SSP245 data runs to 2099. Truncated
-# member 008 (data ends 2069) lives in cesm2-waccm-ssp245-std-trunc-southafrica.yaml; temperature
-# extremes are in cesm2-waccm-ssp245-tmx-southafrica.yaml.
+# Snapshot proxy: CESM2-WACCM6 / SSP245 / temperature extremes / South Africa.
+# Mirrors configs/production/cesm2-waccm6/cesm2-waccm6-ssp245-tmx.yaml with SA
+# bounds + qa env. Corrected tasmax/tasmin (and derived dtr) only exist for SSP245
+# members 006-010 (CMIP6 bug); member 008 is the tmx bridge for G6-1.5K/003.
+# Member 008's data ends 2069-12-31, so predict_period_end is clamped to 2069. Standard
+# variables live in cesm2-waccm6-ssp245-std-southafrica.yaml (member 003) and
+# cesm2-waccm6-ssp245-std-trunc-southafrica.yaml (member 008).
 gcm: "CESM2-WACCM6"
-variables: ["tas", "pr", "rsds"]
-ensemble_members: ["003"]
+variables: ["tasmax", "tasmin", "dtr"]
+ensemble_members: ["008"]
 scenarios: ["SSP245"]
 
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2099
+predict_period_end: 2069
 
 # === Downscaling Method ===
 # "BCSD" (detrend + quantile mapping) or "QDMSD" (quantile delta mapping). Required:

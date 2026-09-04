@@ -1,18 +1,19 @@
-# BCSD configuration: CESM2-WACCM6 / SSP245 / temperature extremes (production)
+# BCSD configuration: CESM2-WACCM6 / SSP245 / standard variables (production)
 #
-# tasmax/tasmin (and derived dtr) use the corrected historical run and only exist
-# for SSP245 members 006-010; members 001-005 are standard-vars-only due to the
-# CMIP6 tasmax/tasmin bug. Standard variables live in cesm2-waccm-ssp245-std.yaml.
-# Member 008's data ends 2069-12-31, so predict_period_end is clamped to 2069 to avoid
-# downscaling past its valid extent.
+# Standard variables (tas/pr/rsds/hurs) for full-length SSP245 member 003, which
+# reaches 2099. Truncated member 008 (data ends 2069) is downscaled in
+# cesm2-waccm6-ssp245-std-trunc.yaml so each config's predict_period_end matches its
+# members' real data extent. tasmax/tasmin/dtr are split into
+# cesm2-waccm6-ssp245-tmx.yaml because the corrected temperature extremes only exist
+# for members 006-010 (CMIP6 bug).
 #
 # Equivalent CLI command:
 #   uv run bcsd run --config-path configs/production/
 
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM6"
-variables: ["tasmax", "tasmin", "dtr"]
-ensemble_members: ["008"]
+variables: ["tas", "pr", "rsds"]
+ensemble_members: ["003"]
 scenarios: ["SSP245"]
 
 # === Downscaling Methods ===
@@ -24,7 +25,7 @@ downscaling_methods: ["BCSD", "QDMSD"]
 train_period_start: 1978
 train_period_end: 2014
 predict_period_start: 2015
-predict_period_end: 2069
+predict_period_end: 2099
 
 # === PipelineOptions: Operational Settings ===
 scratch_dir: "s3://carbonplan-srm/scratch/cache"
