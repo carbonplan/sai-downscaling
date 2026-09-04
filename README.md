@@ -12,7 +12,7 @@
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 
 This repository implements a scalable, cloud-native pipeline for downscaling Stratospheric Aerosol Injection (SAI) climate model outputs. It uses the [BCSD](docs/explanation/scientific-approach.md) (Bias-Correction and Spatial-Disaggregation)
-method to spatially downscale daily `CESM2-WACCM6` GCM output from historical, SSP2-4.5, G6-1.5K, and G6-1.5K termination-shock SAI scenarios using daily ERA5 observation data.
+method to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K scenarios, plus the CESM G6-1.5K termination-shock run, using daily ERA5 observation data.
 
 > **Note:** This repository reflects the code and infrastructure used for this specific project. It is not maintained as a general-purpose, plug-and-play downscaling tool. Treat it as a reference — a place to borrow patterns, adapt components, or learn from rather than something to run as-is.
 

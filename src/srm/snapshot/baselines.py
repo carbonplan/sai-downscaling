@@ -54,10 +54,9 @@ CESM2_WACCM_GLOBAL = Baseline(
     executor="coiled",
 )
 
-# Deliberately still on ``carbonplan-scratch`` while other non-production paths moved to
-# ``s3://carbonplan-srm/scratch/``: copying 302 GiB to reach one of 20 branches buys
-# nothing, and a baseline does not belong in a prefix meant to be deleted wholesale. The
-# next release rebuilds it under ``scratch/snapshot/output/qa/``.
+# The store name still carries the pre-#598 model name because this data was written before
+# the rename. The next release's snapshot job rebuilds the baseline under
+# ``CESM2-WACCM6-ERA5-...`` and prints the new pointer; repoint both fields then.
 #
 # ``branch`` is writable, not a frozen tag: the ``bcsd release`` freeze step has never run
 # here, so a run with a matching ``BCSD_BRANCH`` could overwrite what this cites.
