@@ -112,7 +112,7 @@ uv run bcsd run-matrix [OPTIONS]
 # 2 GCMs x 2 variables x 3 members x 2 scenarios
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --gcm UKESM \
+  --gcm CESM2-WACCM6 --gcm UKESM1-1-LL \
   --variable tas --variable pr \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 --scenario G6-1.5K \
@@ -122,14 +122,14 @@ uv run bcsd run-matrix \
 
 # Compare both downscaling methods on identical inputs
 uv run bcsd run-matrix \
-  --gcm CESM2-WACCM --variable pr --member 003 --scenario SSP245 \
+  --gcm CESM2-WACCM6 --variable pr --member 003 --scenario SSP245 \
   --downscaling-method BCSD --downscaling-method QDMSD \
   --predict-period-start 2015 --predict-period-end 2099
 
 # Give one variable a different bias-correction approach
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM \
+  --gcm CESM2-WACCM6 \
   --variable tasmax --variable dtr \
   --member 007 --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2069 \
@@ -138,7 +138,7 @@ uv run bcsd run-matrix \
 # Preview what would run without executing
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --gcm UKESM \
+  --gcm CESM2-WACCM6 --gcm UKESM1-1-LL \
   --variable tas \
   --member r1i1p1f1 --member r2i1p1f1 \
   --scenario ssp245 \
@@ -148,14 +148,14 @@ uv run bcsd run-matrix \
 # Historical-only (omit --scenario)
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM \
+  --gcm CESM2-WACCM6 \
   --variable tas --variable pr \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1
 
 # Regional subset
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM \
+  --gcm CESM2-WACCM6 \
   --variable tas \
   --member r1i1p1f1 \
   --scenario ssp245 \
@@ -165,14 +165,14 @@ uv run bcsd run-matrix \
 # Run only a specific stage
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
+  --gcm CESM2-WACCM6 --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --stage scenario
 
 # Force recompute of all runs
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
+  --gcm CESM2-WACCM6 --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --force
 ```
@@ -190,16 +190,16 @@ A two-method run is therefore cheaper than two separate runs, which each pay for
 **How Deduplication Works:**
 
 ```
-Example: CESM2-WACCM, tas, ensembles [r1i1p1f1, r2i1p1f1, r3i1p1f1], ssp245
+Example: CESM2-WACCM6, tas, ensembles [r1i1p1f1, r2i1p1f1, r3i1p1f1], ssp245
 
 stage 1 (prepare_observations):
   - 1 task runs (shared across all ensembles and scenarios)
-  - key: (CESM2-WACCM, tas)
+  - key: (CESM2-WACCM6, tas)
   - output: obs_regridded cached once, reused 3 times
 
 stage 2 (fit_historical):
   - 3 tasks run (one per ensemble member)
-  - keys: (CESM2-WACCM, tas, r1i1p1f1), (CESM2-WACCM, tas, r2i1p1f1), (CESM2-WACCM, tas, r3i1p1f1)
+  - keys: (CESM2-WACCM6, tas, r1i1p1f1), (CESM2-WACCM6, tas, r2i1p1f1), (CESM2-WACCM6, tas, r3i1p1f1)
   - outputs: historical cached for each ensemble, reused across scenarios
 
 stage 3 (transform_scenario):
@@ -235,7 +235,7 @@ uv run bcsd validate --config-path configs/qa/
 uv run bcsd validate --config-path configs/production/
 
 # Validate a specific GCM/scenario combination
-uv run bcsd validate --gcm CESM2-WACCM --scenario SSP245
+uv run bcsd validate --gcm CESM2-WACCM6 --scenario SSP245
 
 # Validate all known datasets locally (no Coiled cluster)
 uv run bcsd validate --no-coiled
@@ -327,9 +327,9 @@ uv run bcsd status --config-path configs/example.yaml --verbose
 #   Branch: main
 #
 # Example Paths:
-#   Obs: s3://carbonplan-srm/scratch/cache/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
-#   Historical: s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
-#   Scenario: s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+#   Obs: s3://carbonplan-srm/scratch/cache/qa/CESM2-WACCM6-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+#   Historical: s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM6-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+#   Scenario: s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM6-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
 #
 # (one icechunk store per GCM-obs-subset tuple; obs/historical/scenario are
 #  groups inside it, and versions are icechunk branches, not path segments)
@@ -371,7 +371,7 @@ uv run bcsd cache-list --config-path configs/example.yaml
 uv run bcsd cache-list --config-path configs/example.yaml --stage obs
 
 # List specific GCM/variable combination
-uv run bcsd cache-list --config-path configs/example.yaml --gcm CESM2-WACCM --variable tas
+uv run bcsd cache-list --config-path configs/example.yaml --gcm CESM2-WACCM6 --variable tas
 ```
 
 ---
@@ -402,7 +402,7 @@ uv run bcsd cache-clear --config-path configs/example.yaml
 uv run bcsd cache-clear --config-path configs/example.yaml --stage scenarios --yes
 
 # Clear specific GCM
-uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --yes
+uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM6 --yes
 ```
 
 :::{admonition} Environment-scoped clearing

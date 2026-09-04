@@ -29,9 +29,16 @@ s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production
 
 | Component | Values | Example |
 | --- | --- | --- |
-| `gcm` | `CESM2-WACCM`, `UKESM` | `CESM2-WACCM` |
+| `gcm` | `CESM2-WACCM6`, `UKESM1-1-LL` | `CESM2-WACCM6` |
 | `obs_dataset` | `ERA5`, `GDEX-GMF` | `ERA5` |
 | `subset_id` | `global` or `lat{min}to{max}_lon{min}to{max}` | `global` |
+
+```{note}
+Releases up to and including `v0.13.0` predate the model-name correction in issue #598, so
+they live under `CESM2-WACCM-ERA5-global.icechunk` and record `srm_downscaling:gcm` as
+`CESM2-WACCM`. Later releases live under `CESM2-WACCM6-ERA5-global.icechunk`. The examples on
+this page open whichever store holds the current release.
+```
 
 Within each store, data is organized in zarr groups:
 
@@ -204,6 +211,7 @@ accessed.
 | `srm_downscaling:config_hash` | 12-character SHA-256 of computation-affecting fields only |
 | `srm_downscaling:version` | `srm` package version that produced the data |
 | `srm_downscaling:gcm` | GCM name |
+| `srm_downscaling:gcm_description` | Model description from the catalog, e.g. `CESM2.1.5-WACCM6(TSMLT)`. Absent on releases before the rename. |
 | `srm_downscaling:scenario` | Scenario (or `"historical"`) |
 | `srm_downscaling:variable` | Variable name |
 | `srm_downscaling:ensemble_member` | Ensemble member label |
@@ -218,7 +226,7 @@ accessed.
 
 Regridded observations carry a reduced set. That artifact is shared across every ensemble
 member, scenario, and downscaling method for a given GCM, so it records only `version`,
-`gcm`, `variable`, `observation_dataset`, and `creation_date`. The presence of
+`gcm`, `gcm_description`, `variable`, `observation_dataset`, and `creation_date`. The presence of
 `srm_downscaling:downscaling_method` on a group therefore means that group depends on the
 downscaling method.
 
@@ -244,6 +252,11 @@ yaml_config.config_hash == stored_config.config_hash
 # Full field-by-field diff if you need to know what changed
 yaml_config.model_dump() == stored_config.model_dump()
 ```
+
+On releases up to `v0.13.0`, `srm_downscaling:config_json` records the retired name
+`CESM2-WACCM`, and `BCSDConfig` rejects it with a message pointing at issue #598. To compare
+against one of those stores, load the attribute with `json.loads` and compare the fields you
+need directly, or map the name to `CESM2-WACCM6` before validating.
 
 `config_hash` is the fastest check: it covers only the fields that affect the computed output
 (GCM, variable, scenario, periods, subset bounds, mapping type, variable config), so it returns

@@ -16,7 +16,7 @@ Both classes use `extra="ignore"`, so a single flat YAML file is accepted by bot
 Any of the five dimension fields can be a list. `load_configs` expands them into one `BCSDConfig` per cartesian-product combination:
 
 ```yaml
-gcm: "CESM2-WACCM"                              # singular, still works
+gcm: "CESM2-WACCM6"                              # singular, still works
 variables: ["tas", "pr"]                         # list, expands
 ensemble_members: ["001", "002", "003"]
 scenarios: ["SSP245"]
@@ -44,7 +44,7 @@ For the first case, remove `variable_config` and rely on per-variable defaults (
 
 `predict_period_start` and `predict_period_end` must fall within the valid data extent of every ensemble member the config expands to. Those extents are not uniform: some members are truncated years before the nominal scenario end and the unified store NaN-pads them to that end, so a predict period that overshoots would silently downscale padding. `bcsd run` and `bcsd run-matrix` guard against this with `check_config_time_domain` before submitting any work, raising a blocking error that lists every config whose predict period falls outside its member's bounds.
 
-The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/srm/validation.py`; the CESM2-WACCM SSP245 spread is representative:
+The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/srm/validation.py`; the CESM2-WACCM6 SSP245 spread is representative:
 
 | Members | Valid end year |
 |---|---|
@@ -53,7 +53,7 @@ The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a pe
 
 007–010 each have a single stray non-NaN day on 2070-01-01 in the raw GCM input, with the rest of 2070 NaN; that one day does not extend their valid extent past 2069.
 
-UKESM SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios can technically start before their own data, because the pipeline bridges the gap: for `G6-1.5K` that bridge is SSP245, and for the `G6-1.5K-END` termination run, whose store begins in 2085, it is SSP245 through 2034 followed by the parent `G6-1.5K` member 002 for 2035–2084. Those bridge years are another scenario's data, so publishing them under this scenario's label is what issue #448 hit, where pre-2035 `g6_1p5k` output drew `tas` and `tasmax` from different SSP245 realizations and produced `tas > tasmax`.
+UKESM1-1-LL SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single config carries one `predict_period`, members with different extents cannot share a config — each extent group needs its own file with a matching `predict_period_end`. SAI/G6 scenarios can technically start before their own data, because the pipeline bridges the gap: for `G6-1.5K` that bridge is SSP245, and for the `G6-1.5K-END` termination run, whose store begins in 2085, it is SSP245 through 2034 followed by the parent `G6-1.5K` member 002 for 2035–2084. Those bridge years are another scenario's data, so publishing them under this scenario's label is what issue #448 hit, where pre-2035 `g6_1p5k` output drew `tas` and `tasmax` from different SSP245 realizations and produced `tas > tasmax`.
 
 `config_time_domain` therefore enforces the start bound for every scenario, SAI included, and set `predict_period_start` to the scenario's own data start: 2035 for `G6-1.5K` and 2085 for `G6-1.5K-END`. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
 
@@ -63,7 +63,7 @@ These fields identify a BCSD run and affect computation results. Changing any of
 
 ```yaml
 # Model identifiers (singular or list)
-gcm: "CESM2-WACCM"                    # GCM model name
+gcm: "CESM2-WACCM6"                    # GCM model name
 variable: "tas"                        # Variable: tas, tasmax, tasmin, pr, rsds, dtr, hurs
 ensemble_member: "r1i1p1f1"            # Ensemble member label (e.g. "r1i1p1f1", "01")
 scenario: "SSP245"                     # Scenario: SSP245, G6-1.5K, etc. (null for historical-only)
@@ -118,7 +118,7 @@ There is no run-wide tier in YAML, deliberately. A top-level `debias_approach` w
 `variable_overrides` is keyed by variable name, so it is order-independent. A key naming a variable outside the run is an error, not a silent no-op. It is only valid in matrix configs; a single-variable config should use `variable_config` directly.
 
 ```bash
-bcsd run-matrix --gcm CESM2-WACCM \
+bcsd run-matrix --gcm CESM2-WACCM6 \
   --variable tasmax --variable dtr \
   --member 007 --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2069 \
@@ -303,7 +303,7 @@ two runs because obs deduplication is deliberately method-blind. On the command 
 equivalent is a repeated flag:
 
 ```bash
-uv run bcsd run-matrix --gcm CESM2-WACCM --variable pr --member 003 --scenario SSP245 \
+uv run bcsd run-matrix --gcm CESM2-WACCM6 --variable pr --member 003 --scenario SSP245 \
   --downscaling-method BCSD --downscaling-method QDMSD \
   --predict-period-start 2015 --predict-period-end 2099
 ```

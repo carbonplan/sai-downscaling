@@ -46,7 +46,7 @@ For quick ad-hoc runs from the command line without writing a config file, `bcsd
 # 2 GCMs × 2 variables × 3 members × 2 scenarios
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --gcm UKESM \
+  --gcm CESM2-WACCM6 --gcm UKESM1-1-LL \
   --variable tas --variable pr \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario ssp245 --scenario G6-1.5K \
@@ -60,7 +60,7 @@ Use `--dry-run` to preview the generated matrix before executing:
 ```bash
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
+  --gcm CESM2-WACCM6 --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --dry-run
 ```
@@ -75,7 +75,7 @@ For all multi-run workflows, the recommended approach is a directory of config f
 ```bash
 for member in r1i1p1f1 r2i1p1f1 r3i1p1f1; do
   cat > configs/batch/cesm2-tas-ssp245-e${member}.yaml <<EOF
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variable: "tas"
 ensemble_member: "${member}"
 scenario: "SSP245"
@@ -100,10 +100,10 @@ A single matrix config file expresses the same set of runs more compactly, with 
 For a quick ad-hoc batch without config files, `bcsd run-matrix` takes the cartesian product of the dimensions you pass on the command line and handles everything itself:
 
 ```bash
-# 3 members × 2 scenarios for CESM2-WACCM tas, with deduplication
+# 3 members × 2 scenarios for CESM2-WACCM6 tas, with deduplication
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM \
+  --gcm CESM2-WACCM6 \
   --variable tas \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \
   --scenario SSP245 --scenario G6-1.5K \
@@ -124,7 +124,7 @@ The orchestrator automatically deduplicates shared work across the matrix:
 ```bash
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM \
+  --gcm CESM2-WACCM6 \
   --variable tas \
   --member r1i1p1f1 \
   --scenario SSP245 --scenario G6-1.5K \
@@ -138,7 +138,7 @@ uv run bcsd run-matrix \
 
 Ensemble members rarely all cover the same period, and `bcsd run` rejects any config whose `predict_period_end` runs past a member's real data extent (see the [per-member data extents](../reference/configuration.md#prediction-period-and-per-member-data-extents) reference for the full table). Because a config carries a single `predict_period`, members with different extents have to be split into separate files, each with a `predict_period_end` matched to its group.
 
-The production CESM2-WACCM SSP245 configs are organized exactly this way. Members 006–010 run to `predict_period_end: 2069` (`cesm2-waccm-ssp245-tas-global-trunc-2069.yaml`), and the full-length members 001–005 run to 2099. Drop the per-extent files in one directory and run them together — deduplication still applies across the whole set:
+The production CESM2-WACCM6 SSP245 configs are organized exactly this way. Members 006–010 run to `predict_period_end: 2069` (`cesm2-waccm-ssp245-tas-global-trunc-2069.yaml`), and the full-length members 001–005 run to 2099. Drop the per-extent files in one directory and run them together — deduplication still applies across the whole set:
 
 ```bash
 uv run bcsd run --config-path configs/production/cesm2-waccm/
@@ -155,7 +155,7 @@ uv run bcsd run --config-path configs/example.yaml --executor local
 # Matrix run locally (useful for testing)
 uv run bcsd run-matrix \
   --downscaling-method BCSD \
-  --gcm CESM2-WACCM --variable tas --member r1i1p1f1 \
+  --gcm CESM2-WACCM6 --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --subset-bounds '-35,-22,16,33' \
   --executor local
