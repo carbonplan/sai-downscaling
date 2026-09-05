@@ -1491,6 +1491,7 @@ def calculate_all_flags(
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot_flag_maps: bool = True,
     grid_type: str = "downscaled",
+    verbose: bool = True,
 ):
     """
     Run every intermediate QA-flag check -- time-varying and time-invariant --
@@ -1527,6 +1528,8 @@ def calculate_all_flags(
 
     ########### Run time-varying flag loops that are the same for all grids ############################################
     # Flag 1. Global exceedances
+    if verbose:
+        print("Running flag loop 1/5: global exceedance flag...")
     run_flag_loop(
         tags=tags,
         trees=trees,
@@ -1539,6 +1542,8 @@ def calculate_all_flags(
     )
 
     # Flag 2. Temperature inconsistencies (tas vs. tasmin/tasmax)
+    if verbose:
+        print("Running flag loop 2/5: temperature inconsistency flag...")
     run_flag_loop_temperature_inconsistencies(
         tags,
         trees,
@@ -1551,6 +1556,8 @@ def calculate_all_flags(
 
     ########### Run time-varying flag loops that use different pre-computed inputs for different grids ###################
     # Flag 3. Outliers based on observations
+    if verbose:
+        print("Running flag loop 3/5: annual outlier flag...")
     [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_annual_threshold_inputs(
         grid_type=grid_type
     )
@@ -1571,6 +1578,8 @@ def calculate_all_flags(
     )
 
     # Flag 4. rsds-specific latitude/day-of-year check
+    if verbose:
+        print("Running flag loop 4/5: rsds max exceedance flag...")
     zonal_doy_max_rsds = load_rsds_lims(grid_type=grid_type)
     run_flag_loop(
         tags=tags,
@@ -1587,6 +1596,8 @@ def calculate_all_flags(
     )
 
     ########### Run time-invariant flag loops ##################################################
+    if verbose:
+        print("Running flag loop 5/5: trend distortion flag...")
     calculate_trend_distortion_flags(
         trees=trees,
         gcms=gcms,
@@ -1615,6 +1626,7 @@ def run_step2(
     bucket: str,
     prefix: str,
     plot_flag_maps: bool = True,
+    verbose: bool = True,
 ):
     """
     Run through all the intermediate flag calculations and write them to icechunk stores on scratch.
@@ -1641,6 +1653,8 @@ def run_step2(
         If True, plot each computed flag.
     """
     ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
+    if verbose:
+        print("Discovering leaves of the data tree...")
     [
         trees,
         tags,
@@ -1667,6 +1681,8 @@ def run_step2(
     methods_np_downscaled = methods_np[keep_idx]
 
     # Calculate the flags for the downscaled output
+    if verbose:
+        print("Calculating flags on downscaled data...")
     calculate_all_flags(
         variables=variables,
         gcms=gcms,
@@ -1682,9 +1698,12 @@ def run_step2(
         methods_np=methods_np_downscaled,
         plot_flag_maps=plot_flag_maps,
         grid_type="downscaled",
+        verbose=verbose,
     )
 
     # Calculate the flags for the coarse debiased output
+    if verbose:
+        print("Calculating flags on coarse debiased data...")
     for gcm in gcms:
         mask = (debiased_coarse_flags_np == "debiased_coarse") & (gcms_np == gcm)
         gcms_np_coarse = gcms_np[mask]
@@ -1708,4 +1727,5 @@ def run_step2(
             methods_np=methods_np_coarse,
             plot_flag_maps=plot_flag_maps,
             grid_type=gcm,
+            verbose=verbose,
         )
