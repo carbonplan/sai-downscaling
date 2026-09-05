@@ -1,3 +1,5 @@
+import time
+
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import icechunk
@@ -1530,6 +1532,7 @@ def calculate_all_flags(
     # Flag 1. Global exceedances
     if verbose:
         print("Running flag loop 1/5: global exceedance flag...")
+        t0 = time.time()
     run_flag_loop(
         tags=tags,
         trees=trees,
@@ -1540,10 +1543,13 @@ def calculate_all_flags(
         write_mode="a",
         is_downscaled=is_downscaled,
     )
+    if verbose:
+        print(f"  flag loop 1/5 completed in {time.time() - t0:.1f}s")
 
     # Flag 2. Temperature inconsistencies (tas vs. tasmin/tasmax)
     if verbose:
         print("Running flag loop 2/5: temperature inconsistency flag...")
+        t0 = time.time()
     run_flag_loop_temperature_inconsistencies(
         tags,
         trees,
@@ -1553,11 +1559,14 @@ def calculate_all_flags(
         prefix=prefix,
         is_downscaled=is_downscaled,
     )
+    if verbose:
+        print(f"  flag loop 2/5 completed in {time.time() - t0:.1f}s")
 
     ########### Run time-varying flag loops that use different pre-computed inputs for different grids ###################
     # Flag 3. Outliers based on observations
     if verbose:
         print("Running flag loop 3/5: annual outlier flag...")
+        t0 = time.time()
     [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_annual_threshold_inputs(
         grid_type=grid_type
     )
@@ -1576,10 +1585,13 @@ def calculate_all_flags(
         write_mode="a",
         is_downscaled=is_downscaled,
     )
+    if verbose:
+        print(f"  flag loop 3/5 completed in {time.time() - t0:.1f}s")
 
     # Flag 4. rsds-specific latitude/day-of-year check
     if verbose:
         print("Running flag loop 4/5: rsds max exceedance flag...")
+        t0 = time.time()
     zonal_doy_max_rsds = load_rsds_lims(grid_type=grid_type)
     run_flag_loop(
         tags=tags,
@@ -1594,10 +1606,13 @@ def calculate_all_flags(
         write_mode="a",
         is_downscaled=is_downscaled,
     )
+    if verbose:
+        print(f"  flag loop 4/5 completed in {time.time() - t0:.1f}s")
 
     ########### Run time-invariant flag loops ##################################################
     if verbose:
         print("Running flag loop 5/5: trend distortion flag...")
+        t0 = time.time()
     calculate_trend_distortion_flags(
         trees=trees,
         gcms=gcms,
@@ -1614,6 +1629,8 @@ def calculate_all_flags(
         plot=plot_flag_maps,
         is_downscaled=is_downscaled,
     )
+    if verbose:
+        print(f"  flag loop 5/5 completed in {time.time() - t0:.1f}s")
 
 
 def run_step2(
@@ -1655,6 +1672,7 @@ def run_step2(
     ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
     if verbose:
         print("Discovering leaves of the data tree...")
+        t0 = time.time()
     [
         trees,
         tags,
@@ -1671,6 +1689,8 @@ def run_step2(
         store_subset_id=store_subset_id,
         is_downscaled=False,
     )
+    if verbose:
+        print(f"  leaf discovery completed in {time.time() - t0:.1f}s")
 
     keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
     tags_np_downscaled = tags_np[keep_idx]
@@ -1683,6 +1703,7 @@ def run_step2(
     # Calculate the flags for the downscaled output
     if verbose:
         print("Calculating flags on downscaled data...")
+        t0 = time.time()
     calculate_all_flags(
         variables=variables,
         gcms=gcms,
@@ -1700,10 +1721,13 @@ def run_step2(
         grid_type="downscaled",
         verbose=verbose,
     )
+    if verbose:
+        print(f"  flags on downscaled data completed in {time.time() - t0:.1f}s")
 
     # Calculate the flags for the coarse debiased output
     if verbose:
         print("Calculating flags on coarse debiased data...")
+        t0 = time.time()
     for gcm in gcms:
         mask = (debiased_coarse_flags_np == "debiased_coarse") & (gcms_np == gcm)
         gcms_np_coarse = gcms_np[mask]
@@ -1712,6 +1736,8 @@ def run_step2(
         tags_np_coarse = tags_np[mask]
         methods_np_coarse = methods_np[mask]
 
+        if verbose:
+            t_gcm = time.time()
         calculate_all_flags(
             variables=variables,
             gcms=[gcm],
@@ -1729,3 +1755,9 @@ def run_step2(
             grid_type=gcm,
             verbose=verbose,
         )
+        if verbose:
+            print(
+                f"  flags on coarse debiased data for {gcm} completed in {time.time() - t_gcm:.1f}s"
+            )
+    if verbose:
+        print(f"  flags on coarse debiased data (all gcms) completed in {time.time() - t0:.1f}s")
