@@ -1064,6 +1064,83 @@ class TestAwaitBatchJobQueueStall:
                 )
 
 
+class TestAwaitBatchJobArrayParent:
+    """An array parent stays PENDING for its whole life, so it is not a start signal.
+
+    AWS Batch reports the parent of an array job as ``PENDING`` from submission until the
+    last child terminates; it never becomes ``RUNNING`` and never gets a ``startedAt``.
+    Reading the parent alone therefore leaves ``started`` false forever and turns the queue
+    guard into a hard cap on total runtime. That killed both stage 3 waves of the v0.14.1
+    production run at exactly 60 minutes with 40 children already finished.
+    """
+
+    @staticmethod
+    def _summary(**counts):
+        base = dict.fromkeys(
+            ("STARTING", "RUNNING", "SUCCEEDED", "FAILED", "RUNNABLE", "SUBMITTED", "PENDING"), 0
+        )
+        return base | counts
+
+    def _parent(self, **counts):
+        return {
+            "status": "PENDING",
+            "arrayProperties": {"size": 20, "statusSummary": self._summary(**counts)},
+        }
+
+    def test_running_children_count_as_started(self, orchestrator):
+        # Observed shape of job 7aa5e59b: parent PENDING, 21 children RUNNING.
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [self._parent(RUNNING=21)]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            status = orchestrator._await_batch_job(
+                client, "array-1", poll_seconds=0, max_queued_seconds=0
+            )
+        assert status == "SUCCEEDED"
+        client.terminate_job.assert_not_called()
+
+    def test_finished_children_count_as_started(self, orchestrator):
+        # Observed shape of job 716641f6 at the moment it was wrongly killed.
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [self._parent(SUCCEEDED=15, FAILED=5)]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            status = orchestrator._await_batch_job(
+                client, "array-2", poll_seconds=0, max_queued_seconds=0
+            )
+        assert status == "SUCCEEDED"
+        client.terminate_job.assert_not_called()
+
+    def test_an_array_whose_children_never_place_still_stalls(self, orchestrator):
+        # The guard must survive the fix: no child has left the queue, so this is the real
+        # capacity failure the deadline exists to catch.
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [self._parent(RUNNABLE=20)]}
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="without starting"):
+                orchestrator._await_batch_job(
+                    client, "stuck-array", poll_seconds=0, max_queued_seconds=0
+                )
+        assert client.terminate_job.call_args.kwargs["jobId"] == "stuck-array"
+
+    def test_an_array_with_no_summary_yet_still_stalls(self, orchestrator):
+        # Between submission and the first status roll-up the summary is empty. Absence of
+        # evidence is not a start.
+        client = MagicMock()
+        client.describe_jobs.return_value = {
+            "jobs": [{"status": "PENDING", "arrayProperties": {"size": 20, "statusSummary": {}}}]
+        }
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="without starting"):
+                orchestrator._await_batch_job(
+                    client, "fresh-array", poll_seconds=0, max_queued_seconds=0
+                )
+
+
 class TestSubmitToAwsBatch:
     def test_returns_paths_when_cache_confirms_every_task(self, orchestrator, multi_configs):
         client = MagicMock()
