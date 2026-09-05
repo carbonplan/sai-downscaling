@@ -209,11 +209,17 @@ def flag_global_exceedances(da, var: str, var_ranges: dict = VAR_SPATIAL_RANGES)
 
 
 def flag_tasmax_tas_inconsistency(tas, tasmax):
+    """
+    Flags days when tasmax < tas. This is physically inconsistent.
+    """
     inconsistent_days = tasmax < tas
     return inconsistent_days
 
 
 def flag_tasmin_tas_inconsistency(tas, tasmin):
+    """
+    Flags days when tasmin > tas. This is physically inconsistent.
+    """
     inconsistent_days = tasmin > tas
     return inconsistent_days
 
@@ -227,6 +233,9 @@ def write_individual_flags(
     write_mode: str = "w",
     branch: str = "main",
 ):
+    """
+    Writes out an individual flags to icechunk store in scratch. These are intermediate flags that will be combined into higher-level flags that are saved alongside the output data.
+    """
     flag_data = flag_data.rename(flag_name)
     if flag_data.dtype != bool:
         raise TypeError(f"flag_data must be boolean before casting to uint8, got {flag_data.dtype}")
@@ -464,7 +473,7 @@ def run_flag_loop_temperature_inconsistencies(
             write_individual_flags(
                 flag_data=flag_tasmax,
                 flag_name=flag_name,
-                tag=tag,
+                tag=tag_tasmax,
                 write_mode=write_mode,
                 bucket=bucket,
                 prefix=prefix,
@@ -473,7 +482,7 @@ def run_flag_loop_temperature_inconsistencies(
             write_individual_flags(
                 flag_data=flag_tasmin,
                 flag_name=flag_name,
-                tag=tag,
+                tag=tag_tasmin,
                 write_mode=write_mode,
                 bucket=bucket,
                 prefix=prefix,
@@ -571,10 +580,12 @@ def calculate_trend_distortion_flags(
     trees: dict,
     gcms: list,
     variables: list,
+    methods: list,
     tags_np: np.ndarray,
     gcms_np: np.ndarray,
     scenarios_np: np.ndarray,
     variables_np: np.ndarray,
+    methods_np: np.ndarray,
     bucket: str,
     prefix: str,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
@@ -590,99 +601,109 @@ def calculate_trend_distortion_flags(
 
         for gcm in gcms:
             for var in variables:
-                print(var)
-                # Find tags to use in scenario comparison (all ensemble members for this variable and gcm for the two comparison scenarios)
-                tags_scenario1 = tags_np[
-                    (gcms_np == gcm) * (scenarios_np == scenario1) * (variables_np == var)
-                ]
-                tags_scenario2 = tags_np[
-                    (gcms_np == gcm) * (scenarios_np == scenario2) * (variables_np == var)
-                ]
+                for method in methods:
+                    print(var)
+                    # Find tags to use in scenario comparison (all ensemble members for this variable and gcm for the two comparison scenarios)
+                    tags_scenario1 = tags_np[
+                        (gcms_np == gcm)
+                        * (scenarios_np == scenario1)
+                        * (variables_np == var)
+                        * (methods_np == method)
+                    ]
+                    tags_scenario2 = tags_np[
+                        (gcms_np == gcm)
+                        * (scenarios_np == scenario2)
+                        * (variables_np == var)
+                        * (methods_np == method)
+                    ]
 
-                # Calculate distortions
-                [delta_raw, delta_raw_pct, delta_ds_coarse, delta_ds_coarse_pct, delta_ds] = (
-                    calculate_ensemble_mean_deltas(
-                        variable=var,
-                        tags_scenario1=tags_scenario1,
-                        tags_scenario2=tags_scenario2,
-                        gcm=gcm,
-                        scenario1=scenario1,
-                        scenario2=scenario2,
-                        scenario1_time_slice=scenario1_time_slice,
-                        scenario2_time_slice=scenario2_time_slice,
-                        trees=trees,
-                    )
-                )
-
-                distortion_absolute = delta_ds_coarse - delta_raw
-                distortion_pct = delta_ds_coarse_pct - delta_raw_pct
-
-                # Flag distortions at coarse scale
-                abs_tol = TREND_VARIABLE_SETTINGS[var]["abs_tol"]
-                pct_tol = TREND_VARIABLE_SETTINGS[var]["pct_tol"]
-                sign_flip_tol = TREND_VARIABLE_SETTINGS[var]["sign_flip"]
-                scale = TREND_VARIABLE_SETTINGS[var]["scale"]
-
-                trend_distortion_flag = calculate_distortion_flags(
-                    distortion_absolute=distortion_absolute * scale,
-                    distortion_pct=distortion_pct,
-                    tolerance_absolute=abs_tol,
-                    tolerance_pct=pct_tol,
-                )
-
-                flipped_sign_flag = sign_flip_mask(
-                    delta_ds_coarse * scale, delta_raw * scale, threshold=sign_flip_tol
-                )
-
-                # Propagate coarse distortion flags to fine scale
-                trend_distortion_flag_fine_frac = interpolate_coarse_to_fine_grid(
-                    da_coarse_to_regrid=trend_distortion_flag.astype("float32"),
-                    da_fine_grid=delta_ds,
-                )
-                trend_distortion_flag_fine = trend_distortion_flag_fine_frac > 0
-
-                flipped_sign_flag_fine_frac = interpolate_coarse_to_fine_grid(
-                    da_coarse_to_regrid=flipped_sign_flag.astype("float32"), da_fine_grid=delta_ds
-                )
-                flipped_sign_flag_fine = flipped_sign_flag_fine_frac > 0
-
-                if plot:
-                    plot_flags(
-                        flags=trend_distortion_flag_fine,
-                        time_varying=False,
-                        separate_low_high=False,
-                    )
-                    plt.show()
-                    plt.close()
-
-                    plot_flags(
-                        flags=flipped_sign_flag_fine, time_varying=False, separate_low_high=False
-                    )
-                    plt.show()
-                    plt.close()
-
-                # Write out flags
-                tags_to_flag = np.concat([tags_scenario1, tags_scenario2])
-                for tag in tags_to_flag:
-                    print(tag)
-                    gcm, var, scenario, ens, method = parse_tag(tag)
-                    write_individual_flags(
-                        flag_data=trend_distortion_flag_fine,
-                        flag_name="trend_distortion_" + scenario1 + "_" + scenario2,
-                        tag=tag,
-                        write_mode="a",
-                        bucket=bucket,
-                        prefix=prefix,
+                    # Calculate distortions
+                    [delta_raw, delta_raw_pct, delta_ds_coarse, delta_ds_coarse_pct, delta_ds] = (
+                        calculate_ensemble_mean_deltas(
+                            variable=var,
+                            tags_scenario1=tags_scenario1,
+                            tags_scenario2=tags_scenario2,
+                            gcm=gcm,
+                            scenario1=scenario1,
+                            scenario2=scenario2,
+                            scenario1_time_slice=scenario1_time_slice,
+                            scenario2_time_slice=scenario2_time_slice,
+                            trees=trees,
+                        )
                     )
 
-                    write_individual_flags(
-                        flag_data=flipped_sign_flag_fine,
-                        flag_name="flipped_sign_" + scenario1 + "_" + scenario2,
-                        tag=tag,
-                        write_mode="a",
-                        bucket=bucket,
-                        prefix=prefix,
+                    distortion_absolute = delta_ds_coarse - delta_raw
+                    distortion_pct = delta_ds_coarse_pct - delta_raw_pct
+
+                    # Flag distortions at coarse scale
+                    abs_tol = TREND_VARIABLE_SETTINGS[var]["abs_tol"]
+                    pct_tol = TREND_VARIABLE_SETTINGS[var]["pct_tol"]
+                    sign_flip_tol = TREND_VARIABLE_SETTINGS[var]["sign_flip"]
+                    scale = TREND_VARIABLE_SETTINGS[var]["scale"]
+
+                    trend_distortion_flag = calculate_distortion_flags(
+                        distortion_absolute=distortion_absolute * scale,
+                        distortion_pct=distortion_pct,
+                        tolerance_absolute=abs_tol,
+                        tolerance_pct=pct_tol,
                     )
+
+                    flipped_sign_flag = sign_flip_mask(
+                        delta_ds_coarse * scale, delta_raw * scale, threshold=sign_flip_tol
+                    )
+
+                    # Propagate coarse distortion flags to fine scale
+                    trend_distortion_flag_fine_frac = interpolate_coarse_to_fine_grid(
+                        da_coarse_to_regrid=trend_distortion_flag.astype("float32"),
+                        da_fine_grid=delta_ds,
+                    )
+                    trend_distortion_flag_fine = trend_distortion_flag_fine_frac > 0
+
+                    flipped_sign_flag_fine_frac = interpolate_coarse_to_fine_grid(
+                        da_coarse_to_regrid=flipped_sign_flag.astype("float32"),
+                        da_fine_grid=delta_ds,
+                    )
+                    flipped_sign_flag_fine = flipped_sign_flag_fine_frac > 0
+
+                    if plot:
+                        plot_flags(
+                            flags=trend_distortion_flag_fine,
+                            time_varying=False,
+                            separate_low_high=False,
+                        )
+                        plt.show()
+                        plt.close()
+
+                        plot_flags(
+                            flags=flipped_sign_flag_fine,
+                            time_varying=False,
+                            separate_low_high=False,
+                        )
+                        plt.show()
+                        plt.close()
+
+                    # Write out flags
+                    tags_to_flag = np.concat([tags_scenario1, tags_scenario2])
+                    for tag in tags_to_flag:
+                        print(tag)
+                        gcm, var, scenario, ens, method = parse_tag(tag)
+                        write_individual_flags(
+                            flag_data=trend_distortion_flag_fine,
+                            flag_name="trend_distortion_" + scenario1 + "_" + scenario2,
+                            tag=tag,
+                            write_mode="a",
+                            bucket=bucket,
+                            prefix=prefix,
+                        )
+
+                        write_individual_flags(
+                            flag_data=flipped_sign_flag_fine,
+                            flag_name="flipped_sign_" + scenario1 + "_" + scenario2,
+                            tag=tag,
+                            write_mode="a",
+                            bucket=bucket,
+                            prefix=prefix,
+                        )
 
 
 def get_intermediate_flags(
@@ -706,7 +727,7 @@ def combine_intermediate_flags(
     prefix: str = "output/qa-intermediate-flags",
 ):
     """
-    This calculates two single binary flags from multiple intermediate flags. The intermediate flags
+    This calculates two single binary flags from multiple intermediate flags.
 
     """
 
@@ -1005,6 +1026,11 @@ def run_step2(
     plot_flag_maps: bool = True,
     is_downscaled: bool = True,
 ):
+    """
+    Runs through all the intermediate flag calculations and writes them to icechunk stores on scratch.
+    This function goes through all the steps in the step2 qa flag notebook, but is designed to be run in a single script rather than interactively.
+    The intermediate icechunk stores from this step can then be used to write the final qa flags to the production store.
+    """
     ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
     [
         trees,
@@ -1089,6 +1115,7 @@ def run_step2(
         gcms_np=gcms_np,
         scenarios_np=scenarios_np,
         variables_np=variables_np,
+        methods_np=methods_np,
         bucket=bucket,
         prefix=prefix,
         scenario_comparisons=scenario_comparisons,
