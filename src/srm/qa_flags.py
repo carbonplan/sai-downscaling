@@ -515,7 +515,7 @@ def parse_tag(tag):
     return gcm, var, scenario, ens, method
 
 
-def get_data(tag, trees, var_to_analyze=None):
+def get_data(tag, trees, var_to_analyze=None, is_downscaled: bool = True):
     """
     Look up the DataArray for `tag` within the already-opened `trees`.
 
@@ -529,6 +529,8 @@ def get_data(tag, trees, var_to_analyze=None):
         Variable to pull from the leaf group; defaults to the variable
         encoded in `tag`. Pass this to pull a sibling variable from the same
         group -- e.g. tasmax, while iterating over `tas` tags.
+    is_downscaled : bool, optional
+        Whether the data is downscaled (False means debiased_coarse output). Defaults to True.
 
     Returns
     -------
@@ -541,9 +543,15 @@ def get_data(tag, trees, var_to_analyze=None):
     # of QDMSD don't have a method specified, and are just gcm_var_scenario_ens. In those cases,
     # we should just use the scenario/var/ens as the group path.
     if method == "no-method-specified":
-        group_path = f"{scenario}/{var}/{ens}"
+        if is_downscaled:
+            group_path = f"{scenario}/{var}/{ens}"
+        else:
+            group_path = f"debiased_coarse/{scenario}/{var}/{ens}"
     else:
-        group_path = f"{method}/{scenario}/{var}/{ens}"
+        if is_downscaled:
+            group_path = f"{method}/{scenario}/{var}/{ens}"
+        else:
+            group_path = f"{method}/debiased_coarse/{scenario}/{var}/{ens}"
     comparison_ds = trees[gcm][group_path]
     if var_to_analyze is None:
         var_to_analyze = var
@@ -562,6 +570,7 @@ def run_flag_loop(
     plot: bool = True,
     bucket: str = "carbonplan-srm",
     prefix: str = "output/qa-intermediate-flags",
+    is_downscaled: bool = True,
 ):
     """Loop over tags, compute one flag per leaf, write it, optionally plot it.
 
@@ -593,7 +602,7 @@ def run_flag_loop(
             continue
         print(tag)
 
-        da = get_data(tag=tag, trees=trees)
+        da = get_data(tag=tag, trees=trees, is_downscaled=is_downscaled)
         flag_data = compute_flag(da, var)
 
         write_individual_flags(
@@ -619,6 +628,7 @@ def run_flag_loop_temperature_inconsistencies(
     write_mode: str = "a",
     bucket: str = "carbonplan-srm",
     prefix: str = "output/qa-intermediate-flags",
+    is_downscaled: bool = True,
 ):
     """Flag tas/tasmin/tasmax physical inconsistencies (tasmax < tas or tasmin > tas).
 
@@ -653,9 +663,9 @@ def run_flag_loop_temperature_inconsistencies(
         if (tag_tasmin in tags) and (tag_tasmax in tags):
             print(tag)
 
-            tas = get_data(tag=tag, trees=trees)
-            tasmin = get_data(tag=tag_tasmin, trees=trees)
-            tasmax = get_data(tag=tag_tasmax, trees=trees)
+            tas = get_data(tag=tag, trees=trees, is_downscaled=is_downscaled)
+            tasmin = get_data(tag=tag_tasmin, trees=trees, is_downscaled=is_downscaled)
+            tasmax = get_data(tag=tag_tasmax, trees=trees, is_downscaled=is_downscaled)
 
             flag_tas_tasmax = flag_tasmax_tas_inconsistency(tas, tasmax)
             flag_tas_tasmin = flag_tasmin_tas_inconsistency(tas, tasmin)
@@ -763,7 +773,7 @@ def calculate_ensemble_mean_deltas(
     das_scenario1 = []
     ens_scenario1 = []
     for tag in tags_scenario1:
-        da = get_data(tag=tag, trees=trees)
+        da = get_data(tag=tag, trees=trees, is_downscaled=is_downscaled)
         [thisgcm, thisvar, thisscenario, thisens, thismethod] = parse_tag(tag)
         das_scenario1.append(da)
         ens_scenario1.append(thisens)
@@ -778,7 +788,7 @@ def calculate_ensemble_mean_deltas(
     das_scenario2 = []
     ens_scenario2 = []
     for tag in tags_scenario2:
-        da = get_data(tag=tag, trees=trees)
+        da = get_data(tag=tag, trees=trees, is_downscaled=is_downscaled)
         [thisgcm, thisvar, thisscenario, thisens, thismethod] = parse_tag(tag)
         das_scenario2.append(da)
         ens_scenario2.append(thisens)
@@ -850,6 +860,7 @@ def calculate_trend_distortion_flags(
     methods_np: np.ndarray,
     bucket: str,
     prefix: str,
+    is_downscaled: bool = True,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot: bool = True,
 ):
@@ -919,6 +930,7 @@ def calculate_trend_distortion_flags(
                             scenario1_time_slice=scenario1_time_slice,
                             scenario2_time_slice=scenario2_time_slice,
                             trees=trees,
+                            is_downscaled=is_downscaled,
                         )
                     )
 
@@ -1507,6 +1519,12 @@ def calculate_all_flags(
         GRID_TYPES); should match the grid `trees`/`tags_np`/etc. were
         discovered from.
     """
+
+    if grid_type == "downscaled":
+        is_downscaled = True
+    else:
+        is_downscaled = False
+
     ########### Run time-varying flag loops that are the same for all grids ############################################
     # Flag 1. Global exceedances
     run_flag_loop(
@@ -1517,6 +1535,7 @@ def calculate_all_flags(
         flag_name="outside_global_plausible_range",
         compute_flag=lambda da, var: flag_global_exceedances(da=da, var=var),
         write_mode="a",
+        is_downscaled=is_downscaled,
     )
 
     # Flag 2. Temperature inconsistencies (tas vs. tasmin/tasmax)
@@ -1527,6 +1546,7 @@ def calculate_all_flags(
         flag_name="temperature_inconsistency",
         bucket=bucket,
         prefix=prefix,
+        is_downscaled=is_downscaled,
     )
 
     ########### Run time-varying flag loops that use different pre-computed inputs for different grids ###################
@@ -1547,6 +1567,7 @@ def calculate_all_flags(
         bucket=bucket,
         prefix=prefix,
         write_mode="a",
+        is_downscaled=is_downscaled,
     )
 
     # Flag 4. rsds-specific latitude/day-of-year check
@@ -1562,6 +1583,7 @@ def calculate_all_flags(
         bucket=bucket,
         prefix=prefix,
         write_mode="a",
+        is_downscaled=is_downscaled,
     )
 
     ########### Run time-invariant flag loops ##################################################
@@ -1579,6 +1601,7 @@ def calculate_all_flags(
         prefix=prefix,
         scenario_comparisons=scenario_comparisons,
         plot=plot_flag_maps,
+        is_downscaled=is_downscaled,
     )
 
 
@@ -1592,7 +1615,6 @@ def run_step2(
     bucket: str,
     prefix: str,
     plot_flag_maps: bool = True,
-    is_downscaled: bool = True,
 ):
     """
     Run through all the intermediate flag calculations and write them to icechunk stores on scratch.
@@ -1617,12 +1639,6 @@ def run_step2(
         S3 location to write intermediate flags to.
     plot_flag_maps : bool
         If True, plot each computed flag.
-    is_downscaled : bool
-        Passed to discover_leaves; selects fine-grid vs. debiased_coarse
-        leaves. Note calculate_all_flags is always called here with
-        ``grid_type="downscaled"`` regardless of this flag -- calling with
-        ``is_downscaled=False`` does not yet select the matching coarse-grid
-        thresholds.
     """
     ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
     [
@@ -1643,6 +1659,7 @@ def run_step2(
     )
 
     keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
+    tags_np_downscaled = tags_np[keep_idx]
     gcms_np_downscaled = gcms_np[keep_idx]
     scenarios_np_downscaled = scenarios_np[keep_idx]
     variables_np_downscaled = variables_np[keep_idx]
@@ -1657,7 +1674,7 @@ def run_step2(
         bucket=bucket,
         prefix=prefix,
         trees=trees,
-        tags=tags,
+        tags=tags_np_downscaled,
         gcms_np=gcms_np_downscaled,
         scenarios_np=scenarios_np_downscaled,
         variables_np=variables_np_downscaled,
@@ -1683,7 +1700,7 @@ def run_step2(
             bucket=bucket,
             prefix=prefix + "/debiased_coarse",
             trees=trees,
-            tags=tags,
+            tags=tags_np_coarse,
             gcms_np=gcms_np_coarse,
             scenarios_np=scenarios_np_coarse,
             variables_np=variables_np_coarse,
