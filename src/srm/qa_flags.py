@@ -969,7 +969,7 @@ def run_step2(
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot_flag_maps: bool = True,
 ):
-    # Get the leaves of the data tree to traverse and the tags for each leaf
+    ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
     [
         trees,
         tags,
@@ -980,10 +980,15 @@ def run_step2(
         methods_np,
         debiased_coarse_flags_np,
     ] = discover_leaves(
-        gcms=gcms, branch=branch, root_dir=root_dir, store_subset_id=store_subset_id
+        gcms=gcms,
+        branch=branch,
+        root_dir=root_dir,
+        store_subset_id=store_subset_id,
+        is_downscaled=True,
     )
 
-    # Run time-varying flag loops
+    ########### Run time-varying flag loops ####################################################
+    # Flag 1. Global exceedances
     run_flag_loop(
         tags=tags,
         trees=trees,
@@ -994,6 +999,9 @@ def run_step2(
         write_mode="a",
     )
 
+    # Flag 2. TK. Outliers based on observations
+
+    # Flag 3. rsds-specific latitude/day-of-year check
     zonal_doy_max_rsds = load_rsds_lims()
     run_flag_loop(
         tags=tags,
@@ -1007,7 +1015,7 @@ def run_step2(
         prefix=prefix,
         write_mode="a",
     )
-
+    # Flag 4. Temperature inconsistencies (tas vs. tasmin/tasmax)
     run_flag_loop_temperature_inconsistencies(
         tags,
         trees,
@@ -1017,7 +1025,7 @@ def run_step2(
         prefix=prefix,
     )
 
-    # Run time-invariant flag loops
+    ########### Run time-invariant flag loops ##################################################
     calculate_trend_distortion_flags(
         trees=trees,
         gcms=gcms,
