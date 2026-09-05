@@ -327,8 +327,8 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=N
             ax2 = plt.subplot(1, 2, 2, projection=ccrs.PlateCarree())
             if contains_high_flags:
                 if vlims is not None:
-                    count_low_flag.where(count_low_flag > 0).plot(
-                        ax=ax1, transform=ccrs.PlateCarree(), vmin=vlims[0], vmax=vlims[1]
+                    count_high_flag.where(count_high_flag > 0).plot(
+                        ax=ax2, transform=ccrs.PlateCarree(), vmin=vlims[0], vmax=vlims[1]
                     )
                 else:
                     count_high_flag.where(count_high_flag > 0).plot(
@@ -496,6 +496,16 @@ def run_flag_loop_temperature_inconsistencies(
                 plt.close()
 
 
+# The catalog now uses exact model names (e.g. "UKESM1-1-LL" instead of "UKESM"). If
+# a dataset was generated before this change, the model names will be inconsistent.
+# This dictionary maps the pipeline's GCM names to the catalog's GCM names for any exceptions.
+# Map the exceptions here; any model name not listed is looked up under its own name.
+GCM_CATALOG_NAME_OVERRIDES = {
+    "CESM2-WACCM": "CESM2-WACCM6",
+    "UKESM": "UKESM1-1-LL",
+}
+
+
 def calculate_ensemble_mean_deltas(
     variable,
     tags_scenario1,
@@ -517,6 +527,11 @@ def calculate_ensemble_mean_deltas(
         das_scenario1.append(da)
         ens_scenario1.append(thisens)
 
+    if not das_scenario1:
+        raise ValueError(
+            f"no leaves found for gcm={gcm!r}, scenario={scenario1!r}, variable={variable!r}"
+        )
+
     var_scenario1 = xr.concat(das_scenario1, dim=pd.Index(ens_scenario1, name="ensemble_member"))
 
     das_scenario2 = []
@@ -526,6 +541,11 @@ def calculate_ensemble_mean_deltas(
         [thisgcm, thisvar, thisscenario, thisens, thismethod] = parse_tag(tag)
         das_scenario2.append(da)
         ens_scenario2.append(thisens)
+
+    if not das_scenario2:
+        raise ValueError(
+            f"no leaves found for gcm={gcm!r}, scenario={scenario2!r}, variable={variable!r}"
+        )
 
     var_scenario2 = xr.concat(das_scenario2, dim=pd.Index(ens_scenario2, name="ensemble_member"))
 
@@ -537,9 +557,8 @@ def calculate_ensemble_mean_deltas(
         dim=["time", "ensemble_member"]
     )
 
-    # Temporary patch to deal with catalog inconsistency
-    if gcm == "CESM2-WACCM":
-        gcm_catalog_name = "CESM2-WACCM6"
+    # Temporary fix to deal with catalog inconsistency vs. model names used in old runs
+    gcm_catalog_name = GCM_CATALOG_NAME_OVERRIDES.get(gcm, gcm)
 
     # Take ensemble mean across comparison time periods in raw data
     raw_ds = catalog.get(gcm_catalog_name).to_xarray()
@@ -974,13 +993,20 @@ def discover_leaves(
     )
 
 
+GRID_TYPES = ("downscaled", "cesm2-waccm6", "ukesm1-1-ll")
+
+
 def load_rsds_lims(key: str = "zonal_doy_max_rsds", grid_type: str = "downscaled") -> xr.DataArray:
     """
     Load the zonal/day-of-year maximum rsds values (from step 1 notebook) for use in the rsds-specific flag.
     """
-    if grid_type == "downscaled":
+    if grid_type not in GRID_TYPES:
+        raise ValueError(
+            f"unsupported grid_type: {grid_type!r}. Valid values include: {GRID_TYPES}"
+        )
+    elif grid_type == "downscaled":
         fpath = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds.zarr"
-    elif grid_type in ("cesm2-waccm6", "ukesm1-1-ll"):
+    else:
         fpath = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds_" + grid_type + ".zarr"
     return xr.open_zarr(fpath, group=key)["data"].load()
 
@@ -990,9 +1016,13 @@ def prep_annual_threshold_inputs(grid_type: str = "downscaled"):
     Reads in the thresholds output from step 1 notebook and prepares the annual thresholds for use in flag calculation
     """
     # Loading thresholds output from step 1 notebook. There are different stores for different grids
-    if grid_type == "downscaled":
+    if grid_type not in GRID_TYPES:
+        raise ValueError(
+            f"unsupported grid_type: {grid_type!r}. Valid values include: {GRID_TYPES}"
+        )
+    elif grid_type == "downscaled":
         store = DIR_QA_FLAG_CONSTANT_INPUTS + "doy_obs_thresholds_global.zarr"
-    elif grid_type in ("cesm2-waccm6", "ukesm1-1-ll"):
+    else:
         store = DIR_QA_FLAG_CONSTANT_INPUTS + "doy_obs_thresholds_global_" + grid_type + ".zarr"
 
     combined = xr.open_zarr(store)
