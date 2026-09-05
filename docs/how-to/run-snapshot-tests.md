@@ -1,6 +1,6 @@
 # How to Compare a Run Against the Snapshot
 
-This guide shows you how to check a candidate BCSD run against the snapshot baseline before merging modeling changes. It is the concrete, per-pull-request procedure; for the background on why the snapshot exists and how the comparison works, see [Snapshot Regression Testing](../explanation/snapshot-testing.md). The whole check runs through the [snapshot comparison notebook](./snapshot-comparison.ipynb), which calls `saidownscale.snapshot.compare_runs` under the hood, so you never write bespoke comparison code yourself.
+This guide shows you how to check a candidate downscaling run against the snapshot baseline before merging modeling changes. It is the concrete, per-pull-request procedure; for the background on why the snapshot exists and how the comparison works, see [Snapshot Regression Testing](../explanation/snapshot-testing.md). The whole check runs through the [snapshot comparison notebook](./snapshot-comparison.ipynb), which calls `saidownscale.snapshot.compare_runs` under the hood, so you never write bespoke comparison code yourself.
 
 Every command below runs through `uv`, and the produce step needs access to S3 and Coiled. The comparison notebook needs read access to the two output stores it opens.
 

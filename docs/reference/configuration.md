@@ -6,7 +6,7 @@ Configuration files use YAML format with Pydantic validation. All fields are val
 
 Configuration is split across two Pydantic classes loaded from the same flat YAML:
 
-- **`DownscalingConfig`** — run identity: the parameters that uniquely identify a BCSD run and affect computation results (model, variable, time periods, bias-correction method). Changes here bust the cache.
+- **`DownscalingConfig`** — run identity: the parameters that uniquely identify a downscaling run and affect computation results (model, variable, time periods, bias-correction method). Changes here bust the cache.
 - **`PipelineOptions`** — operational settings: storage paths, environment, branch, and runtime flags. Changes here do not affect computation results.
 
 Both classes use `extra="ignore"`, so a single flat YAML file is accepted by both — no nested sections required.
@@ -59,7 +59,7 @@ UKESM1-1-LL SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single confi
 
 ## DownscalingConfig Fields (run identity)
 
-These fields identify a BCSD run and affect computation results. Changing any of these busts the cache (`config_hash` covers all of them).
+These fields identify a downscaling run and affect computation results. Changing any of these busts the cache (`config_hash` covers all of them).
 
 ```yaml
 # Model identifiers (singular or list)
@@ -200,7 +200,7 @@ The removed `use_coiled` boolean is rejected rather than ignored. Because `Pipel
 
 ## Branch Defaulting
 
-The `branch` field defaults to the **public version of the installed `srm` package** (e.g. `v1.0.post12`),
+The `branch` field defaults to the **public version of the installed `saidownscale` package** (e.g. `v1.0.post12`),
 derived via:
 
 ```python

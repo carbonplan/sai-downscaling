@@ -1,6 +1,6 @@
 # Deploy the Pipeline
 
-The BCSD pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds six jobs:
+The downscaling pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds six jobs:
 
 | Job | Purpose | Trigger |
 |---|---|---|

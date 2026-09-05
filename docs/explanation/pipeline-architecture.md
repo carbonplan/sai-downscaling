@@ -1,10 +1,10 @@
 # Pipeline Architecture
 
-This page explains how the BCSD downscaling pipeline is structured, why it is designed the way it is, and how its components fit together.
+This page explains how the downscaling pipeline is structured, why it is designed the way it is, and how its components fit together.
 
 ## The Three-Stage Pipeline
 
-The BCSD pipeline consists of three stages that automatically cache and reuse artifacts:
+The downscaling pipeline consists of three stages that automatically cache and reuse artifacts:
 
 ```mermaid
 graph TB

@@ -4,7 +4,7 @@ This page is the exhaustive reference for all `saidownscale` commands, their opt
 
 ## `saidownscale run` — Execute Pipeline from Config File (Recommended)
 
-Run the BCSD downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format): list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods` are expanded into one run per cartesian-product combination.
+Run the downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format): list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods` are expanded into one run per cartesian-product combination.
 
 :::{tip} Recommended for most workflows
 Config files are version-controlled and reproducible, and they are what the QA and production deploys consume. For quick ad-hoc runs from the command line without config files, use `saidownscale run-matrix` instead.

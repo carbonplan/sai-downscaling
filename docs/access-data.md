@@ -86,7 +86,7 @@ for the full reasoning.
 ## Choosing the right branch
 
 Each pipeline run writes to an icechunk branch whose name matches the release tag that triggered
-it. The branch defaults to the installed `srm` package version (e.g. `v0.13.0`), so release tags
+it. The branch defaults to the installed `saidownscale` package version (e.g. `v0.13.0`), so release tags
 follow semantic versioning rather than a date stamp. To read a specific run's output, use the
 corresponding release tag as the branch name. Production releases are listed at
 [github.com/carbonplan/srm-downscaling/releases](https://github.com/carbonplan/srm-downscaling/releases).
@@ -205,11 +205,15 @@ the exact configuration used to produce it. These live on `ds.attrs` and are wri
 the icechunk commit is made, so they travel with the data regardless of how or where it is
 accessed.
 
+The `srm_downscaling:` prefix is a stable data contract rather than a mirror of the package name.
+It predates the package's rename to `saidownscale` and is deliberately kept, so code written
+against published stores keeps working.
+
 | Attribute | Contents |
 | --- | --- |
 | `srm_downscaling:config_json` | Full `DownscalingConfig` serialized as a JSON string |
 | `srm_downscaling:config_hash` | 12-character SHA-256 of computation-affecting fields only |
-| `srm_downscaling:version` | `srm` package version that produced the data |
+| `srm_downscaling:version` | `saidownscale` package version that produced the data |
 | `srm_downscaling:gcm` | GCM name |
 | `srm_downscaling:gcm_description` | Model description from the catalog, e.g. `CESM2.1.5-WACCM6(TSMLT)`. Absent on releases before the rename. |
 | `srm_downscaling:scenario` | Scenario (or `"historical"`) |

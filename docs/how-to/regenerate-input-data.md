@@ -1,6 +1,6 @@
 # Regenerate Input Data
 
-Re-process raw source files into the icechunk stores the BCSD pipeline reads from. Run this when:
+Re-process raw source files into the icechunk stores the downscaling pipeline reads from. Run this when:
 
 - New ensemble members or variables were added to an existing scenario
 - A raw source file was corrected upstream and needs re-ingestion
