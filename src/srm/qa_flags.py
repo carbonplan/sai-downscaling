@@ -159,13 +159,6 @@ def calculate_thresholds(obs_max, obs_min, obs_max_std, obs_min_std):
     return outlier_thresh_low, outlier_thresh_high
 
 
-def load_rsds_lims(
-    key: str = "zonal_doy_max_rsds",
-    fpath: str = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds.zarr",
-) -> xr.DataArray:
-    return xr.open_zarr(fpath, group=key)["data"].load()
-
-
 def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = "annual"):
     """
     Flags outliers based on the observational record
@@ -958,6 +951,37 @@ def discover_leaves(
     )
 
 
+def load_rsds_lims(
+    key: str = "zonal_doy_max_rsds",
+    fpath: str = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds.zarr",
+) -> xr.DataArray:
+    return xr.open_zarr(fpath, group=key)["data"].load()
+
+
+def prep_annual_threshold_inputs():
+    # Loading thresholds output from step 1 notebook
+    store = DIR_QA_FLAG_CONSTANT_INPUTS + "doy_obs_thresholds_global.zarr"
+    combined = xr.open_zarr(store)
+
+    def _split(ds, suffix):
+        names = [v for v in ds.data_vars if v.endswith(suffix)]
+        return ds[names].rename({v: v[: -len(suffix)] for v in names})
+
+    obs_max = _split(combined, "_max")
+    obs_min = _split(combined, "_min")
+    obs_max_std = _split(combined, "_max_std")
+    obs_min_std = _split(combined, "_min_std")
+
+    [outlier_thresh_low, outlier_thresh_high] = calculate_thresholds(
+        obs_max, obs_min, obs_max_std, obs_min_std
+    )
+
+    outlier_thresh_low_annual = outlier_thresh_low.min(dim="dayofyear")
+    outlier_thresh_high_annual = outlier_thresh_high.max(dim="dayofyear")
+
+    return outlier_thresh_low_annual, outlier_thresh_high_annual
+
+
 def run_step2(
     variables: list,
     gcms: list,
@@ -968,6 +992,7 @@ def run_step2(
     prefix: str,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot_flag_maps: bool = True,
+    is_downscaled: bool = True,
 ):
     ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
     [
@@ -984,7 +1009,7 @@ def run_step2(
         branch=branch,
         root_dir=root_dir,
         store_subset_id=store_subset_id,
-        is_downscaled=True,
+        is_downscaled=is_downscaled,
     )
 
     ########### Run time-varying flag loops ####################################################
@@ -999,7 +1024,22 @@ def run_step2(
         write_mode="a",
     )
 
-    # Flag 2. TK. Outliers based on observations
+    # Flag 2. Outliers based on observations
+    [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_annual_threshold_inputs()
+    run_flag_loop(
+        tags=tags,
+        trees=trees,
+        flag_name="annual_outlier_flag",
+        compute_flag=lambda da, var: flag_outliers(
+            da=da,
+            outlier_thresh_low=outlier_thresh_low_annual[var],
+            outlier_thresh_high=outlier_thresh_high_annual[var],
+            timescale="annual",
+        ),
+        bucket=bucket,
+        prefix=prefix,
+        write_mode="a",
+    )
 
     # Flag 3. rsds-specific latitude/day-of-year check
     zonal_doy_max_rsds = load_rsds_lims()
