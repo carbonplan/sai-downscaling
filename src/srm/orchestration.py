@@ -777,11 +777,42 @@ class BCSDOrchestrator:
     #: waiting on the queue, not doing work.
     _BATCH_QUEUED_STATES = frozenset({"SUBMITTED", "PENDING", "RUNNABLE"})
 
+    #: Array-child states that prove at least one container was placed. ``FAILED`` belongs
+    #: here: a child that failed did run, whereas a queue with no capacity leaves its
+    #: children sitting in ``RUNNABLE``.
+    _BATCH_CHILD_STARTED_STATES = frozenset({"STARTING", "RUNNING", "SUCCEEDED", "FAILED"})
+
     #: How long a job may sit queued before the wait gives up. Generous enough to absorb a
     #: compute environment scaling up from zero, short enough that a queue with no instance
     #: large enough to place the task fails with a diagnostic rather than hanging until the
     #: surrounding CI job times out hours later with nothing to read.
     _MAX_QUEUED_SECONDS = 3600
+
+    def _batch_job_has_started(self, job: dict) -> bool:
+        """Report whether any container belonging to ``job`` has left the queue.
+
+        AWS Batch keeps an **array parent** in ``PENDING`` from submission until its last
+        child terminates. It never reports ``RUNNING`` and never gets a ``startedAt``, so
+        its own status says nothing about whether work began, and reading it alone turns
+        :data:`_MAX_QUEUED_SECONDS` into a cap on total runtime instead of on queue time.
+        The children's roll-up is the only start signal an array job has. A plain job has
+        no roll-up and answers for itself.
+
+        Parameters
+        ----------
+        job : dict
+            One entry from an AWS Batch ``describe_jobs`` response.
+
+        Returns
+        -------
+        bool
+            True once a container has been placed. An array whose roll-up has not been
+            published yet reads as not started, which is what an empty summary means.
+        """
+        summary = job.get("arrayProperties", {}).get("statusSummary") or {}
+        if summary:
+            return any(summary.get(state, 0) for state in self._BATCH_CHILD_STARTED_STATES)
+        return job["status"] not in self._BATCH_QUEUED_STATES
 
     def _terminate_batch_job(self, client, job_id: str, reason: str) -> None:
         """Cancel a job, best effort. A failure here must not replace why we gave up."""
@@ -855,7 +886,7 @@ class BCSDOrchestrator:
                     + (f", children: {summary}" if summary else "")
                 )
                 return status
-            started = started or status not in self._BATCH_QUEUED_STATES
+            started = started or self._batch_job_has_started(job)
             if not started and time.monotonic() >= queued_deadline:
                 # Terminated rather than abandoned: a job left queued can still start
                 # hours later, spend money with nobody watching, and leave output that the

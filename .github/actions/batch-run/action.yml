@@ -83,16 +83,29 @@ runs:
         # There is no waiter for Batch in the AWS CLI, so poll. The deadline applies only
         # while the job has never started: a validate pass over a global store legitimately
         # runs for a long time, and capping that would fire on the wrong thing.
+        #
+        # An array parent reports PENDING from submission until its last child terminates,
+        # so its own status is never a start signal. The third query field rolls its
+        # children up instead, and is 0 for a plain job, which answers for itself.
         QUEUED_DEADLINE=$(( $(date +%s) + MAX_QUEUED_SECONDS ))
         STARTED=false
         while true; do
           DESC=$(aws batch describe-jobs --jobs "$JOB_ID" \
-            --query 'jobs[0].[status,container.logStreamName]' --output text)
+            --query 'jobs[0].[status,container.logStreamName,sum([arrayProperties.statusSummary.STARTING || `0`, arrayProperties.statusSummary.RUNNING || `0`, arrayProperties.statusSummary.SUCCEEDED || `0`, arrayProperties.statusSummary.FAILED || `0`])]' \
+            --output text)
           STATUS=$(printf '%s' "$DESC" | cut -f1)
           STREAM=$(printf '%s' "$DESC" | cut -f2)
+          # sum() is free to render as 21.0, and a plain job can report None, so normalise
+          # to an integer before comparing: [[ 21.0 -gt 0 ]] is an arithmetic error that
+          # reads as false and would leave STARTED stuck exactly as the parent status did.
+          STARTED_CHILDREN=$(printf '%s' "$DESC" | cut -f3)
+          STARTED_CHILDREN=${STARTED_CHILDREN%%.*}
+          [[ "$STARTED_CHILDREN" =~ ^[0-9]+$ ]] || STARTED_CHILDREN=0
           case "$STATUS" in
             SUCCEEDED|FAILED) break ;;
-            SUBMITTED|PENDING|RUNNABLE) ;;
+            SUBMITTED|PENDING|RUNNABLE)
+              if (( STARTED_CHILDREN > 0 )); then STARTED=true; fi
+              ;;
             *) STARTED=true ;;
           esac
           if [[ "$STARTED" == "false" && "$(date +%s)" -ge "$QUEUED_DEADLINE" ]]; then
