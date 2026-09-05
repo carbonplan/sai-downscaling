@@ -11,11 +11,11 @@ See [How-to guides](../../how-to/run-pipeline.md) for task-oriented usage and
    :nosignatures:
    :template: module.rst
 
-   srm.bcsd_config
-   srm.pipeline
-   srm.orchestration
-   srm.cache
-   srm.datasets
-   srm.lineage
-   srm.downscaling_utils
+   saidownscale.bcsd_config
+   saidownscale.pipeline
+   saidownscale.orchestration
+   saidownscale.cache
+   saidownscale.datasets
+   saidownscale.lineage
+   saidownscale.downscaling_utils
 ```

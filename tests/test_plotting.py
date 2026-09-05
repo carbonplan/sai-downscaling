@@ -1,4 +1,4 @@
-"""Tests for srm.plotting helpers that read the output store.
+"""Tests for saidownscale.plotting helpers that read the output store.
 
 Only the store-layout resolution is covered here: the plotting functions themselves
 draw figures and are exercised in the QA notebooks, not in the test suite.
@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from srm.plotting import _debiased_coarse_node, point_series
+from saidownscale.plotting import _debiased_coarse_node, point_series
 
 
 def _coarse_leaf(value: float = 1.0) -> xr.Dataset:

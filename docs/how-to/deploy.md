@@ -138,7 +138,7 @@ Dispatching is preferable to running `bcsd run` locally for the same purpose, be
 
 The checkout uses `fetch-depth: 0` for this reason: `setuptools_scm` names the icechunk branch, and a shallow checkout off a non-tag ref falls back to version `999`, so the run would write to a branch literally named `v999`. A release tag survives a shallow checkout because `git describe` finds the tag on `HEAD`; a pull request's head does not.
 
-Repointing `CESM2_WACCM_SOUTH_AFRICA` in `src/srm/snapshot/baselines.py` at the new release is manual. The job prints both fields in its workflow summary, the store URI as well as the branch, because a release can move either one. See [How to Compare a Run Against the Snapshot](run-snapshot-tests.md).
+Repointing `CESM2_WACCM_SOUTH_AFRICA` in `src/saidownscale/snapshot/baselines.py` at the new release is manual. The job prints both fields in its workflow summary, the store URI as well as the branch, because a release can move either one. See [How to Compare a Run Against the Snapshot](run-snapshot-tests.md).
 
 ## Adding a new production config
 

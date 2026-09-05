@@ -44,7 +44,7 @@ For the first case, remove `variable_config` and rely on per-variable defaults (
 
 `predict_period_start` and `predict_period_end` must fall within the valid data extent of every ensemble member the config expands to. Those extents are not uniform: some members are truncated years before the nominal scenario end and the unified store NaN-pads them to that end, so a predict period that overshoots would silently downscale padding. `bcsd run` and `bcsd run-matrix` guard against this with `check_config_time_domain` before submitting any work, raising a blocking error that lists every config whose predict period falls outside its member's bounds.
 
-The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/srm/validation.py`; the CESM2-WACCM6 SSP245 spread is representative:
+The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/saidownscale/validation.py`; the CESM2-WACCM6 SSP245 spread is representative:
 
 | Members | Valid end year |
 |---|---|
@@ -186,7 +186,7 @@ All `PipelineOptions` fields are optional — defaults are suitable for most run
 
 ### Choosing an executor
 
-`executor` selects where a stage's tasks run. The choice affects cost and nothing else: all three produce identical output, because each task runs the same `srm.batch_runner` entry point.
+`executor` selects where a stage's tasks run. The choice affects cost and nothing else: all three produce identical output, because each task runs the same `saidownscale.batch_runner` entry point.
 
 | Value | Where tasks run | Cost per vCPU-hour |
 | --- | --- | --- |
@@ -206,7 +206,7 @@ derived via:
 ```python
 from packaging.version import Version
 from importlib.metadata import version as pkg_version
-"v" + Version(pkg_version("srm")).public  # e.g. "v1.0.post12", strips local/dirty markers
+"v" + Version(pkg_version("saidownscale")).public  # e.g. "v1.0.post12", strips local/dirty markers
 ```
 
 The branch is an icechunk branch created inside each unified per-GCM store. This means:
@@ -250,7 +250,7 @@ This is useful for:
 
 ## Variable-Specific Auto-Configuration
 
-The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/srm/bcsd_config.py`). Which table it reads is set by the required top-level `downscaling_method` key, described in [Downscaling method](#downscaling-method) below.
+The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/saidownscale/bcsd_config.py`). Which table it reads is set by the required top-level `downscaling_method` key, described in [Downscaling method](#downscaling-method) below.
 
 ### BCSD defaults
 

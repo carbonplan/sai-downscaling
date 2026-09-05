@@ -20,9 +20,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from srm.batch_manifest import write_manifest
-from srm.batch_runner import _load_config_dict, run_stage
-from srm.bcsd_config import BCSDConfig
+from saidownscale.batch_manifest import write_manifest
+from saidownscale.batch_runner import _load_config_dict, run_stage
+from saidownscale.bcsd_config import BCSDConfig
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -96,7 +96,7 @@ class TestConfigJsonReading:
             # Prevent real pipeline operations
             raise StopIteration("stop")
 
-        with patch("srm.batch_runner.BCSDPipeline.__init__", fake_init):
+        with patch("saidownscale.batch_runner.BCSDPipeline.__init__", fake_init):
             with pytest.raises(StopIteration):
                 run_stage("prepare_observations")
 
@@ -122,7 +122,7 @@ class TestStageRouting:
         mock_pipeline.fit_historical.return_value = f"{stage}_output_path"
         mock_pipeline.transform_scenario.return_value = f"{stage}_output_path"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.BCSDPipeline", return_value=mock_pipeline):
             run_stage(stage)
 
         return mock_pipeline
@@ -159,7 +159,7 @@ class TestStageRouting:
     def test_unknown_stage_raises(self, valid_config_json):
         os.environ["CONFIG_JSON"] = valid_config_json
         mock_pipeline = MagicMock()
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.BCSDPipeline", return_value=mock_pipeline):
             with pytest.raises(ValueError, match="Unknown stage"):
                 run_stage("nonexistent_stage")
 
@@ -175,7 +175,7 @@ class TestPipelineConstruction:
         mock_pipeline = MagicMock()
         mock_pipeline.prepare_observations.return_value = "obs_path"
 
-        with patch("srm.batch_runner.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.batch_runner.BCSDPipeline") as MockPipeline:
             MockPipeline.return_value = mock_pipeline
             run_stage("prepare_observations")
             constructor_call = MockPipeline.call_args
@@ -190,7 +190,9 @@ class TestPipelineConstruction:
         mock_pipeline = MagicMock()
         mock_pipeline.prepare_observations.return_value = "obs_path"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline) as MockPipeline:
+        with patch(
+            "saidownscale.batch_runner.BCSDPipeline", return_value=mock_pipeline
+        ) as MockPipeline:
             run_stage("prepare_observations")
 
         MockPipeline.assert_called_once()
@@ -212,7 +214,7 @@ class TestReturnValue:
         mock_pipeline = MagicMock()
         mock_pipeline.prepare_observations.return_value = "s3://bucket/obs.icechunk"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.BCSDPipeline", return_value=mock_pipeline):
             run_stage("prepare_observations")
 
         captured = capsys.readouterr()
@@ -223,7 +225,7 @@ class TestReturnValue:
         mock_pipeline = MagicMock()
         mock_pipeline.fit_historical.return_value = "s3://bucket/hist.icechunk"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.BCSDPipeline", return_value=mock_pipeline):
             result = run_stage("fit_historical")
 
         assert result == "s3://bucket/hist.icechunk"
@@ -233,7 +235,7 @@ class TestReturnValue:
         mock_pipeline = MagicMock()
         mock_pipeline.transform_scenario.return_value = "s3://bucket/ssp245.icechunk"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.BCSDPipeline", return_value=mock_pipeline):
             result = run_stage("transform_scenario")
 
         assert result == "s3://bucket/ssp245.icechunk"

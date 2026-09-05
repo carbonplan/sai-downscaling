@@ -1,12 +1,12 @@
 import datetime
 
-import srm
+import saidownscale
 
 project = "SRM Downscaling"
 this_year = datetime.datetime.now().year
 author = "CarbonPlan and contributors"
 copyright = f"{this_year}, {author}"
-version = srm.__version__
+version = saidownscale.__version__
 
 
 # -- General configuration ---------------------------------------------------

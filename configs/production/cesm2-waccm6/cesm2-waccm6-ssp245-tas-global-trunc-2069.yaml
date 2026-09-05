@@ -1,5 +1,5 @@
 # BCSD configuration: CESM2-WACCM6 / tas / SSP245 / truncated members 006-010 / global (production)
-# Members 006-010's data ends in 2069 (per srm.validation._MEMBER_TIME_BOUNDS: 007-010 on
+# Members 006-010's data ends in 2069 (per saidownscale.validation._MEMBER_TIME_BOUNDS: 007-010 on
 # 2069-12-31, 006 a day earlier), so predict_period_end is 2069. These were previously
 # mis-truncated at 2070 in a separate cesm2-waccm6-ssp245-tas-global-trunc-2070.yaml config
 # now folded in here: the raw input's apparent extra day at 2070-01-01 was the last 2069

@@ -237,7 +237,7 @@ stored in a dataset — no field-by-field comparison needed.
 
 ```python
 import yaml
-from srm.bcsd_config import BCSDConfig
+from saidownscale.bcsd_config import BCSDConfig
 
 # Reconstruct BCSDConfig from the YAML you intend to run
 with open("configs/production/cesm2-waccm6/cesm2-waccm6-ssp245-std.yaml") as f:

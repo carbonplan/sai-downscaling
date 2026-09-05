@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.pipeline import BCSDPipeline
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
+from saidownscale.pipeline import BCSDPipeline
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -107,9 +107,9 @@ class TestLoadGcmObsMemberSelection:
         assert pipeline._hist_member == "r1i1p1f1"
 
         with (
-            patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
             patch(
-                "srm.pipeline.get_historical_experiment", return_value=_make_mock_da()
+                "saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()
             ) as mock_get_hist,
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
             patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
@@ -134,9 +134,9 @@ class TestLoadGcmObsMemberSelection:
         assert pipeline._hist_member == "r1i1p1f1"
 
         with (
-            patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
             patch(
-                "srm.pipeline.get_historical_experiment", return_value=_make_mock_da()
+                "saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()
             ) as mock_get_hist,
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
             patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
@@ -155,9 +155,9 @@ class TestLoadGcmObsMemberSelection:
 class TestLoadScenarioDataMemberSelection:
     def _run_load_scenario(self, pipeline, mock_get_experiment):
         with (
-            patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
-            patch("srm.pipeline.get_historical_experiment", return_value=_make_mock_da()),
-            patch("srm.pipeline.get_experiment", side_effect=mock_get_experiment),
+            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_experiment", side_effect=mock_get_experiment),
             patch.object(pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()),
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
             patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
@@ -175,11 +175,11 @@ class TestLoadScenarioDataMemberSelection:
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
 
         with (
-            patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
             patch(
-                "srm.pipeline.get_historical_experiment", return_value=_make_mock_da()
+                "saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()
             ) as mock_get_hist,
-            patch("srm.pipeline.get_experiment", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_experiment", return_value=_make_mock_da()),
             patch.object(pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()),
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
             patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
@@ -207,11 +207,11 @@ class TestLoadScenarioDataMemberSelection:
         assert pipeline._hist_member == "r1i1p1f1"
 
         with (
-            patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
             patch(
-                "srm.pipeline.get_historical_experiment", return_value=_make_mock_da()
+                "saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()
             ) as mock_get_hist,
-            patch("srm.pipeline.get_experiment", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_experiment", return_value=_make_mock_da()),
             patch.object(pipeline.cache, "check_dependencies") as mock_deps,
             patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
         ):
@@ -233,9 +233,9 @@ class TestLoadScenarioDataMemberSelection:
         pipeline = BCSDPipeline(g6_001_tas_config, pipeline_options)
 
         with (
-            patch("srm.pipeline.get_obs", return_value=_make_mock_da()),
-            patch("srm.pipeline.get_historical_experiment", return_value=_make_mock_da()),
-            patch("srm.pipeline.get_experiment", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()),
+            patch("saidownscale.pipeline.get_experiment", return_value=_make_mock_da()),
             patch.object(
                 pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()
             ) as mock_bridge,

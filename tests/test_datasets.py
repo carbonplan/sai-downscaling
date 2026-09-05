@@ -1,6 +1,6 @@
 import pytest
 
-from srm.datasets import catalog
+from saidownscale.datasets import catalog
 
 
 def test_catalog(ds_info):

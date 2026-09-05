@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from srm.qaqc import (
+from saidownscale.qaqc import (
     CHECK_AMBER,
     CHECK_RED,
     DISTORTION_STAGES,

@@ -186,7 +186,7 @@ Every stage task is one `(gcm, scenario, member, variable)` leaf that reads a co
 | `coiled` | [Coiled](https://coiled.io) batch API | $0.1089 (EC2 plus a $0.05 platform fee) |
 | `local` | Sequential, in the current process | none |
 
-Deploys use `aws-batch`. The output is identical either way, because both remote executors run the same `srm.batch_runner` entry point against the same config payload.
+Deploys use `aws-batch`. The output is identical either way, because both remote executors run the same `saidownscale.batch_runner` entry point against the same config payload.
 
 ### Config delivery differs between the two
 
@@ -221,7 +221,7 @@ sequenceDiagram
     
     loop For each task
         Coiled->>VM: Start VM with CONFIG_JSON env var
-        VM->>VM: python -m srm.batch_runner {stage}
+        VM->>VM: python -m saidownscale.batch_runner {stage}
         Note over VM: batch_runner reads CONFIG_JSON<br/>Creates BCSDPipeline<br/>Runs stage
         VM->>S3: Write output to cache/output_dir
         VM-->>Coiled: Task complete
@@ -261,38 +261,38 @@ AWS Batch takes resource requirements rather than instance types and picks the i
 
 The CLI is built on several key components:
 
-1. **BCSDConfig** + **PipelineOptions** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
+1. **BCSDConfig** + **PipelineOptions** ([src/saidownscale/bcsd_config.py](../../src/saidownscale/bcsd_config.py))
    - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `is_sai_scenario`. Variable-specific parameters (`detrend_data`, `disaggregation_method`, `debias_approach`, etc.) live only on the nested `variable_config`, never as accessors on `BCSDConfig`. The required top-level `downscaling_method` (`BCSD` or `QDMSD`) is a `BCSDConfig` field: it selects which per-variable defaults table `variable_config` is read from.
    - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `branch`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`, `clip_values`, `clip_bounds`. The `branch` field (default: installed package version) names the icechunk branch all artifacts are written to and read from.
    - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 
-2. **ArtifactCache** ([src/srm/cache.py](../../src/srm/cache.py))
+2. **ArtifactCache** ([src/saidownscale/cache.py](../../src/saidownscale/cache.py))
    - S3-based cache with fsspec backend
    - dependency tracking and validation
    - environment and spatial subset awareness
    - icechunk format with commit-based write verification
    - efficient prefix-based listing (not recursive globbing)
 
-3. **BCSDPipeline** ([src/srm/pipeline.py](../../src/srm/pipeline.py))
+3. **BCSDPipeline** ([src/saidownscale/pipeline.py](../../src/saidownscale/pipeline.py))
    - three-stage API
    - each stage: check cache → compute if needed → write to cache
    - automatic metadata preservation (units, attributes)
    - rechunking strategy for optimal Dask performance
 
-4. **BCSDOrchestrator** ([src/srm/orchestration.py](../../src/srm/orchestration.py))
+4. **BCSDOrchestrator** ([src/saidownscale/orchestration.py](../../src/saidownscale/orchestration.py))
    - batch execution with Coiled integration
    - automatic task deduplication across stages
    - status tracking and reporting
    - error handling and output verification
 
-5. **batch_runner** ([src/srm/batch_runner.py](../../src/srm/batch_runner.py))
+5. **batch_runner** ([src/saidownscale/batch_runner.py](../../src/saidownscale/batch_runner.py))
    - entry point for Coiled batch jobs
    - reads `CONFIG_JSON` environment variable (structure: `{"options": {...PipelineOptions fields...}, ...BCSDConfig fields...}`)
    - pops the `"options"` key to construct `PipelineOptions`; remaining keys construct `BCSDConfig`
    - creates `BCSDPipeline(config, options)` and runs the requested stage
    - minimal dependencies for fast VM startup
 
-6. **CLI** ([src/srm/cli.py](../../src/srm/cli.py))
+6. **CLI** ([src/saidownscale/cli.py](../../src/saidownscale/cli.py))
    - typer-based command-line interface
    - rich formatting for tables and progress display
    - configuration loading and validation
@@ -321,7 +321,7 @@ flowchart TD
     K --> L[Coiled: Spin up N VMs in parallel]
     
     L --> M[VM: Set CONFIG_JSON environment variable]
-    M --> N[VM: Run 'python -m srm.batch_runner stage']
+    M --> N[VM: Run 'python -m saidownscale.batch_runner stage']
     
     N --> O[batch_runner: Parse CONFIG_JSON]
     O --> P[batch_runner: Create BCSDPipeline]

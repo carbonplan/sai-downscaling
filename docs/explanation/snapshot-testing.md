@@ -15,7 +15,7 @@ graph TB
     SNAP --> CMP
     CAND --> CMP
 
-    subgraph "srm.snapshot: compare_runs → compare()"
+    subgraph "saidownscale.snapshot: compare_runs → compare()"
         CMP["assert_equal<br/>exact by default"] --> REP["DiffReport<br/>max_abs, rmse, frac over tol"]
     end
 
@@ -34,15 +34,15 @@ The default comparison is **exact equality**. Two runs of the same configs at th
 
 That holds only when both runs cover the same spatial extent, which is why the regional baseline shares the candidate's `subset_bounds`. Two runs over *different* extents disagree in the last digit or two the stored numbers can hold, roughly 0.00006 W/m² on a solar radiation field near 200 W/m². That is rounding, not science, but it is not zero, so a regional-versus-global comparison still needs a tolerance band; [issue #575](https://github.com/carbonplan/srm-downscaling/issues/575) tracks why.
 
-For that case, pass `srm.snapshot.tolerances.TOLERANCES` to restore the band, which passes a cell when `abs(candidate - snapshot) <= atol + rtol * abs(snapshot)` (the `xarray.testing.assert_allclose` rule). A variable absent from the mapping is compared exactly, so a partial mapping can only tighten a comparison. In either mode a leaf passes only when no cell is over tolerance, no cell disagrees on NaN-ness, and the dimension names, shapes, and coordinates all match.
+For that case, pass `saidownscale.snapshot.tolerances.TOLERANCES` to restore the band, which passes a cell when `abs(candidate - snapshot) <= atol + rtol * abs(snapshot)` (the `xarray.testing.assert_allclose` rule). A variable absent from the mapping is compared exactly, so a partial mapping can only tighten a comparison. In either mode a leaf passes only when no cell is over tolerance, no cell disagrees on NaN-ness, and the dimension names, shapes, and coordinates all match.
 
 ## Per-variable tolerances
 
-One global tolerance cannot fit every variable, because they live on different scales. Temperature in kelvin sits around 250–310, where a small relative tolerance is meaningful; precipitation is dominated by near-zero values, where relative tolerance collapses to nothing and is replaced by a pure absolute tolerance. The policy is a per-variable table in `srm.snapshot.tolerances` with a default fallback — seed values loose enough to absorb cross-version noise and tight enough to catch a genuine shift, expected to be tuned as the team learns how much each variable wanders between blessed runs.
+One global tolerance cannot fit every variable, because they live on different scales. Temperature in kelvin sits around 250–310, where a small relative tolerance is meaningful; precipitation is dominated by near-zero values, where relative tolerance collapses to nothing and is replaced by a pure absolute tolerance. The policy is a per-variable table in `saidownscale.snapshot.tolerances` with a default fallback — seed values loose enough to absorb cross-version noise and tight enough to catch a genuine shift, expected to be tuned as the team learns how much each variable wanders between blessed runs.
 
 ## The baseline and the cheap proxy
 
-There are two baselines in `srm.snapshot.baselines`, each a store URI and an icechunk branch. "Which run is the baseline" is a version-controlled value that the notebook and `compare_runs` both read, so repointing is a reviewed edit rather than an untracked change on a bucket.
+There are two baselines in `saidownscale.snapshot.baselines`, each a store URI and an icechunk branch. "Which run is the baseline" is a version-controlled value that the notebook and `compare_runs` both read, so repointing is a reviewed edit rather than an untracked change on a bucket.
 
 | pointer | mode | run | verdict |
 |---|---|---|---|

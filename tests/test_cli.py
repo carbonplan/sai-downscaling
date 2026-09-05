@@ -8,8 +8,8 @@ import typer
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
-from srm.cli import (
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
+from saidownscale.cli import (
     _confirm_cost,
     _expand_matrix_config,
     _is_matrix_config,
@@ -20,7 +20,7 @@ from srm.cli import (
     app,
     configs_from_matrix,
 )
-from srm.validation import CheckResult, CheckStatus
+from saidownscale.validation import CheckResult, CheckStatus
 
 
 class TestConfigsFromMatrix:
@@ -234,7 +234,7 @@ branch: "v9"
         )
 
         with patch(
-            "srm.validation.validate_output_store", return_value=[passing_result]
+            "saidownscale.validation.validate_output_store", return_value=[passing_result]
         ) as mock_validate:
             result = CliRunner().invoke(
                 app, ["validate-output", "--config-path", str(config_file), "--no-coiled"]
@@ -257,7 +257,7 @@ branch: "v9"
         )
 
         with patch(
-            "srm.validation.validate_output_store", return_value=[passing_result]
+            "saidownscale.validation.validate_output_store", return_value=[passing_result]
         ) as mock_validate:
             result = CliRunner().invoke(
                 app,
@@ -345,7 +345,7 @@ class TestEmptyStoreIsBlocking:
         # read means the run wrote nothing or this process resolved a different branch
         # than the writer. Warning and exiting 0 passes a deploy gate that checked nothing.
         config_file = self._write_config(tmp_path)
-        with patch("srm.validation.validate_output_store", return_value=[]):
+        with patch("saidownscale.validation.validate_output_store", return_value=[]):
             result = CliRunner().invoke(
                 app, ["validate-output", "--config-path", str(config_file), "--no-coiled"]
             )
@@ -353,7 +353,7 @@ class TestEmptyStoreIsBlocking:
 
     def test_no_leaves_with_a_filter_still_exits_nonzero(self, tmp_path):
         config_file = self._write_config(tmp_path)
-        with patch("srm.validation.validate_output_store", return_value=[]):
+        with patch("saidownscale.validation.validate_output_store", return_value=[]):
             result = CliRunner().invoke(
                 app,
                 [
@@ -375,7 +375,7 @@ class TestEmptyStoreIsBlocking:
             scenario="ssp245/tas/001",
             status=CheckStatus.PASS,
         )
-        with patch("srm.validation.validate_output_store", return_value=[passing]):
+        with patch("saidownscale.validation.validate_output_store", return_value=[passing]):
             result = CliRunner().invoke(
                 app, ["validate-output", "--config-path", str(config_file), "--no-coiled"]
             )
@@ -395,7 +395,7 @@ class TestResolveBranch:
     def test_falls_back_to_the_package_version(self, tmp_path):
         # With no branch in the config, the printed value must be the same default
         # validate-output would have used, or passing it through changes behavior.
-        from srm.bcsd_config import PipelineOptions
+        from saidownscale.bcsd_config import PipelineOptions
 
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
@@ -716,7 +716,7 @@ class TestMatrixDownscalingMethodAxis:
             )
 
     def test_run_matrix_accepts_a_repeated_method_flag(self):
-        with patch("srm.cli._validate_lineage_members"):
+        with patch("saidownscale.cli._validate_lineage_members"):
             result = CliRunner().invoke(
                 app,
                 [
@@ -850,7 +850,7 @@ class TestRunMatrixOverrideFlag:
     def test_dry_run_applies_per_variable_override(self):
         # `_validate_lineage_members` runs before the --dry-run branch and opens each
         # GCM's unified datatree over the network. Patch it out so this test stays hermetic.
-        with patch("srm.cli._validate_lineage_members"):
+        with patch("saidownscale.cli._validate_lineage_members"):
             result = CliRunner().invoke(
                 app,
                 [
@@ -930,7 +930,7 @@ branch: "v9"
         # Two configs (tas, pr) share one gcm/obs/subset triple, so they resolve to a
         # single store. Tagging it twice would fail on the second create_tag call.
         config_file = self._write_config(tmp_path)
-        with patch("srm.cache.ArtifactCache.release") as mock_release:
+        with patch("saidownscale.cache.ArtifactCache.release") as mock_release:
             result = CliRunner().invoke(
                 app, ["release", "--config-path", str(config_file), "--tag", "snapshot-v1.0.0"]
             )
@@ -941,7 +941,7 @@ branch: "v9"
         config_file = self._write_config(tmp_path)
         seen = {}
         with patch(
-            "srm.cache.ArtifactCache.release",
+            "saidownscale.cache.ArtifactCache.release",
             autospec=True,
             side_effect=lambda self, tag: seen.update(branch=self.branch, tag=tag),
         ):
@@ -964,7 +964,9 @@ branch: "v9"
         # icechunk refuses to move an existing tag. Swallowing that would leave the
         # release green while the baseline still points at the previous run.
         config_file = self._write_config(tmp_path)
-        with patch("srm.cache.ArtifactCache.release", side_effect=ValueError("tag exists")):
+        with patch(
+            "saidownscale.cache.ArtifactCache.release", side_effect=ValueError("tag exists")
+        ):
             result = CliRunner().invoke(
                 app, ["release", "--config-path", str(config_file), "--tag", "snapshot-v1.0.0"]
             )
@@ -981,7 +983,7 @@ class TestConfirmCost:
 
     @pytest.fixture
     def orchestrator(self, tmp_path):
-        from srm.orchestration import BCSDOrchestrator
+        from saidownscale.orchestration import BCSDOrchestrator
 
         return BCSDOrchestrator(
             PipelineOptions(
@@ -1007,14 +1009,14 @@ class TestConfirmCost:
 
     def test_local_executor_skips_the_gate_entirely(self, orchestrator, configs):
         # Nothing is spent locally, so there is nothing to confirm.
-        with patch("srm.cli._render_cost_plan") as mock_render:
+        with patch("saidownscale.cli._render_cost_plan") as mock_render:
             assert _confirm_cost(orchestrator, configs, "local", False, False) is True
         mock_render.assert_not_called()
 
     def test_non_interactive_proceeds_without_prompting(self, orchestrator, configs):
         # Every deploy job is non-interactive; a prompt would hang it until timeout.
         with (
-            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("saidownscale.cli._render_cost_plan", return_value=True),
             patch("sys.stdin.isatty", return_value=False),
             patch("typer.confirm") as mock_confirm,
         ):
@@ -1023,7 +1025,7 @@ class TestConfirmCost:
 
     def test_yes_flag_skips_the_prompt(self, orchestrator, configs):
         with (
-            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("saidownscale.cli._render_cost_plan", return_value=True),
             patch("sys.stdin.isatty", return_value=True),
             patch("typer.confirm") as mock_confirm,
         ):
@@ -1032,7 +1034,7 @@ class TestConfirmCost:
 
     def test_interactive_prompts_and_honors_a_refusal(self, orchestrator, configs):
         with (
-            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("saidownscale.cli._render_cost_plan", return_value=True),
             patch("sys.stdin.isatty", return_value=True),
             patch("typer.confirm", return_value=False) as mock_confirm,
         ):
@@ -1041,7 +1043,7 @@ class TestConfirmCost:
 
     def test_interactive_prompts_and_honors_acceptance(self, orchestrator, configs):
         with (
-            patch("srm.cli._render_cost_plan", return_value=True),
+            patch("saidownscale.cli._render_cost_plan", return_value=True),
             patch("sys.stdin.isatty", return_value=True),
             patch("typer.confirm", return_value=True),
         ):
@@ -1049,7 +1051,7 @@ class TestConfirmCost:
 
     def test_nothing_to_submit_does_not_prompt(self, orchestrator, configs):
         with (
-            patch("srm.cli._render_cost_plan", return_value=False),
+            patch("saidownscale.cli._render_cost_plan", return_value=False),
             patch("sys.stdin.isatty", return_value=True),
             patch("typer.confirm") as mock_confirm,
         ):
@@ -1062,7 +1064,7 @@ class TestStageScopedCostPlan:
 
     @pytest.fixture
     def orchestrator(self, tmp_path):
-        from srm.orchestration import BCSDOrchestrator
+        from saidownscale.orchestration import BCSDOrchestrator
 
         return BCSDOrchestrator(
             PipelineOptions(
@@ -1087,9 +1089,9 @@ class TestStageScopedCostPlan:
         ]
 
     def _priced_stages(self, orchestrator, configs, stage):
-        from srm.cli import _render_cost_plan
+        from saidownscale.cli import _render_cost_plan
 
-        with patch("srm.cli.estimate_workflow", side_effect=ValueError) as mock_est:
+        with patch("saidownscale.cli.estimate_workflow", side_effect=ValueError) as mock_est:
             with pytest.raises(ValueError):
                 _render_cost_plan(orchestrator, configs, "aws-batch", False, stage=stage)
         return [entry[0] for entry in mock_est.call_args.args[0]]
@@ -1118,7 +1120,7 @@ class TestStageValidation:
     """An unrecognized --stage used to prompt for cost and then silently do nothing."""
 
     def test_unknown_stage_is_rejected(self, tmp_path):
-        from srm.cli import _resolve_stage
+        from saidownscale.cli import _resolve_stage
 
         with pytest.raises(typer.BadParameter, match="foo"):
             _resolve_stage("foo")
@@ -1135,7 +1137,7 @@ class TestStageValidation:
         ],
     )
     def test_known_stages_resolve(self, given, expected):
-        from srm.cli import _resolve_stage
+        from saidownscale.cli import _resolve_stage
 
         assert _resolve_stage(given) == expected
 
@@ -1145,7 +1147,7 @@ class TestRunEnvironmentTable:
 
     @pytest.fixture
     def orchestrator(self, tmp_path):
-        from srm.orchestration import BCSDOrchestrator
+        from saidownscale.orchestration import BCSDOrchestrator
 
         return BCSDOrchestrator(
             PipelineOptions(
@@ -1156,7 +1158,7 @@ class TestRunEnvironmentTable:
         )
 
     def _render(self, orchestrator, executor):
-        from srm.cli import _render_run_environment, console
+        from saidownscale.cli import _render_run_environment, console
 
         with console.capture() as cap:
             _render_run_environment(orchestrator, executor)

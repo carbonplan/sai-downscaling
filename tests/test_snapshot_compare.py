@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 
-from srm.snapshot.compare import DiffReport, LeafDiff, _compare_dataarray, compare
+from saidownscale.snapshot.compare import DiffReport, LeafDiff, _compare_dataarray, compare
 
 
 def _da(values):
@@ -106,7 +106,7 @@ def test_compare_defaults_to_exact_no_per_variable_tolerance():
 def test_compare_tolerances_param_restores_per_variable_band():
     # Passing the TOLERANCES table opts back into the old banded comparison: pr keeps a
     # tight near-zero atol floor, so the same 1e-3 change fails for pr...
-    from srm.snapshot.tolerances import TOLERANCES
+    from saidownscale.snapshot.tolerances import TOLERANCES
 
     a = _ds([0.0, 0.0, 0.0], name="pr")
     b = _ds([0.0, 0.0, 1e-3], name="pr")
@@ -150,7 +150,7 @@ def _passing_leaf():
 
 
 def test_report_with_no_invariants_passes_on_leaves_alone():
-    from srm.snapshot.compare import DiffReport
+    from saidownscale.snapshot.compare import DiffReport
 
     report = DiffReport(leaves=[_passing_leaf()])
     assert report.within_tolerance is True
@@ -159,7 +159,7 @@ def test_report_with_no_invariants_passes_on_leaves_alone():
 
 
 def test_invariant_violation_fails_passed_even_when_leaves_within_tol():
-    from srm.snapshot.compare import DiffReport, InvariantCheck
+    from saidownscale.snapshot.compare import DiffReport, InvariantCheck
 
     report = DiffReport(
         leaves=[_passing_leaf()],
@@ -175,7 +175,7 @@ def test_invariant_violation_fails_passed_even_when_leaves_within_tol():
 
 
 def test_report_passes_when_invariant_holds():
-    from srm.snapshot.compare import DiffReport, InvariantCheck
+    from saidownscale.snapshot.compare import DiffReport, InvariantCheck
 
     report = DiffReport(
         leaves=[_passing_leaf()],
@@ -185,7 +185,7 @@ def test_report_passes_when_invariant_holds():
 
 
 def test_global_baseline_pointer_is_well_formed():
-    from srm.snapshot.baselines import CESM2_WACCM_GLOBAL
+    from saidownscale.snapshot.baselines import CESM2_WACCM_GLOBAL
 
     assert CESM2_WACCM_GLOBAL.uri.startswith(
         "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/"
@@ -237,7 +237,7 @@ def test_matching_infinities_are_an_exact_match():
 
 
 def test_inf_in_snapshot_is_caught_under_a_tolerance_band_too():
-    from srm.snapshot.tolerances import TOLERANCES
+    from saidownscale.snapshot.tolerances import TOLERANCES
 
     candidate = xr.Dataset({"tas": _da([1.0, 5.0])})
     snapshot = xr.Dataset({"tas": _da([1.0, np.inf])})
@@ -266,7 +266,7 @@ def test_shifted_coordinates_at_equal_shape_are_a_shape_mismatch():
 def test_partial_tolerances_mapping_leaves_unlisted_variables_exact():
     # A mapping that names only `pr` must not silently band `tas` with the module-level
     # table: a partial mapping can tighten the check, never loosen it.
-    from srm.snapshot.tolerances import TOLERANCES
+    from saidownscale.snapshot.tolerances import TOLERANCES
 
     a = _ds([0.0, 0.0, 0.0], name="tas")
     b = _ds([0.0, 0.0, 1e-3], name="tas")

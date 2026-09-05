@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from srm.qaqc import DatasetChecker as DatasetValidator
-from srm.utils import decode_time_from_bounds, lon_to_180, to_proleptic_gregorian
+from saidownscale.qaqc import DatasetChecker as DatasetValidator
+from saidownscale.utils import decode_time_from_bounds, lon_to_180, to_proleptic_gregorian
 
 
 class TestLonTo180:

@@ -21,9 +21,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import make_icechunk_group as _make_icechunk_group
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import ArtifactCache
-from srm.orchestration import BCSDOrchestrator
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
+from saidownscale.cache import ArtifactCache
+from saidownscale.orchestration import BCSDOrchestrator
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -557,7 +557,7 @@ class TestSubmitToCoiled:
 
 class TestRunLocal:
     def test_routes_prepare_observations(self, orchestrator, config):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -570,7 +570,7 @@ class TestRunLocal:
         assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_fit_historical(self, orchestrator, config):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -584,7 +584,7 @@ class TestRunLocal:
         assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_transform_scenario(self, orchestrator, config):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -600,7 +600,7 @@ class TestRunLocal:
             orchestrator._run_local("bad_stage", [config])
 
     def test_creates_pipeline_per_config(self, orchestrator, multi_configs):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
             mock_instance.prepare_observations.return_value = "path"
@@ -610,7 +610,7 @@ class TestRunLocal:
         assert MockPipeline.call_count == len(multi_configs)
 
     def test_returns_path_per_config(self, orchestrator, multi_configs):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -627,7 +627,7 @@ class TestRunLocal:
         }
         for stage, method_name in stage_to_method.items():
             with subtests.test(stage=stage):
-                with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+                with patch("saidownscale.orchestration.BCSDPipeline") as MockPipeline:
                     mock_instance = MagicMock()
                     MockPipeline.return_value = mock_instance
                     getattr(mock_instance, method_name).return_value = f"{stage}_path"
@@ -945,7 +945,7 @@ class TestSubmitBatchJob:
         assert overrides["command"] == [
             "python",
             "-m",
-            "srm.batch_runner",
+            "saidownscale.batch_runner",
             "transform_scenario",
         ]
 
@@ -1148,7 +1148,7 @@ class TestSubmitToAwsBatch:
         client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", return_value=True),
             patch("time.sleep"),
         ):
@@ -1162,7 +1162,7 @@ class TestSubmitToAwsBatch:
         client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", return_value=False),
             patch("time.sleep"),
         ):
@@ -1175,7 +1175,7 @@ class TestSubmitToAwsBatch:
         client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest") as mock_write,
+            patch("saidownscale.batch_manifest.write_manifest") as mock_write,
             patch.object(ArtifactCache, "exists", return_value=True),
             patch("time.sleep"),
         ):
@@ -1254,7 +1254,7 @@ class TestFailedJobIsNotMaskedByStaleCache:
         client.describe_jobs.return_value = {"jobs": [{"status": status}]}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", return_value=True),
             patch("time.sleep"),
         ):
@@ -1281,7 +1281,7 @@ class TestFailedJobIsNotMaskedByStaleCache:
         client.describe_jobs.return_value = {"jobs": []}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", return_value=True),
             patch("time.sleep"),
         ):
@@ -1299,7 +1299,7 @@ class TestFailedJobIsNotMaskedByStaleCache:
         client.describe_jobs.return_value = {"jobs": []}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", side_effect=[False] * n + [True] * (2 * n)),
             patch("time.sleep"),
         ):
@@ -1564,7 +1564,7 @@ class TestBothExecutorsAgreeOnProcessCount:
         assert env["SRM_NR_PROCESSES"] == str(expected)
 
     def test_the_two_executors_send_the_same_number(self, orchestrator, multi_configs):
-        from srm.cost import vcpus
+        from saidownscale.cost import vcpus
 
         stage = "transform_scenario"
         assert (
@@ -1581,7 +1581,7 @@ class TestResourcesDerivedFromOneTable:
             orchestrator._resources_for("polish_the_output", [config])
 
     def test_matches_the_instance_the_coiled_path_would_pick(self, orchestrator, config):
-        from srm.cost import memory_mib, vcpus
+        from saidownscale.cost import memory_mib, vcpus
 
         vm_type = orchestrator._vm_types_for("transform_scenario", [config])[0]
         assert orchestrator._resources_for("transform_scenario", [config]) == {

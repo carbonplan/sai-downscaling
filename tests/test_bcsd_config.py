@@ -7,7 +7,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from srm.bcsd_config import (
+from saidownscale.bcsd_config import (
     BCSDConfig,
     CacheConfig,
     PipelineOptions,
@@ -806,9 +806,9 @@ class TestUsageExamples:
     def _example_block() -> str:
         import inspect
 
-        import srm.bcsd_config
+        import saidownscale.bcsd_config
 
-        source = inspect.getsource(srm.bcsd_config)
+        source = inspect.getsource(saidownscale.bcsd_config)
         _, _, block = source.partition("Usage Examples:")
         assert block, "usage-example block not found in srm/bcsd_config.py"
         return block

@@ -28,9 +28,9 @@ from conftest import make_icechunk_group as _make_icechunk_group
 from ibicus.debias import QuantileDeltaMapping, QuantileMapping
 from ibicus.utils import PrecipitationHurdleModelGamma
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
-from srm.pipeline import (
+from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
+from saidownscale.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
+from saidownscale.pipeline import (
     BCSDPipeline,
     _assert_stitched_continuity,
     _location_seed,
@@ -49,11 +49,11 @@ from srm.pipeline import (
 def _mock_prepare_obs_compute():
     """Mock all compute-heavy imports used by prepare_observations."""
     with (
-        patch("srm.pipeline.get_obs") as mock_get_obs,
-        patch("srm.pipeline.get_experiment") as mock_get_exp,
-        patch("srm.pipeline.interpolate_fine_to_coarse_grid") as mock_interp,
-        patch("srm.pipeline.subset_space") as mock_subset,
-        patch("srm.pipeline.rechunk") as mock_rechunk,
+        patch("saidownscale.pipeline.get_obs") as mock_get_obs,
+        patch("saidownscale.pipeline.get_experiment") as mock_get_exp,
+        patch("saidownscale.pipeline.interpolate_fine_to_coarse_grid") as mock_interp,
+        patch("saidownscale.pipeline.subset_space") as mock_subset,
+        patch("saidownscale.pipeline.rechunk") as mock_rechunk,
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         yield mock_get_obs, mock_get_exp, mock_interp, mock_subset, mock_rechunk
@@ -63,16 +63,16 @@ def _mock_prepare_obs_compute():
 def _mock_fit_historical_compute():
     """Mock all compute-heavy imports used by fit_historical."""
     with (
-        patch("srm.pipeline.get_obs"),
-        patch("srm.pipeline.get_historical_experiment"),
-        patch("srm.pipeline.get_experiment"),
-        patch("srm.pipeline.xr.DataArray", return_value=MagicMock()),
-        patch("srm.pipeline.rechunk"),
-        patch("srm.pipeline.downscale_from_coarse"),
+        patch("saidownscale.pipeline.get_obs"),
+        patch("saidownscale.pipeline.get_historical_experiment"),
+        patch("saidownscale.pipeline.get_experiment"),
+        patch("saidownscale.pipeline.xr.DataArray", return_value=MagicMock()),
+        patch("saidownscale.pipeline.rechunk"),
+        patch("saidownscale.pipeline.downscale_from_coarse"),
         # MagicMock stand-ins are not arrays; these tests assert wiring, not data
-        patch("srm.pipeline.assert_no_nans"),
-        patch("srm.pipeline._SeededQuantileMapping") as mock_qm,
-        patch("srm.pipeline.dask"),
+        patch("saidownscale.pipeline.assert_no_nans"),
+        patch("saidownscale.pipeline._SeededQuantileMapping") as mock_qm,
+        patch("saidownscale.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
@@ -85,21 +85,21 @@ def _mock_fit_historical_compute():
 def _mock_transform_scenario_compute():
     """Mock all compute-heavy imports used by transform_scenario."""
     with (
-        patch("srm.pipeline.get_obs"),
-        patch("srm.pipeline.get_historical_experiment"),
-        patch("srm.pipeline.get_experiment"),
-        patch("srm.pipeline.xr.DataArray", return_value=MagicMock()),
-        patch("srm.pipeline.xr.concat", return_value=MagicMock()),
-        patch("srm.pipeline.rechunk"),
-        patch("srm.pipeline.subset_space"),
-        patch("srm.pipeline.calculate_baseline_climatology"),
-        patch("srm.pipeline.detrend"),
-        patch("srm.pipeline.retrend"),
-        patch("srm.pipeline.downscale_from_coarse"),
+        patch("saidownscale.pipeline.get_obs"),
+        patch("saidownscale.pipeline.get_historical_experiment"),
+        patch("saidownscale.pipeline.get_experiment"),
+        patch("saidownscale.pipeline.xr.DataArray", return_value=MagicMock()),
+        patch("saidownscale.pipeline.xr.concat", return_value=MagicMock()),
+        patch("saidownscale.pipeline.rechunk"),
+        patch("saidownscale.pipeline.subset_space"),
+        patch("saidownscale.pipeline.calculate_baseline_climatology"),
+        patch("saidownscale.pipeline.detrend"),
+        patch("saidownscale.pipeline.retrend"),
+        patch("saidownscale.pipeline.downscale_from_coarse"),
         # MagicMock stand-ins are not arrays; these tests assert wiring, not data
-        patch("srm.pipeline.assert_no_nans"),
-        patch("srm.pipeline._SeededQuantileMapping") as mock_qm,
-        patch("srm.pipeline.dask"),
+        patch("saidownscale.pipeline.assert_no_nans"),
+        patch("saidownscale.pipeline._SeededQuantileMapping") as mock_qm,
+        patch("saidownscale.pipeline.dask"),
         patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
         patch.object(BCSDPipeline, "_apply_bias_correction_scenario", return_value=MagicMock()),
@@ -205,7 +205,7 @@ class TestPrepareObservationsCache:
         obs_loc = pipeline.cache.obs_loc
         _make_icechunk_group(obs_loc, branch=pipeline.cache.branch)
 
-        with patch("srm.pipeline.get_obs") as mock_get_obs:
+        with patch("saidownscale.pipeline.get_obs") as mock_get_obs:
             result = pipeline.prepare_observations()
 
         assert result == obs_loc.store_path
@@ -328,7 +328,7 @@ class TestBuildOceanMask:
     def test_fetches_ocean_mask_from_catalog(self):
         mock_gdf = MagicMock()
         with (
-            patch("srm.datasets.catalog") as mock_catalog,
+            patch("saidownscale.datasets.catalog") as mock_catalog,
             patch.dict("sys.modules", {"xproj": MagicMock()}),
             patch("rasterix.rasterize.geometry_mask", return_value=MagicMock()),
         ):
@@ -346,7 +346,7 @@ class TestBuildOceanMask:
             return MagicMock()
 
         with (
-            patch("srm.datasets.catalog") as mock_catalog,
+            patch("saidownscale.datasets.catalog") as mock_catalog,
             patch.dict("sys.modules", {"xproj": MagicMock()}),
             patch("rasterix.rasterize.geometry_mask", side_effect=capture_template),
         ):
@@ -382,7 +382,7 @@ class TestFitHistoricalBehavior:
         _make_icechunk_group(hist_loc, branch=pipeline.cache.branch)
         _make_icechunk_group(coarse_loc, branch=pipeline.cache.branch)
 
-        with patch("srm.pipeline.get_obs") as mock_get_obs:
+        with patch("saidownscale.pipeline.get_obs") as mock_get_obs:
             result = pipeline.fit_historical()
 
         assert result == hist_loc.store_path
@@ -395,7 +395,7 @@ class TestFitHistoricalBehavior:
         )
 
         with _mock_fit_historical_compute():
-            with patch("srm.pipeline.get_obs") as mock_get_obs:
+            with patch("saidownscale.pipeline.get_obs") as mock_get_obs:
                 pipeline.fit_historical(force=True)
 
         mock_get_obs.assert_called_once()
@@ -455,7 +455,7 @@ class TestTransformScenarioBehavior:
         _make_icechunk_group(scenario_loc, branch=pipeline.cache.branch)
         _make_icechunk_group(coarse_loc, branch=pipeline.cache.branch)
 
-        with patch("srm.pipeline.get_obs") as mock_get_obs:
+        with patch("saidownscale.pipeline.get_obs") as mock_get_obs:
             result = pipeline.transform_scenario()
 
         assert result == scenario_loc.store_path
@@ -469,7 +469,7 @@ class TestTransformScenarioBehavior:
         _make_icechunk_group(p.cache.scenario_loc, branch=p.cache.branch)
 
         with _mock_transform_scenario_compute():
-            with patch("srm.pipeline.get_obs") as mock_get_obs:
+            with patch("saidownscale.pipeline.get_obs") as mock_get_obs:
                 p.transform_scenario(force=True)
 
         mock_get_obs.assert_called_once()
@@ -493,14 +493,17 @@ class TestTransformScenarioBehavior:
             branch=pr_pipeline.cache.branch,
         )
         with _mock_transform_scenario_compute():
-            with patch("srm.pipeline.detrend") as mock_detrend:
+            with patch("saidownscale.pipeline.detrend") as mock_detrend:
                 pr_pipeline.transform_scenario()
         mock_detrend.assert_not_called()
 
     def test_detrend_called_for_tas(self, all_deps_present):
         pipeline = all_deps_present
         with _mock_transform_scenario_compute():
-            with patch("srm.pipeline.detrend") as mock_detrend, patch("srm.pipeline.xr"):
+            with (
+                patch("saidownscale.pipeline.detrend") as mock_detrend,
+                patch("saidownscale.pipeline.xr"),
+            ):
                 # detrend_data=True for tas; mock xr.concat needed by the splice step
                 try:
                     pipeline.transform_scenario()
@@ -558,7 +561,7 @@ class TestTransformScenarioBehavior:
 
     def test_write_called_with_chunk_shard_encoding(self, pipeline_pr):
         """transform_scenario passes chunk/shard/compressor encoding to the write call."""
-        from srm.encoding import (
+        from saidownscale.encoding import (
             CHUNK_LAT,
             CHUNK_LON,
             CHUNK_TIME,
@@ -1074,18 +1077,18 @@ class TestMakeDebiaser:
     """Tests that _make_debiaser forwards mapping_type to QuantileMapping."""
 
     def test_parametric_mapping_type_forwarded(self):
-        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
+        with patch("saidownscale.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(variable="tas", mapping_type="parametric")
             assert mock_qm.call_args.kwargs["mapping_type"] == "parametric"
 
     def test_nonparametric_mapping_type_forwarded(self):
-        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
+        with patch("saidownscale.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(variable="tas", mapping_type="nonparametric")
             assert mock_qm.call_args.kwargs["mapping_type"] == "nonparametric"
 
     def test_2sided_pr_low_tail_uses_parametric_with_weibull(self):
         """PR low-tail debiaser must use mapping_type='parametric' and the zero-bounded Weibull."""
-        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
+        with patch("saidownscale.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(
                 variable="pr",
                 distribution=_weibull_min_zero_bounded,
@@ -1097,7 +1100,7 @@ class TestMakeDebiaser:
 
     def test_2sided_pr_high_tail_uses_parametric_with_gumbel(self):
         """PR high-tail debiaser must use mapping_type='parametric' and gumbel_r distribution."""
-        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
+        with patch("saidownscale.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(
                 variable="pr",
                 distribution=scipy.stats.gumbel_r,
@@ -1109,7 +1112,7 @@ class TestMakeDebiaser:
 
     def test_tas_no_explicit_distribution_uses_norm(self):
         """tas without explicit distribution defaults to scipy.stats.norm."""
-        with patch("srm.pipeline._SeededQuantileMapping") as mock_qm:
+        with patch("saidownscale.pipeline._SeededQuantileMapping") as mock_qm:
             _make_debiaser(variable="tas", mapping_type="parametric")
             assert mock_qm.call_args.kwargs["distribution"] is scipy.stats.norm
 
@@ -1188,8 +1191,10 @@ class TestWeibullZeroBounded:
         make_debiaser_spy = MagicMock()
         make_debiaser_spy.return_value.apply.return_value = np.zeros((6, 2, 3))
         with (
-            patch("srm.pipeline._make_debiaser", make_debiaser_spy),
-            patch("srm.pipeline.calculate_out_of_range_mask", return_value=(mask, mask, mask)),
+            patch("saidownscale.pipeline._make_debiaser", make_debiaser_spy),
+            patch(
+                "saidownscale.pipeline.calculate_out_of_range_mask", return_value=(mask, mask, mask)
+            ),
         ):
             pipeline._apply_bias_correction_scenario(da, da, da)
 
@@ -1258,7 +1263,7 @@ class TestFitHistoricalCoarseOutput:
 
     def test_coarse_write_uses_coarse_encoding(self, all_deps_present):
         """fit_historical uses make_coarse_encoding for the coarse write."""
-        from srm.encoding import CHUNK_TIME_COARSE, SHARD_TIME_COARSE
+        from saidownscale.encoding import CHUNK_TIME_COARSE, SHARD_TIME_COARSE
 
         pipeline = all_deps_present
         write_calls: list = []
@@ -1301,7 +1306,7 @@ class TestFitHistoricalCoarseOutput:
         _make_icechunk_group(hist_loc, branch=pipeline.cache.branch)
         _make_icechunk_group(coarse_loc, branch=pipeline.cache.branch)
 
-        with patch("srm.pipeline.get_obs") as mock_get_obs:
+        with patch("saidownscale.pipeline.get_obs") as mock_get_obs:
             pipeline.fit_historical()
 
         mock_get_obs.assert_not_called()
@@ -1328,7 +1333,7 @@ class TestTransformScenarioCoarseOutput:
 
     def test_coarse_write_uses_coarse_encoding(self, pipeline_pr):
         """transform_scenario uses make_coarse_encoding for the coarse write."""
-        from srm.encoding import CHUNK_TIME_COARSE, SHARD_TIME_COARSE
+        from saidownscale.encoding import CHUNK_TIME_COARSE, SHARD_TIME_COARSE
 
         p = pipeline_pr
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
@@ -1375,7 +1380,7 @@ class TestTransformScenarioCoarseOutput:
         _make_icechunk_group(scenario_loc, branch=pipeline.cache.branch)
         _make_icechunk_group(coarse_loc, branch=pipeline.cache.branch)
 
-        with patch("srm.pipeline.get_obs") as mock_get_obs:
+        with patch("saidownscale.pipeline.get_obs") as mock_get_obs:
             pipeline.transform_scenario()
 
         mock_get_obs.assert_not_called()
@@ -1459,7 +1464,7 @@ class TestCoarseOnlyFitHistorical:
             p.cache.debiased_coarse_historical_loc(p._hist_member), branch=p.cache.branch
         )
 
-        with patch("srm.pipeline.get_obs") as mock_get_obs:
+        with patch("saidownscale.pipeline.get_obs") as mock_get_obs:
             p.fit_historical()
 
         mock_get_obs.assert_not_called()
@@ -1527,7 +1532,7 @@ class TestCoarseOnlyTransformScenario:
         self._seed_deps(p)
         _make_icechunk_group(p.cache.debiased_coarse_scenario_loc(), branch=p.cache.branch)
 
-        with patch("srm.pipeline.get_obs") as mock_get_obs:
+        with patch("saidownscale.pipeline.get_obs") as mock_get_obs:
             p.transform_scenario()
 
         mock_get_obs.assert_not_called()
@@ -1755,7 +1760,7 @@ def _read_coarse_tasmin(cache, coarse_loc) -> xr.DataArray:
     """Open a written coarse store directly, bypassing the mocked ``_open_from_icechunk``."""
     import icechunk
 
-    from srm.pipeline import _icechunk_storage_for_path
+    from saidownscale.pipeline import _icechunk_storage_for_path
 
     storage = _icechunk_storage_for_path(coarse_loc.store_path)
     repo = icechunk.Repository.open(storage)
@@ -2045,7 +2050,7 @@ class TestReconcileTemperatureExtremes:
         p = tasmin_pipeline  # pipeline_options defaults to environment="qa"
         assert p.options.environment == "qa"
         tasmax_fine, tasmin_fine = _fine_pair_with_inversion()  # 1 inverted of 2 valid cells
-        with caplog.at_level(logging.INFO, logger="srm.pipeline"):
+        with caplog.at_level(logging.INFO, logger="saidownscale.pipeline"):
             self._run_reconcile(p, tasmax_fine, tasmin_fine)
         assert "swapped 1 / 2 valid cells" in caplog.text
         assert "50.0000%" in caplog.text
@@ -2064,7 +2069,7 @@ class TestReconcileTemperatureExtremes:
         )
         p = BCSDPipeline(tasmin_config, opts)
         tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
-        with caplog.at_level(logging.INFO, logger="srm.pipeline"):
+        with caplog.at_level(logging.INFO, logger="saidownscale.pipeline"):
             self._run_reconcile(p, tasmax_fine, tasmin_fine)
         assert "swapped" not in caplog.text
 
@@ -2134,7 +2139,7 @@ class TestReconcileTemperatureExtremes:
     def test_reads_both_inputs_shard_aligned(self, tasmin_pipeline):
         # Store-to-store reconcile must open BOTH fields with shard-aligned chunks so the
         # swap+write slices per-shard instead of pulling the whole fine array (OOM fix).
-        from srm.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME
+        from saidownscale.encoding import SHARD_LAT, SHARD_LON, SHARD_TIME
 
         p = tasmin_pipeline
         tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
@@ -2204,7 +2209,7 @@ class TestTasminReconcileSequencing:
         with (
             load_patch,
             patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
-            patch("srm.pipeline.derive_tasmin", return_value=MagicMock()),
+            patch("saidownscale.pipeline.derive_tasmin", return_value=MagicMock()),
             patch.object(BCSDPipeline, "_apply_spatial_downscaling", return_value=sentinel),
             patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write),
             patch.object(
@@ -2307,7 +2312,9 @@ class TestDetrendScenarioBridge:
         ssp = MagicMock(name="ssp_timeseries")
         stitched = MagicMock(name="stitched")
         stitched.sel.return_value = "bridged-predict-slice"
-        with patch("srm.pipeline.stitch_historical_scenario", return_value=stitched) as mock_stitch:
+        with patch(
+            "saidownscale.pipeline.stitch_historical_scenario", return_value=stitched
+        ) as mock_stitch:
             out, trend = pipe._detrend_scenario(MagicMock(), MagicMock(), ssp)
 
         mock_stitch.assert_called_once()
@@ -2331,7 +2338,7 @@ class TestDetrendScenarioBridge:
         assert cfg.variable_config.detrend_data is False and cfg.is_sai_scenario is False
 
         model_scenario = MagicMock(name="model_scenario")
-        with patch("srm.pipeline.stitch_historical_scenario") as mock_stitch:
+        with patch("saidownscale.pipeline.stitch_historical_scenario") as mock_stitch:
             out, trend = pipe._detrend_scenario(MagicMock(), model_scenario, None)
 
         mock_stitch.assert_not_called()
@@ -2370,14 +2377,15 @@ class TestScenarioHistoricalSlice:
                 return_value=obs,
             ),
             patch(
-                "srm.pipeline.get_obs", return_value=_spatial_daily_da("1978-01-01", "2014-12-31")
+                "saidownscale.pipeline.get_obs",
+                return_value=_spatial_daily_da("1978-01-01", "2014-12-31"),
             ),
             patch(
-                "srm.pipeline.get_historical_experiment",
+                "saidownscale.pipeline.get_historical_experiment",
                 return_value=_spatial_daily_da("1978-01-01", hist_end),
             ),
             patch(
-                "srm.pipeline.get_experiment",
+                "saidownscale.pipeline.get_experiment",
                 return_value=_spatial_daily_da("2015-01-01", "2060-12-31").expand_dims(
                     ensemble_member=[member]
                 ),
@@ -2448,11 +2456,11 @@ class TestScenarioHistoricalSlice:
         with (
             patch.object(BCSDPipeline, "_open_from_icechunk", return_value=obs),
             patch(
-                "srm.pipeline.get_obs",
+                "saidownscale.pipeline.get_obs",
                 return_value=_spatial_daily_da("1978-01-01", "2014-12-31"),
             ),
             patch(
-                "srm.pipeline.get_historical_experiment",
+                "saidownscale.pipeline.get_historical_experiment",
                 return_value=_spatial_daily_da("1978-01-01", "2015-01-16"),
             ),
             patch.object(
@@ -2610,7 +2618,7 @@ class TestQDMScenarioWindow:
 
         hist = _qdm_da("2010-01-01", "2014-12-31")
         with (
-            patch("srm.pipeline.stitch_historical_scenario", return_value=stitched),
+            patch("saidownscale.pipeline.stitch_historical_scenario", return_value=stitched),
             patch.object(QuantileDeltaMapping, "apply", _fake_apply),
         ):
             pipe._apply_bias_correction_scenario(
@@ -2684,7 +2692,7 @@ class TestQDMPadCompleteness:
             return np.zeros(kwargs["cm_future"].shape)
 
         with (
-            patch("srm.pipeline.stitch_historical_scenario", return_value=stitched),
+            patch("saidownscale.pipeline.stitch_historical_scenario", return_value=stitched),
             patch.object(QuantileDeltaMapping, "apply", _fake_apply),
         ):
             return pipe._apply_bias_correction_scenario(
@@ -2868,7 +2876,7 @@ class TestQDMReproducibility:
         scenario = _qdm_da("2015-01-01", "2016-12-31")
         with (
             patch(
-                "srm.pipeline.stitch_historical_scenario",
+                "saidownscale.pipeline.stitch_historical_scenario",
                 return_value=_qdm_da("1990-01-01", "2014-12-31"),
             ),
             patch.object(QuantileDeltaMapping, "apply", _fake_apply),
@@ -3011,7 +3019,7 @@ class TestDebiaserProcesses:
     """nr_processes comes from the allocation, not from what the container can see."""
 
     def test_uses_the_env_var_when_set(self, monkeypatch):
-        from srm.pipeline import NR_PROCESSES_ENV, debiaser_processes
+        from saidownscale.pipeline import NR_PROCESSES_ENV, debiaser_processes
 
         monkeypatch.setenv(NR_PROCESSES_ENV, "16")
         assert debiaser_processes() == 16
@@ -3019,7 +3027,7 @@ class TestDebiaserProcesses:
     def test_falls_back_to_cpu_count_when_unset(self, monkeypatch):
         import dask.system
 
-        from srm.pipeline import NR_PROCESSES_ENV, debiaser_processes
+        from saidownscale.pipeline import NR_PROCESSES_ENV, debiaser_processes
 
         monkeypatch.delenv(NR_PROCESSES_ENV, raising=False)
         assert debiaser_processes() == dask.system.CPU_COUNT
@@ -3029,7 +3037,7 @@ class TestDebiaserProcesses:
         # A malformed value must not kill a multi-hour task partway through.
         import dask.system
 
-        from srm.pipeline import NR_PROCESSES_ENV, debiaser_processes
+        from saidownscale.pipeline import NR_PROCESSES_ENV, debiaser_processes
 
         monkeypatch.setenv(NR_PROCESSES_ENV, bad)
         assert debiaser_processes() == dask.system.CPU_COUNT

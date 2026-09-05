@@ -232,8 +232,8 @@ jobs:
               # such branch. Resolved from the configs so the summary cannot drift from them.
               run: |
                   URI=$(uv run python - <<'PY'
-                  from srm.cache import ArtifactCache
-                  from srm.cli import load_configs
+                  from saidownscale.cache import ArtifactCache
+                  from saidownscale.cli import load_configs
 
                   configs, options = load_configs("configs/snapshot/cesm2-waccm6/")
                   stores = {ArtifactCache.from_config(c, options)._output_store for c in configs}
@@ -245,7 +245,7 @@ jobs:
                   {
                       echo "### Snapshot baseline produced"
                       echo ""
-                      echo "Repoint \`CESM2_WACCM_SOUTH_AFRICA\` in \`src/srm/snapshot/baselines.py\`:"
+                      echo "Repoint \`CESM2_WACCM_SOUTH_AFRICA\` in \`src/saidownscale/snapshot/baselines.py\`:"
                       echo ""
                       echo '```python'
                       echo "CESM2_WACCM_SOUTH_AFRICA = Baseline("
