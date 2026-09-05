@@ -138,7 +138,7 @@ zarr group paths on a named branch (defaulting to the installed package version)
 ```text
 # Scratch store — obs regridded + optional intermediates
 s3://carbonplan-srm/scratch/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
-  branch: v1.2.3        ← installed package version (BCSD_BRANCH to override)
+  branch: v1.2.3        ← installed package version (SAIDOWNSCALE_BRANCH to override)
     obs/{variable}                                                   # shared by both methods
     {method}/detrended_scenario/{scenario_group}/{variable}/{ensemble_member}  # only if save_intermediate=True
     {method}/trend_scenario/{scenario_group}/{variable}/{ensemble_member}      # only if save_intermediate=True
@@ -164,7 +164,7 @@ Where:
 
 This design concentrates all artifacts for a GCM into two stores instead of scattering them across
 dozens of separate icechunk repositories. Branching — rather than path segments — provides version
-isolation: bumping the package version (or setting `BCSD_BRANCH`) starts a fresh branch with no
+isolation: bumping the package version (or setting `SAIDOWNSCALE_BRANCH`) starts a fresh branch with no
 inherited ancestry, so the existence checks never find stale artifacts from a previous run.
 
 The paths above are the scratch defaults. Production runs override `output_dir` to CarbonPlan's
@@ -264,7 +264,7 @@ The CLI is built on several key components:
 1. **DownscalingConfig** + **PipelineOptions** ([src/saidownscale/downscaling_config.py](../../src/saidownscale/downscaling_config.py))
    - **DownscalingConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `is_sai_scenario`. Variable-specific parameters (`detrend_data`, `disaggregation_method`, `debias_approach`, etc.) live only on the nested `variable_config`, never as accessors on `DownscalingConfig`. The required top-level `downscaling_method` (`BCSD` or `QDMSD`) is a `DownscalingConfig` field: it selects which per-variable defaults table `variable_config` is read from.
    - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `branch`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`, `clip_values`, `clip_bounds`. The `branch` field (default: installed package version) names the icechunk branch all artifacts are written to and read from.
-   - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
+   - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "SAIDOWNSCALE_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 
 2. **ArtifactCache** ([src/saidownscale/cache.py](../../src/saidownscale/cache.py))
    - S3-based cache with fsspec backend

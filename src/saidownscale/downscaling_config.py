@@ -3,7 +3,7 @@ Configuration classes for downscaling runs.
 
 Defines :class:`DownscalingConfig` (run identity fields that determine the cache key) and
 :class:`PipelineOptions` (operational settings that do not affect computation). Both
-extend :class:`pydantic_settings.BaseSettings` with a ``BCSD_`` env prefix and load
+extend :class:`pydantic_settings.BaseSettings` with a ``SAIDOWNSCALE_`` env prefix and load
 from the same flat YAML file.
 """
 
@@ -19,6 +19,31 @@ from packaging.version import Version as _Version
 from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 _cache_version = f"v{_Version(_pkg_version('saidownscale')).public}"
+
+_ENV_PREFIX = "SAIDOWNSCALE_"
+_LEGACY_ENV_PREFIX = "BCSD_"
+
+
+def _reject_legacy_env_prefix() -> None:
+    """Fail loudly if any ``BCSD_*`` variable is still set in the environment.
+
+    The settings prefix was renamed to ``SAIDOWNSCALE_``. pydantic-settings filters the
+    environment against the current prefix before any validator runs, and
+    ``extra = "ignore"`` drops what does not match, so a stale ``BCSD_BRANCH`` would
+    otherwise vanish without a trace and the run would write to the default branch.
+    The check is case-folded to match pydantic-settings' ``case_sensitive=False``.
+    """
+    legacy = _LEGACY_ENV_PREFIX.casefold()
+    stale = sorted(name for name in os.environ if name.casefold().startswith(legacy))
+    if stale:
+        renamed = ", ".join(
+            f"{name} -> {_ENV_PREFIX}{name[len(_LEGACY_ENV_PREFIX) :].upper()}" for name in stale
+        )
+        raise ValueError(
+            f"The {_LEGACY_ENV_PREFIX}* environment prefix was renamed to {_ENV_PREFIX}*. "
+            f"Unset or rename: {renamed}."
+        )
+
 
 DebiasApproach = Literal[
     "parametric", "nonparametric", "nonparametric_hybrid", "nonparametric_hybrid_2sided", "qdm"
@@ -350,7 +375,7 @@ class DownscalingConfig(pydantic_settings.BaseSettings):
         description="Catalog key for observation dataset (e.g. 'ERA5', 'GDEX-GMF-icechunk').",
     )
 
-    model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
+    model_config = {"env_prefix": _ENV_PREFIX, "extra": "ignore"}
 
     # Which downscaling method this run uses. Selects the VariableConfig defaults
     # table in VariableConfig.for_variable, so it has to be a run-identity field rather
@@ -388,7 +413,7 @@ class DownscalingConfig(pydantic_settings.BaseSettings):
             "'variable_config.debias_approach' for a single-variable config; in a matrix "
             "config, use a top-level 'debias_approach' key to apply it to every variable, "
             "or 'variable_overrides' to set it per variable (or --debias-approach / "
-            "--variable-override on the CLI, or BCSD_VARIABLE_CONFIG as JSON in the "
+            "--variable-override on the CLI, or SAIDOWNSCALE_VARIABLE_CONFIG as JSON in the "
             "environment)."
         ),
         "variable_overrides": (
@@ -404,12 +429,13 @@ class DownscalingConfig(pydantic_settings.BaseSettings):
     def _reject_unsupported_keys(cls, data):
         """Fail loudly if a key that DownscalingConfig does not honor is still used.
 
-        Checks the supplied data and the ``BCSD_*`` environment. Both need covering:
+        Checks the supplied data and the ``SAIDOWNSCALE_*`` environment. Both need covering:
         pydantic-settings filters env vars against the model's fields before any
-        validator runs, so a rejected key set as ``BCSD_DEBIAS_APPROACH`` never reaches
+        validator runs, so a rejected key set as ``SAIDOWNSCALE_DEBIAS_APPROACH`` never reaches
         ``data`` and would otherwise vanish without a trace. The environment lookup
         is case-folded to match pydantic-settings' default ``case_sensitive=False``.
         """
+        _reject_legacy_env_prefix()
         supplied = set(data) if isinstance(data, dict) else set()
         prefix = cls.model_config.get("env_prefix", "")
         env_keys = {name.casefold() for name in os.environ}
@@ -429,12 +455,13 @@ class DownscalingConfig(pydantic_settings.BaseSettings):
         """
         if isinstance(data, dict) and data.get("variable_config") is None:
             variable = data.get("variable")
-            method = data.get("downscaling_method") or os.environ.get("BCSD_DOWNSCALING_METHOD")
+            prefix = cls.model_config.get("env_prefix", "")
+            method = data.get("downscaling_method") or os.environ.get(f"{prefix}DOWNSCALING_METHOD")
             if variable is not None:
                 if method is None:
                     raise ValueError(
                         "'downscaling_method' is required: set it to 'BCSD' or 'QDMSD' in "
-                        "the config, or BCSD_DOWNSCALING_METHOD in the environment. There "
+                        "the config, or SAIDOWNSCALE_DOWNSCALING_METHOD in the environment. There "
                         "is deliberately no default, so every run states which method "
                         "produced it."
                     )
@@ -573,7 +600,7 @@ class PipelineOptions(pydantic_settings.BaseSettings):
     flags (verbosity, rechunking, post-processing). These do not affect
     computation results and are separate from DownscalingConfig run identity.
 
-    All fields can be overridden via BCSD_* environment variables.
+    All fields can be overridden via SAIDOWNSCALE_* environment variables.
     """
 
     scratch_dir: str = Field(
@@ -589,7 +616,7 @@ class PipelineOptions(pydantic_settings.BaseSettings):
     )
     branch: str = Field(
         default=_cache_version,
-        description="icechunk branch for output writes. Defaults to the installed package version (e.g. 'v1.2.0'). Each version starts a fresh branch; bump the package to get a clean slate. Override with BCSD_BRANCH env var.",
+        description="icechunk branch for output writes. Defaults to the installed package version (e.g. 'v1.2.0'). Each version starts a fresh branch; bump the package to get a clean slate. Override with SAIDOWNSCALE_BRANCH env var.",
     )
     verbose: bool = Field(True, description="Enable verbose logging")
     rechunk_workflow: bool = Field(
@@ -635,7 +662,9 @@ class PipelineOptions(pydantic_settings.BaseSettings):
 
         ``extra = "ignore"`` would otherwise swallow the old key and quietly change which
         executor runs, which is exactly the failure mode a hard break is meant to prevent.
+        The legacy ``BCSD_*`` prefix is rejected here for the same reason.
         """
+        _reject_legacy_env_prefix()
         if isinstance(values, dict) and "use_coiled" in values:
             raise ValueError(
                 "'use_coiled' was replaced by 'executor'. Set executor to 'coiled', "
@@ -643,7 +672,7 @@ class PipelineOptions(pydantic_settings.BaseSettings):
             )
         return values
 
-    model_config = {"env_prefix": "BCSD_", "extra": "ignore"}
+    model_config = {"env_prefix": _ENV_PREFIX, "extra": "ignore"}
 
 
 class CacheConfig(BaseModel):

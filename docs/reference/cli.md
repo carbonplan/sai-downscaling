@@ -44,7 +44,7 @@ uv run bcsd run --config-path configs/example.yaml --stage fit_historical --forc
 uv run bcsd run --config-path configs/example.yaml --branch v2
 
 # Override environment for production run
-BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
 
 # Process all configs in a directory
 uv run bcsd run --config-path configs/cesm2-ensemble/

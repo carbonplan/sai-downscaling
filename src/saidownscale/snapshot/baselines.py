@@ -57,7 +57,7 @@ CESM2_WACCM_GLOBAL = Baseline(
 # First baseline under the renamed store (#598). Written by the snapshot dispatch of main at
 # b6d0c5b, the merge of #673, and bit-identical to the pre-rename baseline v0.13.0.post45.
 # Frozen as icechunk tag ``snapshot-main-b6d0c5b-sep-4``; ``branch`` itself stays writable,
-# so a run with the same ``BCSD_BRANCH`` would move it, the tag would not.
+# so a run with the same ``SAIDOWNSCALE_BRANCH`` would move it, the tag would not.
 CESM2_WACCM_SOUTH_AFRICA = Baseline(
     uri=(
         "s3://carbonplan-srm/scratch/snapshot"

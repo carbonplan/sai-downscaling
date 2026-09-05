@@ -29,7 +29,7 @@ uv run bcsd run --config-path configs/example.yaml
 uv run bcsd run --config-path configs/example.yaml --branch v2
 
 # Override environment via environment variable
-BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
 ```
 
 A single config file can also expand into many runs. List values for `gcm`, `variables`, `ensemble_members`, `scenarios`, and `downscaling_methods` produce one run per cartesian-product combination — see the [matrix config format](../reference/configuration.md#matrix-config-format) reference for the syntax.

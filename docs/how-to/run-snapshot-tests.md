@@ -15,7 +15,7 @@ uv run bcsd run --config-path configs/snapshot/cesm2-waccm6/ \
 
 **Match the baseline's executor.** `PipelineOptions.executor` defaults to `coiled`, and the snapshot configs do not override it, so running without the flag produces a Coiled candidate whatever the baseline is. That matters: the executor is visible in the answers. A Coiled run and an AWS Batch run of identical code differ on `dtr`, `pr` and derived `tasmin` by up to 0.00003 K, the smallest gap the stored format can represent at that temperature. Under the default exact-equality verdict those 22 leaves fail on their own, with no code change involved, and a gate that fails for a reason unrelated to your work is one people learn to skim past. `baselines.py` records the executor for each baseline so you can read it rather than guess; the command above reads it directly.
 
-The run finishes quickly because the subset is small. Add `--executor local` only if you have local source-data access and enough memory, and expect the same class of difference against either remote baseline. The run writes to the icechunk branch `bcsd run` uses — the installed package version by default, or `BCSD_BRANCH` if you set it — which Step 2 needs as `candidate_branch`.
+The run finishes quickly because the subset is small. Add `--executor local` only if you have local source-data access and enough memory, and expect the same class of difference against either remote baseline. The run writes to the icechunk branch `bcsd run` uses — the installed package version by default, or `SAIDOWNSCALE_BRANCH` if you set it — which Step 2 needs as `candidate_branch`.
 
 ## Step 2 — Run the comparison notebook
 
@@ -52,7 +52,7 @@ uv run bcsd run --config-path configs/snapshot/cesm2-waccm6/
 uv run bcsd release --config-path configs/snapshot/cesm2-waccm6/ --tag snapshot-<name>
 ```
 
-`bcsd release` creates an icechunk tag. A branch stays writable, so without the tag a later `bcsd run` carrying a matching `BCSD_BRANCH` can overwrite the baseline in place, and the next comparison would then diff a candidate against itself and report a clean pass.
+`bcsd release` creates an icechunk tag. A branch stays writable, so without the tag a later `bcsd run` carrying a matching `SAIDOWNSCALE_BRANCH` can overwrite the baseline in place, and the next comparison would then diff a candidate against itself and report a clean pass.
 
 ## Step 5 — Satisfy CI
 

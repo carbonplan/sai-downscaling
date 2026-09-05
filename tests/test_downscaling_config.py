@@ -334,7 +334,9 @@ class TestBCSDConfigConstruction:
                 mapping_type="parametric",
             )
 
-    @pytest.mark.parametrize("env_var", ["BCSD_DEBIAS_APPROACH", "BCSD_MAPPING_TYPE"])
+    @pytest.mark.parametrize(
+        "env_var", ["SAIDOWNSCALE_DEBIAS_APPROACH", "SAIDOWNSCALE_MAPPING_TYPE"]
+    )
     def test_moved_key_via_env_raises(self, monkeypatch, env_var):
         """A moved key set through the environment must fail loudly too.
 
@@ -353,7 +355,7 @@ class TestBCSDConfigConstruction:
 
     def test_moved_key_env_check_is_case_insensitive(self, monkeypatch):
         """pydantic-settings matches env vars case-insensitively; so must the check."""
-        monkeypatch.setenv("bcsd_debias_approach", "nonparametric")
+        monkeypatch.setenv("saidownscale_debias_approach", "nonparametric")
         with pytest.raises(ValidationError, match="variable_overrides"):
             DownscalingConfig(
                 downscaling_method="BCSD",
@@ -363,9 +365,9 @@ class TestBCSDConfigConstruction:
             )
 
     def test_variable_config_env_override_is_the_supported_path(self, monkeypatch):
-        """BCSD_VARIABLE_CONFIG replaces the removed BCSD_DEBIAS_APPROACH env override."""
+        """SAIDOWNSCALE_VARIABLE_CONFIG replaces the removed SAIDOWNSCALE_DEBIAS_APPROACH env override."""
         monkeypatch.setenv(
-            "BCSD_VARIABLE_CONFIG",
+            "SAIDOWNSCALE_VARIABLE_CONFIG",
             json.dumps(
                 VariableConfig.for_variable("tas", "BCSD")
                 .model_copy(update={"debias_approach": "parametric"})
@@ -733,7 +735,7 @@ class TestBranchDefaulting:
         assert opts.branch == "v2"
 
     def test_env_var_overrides_branch(self, monkeypatch):
-        monkeypatch.setenv("BCSD_BRANCH", "v3")
+        monkeypatch.setenv("SAIDOWNSCALE_BRANCH", "v3")
         opts = PipelineOptions()
         assert opts.branch == "v3"
 
@@ -878,3 +880,34 @@ class TestLegacyGcmNames:
             ensemble_member="r1i1p1f1",
         )
         assert config.gcm == "SOME-OTHER-GCM"
+
+
+class TestLegacyEnvPrefix:
+    """``BCSD_*`` was renamed to ``SAIDOWNSCALE_*``; a stale name must fail, not vanish.
+
+    pydantic-settings filters the environment against ``env_prefix`` before any
+    validator runs and ``extra = "ignore"`` drops the rest, so without an explicit
+    ``os.environ`` check a leftover ``BCSD_BRANCH`` would silently write to the
+    default branch.
+    """
+
+    def test_downscaling_config_rejects_legacy_prefix(self, monkeypatch):
+        monkeypatch.setenv("BCSD_BRANCH", "v3")
+        with pytest.raises(ValidationError, match="BCSD_BRANCH -> SAIDOWNSCALE_BRANCH"):
+            DownscalingConfig(
+                downscaling_method="BCSD",
+                gcm="CESM2-WACCM6",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+            )
+
+    def test_pipeline_options_rejects_legacy_prefix(self, monkeypatch):
+        monkeypatch.setenv("BCSD_BATCH_JOB_QUEUE", "srm-qa")
+        with pytest.raises(ValidationError, match="SAIDOWNSCALE_BATCH_JOB_QUEUE"):
+            PipelineOptions()
+
+    def test_legacy_prefix_check_is_case_insensitive(self, monkeypatch):
+        """pydantic-settings matches env vars case-insensitively; so must the guard."""
+        monkeypatch.setenv("bcsd_branch", "v3")
+        with pytest.raises(ValidationError, match="SAIDOWNSCALE_BRANCH"):
+            PipelineOptions()

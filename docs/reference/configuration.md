@@ -138,7 +138,7 @@ The pipeline detects this rather than preventing it. On a cache hit, it compares
 To run two configurations side by side, give each its own branch:
 
 ```bash
-BCSD_BRANCH=v0.13.0-dtr-nonparam bcsd run-matrix ... --variable-override dtr:debias_approach=nonparametric
+SAIDOWNSCALE_BRANCH=v0.13.0-dtr-nonparam bcsd run-matrix ... --variable-override dtr:debias_approach=nonparametric
 ```
 
 | Case | Behavior |
@@ -223,15 +223,15 @@ branch: "v1.0.post5"   # pin to an earlier commit's cache branch
 
 ## Environment Variable Override
 
-You can override the `environment` field using the `BCSD_ENVIRONMENT` environment variable, and
-`branch` using `BCSD_BRANCH`:
+You can override the `environment` field using the `SAIDOWNSCALE_ENVIRONMENT` environment variable, and
+`branch` using `SAIDOWNSCALE_BRANCH`:
 
 ```bash
 # Override environment for this run
-BCSD_ENVIRONMENT=production bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_ENVIRONMENT=production bcsd run --config-path configs/example.yaml
 
 # Override branch for this run
-BCSD_BRANCH=v1.0.post5 bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_BRANCH=v1.0.post5 bcsd run --config-path configs/example.yaml
 ```
 
 You can also override `branch` directly on the CLI without editing the config file:

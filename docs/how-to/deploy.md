@@ -28,7 +28,7 @@ Both queues are served by the one `srm-production` compute environment. Splittin
 
 ### The image is a dependency, not a side effect
 
-`qa`, `snapshot`, and `production` all declare `needs: image`. That job builds the container from `uv.lock` and pushes it to the `srm-downscaling` ECR repository, then registers an AWS Batch job definition revision pointing at that exact image and returns its `name:revision`. Each run job passes that value through `BCSD_BATCH_JOB_DEFINITION`.
+`qa`, `snapshot`, and `production` all declare `needs: image`. That job builds the container from `uv.lock` and pushes it to the `srm-downscaling` ECR repository, then registers an AWS Batch job definition revision pointing at that exact image and returns its `name:revision`. Each run job passes that value through `SAIDOWNSCALE_BATCH_JOB_DEFINITION`.
 
 Every build tags the image with the commit SHA. A release additionally tags it with the package version and moves `latest`. The version tag is what lets you walk backward from data to code: every output store is stamped `srm_downscaling:version` and written to an icechunk branch of that version, so the tag names the image that produced it. Only a release moves `latest`, because the job definition's fallback image is `latest` and a dispatch from a feature branch would otherwise repoint unpinned runs at its code.
 

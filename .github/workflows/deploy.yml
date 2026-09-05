@@ -70,8 +70,8 @@ jobs:
         environment:
             name: qa
         env:
-            BCSD_BATCH_JOB_QUEUE: srm-qa
-            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
+            SAIDOWNSCALE_BATCH_JOB_QUEUE: srm-qa
+            SAIDOWNSCALE_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
             QA_CONFIG_PATH: ${{ inputs.model == '' && 'configs/qa/' || endsWith(inputs.model, '.yaml') && format('configs/qa/{0}', inputs.model) || format('configs/qa/{0}/', inputs.model) }}
             FORCE: ${{ inputs.force }}
             BRANCH: ${{ inputs.branch }}
@@ -86,7 +86,7 @@ jobs:
               with:
                   name: validate-input-qa
                   command: '["bcsd","validate","--config-path","${{ env.QA_CONFIG_PATH }}","--no-coiled"]'
-                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-queue: ${{ env.SAIDOWNSCALE_BATCH_JOB_QUEUE }}
                   job-definition: ${{ needs.image.outputs.job_definition }}
 
             - name: Run BCSD pipeline (QA)
@@ -132,7 +132,7 @@ jobs:
               with:
                   name: validate-output-qa
                   command: ${{ steps.validate-output-cmd.outputs.json }}
-                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-queue: ${{ env.SAIDOWNSCALE_BATCH_JOB_QUEUE }}
                   job-definition: ${{ needs.image.outputs.job_definition }}
 
     snapshot:
@@ -160,8 +160,8 @@ jobs:
             # on the same release, and the baseline is a small regional run that must not
             # delay the global one. srm-production outranks it on the shared compute
             # environment.
-            BCSD_BATCH_JOB_QUEUE: srm-qa
-            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
+            SAIDOWNSCALE_BATCH_JOB_QUEUE: srm-qa
+            SAIDOWNSCALE_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
         steps:
             - uses: actions/checkout@v7
               with:
@@ -210,7 +210,7 @@ jobs:
               with:
                   name: validate-output-snapshot
                   command: ${{ steps.validate-output-cmd.outputs.json }}
-                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-queue: ${{ env.SAIDOWNSCALE_BATCH_JOB_QUEUE }}
                   job-definition: ${{ needs.image.outputs.job_definition }}
 
             - name: Freeze the snapshot baseline under an immutable tag
@@ -222,7 +222,7 @@ jobs:
               # No Coiled token: `bcsd release` only moves an icechunk ref and opens no
               # cluster at all, so it never needed one.
               # The branch this wrote to stays writable, so a later qa run with a matching
-              # BCSD_BRANCH could overwrite the baseline in place and a comparison would then
+              # SAIDOWNSCALE_BRANCH could overwrite the baseline in place and a comparison would then
               # diff a candidate against itself. The tag pins the snapshot id.
               run: uv run bcsd release --config-path configs/snapshot/cesm2-waccm6/ --tag "snapshot-$TAG"
 
@@ -318,7 +318,7 @@ jobs:
             PLAN_CONFIG_PATH: ${{ endsWith(matrix.model, '.yaml') && format('configs/production/{0}', matrix.model) || format('configs/production/{0}/', matrix.model) }}
             # The same pinned revision production submits against, so the image the
             # reviewer approves is the image that runs.
-            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
+            SAIDOWNSCALE_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
             FORCE: ${{ inputs.force }}
             BRANCH: ${{ inputs.branch }}
         steps:
@@ -385,8 +385,8 @@ jobs:
             PROD_CONFIG_PATH: ${{ endsWith(matrix.model, '.yaml') && format('configs/production/{0}', matrix.model) || format('configs/production/{0}/', matrix.model) }}
             FORCE: ${{ inputs.force }}
             BRANCH: ${{ inputs.branch }}
-            BCSD_BATCH_JOB_QUEUE: srm-production
-            BCSD_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
+            SAIDOWNSCALE_BATCH_JOB_QUEUE: srm-production
+            SAIDOWNSCALE_BATCH_JOB_DEFINITION: ${{ needs.image.outputs.job_definition }}
         steps:
             - uses: actions/checkout@v7
               with:
@@ -403,7 +403,7 @@ jobs:
               with:
                   name: validate-input-production
                   command: '["bcsd","validate","--config-path","${{ env.PROD_CONFIG_PATH }}","--no-coiled"]'
-                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-queue: ${{ env.SAIDOWNSCALE_BATCH_JOB_QUEUE }}
                   job-definition: ${{ needs.image.outputs.job_definition }}
                   # Global stores, so twice the regional default on both axes.
                   vcpu: "32"
@@ -452,7 +452,7 @@ jobs:
               with:
                   name: validate-output-production
                   command: ${{ steps.validate-output-cmd.outputs.json }}
-                  job-queue: ${{ env.BCSD_BATCH_JOB_QUEUE }}
+                  job-queue: ${{ env.SAIDOWNSCALE_BATCH_JOB_QUEUE }}
                   job-definition: ${{ needs.image.outputs.job_definition }}
                   # Global stores, so twice the regional default on both axes.
                   vcpu: "32"
