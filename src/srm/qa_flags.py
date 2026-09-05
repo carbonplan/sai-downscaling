@@ -951,16 +951,27 @@ def discover_leaves(
     )
 
 
-def load_rsds_lims(
-    key: str = "zonal_doy_max_rsds",
-    fpath: str = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds.zarr",
-) -> xr.DataArray:
+def load_rsds_lims(key: str = "zonal_doy_max_rsds", grid_type: str = "downscaled") -> xr.DataArray:
+    """
+    Load the zonal/day-of-year maximum rsds values (from step 1 notebook) for use in the rsds-specific flag.
+    """
+    if grid_type == "downscaled":
+        fpath = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds.zarr"
+    elif grid_type in ("cesm2-waccm6", "ukesm1-1-ll"):
+        fpath = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds_" + grid_type + ".zarr"
     return xr.open_zarr(fpath, group=key)["data"].load()
 
 
-def prep_annual_threshold_inputs():
-    # Loading thresholds output from step 1 notebook
-    store = DIR_QA_FLAG_CONSTANT_INPUTS + "doy_obs_thresholds_global.zarr"
+def prep_annual_threshold_inputs(grid_type: str = "downscaled"):
+    """
+    Reads in the thresholds output from step 1 notebook and prepares the annual thresholds for use in flag calculation
+    """
+    # Loading thresholds output from step 1 notebook. There are different stores for different grids
+    if grid_type == "downscaled":
+        store = DIR_QA_FLAG_CONSTANT_INPUTS + "doy_obs_thresholds_global.zarr"
+    elif grid_type in ("cesm2-waccm6", "ukesm1-1-ll"):
+        store = DIR_QA_FLAG_CONSTANT_INPUTS + "doy_obs_thresholds_global_" + grid_type + ".zarr"
+
     combined = xr.open_zarr(store)
 
     def _split(ds, suffix):
@@ -1012,7 +1023,7 @@ def run_step2(
         is_downscaled=is_downscaled,
     )
 
-    ########### Run time-varying flag loops ####################################################
+    ########### Run time-varying flag loops that are the same for all grids ############################################
     # Flag 1. Global exceedances
     run_flag_loop(
         tags=tags,
@@ -1024,8 +1035,21 @@ def run_step2(
         write_mode="a",
     )
 
-    # Flag 2. Outliers based on observations
-    [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_annual_threshold_inputs()
+    # Flag 2. Temperature inconsistencies (tas vs. tasmin/tasmax)
+    run_flag_loop_temperature_inconsistencies(
+        tags,
+        trees,
+        plot=plot_flag_maps,
+        flag_name="temperature_inconsistency",
+        bucket=bucket,
+        prefix=prefix,
+    )
+
+    ########### Run time-varying flag loops that use different pre-computed inputs for different grids ###################
+    # Flag 3. Outliers based on observations
+    [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_annual_threshold_inputs(
+        grid_type="downscaled"
+    )
     run_flag_loop(
         tags=tags,
         trees=trees,
@@ -1041,8 +1065,8 @@ def run_step2(
         write_mode="a",
     )
 
-    # Flag 3. rsds-specific latitude/day-of-year check
-    zonal_doy_max_rsds = load_rsds_lims()
+    # Flag 4. rsds-specific latitude/day-of-year check
+    zonal_doy_max_rsds = load_rsds_lims(grid_type="downscaled")
     run_flag_loop(
         tags=tags,
         trees=trees,
@@ -1054,15 +1078,6 @@ def run_step2(
         bucket=bucket,
         prefix=prefix,
         write_mode="a",
-    )
-    # Flag 4. Temperature inconsistencies (tas vs. tasmin/tasmax)
-    run_flag_loop_temperature_inconsistencies(
-        tags,
-        trees,
-        plot=plot_flag_maps,
-        flag_name="temperature_inconsistency",
-        bucket=bucket,
-        prefix=prefix,
     )
 
     ########### Run time-invariant flag loops ##################################################
