@@ -337,20 +337,24 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=N
 
         contains_flags = np.nansum(count_flag)
 
-        # draw the map even when nothing is flagged, so a clean leaf is visibly clean
-        # rather than indistinguishable from a leaf that was skipped or errored
-        plt.figure(figsize=(5, 3))
-        ax1 = plt.subplot(1, 1, 1, projection=ccrs.PlateCarree())
-        limits = {} if contains_flags else {"vmin": 0, "vmax": 1}
-        if vlims is not None:
-            count_flag.where(count_flag > 0).plot(
-                ax=ax1, transform=ccrs.PlateCarree(), vmin=vlims[0], vmax=vlims[1]
-            )
+        # draw the map only when something is flagged
+        if contains_flags > 0:
+            plt.figure(figsize=(5, 3))
+            ax1 = plt.subplot(1, 1, 1, projection=ccrs.PlateCarree())
+            limits = {} if contains_flags else {"vmin": 0, "vmax": 1}
+            if vlims is not None:
+                count_flag.where(count_flag > 0).plot(
+                    ax=ax1, transform=ccrs.PlateCarree(), vmin=vlims[0], vmax=vlims[1]
+                )
+            else:
+                count_flag.where(count_flag > 0).plot(
+                    ax=ax1, transform=ccrs.PlateCarree(), **limits
+                )
+            ax1.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
+            unit = "cell-days" if time_varying else "cells"
+            ax1.set_title(f"{count_flag.name}: {float(contains_flags):,.0f} flagged {unit}")
         else:
-            count_flag.where(count_flag > 0).plot(ax=ax1, transform=ccrs.PlateCarree(), **limits)
-        ax1.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
-        unit = "cell-days" if time_varying else "cells"
-        ax1.set_title(f"{count_flag.name}: {float(contains_flags):,.0f} flagged {unit}")
+            print("No flags found.")
 
 
 def parse_tag(tag):
@@ -522,8 +526,12 @@ def calculate_ensemble_mean_deltas(
         dim=["time", "ensemble_member"]
     )
 
+    # Temporary patch to deal with catalog inconsistency
+    if gcm == "CESM2-WACCM":
+        gcm_catalog_name = "CESM2-WACCM6"
+
     # Take ensemble mean across comparison time periods in raw data
-    raw_ds = catalog.get(gcm).to_xarray()
+    raw_ds = catalog.get(gcm_catalog_name).to_xarray()
     raw_scenario1_mean = (
         raw_ds[scenario1][variable]
         .sel(time=scenario1_time_slice, ensemble_member=ens_scenario1)
@@ -940,4 +948,65 @@ def discover_leaves(
         tags_np,
         methods_np,
         debiased_coarse_flags_np,
+    )
+
+
+def run_step2(
+    variables: list,
+    gcms: list,
+    branch: str,
+    root_dir: str,
+    store_subset_id: str,
+    bucket: str,
+    prefix: str,
+    scenario_comparisons: dict = SCENARIO_COMPARISONS,
+    plot_flag_maps: bool = True,
+):
+    # Get the leaves of the data tree to traverse and the tags for each leaf
+    [
+        trees,
+        tags,
+        gcms_np,
+        scenarios_np,
+        variables_np,
+        tags_np,
+        methods_np,
+        debiased_coarse_flags_np,
+    ] = discover_leaves(
+        gcms=gcms, branch=branch, root_dir=root_dir, store_subset_id=store_subset_id
+    )
+
+    # Run time-varying flag loops
+    run_flag_loop(
+        tags=tags,
+        trees=trees,
+        bucket=bucket,
+        prefix=prefix,
+        flag_name="outside_global_plausible_range",
+        compute_flag=lambda da, var: flag_global_exceedances(da=da, var=var),
+        write_mode="a",
+    )
+
+    run_flag_loop_temperature_inconsistencies(
+        tags,
+        trees,
+        plot=plot_flag_maps,
+        flag_name="temperature_inconsistency",
+        bucket=bucket,
+        prefix=prefix,
+    )
+
+    # Run time-invariant flag loops
+    calculate_trend_distortion_flags(
+        trees=trees,
+        gcms=gcms,
+        variables=variables,
+        tags_np=tags_np,
+        gcms_np=gcms_np,
+        scenarios_np=scenarios_np,
+        variables_np=variables_np,
+        bucket=bucket,
+        prefix=prefix,
+        scenario_comparisons=scenario_comparisons,
+        plot=plot_flag_maps,
     )
