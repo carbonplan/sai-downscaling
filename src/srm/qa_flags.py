@@ -426,6 +426,7 @@ def calculate_ensemble_mean_deltas(
     scenario1_time_slice,
     scenario2_time_slice,
     trees,
+    is_downscaled: bool = True,
 ):
     # Construct data arrays including all relevant ensemble members
     das_scenario1 = []
@@ -470,12 +471,16 @@ def calculate_ensemble_mean_deltas(
     )
 
     # Coarsen the downscaled ensemble means
-    ens_mean_var_scenario1_coarsened = interpolate_fine_to_coarse_grid(
-        da_fine_to_coarsen=ens_mean_var_scenario1, da_coarse_grid=raw_scenario1_mean
-    )
-    ens_mean_var_scenario2_coarsened = interpolate_fine_to_coarse_grid(
-        da_fine_to_coarsen=ens_mean_var_scenario2, da_coarse_grid=raw_scenario1_mean
-    )
+    if is_downscaled:
+        ens_mean_var_scenario1_coarsened = interpolate_fine_to_coarse_grid(
+            da_fine_to_coarsen=ens_mean_var_scenario1, da_coarse_grid=raw_scenario1_mean
+        )
+        ens_mean_var_scenario2_coarsened = interpolate_fine_to_coarse_grid(
+            da_fine_to_coarsen=ens_mean_var_scenario2, da_coarse_grid=raw_scenario1_mean
+        )
+    else:
+        ens_mean_var_scenario1_coarsened = ens_mean_var_scenario1
+        ens_mean_var_scenario2_coarsened = ens_mean_var_scenario2
 
     # Calculate scenario comparison (annual mean) in downscaled and raw
     delta_raw = raw_scenario2_mean - raw_scenario1_mean
@@ -636,7 +641,9 @@ def write_final_qa_flags(
     )
 
 
-def discover_leaves(gcms: list[str], branch: str, root_dir: str, store_subset_id: str):
+def discover_leaves(
+    gcms: list[str], branch: str, root_dir: str, store_subset_id: str, is_downscaled: bool = True
+):
     """Open each GCM's icechunk store and enumerate its (scenario, variable, ensemble) leaves.
 
     Returns (trees, tags, gcms_np, scenarios_np, variables_np, tags_np).
@@ -694,7 +701,10 @@ def discover_leaves(gcms: list[str], branch: str, root_dir: str, store_subset_id
 
     print(f"{len(leaf_gcms)} leaves across {len(open_gcms)} GCMs")
 
-    keep_idx = [i for i, s in enumerate(leaf_debiased_coarse_flags) if s != "debiased_coarse"]
+    if is_downscaled:
+        keep_idx = [i for i, s in enumerate(leaf_debiased_coarse_flags) if s != "debiased_coarse"]
+    else:
+        keep_idx = [i for i, s in enumerate(leaf_debiased_coarse_flags) if s == "debiased_coarse"]
     leaf_gcms = [leaf_gcms[i] for i in keep_idx]
     leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
     leaf_variables = [leaf_variables[i] for i in keep_idx]
