@@ -1046,42 +1046,23 @@ def prep_annual_threshold_inputs(grid_type: str = "downscaled"):
     return outlier_thresh_low_annual, outlier_thresh_high_annual
 
 
-def run_step2(
+def calculate_all_flags(
     variables: list,
     gcms: list,
     methods: list,
-    branch: str,
-    root_dir: str,
-    store_subset_id: str,
     bucket: str,
     prefix: str,
+    trees,
+    tags,
+    gcms_np,
+    scenarios_np,
+    variables_np,
+    tags_np,
+    methods_np,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot_flag_maps: bool = True,
-    is_downscaled: bool = True,
+    grid_type: str = "downscaled",
 ):
-    """
-    Runs through all the intermediate flag calculations and writes them to icechunk stores on scratch.
-    This function goes through all the steps in the step2 qa flag notebook, but is designed to be run in a single script rather than interactively.
-    The intermediate icechunk stores from this step can then be used to write the final qa flags to the production store.
-    """
-    ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
-    [
-        trees,
-        tags,
-        gcms_np,
-        scenarios_np,
-        variables_np,
-        tags_np,
-        methods_np,
-        debiased_coarse_flags_np,
-    ] = discover_leaves(
-        gcms=gcms,
-        branch=branch,
-        root_dir=root_dir,
-        store_subset_id=store_subset_id,
-        is_downscaled=is_downscaled,
-    )
-
     ########### Run time-varying flag loops that are the same for all grids ############################################
     # Flag 1. Global exceedances
     run_flag_loop(
@@ -1107,7 +1088,7 @@ def run_step2(
     ########### Run time-varying flag loops that use different pre-computed inputs for different grids ###################
     # Flag 3. Outliers based on observations
     [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_annual_threshold_inputs(
-        grid_type="downscaled"
+        grid_type=grid_type
     )
     run_flag_loop(
         tags=tags,
@@ -1125,7 +1106,7 @@ def run_step2(
     )
 
     # Flag 4. rsds-specific latitude/day-of-year check
-    zonal_doy_max_rsds = load_rsds_lims(grid_type="downscaled")
+    zonal_doy_max_rsds = load_rsds_lims(grid_type=grid_type)
     run_flag_loop(
         tags=tags,
         trees=trees,
@@ -1154,4 +1135,57 @@ def run_step2(
         prefix=prefix,
         scenario_comparisons=scenario_comparisons,
         plot=plot_flag_maps,
+    )
+
+
+def run_step2(
+    variables: list,
+    gcms: list,
+    methods: list,
+    branch: str,
+    root_dir: str,
+    store_subset_id: str,
+    bucket: str,
+    prefix: str,
+    plot_flag_maps: bool = True,
+    is_downscaled: bool = True,
+):
+    """
+    Runs through all the intermediate flag calculations and writes them to icechunk stores on scratch.
+    This function goes through all the steps in the step2 qa flag notebook, but is designed to be run in a single script rather than interactively.
+    The intermediate icechunk stores from this step can then be used to write the final qa flags to the production store.
+    """
+    ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
+    [
+        trees,
+        tags,
+        gcms_np,
+        scenarios_np,
+        variables_np,
+        tags_np,
+        methods_np,
+        debiased_coarse_flags_np,
+    ] = discover_leaves(
+        gcms=gcms,
+        branch=branch,
+        root_dir=root_dir,
+        store_subset_id=store_subset_id,
+        is_downscaled=is_downscaled,
+    )
+
+    calculate_all_flags(
+        variables=variables,
+        gcms=gcms,
+        methods=methods,
+        bucket=bucket,
+        prefix=prefix,
+        trees=trees,
+        tags=tags,
+        gcms_np=gcms_np,
+        scenarios_np=scenarios_np,
+        variables_np=variables_np,
+        tags_np=tags_np,
+        methods_np=methods_np,
+        plot_flag_maps=plot_flag_maps,
+        grid_type="downscaled",
     )
