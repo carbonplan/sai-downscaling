@@ -536,6 +536,10 @@ def get_data(tag, trees, var_to_analyze=None):
         The requested variable's data at that leaf.
     """
     [gcm, var, scenario, ens, method] = parse_tag(tag)
+
+    # This is a bit of a hack to handle the fact that datasets produced before the addition
+    # of QDMSD don't have a method specified, and are just gcm_var_scenario_ens. In those cases,
+    # we should just use the scenario/var/ens as the group path.
     if method == "no-method-specified":
         group_path = f"{scenario}/{var}/{ens}"
     else:
@@ -613,7 +617,6 @@ def run_flag_loop_temperature_inconsistencies(
     plot: bool = True,
     flag_name: str = "temperature_inconsistency",
     write_mode: str = "a",
-    var_filter: str = "tas",
     bucket: str = "carbonplan-srm",
     prefix: str = "output/qa-intermediate-flags",
 ):
@@ -636,16 +639,13 @@ def run_flag_loop_temperature_inconsistencies(
         Name to write all three computed flags under.
     write_mode : {"w", "a"}
         Passed through to write_individual_flags.
-    var_filter : str
-        Restricts the outer loop to tags with this variable; the function
-        only makes sense for ``"tas"``.
     bucket, prefix : str
         Passed through to write_individual_flags.
     """
     print(len(tags))
     for tag in tags:
         gcm, var, scenario, ens, method = parse_tag(tag)
-        if var_filter is not None and var != var_filter:
+        if var != "tas":
             continue
 
         tag_tasmin = f"{gcm}_tasmin_{scenario}_{ens}_{method}"
@@ -1320,14 +1320,12 @@ def discover_leaves(
 
     if is_downscaled:
         keep_idx = [i for i, s in enumerate(leaf_debiased_coarse_flags) if s != "debiased_coarse"]
-    else:
-        keep_idx = [i for i, s in enumerate(leaf_debiased_coarse_flags) if s == "debiased_coarse"]
-    leaf_gcms = [leaf_gcms[i] for i in keep_idx]
-    leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
-    leaf_variables = [leaf_variables[i] for i in keep_idx]
-    leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
-    leaf_methods = [leaf_methods[i] for i in keep_idx]
-    leaf_debiased_coarse_flags = [leaf_debiased_coarse_flags[i] for i in keep_idx]
+        leaf_gcms = [leaf_gcms[i] for i in keep_idx]
+        leaf_scenarios = [leaf_scenarios[i] for i in keep_idx]
+        leaf_variables = [leaf_variables[i] for i in keep_idx]
+        leaf_ensembles = [leaf_ensembles[i] for i in keep_idx]
+        leaf_methods = [leaf_methods[i] for i in keep_idx]
+        leaf_debiased_coarse_flags = [leaf_debiased_coarse_flags[i] for i in keep_idx]
 
     keep_idx = [i for i, v in enumerate(leaf_variables) if v != "dtr"]
     leaf_gcms = [leaf_gcms[i] for i in keep_idx]
@@ -1377,7 +1375,8 @@ def discover_leaves(
     )
 
 
-GRID_TYPES = ("downscaled", "cesm2-waccm6", "ukesm1-1-ll")
+# Using old model names temporarily
+GRID_TYPES = ("downscaled", "CESM2-WACCM", "UKESM")
 
 
 def load_rsds_lims(key: str = "zonal_doy_max_rsds", grid_type: str = "downscaled") -> xr.DataArray:
@@ -1640,9 +1639,17 @@ def run_step2(
         branch=branch,
         root_dir=root_dir,
         store_subset_id=store_subset_id,
-        is_downscaled=is_downscaled,
+        is_downscaled=False,
     )
 
+    keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
+    gcms_np_downscaled = gcms_np[keep_idx]
+    scenarios_np_downscaled = scenarios_np[keep_idx]
+    variables_np_downscaled = variables_np[keep_idx]
+    tags_np_downscaled = tags_np[keep_idx]
+    methods_np_downscaled = methods_np[keep_idx]
+
+    # Calculate the flags for the downscaled output
     calculate_all_flags(
         variables=variables,
         gcms=gcms,
@@ -1651,11 +1658,37 @@ def run_step2(
         prefix=prefix,
         trees=trees,
         tags=tags,
-        gcms_np=gcms_np,
-        scenarios_np=scenarios_np,
-        variables_np=variables_np,
-        tags_np=tags_np,
-        methods_np=methods_np,
+        gcms_np=gcms_np_downscaled,
+        scenarios_np=scenarios_np_downscaled,
+        variables_np=variables_np_downscaled,
+        tags_np=tags_np_downscaled,
+        methods_np=methods_np_downscaled,
         plot_flag_maps=plot_flag_maps,
         grid_type="downscaled",
     )
+
+    # Calculate the flags for the coarse debiased output
+    for gcm in gcms:
+        mask = (debiased_coarse_flags_np == "debiased_coarse") & (gcms_np == gcm)
+        gcms_np_coarse = gcms_np[mask]
+        scenarios_np_coarse = scenarios_np[mask]
+        variables_np_coarse = variables_np[mask]
+        tags_np_coarse = tags_np[mask]
+        methods_np_coarse = methods_np[mask]
+
+        calculate_all_flags(
+            variables=variables,
+            gcms=[gcm],
+            methods=methods,
+            bucket=bucket,
+            prefix=prefix + "/debiased_coarse",
+            trees=trees,
+            tags=tags,
+            gcms_np=gcms_np_coarse,
+            scenarios_np=scenarios_np_coarse,
+            variables_np=variables_np_coarse,
+            tags_np=tags_np_coarse,
+            methods_np=methods_np_coarse,
+            plot_flag_maps=plot_flag_maps,
+            grid_type=gcm,
+        )
