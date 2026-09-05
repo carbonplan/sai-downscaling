@@ -1,7 +1,7 @@
 """
-Analysis utilities for loading and comparing cached BCSD pipeline artifacts.
+Analysis utilities for loading and comparing cached downscaling pipeline artifacts.
 
-Provides :class:`BCSDRun` for loading intermediate and output arrays from icechunk
+Provides :class:`DownscalingRun` for loading intermediate and output arrays from icechunk
 stores and :func:`load_cached_data` for direct S3 access. Intended for use in QA
 notebooks and post-hoc analysis of pipeline outputs.
 """
@@ -14,8 +14,8 @@ import seaborn as sns
 import xarray as xr
 
 from saidownscale import catalog
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
 from saidownscale.cache import ArtifactCache
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 from saidownscale.utils import lon_to_180
 
 
@@ -44,9 +44,9 @@ def load_cached_data(s3_uri: str, branch: str = "main") -> xr.Dataset:
     return ds
 
 
-class BCSDRun:
+class DownscalingRun:
     """
-    Wrapper around a BCSD downscaling run for interactive analysis.
+    Wrapper around a downscaling run for interactive analysis.
 
     Loads cached obs, historical, and scenario data and provides
     convenience methods for point extraction and plotting.
@@ -54,27 +54,29 @@ class BCSDRun:
 
     COLORS = {"obs": "#1b1e23", "scenario": "#bc85d9", "historical": "#e587b6"}
 
-    def __init__(self, bcsd_config: BCSDConfig, options: PipelineOptions | None = None):
-        self.config = bcsd_config
+    def __init__(
+        self, downscaling_config: DownscalingConfig, options: PipelineOptions | None = None
+    ):
+        self.config = downscaling_config
         self.options = options or PipelineOptions()
         self._location_cache = {}
 
-        self._hist_member = bcsd_config.ensemble_member
-        if bcsd_config.scenario is not None:
+        self._hist_member = downscaling_config.ensemble_member
+        if downscaling_config.scenario is not None:
             from saidownscale.lineage import resolve_member_lineage
 
             try:
                 self._hist_member = resolve_member_lineage(
-                    bcsd_config.gcm,
-                    bcsd_config.scenario,
-                    bcsd_config.ensemble_member,
-                    bcsd_config.variable,
+                    downscaling_config.gcm,
+                    downscaling_config.scenario,
+                    downscaling_config.ensemble_member,
+                    downscaling_config.variable,
                 ).historical
             except KeyError:
                 pass
 
     def __repr__(self):
-        return f"BCSDRun(gcm={self.config.gcm}, ensemble={self.config.ensemble_member}, var={self.config.variable}, scenario={self.config.scenario})"
+        return f"DownscalingRun(gcm={self.config.gcm}, ensemble={self.config.ensemble_member}, var={self.config.variable}, scenario={self.config.scenario})"
 
     @cached_property
     def _cache(self) -> ArtifactCache:

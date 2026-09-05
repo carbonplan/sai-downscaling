@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 from conftest import make_icechunk_group
 
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
 from saidownscale.cache import (
     ArtifactCache,
     CacheCheckError,
     CacheConfigMismatchError,
     StoreLocation,
 )
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -38,9 +38,9 @@ def local_cache_with_output(tmp_path) -> ArtifactCache:
 
 
 @pytest.fixture
-def base_config() -> BCSDConfig:
+def base_config() -> DownscalingConfig:
     """Standard SSP245 scenario config."""
-    return BCSDConfig(
+    return DownscalingConfig(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
@@ -52,9 +52,9 @@ def base_config() -> BCSDConfig:
 
 
 @pytest.fixture
-def sai_config() -> BCSDConfig:
+def sai_config() -> DownscalingConfig:
     """SAI G6 scenario config."""
-    return BCSDConfig(
+    return DownscalingConfig(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="pr",
@@ -66,9 +66,9 @@ def sai_config() -> BCSDConfig:
 
 
 @pytest.fixture
-def regional_config() -> BCSDConfig:
+def regional_config() -> DownscalingConfig:
     """Config with a spatial subset (South Africa region)."""
-    return BCSDConfig(
+    return DownscalingConfig(
         gcm="UKESM1-1-LL",
         downscaling_method="BCSD",
         variable="tasmax",
@@ -81,9 +81,9 @@ def regional_config() -> BCSDConfig:
 
 
 @pytest.fixture
-def dtr_config() -> BCSDConfig:
+def dtr_config() -> DownscalingConfig:
     """dtr config — bias corrected so tasmin can be derived, never published fine."""
-    return BCSDConfig(
+    return DownscalingConfig(
         gcm="CESM2-WACCM6",
         variable="dtr",
         ensemble_member="008",
@@ -609,7 +609,7 @@ class TestStageLoc:
             bound_cache_with_output.stage_loc("nope", base_config)
 
     def test_transform_scenario_without_scenario_raises(self, tmp_path):
-        config = BCSDConfig(
+        config = DownscalingConfig(
             gcm="CESM2-WACCM6",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -683,7 +683,7 @@ class TestCheckDependencies:
         assert exists is False
 
     def _tasmin_cache(self, tmp_path, scenario="SSP245"):
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tasmin",
@@ -808,7 +808,7 @@ class TestGetOutputPath:
         assert path == bound_cache.scenario_loc.store_path
 
     def test_transform_scenario_without_scenario_field_raises(self, tmp_path):
-        config = BCSDConfig(
+        config = DownscalingConfig(
             downscaling_method="BCSD",
             gcm="CESM2-WACCM6",
             variable="tas",
@@ -964,7 +964,7 @@ class TestDownscalingMethodNamespacing:
     @staticmethod
     def _cache_for(method: str, tmp_path) -> ArtifactCache:
         return ArtifactCache.from_config(
-            BCSDConfig(
+            DownscalingConfig(
                 gcm="CESM2-WACCM6",
                 downscaling_method=method,
                 variable="tas",

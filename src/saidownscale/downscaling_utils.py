@@ -2,7 +2,7 @@
 Pure functions for spatial and statistical downscaling operations.
 
 Contains the core algorithmic building blocks used by
-:class:`~saidownscale.pipeline.BCSDPipeline`: detrending and retrend operations, spatial
+:class:`~saidownscale.pipeline.DownscalingPipeline`: detrending and retrend operations, spatial
 interpolation between coarse and fine grids, FFT climatology smoothing, and helpers
 for loading observation and GCM datasets.
 """
@@ -15,9 +15,13 @@ import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers .regrid namespace
 from xarray_regrid.utils import format_for_regrid
 
-from saidownscale.bcsd_config import DetrendMethod, DisaggregationClimMethod, DisaggregationMethod
 from saidownscale.config import SCENARIO_TO_GROUP
 from saidownscale.datasets import catalog
+from saidownscale.downscaling_config import (
+    DetrendMethod,
+    DisaggregationClimMethod,
+    DisaggregationMethod,
+)
 from saidownscale.qa_checks import assert_no_nans
 from saidownscale.utils import get_variable
 
@@ -630,7 +634,7 @@ def calculate_doy_means(
     elif clim_method == "simple_rolling":
         # Note that this rolling mean is used for smoothing the day-of-year climatology in the spatial disaggregation step,
         # and is allowed to be different from the running_window_length used for the bias correction step. running_window_length is
-        # a parameter defined in bcsd_config.py, while rolling_window is hard-coded here to 31 days
+        # a parameter defined in downscaling_config.py, while rolling_window is hard-coded here to 31 days
         rolling_window = 31
         clim_rolling_window = (
             da_xr_doy_mean.pad(dayofyear=rolling_window, mode="wrap")

@@ -1,5 +1,5 @@
 """
-Artifact caching system for BCSD pipeline.
+Artifact caching system for downscaling pipeline.
 
 Manages icechunk-based cache storage with ancestry-based existence checks.
 Supports three pipeline stages: obs_regridded, historical, and scenario,
@@ -17,8 +17,8 @@ from pathlib import Path
 import icechunk
 import zarr
 
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
 from saidownscale.config import _ROOT_MESSAGES, SCENARIO_TO_GROUP, _icechunk_storage_for_path
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 
 logger = logging.getLogger(__name__)
 
@@ -120,16 +120,16 @@ class ArtifactCache:
         self.environment = environment
         self.branch = branch
         self.output_dir = output_dir.rstrip("/") if output_dir else None
-        self.config: BCSDConfig | None = None
+        self.config: DownscalingConfig | None = None
 
     @classmethod
-    def from_config(cls, config: BCSDConfig, options: PipelineOptions) -> ArtifactCache:
+    def from_config(cls, config: DownscalingConfig, options: PipelineOptions) -> ArtifactCache:
         """
-        Create ArtifactCache instance from BCSDConfig and PipelineOptions.
+        Create ArtifactCache instance from DownscalingConfig and PipelineOptions.
 
         Parameters
         ----------
-        config : BCSDConfig
+        config : DownscalingConfig
             Run-identity configuration.
         options : PipelineOptions
             Operational settings containing storage paths.
@@ -168,7 +168,7 @@ class ArtifactCache:
         lat_min, lat_max, lon_min, lon_max = subset_bounds
         return f"lat{lat_min}to{lat_max}_lon{lon_min}to{lon_max}"
 
-    def _require_config(self) -> BCSDConfig:
+    def _require_config(self) -> DownscalingConfig:
         if self.config is None:
             raise RuntimeError(
                 "No config bound to this cache. Use ArtifactCache.from_config(config) "
@@ -187,7 +187,7 @@ class ArtifactCache:
         "ensemble_member",
     )
 
-    def _require_bound(self, config: BCSDConfig) -> BCSDConfig:
+    def _require_bound(self, config: DownscalingConfig) -> DownscalingConfig:
         """Return the bound config, rejecting a ``config`` that points somewhere else.
 
         The location properties are all built from the bound config, while the stage
@@ -197,12 +197,12 @@ class ArtifactCache:
 
         Parameters
         ----------
-        config : BCSDConfig
+        config : DownscalingConfig
             Config supplied by the caller.
 
         Returns
         -------
-        BCSDConfig
+        DownscalingConfig
             The config bound to this cache.
 
         Raises
@@ -491,7 +491,7 @@ class ArtifactCache:
         silently consumes artifacts built with different bias-correction settings.
 
         The comparison reads the ``srm_downscaling:config_json`` provenance attribute
-        written by ``BCSDPipeline._build_attrs`` and compares only its nested
+        written by ``DownscalingPipeline._build_attrs`` and compares only its nested
         ``variable_config``. Other config differences are out of scope here: they
         either already appear in the path or are legitimate (a wider predict period
         reusing a cached historical fit, for instance).
@@ -667,7 +667,7 @@ class ArtifactCache:
     # ── stage completion ──────────────────────────────────────────────────────
 
     def stage_loc(
-        self, stage: str, config: BCSDConfig, hist_member: str | None = None
+        self, stage: str, config: DownscalingConfig, hist_member: str | None = None
     ) -> StoreLocation:
         """
         Return the artifact whose presence means ``stage`` is complete for ``config``.
@@ -688,7 +688,7 @@ class ArtifactCache:
         ----------
         stage : str
             Pipeline stage: 'prepare_observations', 'fit_historical', or 'transform_scenario'.
-        config : BCSDConfig
+        config : DownscalingConfig
             Configuration for the run. Must agree with the bound config.
         hist_member : str, optional
             Resolved historical ensemble member. Defaults to ``config.ensemble_member``.
@@ -729,7 +729,7 @@ class ArtifactCache:
             raise ValueError(f"Unknown stage: {stage}")
 
     def check_dependencies(
-        self, stage: str, config: BCSDConfig, hist_member: str | None = None
+        self, stage: str, config: DownscalingConfig, hist_member: str | None = None
     ) -> dict[str, tuple[bool, StoreLocation]]:
         """
         Check if all dependencies for a stage exist.
@@ -738,7 +738,7 @@ class ArtifactCache:
         ----------
         stage : str
             Pipeline stage: 'prepare_observations', 'fit_historical', or 'transform_scenario'.
-        config : BCSDConfig
+        config : DownscalingConfig
             Configuration for the run.
         hist_member : str, optional
             Resolved historical ensemble member (required for transform_scenario).
@@ -804,7 +804,7 @@ class ArtifactCache:
             raise ValueError(f"Unknown stage: {stage}")
 
     def validate_dependencies(
-        self, stage: str, config: BCSDConfig, hist_member: str | None = None
+        self, stage: str, config: DownscalingConfig, hist_member: str | None = None
     ) -> None:
         """
         Validate that all dependencies exist, raising error if missing.
@@ -813,7 +813,7 @@ class ArtifactCache:
         ----------
         stage : str
             Pipeline stage.
-        config : BCSDConfig
+        config : DownscalingConfig
             Configuration for the run.
         hist_member : str, optional
             Resolved historical ensemble member.
@@ -836,7 +836,7 @@ class ArtifactCache:
             )
 
     def get_output_path(
-        self, stage: str, config: BCSDConfig, hist_member: str | None = None
+        self, stage: str, config: DownscalingConfig, hist_member: str | None = None
     ) -> str:
         """
         Get output store path for a given stage (returns store_path only, not group).
@@ -845,7 +845,7 @@ class ArtifactCache:
         ----------
         stage : str
             Pipeline stage.
-        config : BCSDConfig
+        config : DownscalingConfig
             Configuration for the run.
         hist_member : str, optional
             Resolved historical ensemble member.

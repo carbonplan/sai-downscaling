@@ -207,7 +207,7 @@ accessed.
 
 | Attribute | Contents |
 | --- | --- |
-| `srm_downscaling:config_json` | Full `BCSDConfig` serialized as a JSON string |
+| `srm_downscaling:config_json` | Full `DownscalingConfig` serialized as a JSON string |
 | `srm_downscaling:config_hash` | 12-character SHA-256 of computation-affecting fields only |
 | `srm_downscaling:version` | `srm` package version that produced the data |
 | `srm_downscaling:gcm` | GCM name |
@@ -237,14 +237,14 @@ stored in a dataset — no field-by-field comparison needed.
 
 ```python
 import yaml
-from saidownscale.bcsd_config import BCSDConfig
+from saidownscale.downscaling_config import DownscalingConfig
 
-# Reconstruct BCSDConfig from the YAML you intend to run
+# Reconstruct DownscalingConfig from the YAML you intend to run
 with open("configs/production/cesm2-waccm6/cesm2-waccm6-ssp245-std.yaml") as f:
-    yaml_config = BCSDConfig(**yaml.safe_load(f))
+    yaml_config = DownscalingConfig(**yaml.safe_load(f))
 
-# Reconstruct BCSDConfig from what was actually written
-stored_config = BCSDConfig.model_validate_json(ds.attrs["srm_downscaling:config_json"])
+# Reconstruct DownscalingConfig from what was actually written
+stored_config = DownscalingConfig.model_validate_json(ds.attrs["srm_downscaling:config_json"])
 
 # Quick equality check (computation-affecting fields only)
 yaml_config.config_hash == stored_config.config_hash
@@ -254,7 +254,7 @@ yaml_config.model_dump() == stored_config.model_dump()
 ```
 
 On releases up to `v0.13.0`, `srm_downscaling:config_json` records the retired name
-`CESM2-WACCM`, and `BCSDConfig` rejects it with a message pointing at issue #598. To compare
+`CESM2-WACCM`, and `DownscalingConfig` rejects it with a message pointing at issue #598. To compare
 against one of those stores, load the attribute with `json.loads` and compare the fields you
 need directly, or map the name to `CESM2-WACCM6` before validating.
 

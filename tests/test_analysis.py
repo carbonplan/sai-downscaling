@@ -1,4 +1,4 @@
-"""Tests for analysis.py: load_cached_data, BCSDRun construction, caching, and plotting."""
+"""Tests for analysis.py: load_cached_data, DownscalingRun construction, caching, and plotting."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from saidownscale.analysis import BCSDRun, load_cached_data
-from saidownscale.bcsd_config import BCSDConfig
+from saidownscale.analysis import DownscalingRun, load_cached_data
 from saidownscale.cache import ArtifactCache
+from saidownscale.downscaling_config import DownscalingConfig
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -18,8 +18,8 @@ from saidownscale.cache import ArtifactCache
 
 
 @pytest.fixture
-def config() -> BCSDConfig:
-    return BCSDConfig(
+def config() -> DownscalingConfig:
+    return DownscalingConfig(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
@@ -31,8 +31,8 @@ def config() -> BCSDConfig:
 
 
 @pytest.fixture
-def run(config) -> BCSDRun:
-    return BCSDRun(config)
+def run(config) -> DownscalingRun:
+    return DownscalingRun(config)
 
 
 def _fake_ds(variable: str = "tas") -> xr.Dataset:
@@ -91,7 +91,7 @@ class TestLoadCachedData:
 
 
 # ---------------------------------------------------------------------------
-# BCSDRun construction
+# DownscalingRun construction
 # ---------------------------------------------------------------------------
 
 
@@ -110,7 +110,7 @@ class TestBCSDRunConstruction:
         assert run._cache.config is config
 
     def test_cache_uses_default_scratch_dir(self, run):
-        from saidownscale.bcsd_config import PipelineOptions
+        from saidownscale.downscaling_config import PipelineOptions
 
         assert run._cache.scratch_dir == PipelineOptions().scratch_dir.rstrip("/")
 
@@ -125,7 +125,7 @@ class TestBCSDRunConstruction:
 
 
 # ---------------------------------------------------------------------------
-# BCSDRun data properties (obs / historical / scenario)
+# DownscalingRun data properties (obs / historical / scenario)
 # ---------------------------------------------------------------------------
 
 
@@ -167,14 +167,14 @@ class TestBCSDRunDataProperties:
 
 
 # ---------------------------------------------------------------------------
-# BCSDRun.get_location_data
+# DownscalingRun.get_location_data
 # ---------------------------------------------------------------------------
 
 
 class TestGetLocationData:
     @pytest.fixture
     def run_with_data(self, run):
-        """BCSDRun with obs/historical/scenario replaced by fake datasets."""
+        """DownscalingRun with obs/historical/scenario replaced by fake datasets."""
         fake = _fake_ds("tas")
         # Inject as cached_property values directly
         run.__dict__["obs"] = fake
@@ -206,14 +206,14 @@ class TestGetLocationData:
 
 
 # ---------------------------------------------------------------------------
-# BCSDRun.plot_location_cdf
+# DownscalingRun.plot_location_cdf
 # ---------------------------------------------------------------------------
 
 
 class TestPlotLocationCdf:
     @pytest.fixture
     def run_with_fake_location_data(self, run):
-        """BCSDRun with get_location_data mocked to return predictable arrays."""
+        """DownscalingRun with get_location_data mocked to return predictable arrays."""
         rng = np.random.default_rng(1)
         fake_data = {
             "obs": rng.random(50).astype("float32"),

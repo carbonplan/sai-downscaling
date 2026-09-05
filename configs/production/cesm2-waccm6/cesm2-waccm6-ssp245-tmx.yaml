@@ -9,7 +9,7 @@
 # Equivalent CLI command:
 #   uv run bcsd run --config-path configs/production/
 
-# === BCSDConfig: Run Identity ===
+# === DownscalingConfig: Run Identity ===
 gcm: "CESM2-WACCM6"
 variables: ["tasmax", "tasmin", "dtr"]
 ensemble_members: ["008"]

@@ -190,11 +190,11 @@ You can inspect cached artifacts programmatically using `ArtifactCache`:
 
 ```python
 import yaml
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 from saidownscale.cache import ArtifactCache
 
 raw = yaml.safe_load(open("configs/example.yaml"))
-config = BCSDConfig(**raw)
+config = DownscalingConfig(**raw)
 options = PipelineOptions(**raw)
 cache = ArtifactCache.from_config(config, options)
 

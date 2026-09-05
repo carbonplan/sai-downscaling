@@ -8,7 +8,7 @@
 # continuing against SAI stopping would cross realizations, which is the ensemble-level
 # version of the per-variable mismatch issue #448 hit.
 
-# === BCSDConfig: Run Identity ===
+# === DownscalingConfig: Run Identity ===
 gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002", "003"]

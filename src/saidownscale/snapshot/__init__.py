@@ -1,4 +1,4 @@
-"""Snapshot comparison core for BCSD pipeline outputs.
+"""Snapshot comparison core for downscaling pipeline outputs.
 
 This package provides the per-variable tolerances (:mod:`saidownscale.snapshot.tolerances`)
 and the :func:`saidownscale.snapshot.compare.compare` engine. The

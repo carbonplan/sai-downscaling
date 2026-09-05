@@ -6,14 +6,14 @@ Configuration files use YAML format with Pydantic validation. All fields are val
 
 Configuration is split across two Pydantic classes loaded from the same flat YAML:
 
-- **`BCSDConfig`** — run identity: the parameters that uniquely identify a BCSD run and affect computation results (model, variable, time periods, bias-correction method). Changes here bust the cache.
+- **`DownscalingConfig`** — run identity: the parameters that uniquely identify a BCSD run and affect computation results (model, variable, time periods, bias-correction method). Changes here bust the cache.
 - **`PipelineOptions`** — operational settings: storage paths, environment, branch, and runtime flags. Changes here do not affect computation results.
 
 Both classes use `extra="ignore"`, so a single flat YAML file is accepted by both — no nested sections required.
 
 ## Matrix config format
 
-Any of the five dimension fields can be a list. `load_configs` expands them into one `BCSDConfig` per cartesian-product combination:
+Any of the five dimension fields can be a list. `load_configs` expands them into one `DownscalingConfig` per cartesian-product combination:
 
 ```yaml
 gcm: "CESM2-WACCM6"                              # singular, still works
@@ -57,7 +57,7 @@ UKESM1-1-LL SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single confi
 
 `config_time_domain` therefore enforces the start bound for every scenario, SAI included, and set `predict_period_start` to the scenario's own data start: 2035 for `G6-1.5K` and 2085 for `G6-1.5K-END`. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
 
-## BCSDConfig Fields (run identity)
+## DownscalingConfig Fields (run identity)
 
 These fields identify a BCSD run and affect computation results. Changing any of these busts the cache (`config_hash` covers all of them).
 
@@ -250,7 +250,7 @@ This is useful for:
 
 ## Variable-Specific Auto-Configuration
 
-The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/saidownscale/bcsd_config.py`). Which table it reads is set by the required top-level `downscaling_method` key, described in [Downscaling method](#downscaling-method) below.
+The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/saidownscale/downscaling_config.py`). Which table it reads is set by the required top-level `downscaling_method` key, described in [Downscaling method](#downscaling-method) below.
 
 ### BCSD defaults
 

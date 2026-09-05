@@ -1,8 +1,8 @@
 """
-Batch job runner for individual BCSD pipeline stages on remote task VMs.
+Batch job runner for individual downscaling pipeline stages on remote task VMs.
 
 Reads configuration from the environment and invokes the requested stage via
-:class:`~saidownscale.pipeline.BCSDPipeline`. This is the entry point for all distributed
+:class:`~saidownscale.pipeline.DownscalingPipeline`. This is the entry point for all distributed
 remote execution, on Coiled Batch and on AWS Batch alike; see
 :func:`_load_config_dict` for how each delivers a task's config.
 """
@@ -14,8 +14,8 @@ import os
 import typer
 
 from saidownscale.batch_manifest import read_manifest_entry
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
-from saidownscale.pipeline import BCSDPipeline
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
+from saidownscale.pipeline import DownscalingPipeline
 
 app = typer.Typer()
 
@@ -40,7 +40,7 @@ def _load_config_dict() -> dict:
     Returns
     -------
     dict
-        Payload holding ``BCSDConfig`` fields plus an ``options`` sub-dict.
+        Payload holding ``DownscalingConfig`` fields plus an ``options`` sub-dict.
 
     Raises
     ------
@@ -74,7 +74,7 @@ def run_stage(
     ),
 ):
     """
-    Run a single BCSD pipeline stage with configuration from the environment.
+    Run a single downscaling pipeline stage with configuration from the environment.
 
     This is the entry point for both remote executors. See :func:`_load_config_dict`
     for the two ways a task's configuration reaches it.
@@ -83,13 +83,13 @@ def run_stage(
         # Read config from environment (CONFIG_JSON, or manifest plus array index)
         config_dict = _load_config_dict()
         options_dict = config_dict.pop("options", {})
-        config = BCSDConfig(**config_dict)
+        config = DownscalingConfig(**config_dict)
         options = PipelineOptions(**options_dict)
 
         logger.info(f"Running {stage} for {config.run_id}")
 
         # Create pipeline and run stage
-        pipeline = BCSDPipeline(config, options)
+        pipeline = DownscalingPipeline(config, options)
 
         if stage == "prepare_observations":
             result_path = pipeline.prepare_observations()

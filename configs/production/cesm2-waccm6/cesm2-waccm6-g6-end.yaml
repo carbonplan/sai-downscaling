@@ -12,7 +12,7 @@
 # 2015-2084 years are still read, as the bridge the detrend stitch needs (SSP245 through
 # 2034, then G6-1.5K 002 for 2035-2084), and trimmed from the output afterwards.
 
-# === BCSDConfig: Run Identity ===
+# === DownscalingConfig: Run Identity ===
 gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["002"]

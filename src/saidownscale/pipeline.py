@@ -1,8 +1,8 @@
 """
-BCSD pipeline with three-stage architecture and automatic caching.
+Downscaling pipeline with three-stage architecture and automatic caching.
 
 Implements the full bias-correction spatial disaggregation workflow via
-:class:`BCSDPipeline`. Stages run in order: ``prepare_observations`` (once per
+:class:`DownscalingPipeline`. Stages run in order: ``prepare_observations`` (once per
 GCM/variable), ``fit_historical`` (once per GCM/variable/ensemble), and
 ``transform_scenario`` (once per GCM/variable/ensemble/scenario).
 """
@@ -27,10 +27,10 @@ from ibicus.debias import QuantileDeltaMapping, QuantileMapping
 from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
 from saidownscale.cache import COARSE_ONLY_VARIABLES, ArtifactCache, StoreLocation
 from saidownscale.config import _ensure_root_group, _icechunk_storage_for_path
 from saidownscale.datasets import catalog as _catalog
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 from saidownscale.downscaling_utils import (
     calculate_baseline_climatology,
     derive_tasmin,
@@ -478,9 +478,9 @@ def debiaser_processes() -> int:
     return value
 
 
-class BCSDPipeline:
+class DownscalingPipeline:
     """
-    Three-stage BCSD downscaling pipeline with automatic caching.
+    Three-stage downscaling pipeline with automatic caching.
 
     Stages:
     1. Prepare (i.e. coarsen) training dataset to be at same model resolution as GCM
@@ -503,7 +503,7 @@ class BCSDPipeline:
 
     Example
     -------
-    >>> config = BCSDConfig(
+    >>> config = DownscalingConfig(
     ...     gcm="CESM2-WACCM6",
     ...     variable="tas",
     ...     ensemble_member=0,
@@ -511,14 +511,14 @@ class BCSDPipeline:
     ...     predict_period_start=2015,
     ...     predict_period_end=2100,
     ... )
-    >>> pipeline = BCSDPipeline(config)
+    >>> pipeline = DownscalingPipeline(config)
     >>> # Run all stages
     >>> pipeline.prepare_observations()
     >>> pipeline.fit_historical()
     >>> result = pipeline.transform_scenario()
     """
 
-    def __init__(self, config: BCSDConfig, options: PipelineOptions):
+    def __init__(self, config: DownscalingConfig, options: PipelineOptions):
         """
         Initialize pipeline with configuration and operational options.
 
@@ -528,8 +528,8 @@ class BCSDPipeline:
 
         Parameters
         ----------
-        config : BCSDConfig
-            Run-identity configuration for the BCSD run
+        config : DownscalingConfig
+            Run-identity configuration for the downscaling run
         options : PipelineOptions
             Operational settings (storage paths, runtime flags)
         """

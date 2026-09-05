@@ -1,5 +1,5 @@
 """
-Visualization utilities for comparing BCSD downscaling outputs.
+Visualization utilities for comparing downscaling outputs.
 
 Provides functions for plotting raw vs. debiased vs. observed distributions and
 spatial maps across pipeline stages. Intended for use in QA and diagnostic notebooks.
@@ -18,7 +18,7 @@ import seaborn as sns
 import xarray as xr
 from xclim.indices import dry_days, growing_degree_days, hot_days, tx_max
 
-from saidownscale.bcsd_config import METHOD_SEGMENTS
+from saidownscale.downscaling_config import METHOD_SEGMENTS
 
 
 def plot_comparisons(obs, raw, ds1, ds1_name, ds2=None, bias="absolute", ds2_name=None, title=""):

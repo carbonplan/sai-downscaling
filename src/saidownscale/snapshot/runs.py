@@ -1,4 +1,4 @@
-"""Compare a candidate BCSD run against the snapshot.
+"""Compare a candidate downscaling run against the snapshot.
 
 :func:`compare_runs` opens two output stores on the same icechunk branch and diffs
 them leaf-by-leaf, by default for exact equality, reporting leaves that appear on
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import xarray as xr
 
-from saidownscale.bcsd_config import METHOD_SEGMENTS
+from saidownscale.downscaling_config import METHOD_SEGMENTS
 from saidownscale.qaqc import DatasetChecker
 from saidownscale.snapshot.compare import (
     DiffReport,

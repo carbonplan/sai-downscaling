@@ -1,7 +1,7 @@
 """Tests for lineage resolution and member validation.
 
 _resolve_lineage has been removed from cli.py — lineage is now resolved inside
-BCSDPipeline.__init__ using resolve_member_lineage from saidownscale.lineage. These tests
+DownscalingPipeline.__init__ using resolve_member_lineage from saidownscale.lineage. These tests
 cover the lineage table directly and the CLI's _validate_lineage_members helper.
 """
 
@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from saidownscale.bcsd_config import BCSDConfig
 from saidownscale.cli import _validate_lineage_members
+from saidownscale.downscaling_config import DownscalingConfig
 from saidownscale.lineage import resolve_member_lineage
 
 # ---------------------------------------------------------------------------
@@ -127,7 +127,7 @@ class TestResolveLineage:
 class TestValidateLineageMembers:
     def test_passes_when_hist_member_present(self):
         """G6/001/tas resolves to hist=r1i1p1f1 and ssp245=001; unified store has both — no error."""
-        cfg = BCSDConfig(variable="tas", **_G6_BASE)
+        cfg = DownscalingConfig(variable="tas", **_G6_BASE)
         # G6-1.5K → g6_1p5k group in the unified store
         entry = _mock_dt_entry(
             hist_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
@@ -139,7 +139,7 @@ class TestValidateLineageMembers:
 
     def test_raises_when_hist_member_absent(self):
         """ValueError raised when resolved historical member is absent from store."""
-        cfg = BCSDConfig(variable="tas", **_G6_BASE)
+        cfg = DownscalingConfig(variable="tas", **_G6_BASE)
         entry = _mock_dt_entry(
             hist_members=["r2i1p1f1", "r3i1p1f1"],  # missing r1i1p1f1
             scenario_members={"g6_1p5k": ["001", "002", "003"]},
@@ -151,7 +151,7 @@ class TestValidateLineageMembers:
 
     def test_raises_when_ssp245_member_absent(self):
         """ValueError raised when resolved scenario member is absent from the scenario group."""
-        cfg = BCSDConfig(variable="tas", **_G6_BASE)
+        cfg = DownscalingConfig(variable="tas", **_G6_BASE)
         entry = _mock_dt_entry(
             hist_members=["r1i1p1f1"],  # hist ok
             scenario_members={"g6_1p5k": ["002", "003"]},  # missing 001
@@ -162,7 +162,7 @@ class TestValidateLineageMembers:
                 _validate_lineage_members([cfg])
 
     def test_error_message_includes_gcm_and_variable(self):
-        cfg = BCSDConfig(variable="tasmax", **_G6_BASE)
+        cfg = DownscalingConfig(variable="tasmax", **_G6_BASE)
         # tasmax/001 resolves to hist="001"; store is missing it
         entry = _mock_dt_entry(
             hist_members=["r1i1p1f1"],  # has r* but not "001"
@@ -177,7 +177,7 @@ class TestValidateLineageMembers:
 
     def test_skips_configs_without_scenario(self):
         """Configs with scenario=None are skipped — no catalog lookup."""
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             downscaling_method="BCSD",
             gcm="CESM2-WACCM6",
             variable="tas",
@@ -189,7 +189,7 @@ class TestValidateLineageMembers:
 
     def test_skips_unknown_lineage_combos(self):
         """Combos not in the lineage table raise KeyError internally — silently skipped."""
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="UKESM1-0-LL",
             downscaling_method="BCSD",
             variable="tas",
@@ -204,7 +204,7 @@ class TestValidateLineageMembers:
 
     def test_skips_when_catalog_members_none_and_store_unreachable(self):
         """S3 failure on to_xarray → silently skipped."""
-        cfg = BCSDConfig(variable="tas", **_G6_BASE)
+        cfg = DownscalingConfig(variable="tas", **_G6_BASE)
         entry = _mock_dt_entry(raise_on_open=True)  # to_xarray raises
         with patch("saidownscale.datasets.catalog") as cat:
             cat.get.return_value = entry
@@ -212,14 +212,16 @@ class TestValidateLineageMembers:
 
     def test_skips_when_store_not_in_catalog(self):
         """Exception from catalog.get → store unknown → silently skipped."""
-        cfg = BCSDConfig(variable="tas", **_G6_BASE)
+        cfg = DownscalingConfig(variable="tas", **_G6_BASE)
         with patch("saidownscale.datasets.catalog") as cat:
             cat.get.side_effect = Exception("store not found")
             _validate_lineage_members([cfg])  # must not raise
 
     def test_deduplicates_store_lookups(self):
         """Each GCM's unified store is opened at most once regardless of config count."""
-        cfgs = [BCSDConfig(variable=var, **_G6_BASE) for var in ("tas", "pr", "rsds", "tasmax")]
+        cfgs = [
+            DownscalingConfig(variable=var, **_G6_BASE) for var in ("tas", "pr", "rsds", "tasmax")
+        ]
         # All members across historical and G6-1.5K scenario groups
         entry = _mock_dt_entry(
             hist_members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1", "001", "002", "003"],

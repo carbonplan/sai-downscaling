@@ -1,5 +1,5 @@
 """
-Quality checks for in-memory BCSD pipeline artifact arrays.
+Quality checks for in-memory downscaling pipeline artifact arrays.
 
 Provides :func:`run_artifact_checks` to inspect intermediate and output arrays at any
 pipeline step, running NaN, out-of-range, and sporadic-NaN-days checks on a live

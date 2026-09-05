@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
-from saidownscale.pipeline import BCSDPipeline
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
+from saidownscale.pipeline import DownscalingPipeline
 from saidownscale.qa_checks import NaNCheckError, assert_no_nans
 
 
@@ -114,16 +114,16 @@ def pipeline_options(tmp_path) -> PipelineOptions:
 
 
 @pytest.fixture
-def historical_pipeline(pipeline_options) -> BCSDPipeline:
-    config = BCSDConfig(
+def historical_pipeline(pipeline_options) -> DownscalingPipeline:
+    config = DownscalingConfig(
         downscaling_method="BCSD", gcm="CESM2-WACCM6", variable="tas", ensemble_member="r1i1p1f1"
     )
-    return BCSDPipeline(config, pipeline_options)
+    return DownscalingPipeline(config, pipeline_options)
 
 
 @pytest.fixture
-def scenario_pipeline(pipeline_options) -> BCSDPipeline:
-    config = BCSDConfig(
+def scenario_pipeline(pipeline_options) -> DownscalingPipeline:
+    config = DownscalingConfig(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
@@ -132,7 +132,7 @@ def scenario_pipeline(pipeline_options) -> BCSDPipeline:
         predict_period_start=2035,
         predict_period_end=2040,
     )
-    return BCSDPipeline(config, pipeline_options)
+    return DownscalingPipeline(config, pipeline_options)
 
 
 class TestBiasCorrectionInputChecks:

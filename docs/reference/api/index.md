@@ -11,7 +11,7 @@ See [How-to guides](../../how-to/run-pipeline.md) for task-oriented usage and
    :nosignatures:
    :template: module.rst
 
-   saidownscale.bcsd_config
+   saidownscale.downscaling_config
    saidownscale.pipeline
    saidownscale.orchestration
    saidownscale.cache

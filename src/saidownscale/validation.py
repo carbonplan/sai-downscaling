@@ -1,5 +1,5 @@
 """
-Input data and output store validation checks for the BCSD pipeline.
+Input data and output store validation checks for the downscaling pipeline.
 
 Use :class:`DatasetValidator` to run checks for a given (gcm, scenario) pair.
 Use :func:`validate_output_store` to run checks against a post-consolidation output datatree.
@@ -14,9 +14,9 @@ from typing import get_args
 import pydantic
 import xarray as xr
 
-from saidownscale.bcsd_config import METHOD_SEGMENTS, BCSDConfig, VariableName
 from saidownscale.config import SCENARIO_TO_GROUP
 from saidownscale.datasets import catalog
+from saidownscale.downscaling_config import METHOD_SEGMENTS, DownscalingConfig, VariableName
 from saidownscale.qaqc import DatasetChecker, ValidationResult
 
 BLOCKING_CHECKS = {
@@ -200,7 +200,7 @@ class CheckResult(pydantic.BaseModel):
     ensemble_member: str | None = None
 
 
-def check_config_time_domain(config: BCSDConfig) -> CheckResult:
+def check_config_time_domain(config: DownscalingConfig) -> CheckResult:
     """C1: config predict period must fit the member's valid data extent.
 
     Guards against configs whose ``predict_period`` extends past (or starts before) the
@@ -214,7 +214,7 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
     Both bounds are enforced for every scenario, SAI included. A SAI run whose
     ``predict_period_start`` precedes its own data start still executes, because the
     pipeline bridges the gap, but the bridged years are another scenario's data wearing
-    this scenario's label (see :meth:`BCSDPipeline._load_ssp245_bridge`), so they are
+    this scenario's label (see :meth:`DownscalingPipeline._load_ssp245_bridge`), so they are
     rejected here rather than silently published.
 
     Returns a blocking FAIL when the requested predict period falls outside the member's
@@ -305,7 +305,7 @@ def _get_ensemble_members(ds: xr.Dataset) -> list[str] | None:
 
 class DatasetValidator(pydantic.BaseModel):
     """
-    Validates a (gcm, scenario) pair against the BCSD pipeline dataset catalog.
+    Validates a (gcm, scenario) pair against the downscaling pipeline dataset catalog.
 
     Raises ``pydantic.ValidationError`` on construction if the gcm or scenario is
     not a recognized option.

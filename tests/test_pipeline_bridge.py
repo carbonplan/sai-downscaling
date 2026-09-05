@@ -1,4 +1,4 @@
-"""Unit tests for BCSDPipeline._load_ssp245_bridge gap-fill logic.
+"""Unit tests for DownscalingPipeline._load_ssp245_bridge gap-fill logic.
 
 No registered GCM sets ``ssp245_esgf_bridge`` in the lineage table any more, so the
 gap-fill tests below inject ``_ssp245_esgf_member`` onto the pipeline directly. That keeps
@@ -13,12 +13,12 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import xarray as xr
 
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions, VariableConfig
 from saidownscale.lineage import ScenarioMember
-from saidownscale.pipeline import BCSDPipeline
+from saidownscale.pipeline import DownscalingPipeline
 
 
-def _make_config(**overrides) -> BCSDConfig:
+def _make_config(**overrides) -> DownscalingConfig:
     defaults = dict(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
@@ -33,7 +33,7 @@ def _make_config(**overrides) -> BCSDConfig:
         ),
     )
     defaults.update(overrides)
-    return BCSDConfig(**defaults)
+    return DownscalingConfig(**defaults)
 
 
 def _make_options(tmp_path) -> PipelineOptions:
@@ -79,9 +79,9 @@ def _mock_catalog_get(
 _ESGF_MEMBER = "r1i1p1f1"
 
 
-def _esgf_pipeline(tmp_path) -> BCSDPipeline:
+def _esgf_pipeline(tmp_path) -> DownscalingPipeline:
     """Pipeline for a scenario whose primary SSP245 run starts after the historical period."""
-    pipeline = BCSDPipeline(_make_config(), _make_options(tmp_path))
+    pipeline = DownscalingPipeline(_make_config(), _make_options(tmp_path))
     pipeline._ssp245_esgf_member = _ESGF_MEMBER
     return pipeline
 
@@ -89,7 +89,7 @@ def _esgf_pipeline(tmp_path) -> BCSDPipeline:
 def test_bridge_returns_primary_when_esgf_member_none(tmp_path):
     """When _ssp245_esgf_member is None, _load_ssp245_bridge returns only primary (no gap check)."""
     config = _make_config(gcm="CESM2-WACCM6", ensemble_member="001")
-    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+    pipeline = DownscalingPipeline(config, _make_options(tmp_path))
     assert pipeline._ssp245_esgf_member is None
 
     geomip_start = 2015
@@ -253,7 +253,7 @@ def test_bridge_empty_esgf_gap_returns_primary(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _g6_end_config() -> BCSDConfig:
+def _g6_end_config() -> DownscalingConfig:
     return _make_config(
         gcm="CESM2-WACCM6",
         ensemble_member="002",
@@ -279,7 +279,7 @@ def test_bridge_appends_sai_parent_for_termination_run(tmp_path):
     SSP245 alone would supply those years from the no-SAI run; the parent G6-1.5K
     segment has to take over from 2035.
     """
-    pipeline = BCSDPipeline(_g6_end_config(), _make_options(tmp_path))
+    pipeline = DownscalingPipeline(_g6_end_config(), _make_options(tmp_path))
     assert pipeline._sai_parent == ScenarioMember(scenario="G6-1.5K", member="002")
 
     ssp245_da = _make_annual_ds(2015, 2099, "002")["tas"]
@@ -310,7 +310,7 @@ def test_bridge_sai_parent_takes_precedence_over_ssp245(tmp_path):
     years the model actually spent under SAI. That failure is silent for the standard
     variables, since the stitch stays continuous either way.
     """
-    pipeline = BCSDPipeline(_g6_end_config(), _make_options(tmp_path))
+    pipeline = DownscalingPipeline(_g6_end_config(), _make_options(tmp_path))
 
     ssp245_da = _make_annual_ds(2015, 2099, "002")["tas"] + 1.0
     g6_da = _make_annual_ds(2035, 2084, "002")["tas"]  # zeros
@@ -342,7 +342,7 @@ def test_bridge_sai_parent_tmax_uses_truncated_ssp245_without_gap(tmp_path):
         predict_period_start=2085,
         predict_period_end=2100,
     )
-    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+    pipeline = DownscalingPipeline(config, _make_options(tmp_path))
     assert pipeline._ssp245_member == "007"
 
     ssp245_da = _make_annual_ds(2015, 2069, "007", var="tasmax")["tasmax"]
@@ -363,7 +363,7 @@ def test_bridge_sai_parent_tmax_uses_truncated_ssp245_without_gap(tmp_path):
 def test_bridge_unchanged_when_no_sai_parent(tmp_path):
     """Plain G6-1.5K has no SAI parent, so the bridge stays SSP245-only."""
     config = _make_config(gcm="CESM2-WACCM6", ensemble_member="002", scenario="G6-1.5K")
-    pipeline = BCSDPipeline(config, _make_options(tmp_path))
+    pipeline = DownscalingPipeline(config, _make_options(tmp_path))
     assert pipeline._sai_parent is None
 
     ssp245_da = _make_annual_ds(2015, 2099, "002")["tas"]

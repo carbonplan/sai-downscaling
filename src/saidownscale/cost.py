@@ -1,5 +1,5 @@
 """
-Pre-dispatch cost estimation for a BCSD run.
+Pre-dispatch cost estimation for a downscaling run.
 
 A production wave commits real money before it produces anything, so the CLI shows what
 a run will cost and asks before submitting. Two numbers carry very different confidence

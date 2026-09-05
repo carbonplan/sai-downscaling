@@ -1,4 +1,4 @@
-"""Tests for saidownscale.lineage.resolve_member_lineage and BCSDConfig lineage fields."""
+"""Tests for saidownscale.lineage.resolve_member_lineage and DownscalingConfig lineage fields."""
 
 from __future__ import annotations
 

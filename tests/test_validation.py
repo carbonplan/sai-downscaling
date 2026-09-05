@@ -619,9 +619,9 @@ class TestCheckConfigTimeDomain:
 
     @staticmethod
     def _config(member, predict_end, predict_start=2015, scenario="SSP245"):
-        from saidownscale.bcsd_config import BCSDConfig
+        from saidownscale.downscaling_config import DownscalingConfig
 
-        return BCSDConfig(
+        return DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
@@ -722,10 +722,10 @@ class TestCheckConfigTimeDomain:
         assert "2085" in r.message
 
     def test_historical_only_skips(self):
-        from saidownscale.bcsd_config import BCSDConfig
+        from saidownscale.downscaling_config import DownscalingConfig
         from saidownscale.validation import check_config_time_domain
 
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="UKESM1-1-LL",
             variable="tas",
             ensemble_member="r2i1p1f2",

@@ -8,7 +8,6 @@ import typer
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions, VariableConfig
 from saidownscale.cli import (
     _confirm_cost,
     _expand_matrix_config,
@@ -20,6 +19,7 @@ from saidownscale.cli import (
     app,
     configs_from_matrix,
 )
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions, VariableConfig
 from saidownscale.validation import CheckResult, CheckStatus
 
 
@@ -56,7 +56,7 @@ class TestConfigsFromMatrix:
             members=["r1i1p1f1"],
             scenarios=[None],
         )
-        assert all(isinstance(c, BCSDConfig) for c in configs)
+        assert all(isinstance(c, DownscalingConfig) for c in configs)
 
     def test_historical_only_scenario_is_none(self):
         configs, options = configs_from_matrix(
@@ -117,7 +117,7 @@ class TestConfigsFromMatrix:
         assert all(c.subset_bounds == bounds for c in configs)
 
     def test_scenario_without_predict_period_raises(self):
-        """BCSDConfig raises ValidationError when scenario is set but predict periods are missing."""
+        """DownscalingConfig raises ValidationError when scenario is set but predict periods are missing."""
         with pytest.raises(ValidationError):
             configs_from_matrix(
                 gcms=["CESM2-WACCM6"],
@@ -395,7 +395,7 @@ class TestResolveBranch:
     def test_falls_back_to_the_package_version(self, tmp_path):
         # With no branch in the config, the printed value must be the same default
         # validate-output would have used, or passing it through changes behavior.
-        from saidownscale.bcsd_config import PipelineOptions
+        from saidownscale.downscaling_config import PipelineOptions
 
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
@@ -488,7 +488,7 @@ class TestExpandMatrixConfigOverrides:
         would look configured while silently using the defaults.
         """
         with pytest.raises(ValidationError, match="variable_overrides"):
-            BCSDConfig(
+            DownscalingConfig(
                 gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
@@ -500,7 +500,7 @@ class TestExpandMatrixConfigOverrides:
 class TestExpandMatrixConfigRunWideDebiasApproach:
     """A top-level ``debias_approach`` in a matrix config applies to the whole run.
 
-    ``debias_approach`` is a ``VariableConfig`` field, so ``BCSDConfig`` rejects it at the
+    ``debias_approach`` is a ``VariableConfig`` field, so ``DownscalingConfig`` rejects it at the
     top level. ``_expand_matrix_config`` pops it first and feeds it to
     ``_resolve_variable_config`` as the run-wide tier, which is how a whole run is switched
     between standard quantile mapping and quantile delta mapping. ``TestResolveVariableConfig``
@@ -581,7 +581,7 @@ class TestMatrixDownscalingMethodAxis:
 
     Unlike them it selects an algorithm rather than a slice of input data, so every
     entry re-derives ``variable_config`` from its own defaults table. The guards below
-    exist because ``BCSDConfig`` pins ``debias_approach='qdm'`` to ``'QDMSD'`` and
+    exist because ``DownscalingConfig`` pins ``debias_approach='qdm'`` to ``'QDMSD'`` and
     forbids it under ``'BCSD'``: a single explicit value contradicts one arm of a
     two-method product no matter which value is chosen.
     """
@@ -983,9 +983,9 @@ class TestConfirmCost:
 
     @pytest.fixture
     def orchestrator(self, tmp_path):
-        from saidownscale.orchestration import BCSDOrchestrator
+        from saidownscale.orchestration import DownscalingOrchestrator
 
-        return BCSDOrchestrator(
+        return DownscalingOrchestrator(
             PipelineOptions(
                 scratch_dir=str(tmp_path / "cache"),
                 output_dir=str(tmp_path / "out"),
@@ -996,7 +996,7 @@ class TestConfirmCost:
     @pytest.fixture
     def configs(self):
         return [
-            BCSDConfig(
+            DownscalingConfig(
                 gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
@@ -1064,9 +1064,9 @@ class TestStageScopedCostPlan:
 
     @pytest.fixture
     def orchestrator(self, tmp_path):
-        from saidownscale.orchestration import BCSDOrchestrator
+        from saidownscale.orchestration import DownscalingOrchestrator
 
-        return BCSDOrchestrator(
+        return DownscalingOrchestrator(
             PipelineOptions(
                 scratch_dir=str(tmp_path / "cache"),
                 output_dir=str(tmp_path / "out"),
@@ -1077,7 +1077,7 @@ class TestStageScopedCostPlan:
     @pytest.fixture
     def configs(self):
         return [
-            BCSDConfig(
+            DownscalingConfig(
                 gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
@@ -1147,9 +1147,9 @@ class TestRunEnvironmentTable:
 
     @pytest.fixture
     def orchestrator(self, tmp_path):
-        from saidownscale.orchestration import BCSDOrchestrator
+        from saidownscale.orchestration import DownscalingOrchestrator
 
-        return BCSDOrchestrator(
+        return DownscalingOrchestrator(
             PipelineOptions(
                 scratch_dir=str(tmp_path / "cache"),
                 output_dir=str(tmp_path / "out"),

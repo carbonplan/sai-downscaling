@@ -1,7 +1,7 @@
 """
 Orchestration layer for batch BCSD execution with automatic task deduplication.
 
-Manages efficient batch execution of BCSD runs across multiple configurations using
+Manages efficient batch execution of downscaling runs across multiple configurations using
 Coiled's batch API. Automatically detects cached artifacts, deduplicates shared stages
 across ensemble members and scenarios, and submits only the necessary tasks.
 """
@@ -16,10 +16,10 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Literal
 
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
 from saidownscale.cache import ArtifactCache, StoreLocation
 from saidownscale.cost import memory_mib, vcpus
-from saidownscale.pipeline import BCSDPipeline
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
+from saidownscale.pipeline import DownscalingPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class StagePlan:
     regional: bool
 
 
-class BCSDOrchestrator:
+class DownscalingOrchestrator:
     """
     Manages batch submission of BCSD tasks with dependency awareness.
 
@@ -51,10 +51,10 @@ class BCSDOrchestrator:
     Example
     -------
     >>> configs = [
-    ...     BCSDConfig(gcm="CESM2-WACCM6", variable="tas", ensemble_member=0, scenario="ssp245", ...),
-    ...     BCSDConfig(gcm="CESM2-WACCM6", variable="tas", ensemble_member=1, scenario="ssp245", ...),
+    ...     DownscalingConfig(gcm="CESM2-WACCM6", variable="tas", ensemble_member=0, scenario="ssp245", ...),
+    ...     DownscalingConfig(gcm="CESM2-WACCM6", variable="tas", ensemble_member=1, scenario="ssp245", ...),
     ... ]
-    >>> orchestrator = BCSDOrchestrator()
+    >>> orchestrator = DownscalingOrchestrator()
     >>> output_paths = orchestrator.run_full_workflow(configs, executor="aws-batch")
     """
 
@@ -81,7 +81,7 @@ class BCSDOrchestrator:
     _DEFAULT_VM_TYPE: list[str] = ["c8g.12xlarge"]
 
     @staticmethod
-    def _is_regional(configs: list[BCSDConfig]) -> bool:
+    def _is_regional(configs: list[DownscalingConfig]) -> bool:
         """
         Report whether every config in a batch is spatially subset.
 
@@ -90,7 +90,7 @@ class BCSDOrchestrator:
 
         Parameters
         ----------
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configurations making up a single batch submission.
 
         Returns
@@ -101,7 +101,7 @@ class BCSDOrchestrator:
         return bool(configs) and all(config.subset_bounds is not None for config in configs)
 
     @classmethod
-    def _vm_types_for(cls, stage: str, configs: list[BCSDConfig]) -> list[str]:
+    def _vm_types_for(cls, stage: str, configs: list[DownscalingConfig]) -> list[str]:
         """
         Select the instance types for a stage, scaled to the batch's spatial extent.
 
@@ -109,7 +109,7 @@ class BCSDOrchestrator:
         ----------
         stage : str
             Pipeline stage name.
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configurations making up a single batch submission.
 
         Returns
@@ -121,7 +121,7 @@ class BCSDOrchestrator:
         return table.get(stage, cls._DEFAULT_VM_TYPE)
 
     @classmethod
-    def _resources_for(cls, stage: str, configs: list[BCSDConfig]) -> dict[str, int]:
+    def _resources_for(cls, stage: str, configs: list[DownscalingConfig]) -> dict[str, int]:
         """
         Select vCPU and memory for a stage, scaled to the batch's spatial extent.
 
@@ -129,7 +129,7 @@ class BCSDOrchestrator:
         ----------
         stage : str
             Pipeline stage name.
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configurations making up a single batch submission.
 
         Returns
@@ -149,13 +149,13 @@ class BCSDOrchestrator:
         vm_type = table[stage][0]
         return {"vcpu": vcpus(vm_type), "memory_mib": memory_mib(vm_type)}
 
-    def _config_payload_json(self, config: BCSDConfig) -> str:
+    def _config_payload_json(self, config: DownscalingConfig) -> str:
         """Serialize one task's ``CONFIG_JSON`` payload.
 
         Computed fields (``run_id``, ``config_hash``, ``is_sai_scenario``) are excluded
-        because ``BCSDConfig`` does not accept them as constructor inputs.
+        because ``DownscalingConfig`` does not accept them as constructor inputs.
         """
-        computed_fields = set(BCSDConfig.model_computed_fields.keys())
+        computed_fields = set(DownscalingConfig.model_computed_fields.keys())
         return json.dumps(
             {
                 **config.model_dump(exclude=computed_fields),
@@ -169,7 +169,7 @@ class BCSDOrchestrator:
     #: Page cap when listing job definition revisions; each page holds up to 100.
     _MAX_JOB_DEFINITION_PAGES = 100
 
-    def _job_name(self, stage: str, configs: list[BCSDConfig]) -> str:
+    def _job_name(self, stage: str, configs: list[DownscalingConfig]) -> str:
         """Build the deterministic job name shared by both remote executors.
 
         The descriptive middle grows with the batch's GCMs and variables, so a wide
@@ -244,7 +244,7 @@ class BCSDOrchestrator:
         return self._resolved_job_definition
 
     def _submit_batch_job(
-        self, stage: str, configs: list[BCSDConfig], manifest_uri: str | None
+        self, stage: str, configs: list[DownscalingConfig], manifest_uri: str | None
     ) -> str:
         """
         Submit one AWS Batch job covering ``configs`` and return its job ID.
@@ -257,7 +257,7 @@ class BCSDOrchestrator:
         ----------
         stage : str
             Pipeline stage name.
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configurations to run, in array-index order.
         manifest_uri : str or None
             Manifest location. Required when ``configs`` holds more than one entry.
@@ -375,7 +375,7 @@ class BCSDOrchestrator:
         self,
         cache: ArtifactCache,
         stage: str,
-        config: BCSDConfig,
+        config: DownscalingConfig,
         hist_member: str | None = None,
     ) -> StoreLocation:
         """Return the StoreLocation for a stage/config, binding config to cache.
@@ -389,13 +389,15 @@ class BCSDOrchestrator:
         cache.config = config
         return cache.stage_loc(stage, config, hist_member=hist_member)
 
-    def _stage_loc_for(self, cache: ArtifactCache, stage: str, config: BCSDConfig) -> StoreLocation:
+    def _stage_loc_for(
+        self, cache: ArtifactCache, stage: str, config: DownscalingConfig
+    ) -> StoreLocation:
         """Resolve a config's artifact location, supplying the historical member when due."""
         hist_member = self._resolve_hist_member(config) if stage == "fit_historical" else None
         return self._stage_loc(cache, stage, config, hist_member=hist_member)
 
     def _preexisting_artifacts(
-        self, cache: ArtifactCache, stage: str, configs: list[BCSDConfig]
+        self, cache: ArtifactCache, stage: str, configs: list[DownscalingConfig]
     ) -> list[str]:
         """Report which configs already have an artifact before this run submits anything.
 
@@ -421,7 +423,7 @@ class BCSDOrchestrator:
     # cross-variable dependency and are never wave-split.
     _DERIVED_VARIABLE_STAGES: frozenset[str] = frozenset({"fit_historical", "transform_scenario"})
 
-    def _dependency_waves(self, stage: str, configs: list[BCSDConfig]) -> list[list[int]]:
+    def _dependency_waves(self, stage: str, configs: list[DownscalingConfig]) -> list[list[int]]:
         """Split config indices into ordered execution waves within a stage.
 
         ``tasmin`` is never bias-corrected directly; it is reconstructed from its
@@ -435,7 +437,7 @@ class BCSDOrchestrator:
         ----------
         stage : str
             Pipeline stage being submitted.
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configs to be executed in this stage.
 
         Returns
@@ -452,9 +454,9 @@ class BCSDOrchestrator:
 
     def _run_in_dependency_waves(
         self,
-        executor: Callable[[str, list[BCSDConfig]], list[str]],
+        executor: Callable[[str, list[DownscalingConfig]], list[str]],
         stage: str,
-        configs: list[BCSDConfig],
+        configs: list[DownscalingConfig],
     ) -> list[str]:
         """Run ``configs`` through ``executor`` one dependency wave at a time.
 
@@ -473,9 +475,9 @@ class BCSDOrchestrator:
         self,
         cache: ArtifactCache,
         stage: str,
-        configs: list[BCSDConfig],
+        configs: list[DownscalingConfig],
         force: bool = False,
-    ) -> tuple[list[BCSDConfig], list[str | None]]:
+    ) -> tuple[list[DownscalingConfig], list[str | None]]:
         """Split configs into those still needing a run and the paths of those cached.
 
         Shared by :meth:`submit_stage` and :meth:`plan` so a cost preview cannot disagree
@@ -487,7 +489,7 @@ class BCSDOrchestrator:
             ``(configs_to_run, output_paths)``, where ``output_paths`` is positional over
             ``configs`` and holds ``None`` wherever the artifact still has to be produced.
         """
-        configs_to_run: list[BCSDConfig] = []
+        configs_to_run: list[DownscalingConfig] = []
         output_paths: list[str | None] = []
         for config in configs:
             loc = self._stage_loc_for(cache, stage, config)
@@ -498,7 +500,9 @@ class BCSDOrchestrator:
                 output_paths.append(None)
         return configs_to_run, output_paths
 
-    def plan_stage(self, stage: str, configs: list[BCSDConfig], force: bool = False) -> StagePlan:
+    def plan_stage(
+        self, stage: str, configs: list[DownscalingConfig], force: bool = False
+    ) -> StagePlan:
         """
         Report what one stage would submit for ``configs``, without submitting anything.
 
@@ -510,7 +514,7 @@ class BCSDOrchestrator:
         ----------
         stage : str
             Pipeline stage name.
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configurations exactly as they would be handed to :meth:`submit_stage`.
         force : bool, optional
             Ignore cached artifacts.
@@ -530,7 +534,7 @@ class BCSDOrchestrator:
             regional=self._is_regional(to_run or configs),
         )
 
-    def plan(self, configs: list[BCSDConfig], force: bool = False) -> list[StagePlan]:
+    def plan(self, configs: list[DownscalingConfig], force: bool = False) -> list[StagePlan]:
         """
         Report what each stage would submit, without submitting anything.
 
@@ -540,7 +544,7 @@ class BCSDOrchestrator:
 
         Parameters
         ----------
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             The full set of configurations for the run.
         force : bool, optional
             Ignore cached artifacts, matching the same flag on the run.
@@ -562,7 +566,7 @@ class BCSDOrchestrator:
     def submit_stage(
         self,
         stage: Literal["prepare_observations", "fit_historical", "transform_scenario"],
-        configs: list[BCSDConfig],
+        configs: list[DownscalingConfig],
         force: bool = False,
         executor: str | None = None,
     ) -> list[str]:
@@ -573,7 +577,7 @@ class BCSDOrchestrator:
         ----------
         stage : {'prepare_observations', 'fit_historical', 'transform_scenario'}
             Pipeline stage to execute
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             List of configurations to process
         force : bool, optional
             Force recomputation even if cached
@@ -637,7 +641,7 @@ class BCSDOrchestrator:
         return output_paths
 
     def _submit_to_coiled(
-        self, stage: str, configs: list[BCSDConfig], max_retries: int = 3
+        self, stage: str, configs: list[DownscalingConfig], max_retries: int = 3
     ) -> list[str]:
         """
         Submit tasks to Coiled using batch API.
@@ -655,7 +659,7 @@ class BCSDOrchestrator:
         ----------
         stage : str
             Pipeline stage ('prepare_observations', 'fit_historical', 'transform_scenario')
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configurations to process
 
         Returns
@@ -902,7 +906,7 @@ class BCSDOrchestrator:
                 )
             time.sleep(poll_seconds)
 
-    def _submit_to_aws_batch(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
+    def _submit_to_aws_batch(self, stage: str, configs: list[DownscalingConfig]) -> list[str]:
         """
         Run a stage's tasks on AWS Batch.
 
@@ -916,7 +920,7 @@ class BCSDOrchestrator:
         ----------
         stage : str
             Pipeline stage name.
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configurations to process.
 
         Returns
@@ -969,7 +973,7 @@ class BCSDOrchestrator:
         logger.info(f"✓ All {len(configs)} {stage} tasks completed")
         return [f"{loc.store_path}::{loc.group}" for loc in map(loc_for, configs)]
 
-    def _run_local(self, stage: str, configs: list[BCSDConfig]) -> list[str]:
+    def _run_local(self, stage: str, configs: list[DownscalingConfig]) -> list[str]:
         """
         Run tasks locally (sequential execution).
 
@@ -977,7 +981,7 @@ class BCSDOrchestrator:
         ----------
         stage : str
             Pipeline stage
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configurations to process
 
         Returns
@@ -989,7 +993,7 @@ class BCSDOrchestrator:
         cache = self._get_cache()
 
         for config in configs:
-            pipeline = BCSDPipeline(config, self.options)
+            pipeline = DownscalingPipeline(config, self.options)
 
             if stage == "prepare_observations":
                 pipeline.prepare_observations()
@@ -1008,7 +1012,7 @@ class BCSDOrchestrator:
 
     def run_full_workflow(
         self,
-        configs: list[BCSDConfig],
+        configs: list[DownscalingConfig],
         force: bool = False,
         executor: str | None = None,
     ) -> dict[str, list[str]]:
@@ -1022,7 +1026,7 @@ class BCSDOrchestrator:
 
         Parameters
         ----------
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             List of configurations to process
         force : bool, optional
             Force recomputation of all stages
@@ -1065,7 +1069,7 @@ class BCSDOrchestrator:
             "transform_scenario": scenario_paths,
         }
 
-    def _deduplicate_obs_configs(self, configs: list[BCSDConfig]) -> list[BCSDConfig]:
+    def _deduplicate_obs_configs(self, configs: list[DownscalingConfig]) -> list[DownscalingConfig]:
         """
         Extract unique (GCM, obs_dataset, variable) combinations for obs regridding.
 
@@ -1074,12 +1078,12 @@ class BCSDOrchestrator:
 
         Parameters
         ----------
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             All configurations
 
         Returns
         -------
-        list[BCSDConfig]
+        list[DownscalingConfig]
             Deduplicated configs for obs stage
         """
         seen = set()
@@ -1091,7 +1095,9 @@ class BCSDOrchestrator:
                 unique.append(config)
         return unique
 
-    def _deduplicate_historical_configs(self, configs: list[BCSDConfig]) -> list[BCSDConfig]:
+    def _deduplicate_historical_configs(
+        self, configs: list[DownscalingConfig]
+    ) -> list[DownscalingConfig]:
         """
         Extract unique (GCM, variable, ensemble) combinations for historical downscaling.
 
@@ -1107,12 +1113,12 @@ class BCSDOrchestrator:
 
         Parameters
         ----------
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             All configurations
 
         Returns
         -------
-        list[BCSDConfig]
+        list[DownscalingConfig]
             Deduplicated configs for historical stage
         """
         seen = set()
@@ -1131,17 +1137,17 @@ class BCSDOrchestrator:
         return unique
 
     @staticmethod
-    def _resolve_hist_member(config: BCSDConfig) -> str:
+    def _resolve_hist_member(config: DownscalingConfig) -> str:
         """
         Return the resolved historical ensemble member for a config.
 
-        Mirrors the lineage resolution in ``BCSDPipeline.__init__``: for SAI/SSP245
+        Mirrors the lineage resolution in ``DownscalingPipeline.__init__``: for SAI/SSP245
         scenarios the raw ``ensemble_member`` may map to a different historical parent
         member.  Falls back to ``config.ensemble_member`` when no lineage entry exists.
 
         Parameters
         ----------
-        config : BCSDConfig
+        config : DownscalingConfig
             Run configuration
 
         Returns
@@ -1160,13 +1166,13 @@ class BCSDOrchestrator:
         except KeyError:
             return config.ensemble_member
 
-    def get_status(self, configs: list[BCSDConfig]) -> dict[str, dict]:
+    def get_status(self, configs: list[DownscalingConfig]) -> dict[str, dict]:
         """
         Get cache status for all configs.
 
         Parameters
         ----------
-        configs : list[BCSDConfig]
+        configs : list[DownscalingConfig]
             Configurations to check
 
         Returns

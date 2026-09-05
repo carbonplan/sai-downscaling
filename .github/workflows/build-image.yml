@@ -127,7 +127,7 @@ jobs:
                     exit 1
                   fi
 
-                  # The stage form, as BCSDOrchestrator._submit_batch_job sends it.
+                  # The stage form, as DownscalingOrchestrator._submit_batch_job sends it.
                   docker run --rm "$IMAGE" python -m saidownscale.batch_runner --help >/dev/null
 
                   # The validate form, as the deploy workflow's batch-run action sends it.

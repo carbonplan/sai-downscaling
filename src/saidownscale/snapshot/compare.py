@@ -1,4 +1,4 @@
-"""Comparison of BCSD output datasets and datatrees, exact by default.
+"""Comparison of downscaling output datasets and datatrees, exact by default.
 
 The single :func:`compare` engine backs the comparison notebook (via
 :func:`saidownscale.snapshot.runs.compare_runs`), so the notebook's verdict comes straight
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import xarray as xr
 
-from saidownscale.bcsd_config import METHOD_SEGMENTS
+from saidownscale.downscaling_config import METHOD_SEGMENTS
 from saidownscale.snapshot.tolerances import Tolerance
 
 #: Verdict for a leaf with no caller-supplied tolerance. Exact equality is the strictest
@@ -226,7 +226,7 @@ def _select_matching_branch(
     """Narrow ``candidate`` to the branch whose leaf paths line up with ``snapshot``.
 
     Method-dependent groups are namespaced under a leading downscaling-method segment
-    (``bcsd``, ``qdmsd``; see :data:`saidownscale.bcsd_config.METHOD_SEGMENTS`), so a
+    (``bcsd``, ``qdmsd``; see :data:`saidownscale.downscaling_config.METHOD_SEGMENTS`), so a
     method-namespaced candidate's leaves sit one level deeper than a pre-namespacing
     snapshot's (``bcsd/g6_1p5k/tas/003/tas`` vs ``g6_1p5k/tas/003/tas``).
     :func:`compare` matches leaves by literal path, so diffing the two trees as-is would

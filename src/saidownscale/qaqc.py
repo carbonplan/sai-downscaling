@@ -1,5 +1,5 @@
 """
-QA/QC checks for consolidated BCSD output stores.
+QA/QC checks for consolidated downscaling output stores.
 
 Runs spatial, temporal, and physical-constraint checks against merged output
 datatrees, including NaN detection, range validation, and temperature monotonicity.

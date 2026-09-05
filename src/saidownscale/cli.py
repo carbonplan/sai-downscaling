@@ -1,5 +1,5 @@
 """
-Command-line interface for the BCSD downscaling pipeline.
+Command-line interface for the downscaling pipeline.
 
 Provides a typer-based ``bcsd`` command with subcommands for running, validating, and
 inspecting the pipeline. Supports both single-config and matrix-expansion execution
@@ -26,10 +26,15 @@ from rich.table import Table
 from rich.tree import Tree
 
 from saidownscale import __version__
-from saidownscale.bcsd_config import BCSDConfig, DownscalingMethod, PipelineOptions, VariableConfig
 from saidownscale.cache import ArtifactCache
 from saidownscale.cost import RATES_AS_OF, estimate_workflow
-from saidownscale.orchestration import BCSDOrchestrator
+from saidownscale.downscaling_config import (
+    DownscalingConfig,
+    DownscalingMethod,
+    PipelineOptions,
+    VariableConfig,
+)
+from saidownscale.orchestration import DownscalingOrchestrator
 from saidownscale.validation import CheckResult, CheckStatus
 
 console = Console()
@@ -47,7 +52,7 @@ _STATUS_SYMBOL = {
     CheckStatus.SKIP: "-",
 }
 
-app = typer.Typer(help="BCSD downscaling pipeline with automatic caching")
+app = typer.Typer(help="Downscaling pipeline (BCSD or QDMSD) with automatic caching")
 
 
 @contextlib.contextmanager
@@ -104,7 +109,7 @@ def _build_check_matrix_table(
     return tbl
 
 
-# (plural key, singular key, BCSDConfig field). The first four axes select a slice of
+# (plural key, singular key, DownscalingConfig field). The first four axes select a slice of
 # input data. 'downscaling_method' is different in kind: it selects an algorithm, and
 # picks which per-variable defaults table VariableConfig is built from, so expanding
 # over it re-derives variable_config per combination rather than reusing one.
@@ -117,7 +122,7 @@ _MATRIX_FIELDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def _print_lineage_summary(configs: list[BCSDConfig]) -> None:
+def _print_lineage_summary(configs: list[DownscalingConfig]) -> None:
     """Print a compact table of resolved ensemble member lineage.
 
     Only rows where lineage differs from ensemble_member are shown, deduplicated
@@ -237,7 +242,7 @@ def _print_validate_lineage_summary(gcm: str, scenarios: list[str]) -> None:
         console.print(tbl)
 
 
-def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
+def _validate_predict_periods(configs: list[DownscalingConfig]) -> None:
     """Reject configs whose predict_period falls outside a member's valid data extent."""
     from saidownscale.validation import CheckStatus, check_config_time_domain
 
@@ -251,7 +256,7 @@ def _validate_predict_periods(configs: list[BCSDConfig]) -> None:
         )
 
 
-def _validate_lineage_members(configs: list[BCSDConfig]) -> None:
+def _validate_lineage_members(configs: list[DownscalingConfig]) -> None:
     """Cross-scenario validation: check resolved members exist in the unified datatree store.
 
     Opens each GCM's unified datatree at most once and inspects group children to
@@ -447,7 +452,7 @@ def _reject_debias_approach_across_methods(
     """
     Reject an explicit ``debias_approach`` when the matrix spans more than one method.
 
-    ``BCSDConfig`` pins ``debias_approach='qdm'`` to ``downscaling_method='QDMSD'`` and
+    ``DownscalingConfig`` pins ``debias_approach='qdm'`` to ``downscaling_method='QDMSD'`` and
     forbids it under ``'BCSD'``, so any single explicit value contradicts one arm of a
     multi-method product. Raising here names the matrix as the cause. Letting the
     cross-field invariant fire instead produces an error that reads like a typo in one
@@ -482,8 +487,8 @@ def _reject_debias_approach_across_methods(
         )
 
 
-def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
-    """Expand a matrix config dict into one BCSDConfig per cartesian-product combination."""
+def _expand_matrix_config(config_dict: dict) -> list[DownscalingConfig]:
+    """Expand a matrix config dict into one DownscalingConfig per cartesian-product combination."""
     d = dict(config_dict)
     axes: dict[str, list] = {}
     for plural, singular, field in _MATRIX_FIELDS:
@@ -510,7 +515,7 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
 
     # A top-level 'debias_approach' applies to every variable in the matrix, e.g.
     # switching a whole run between standard quantile mapping and quantile delta
-    # mapping. It has to be popped out of `d` here rather than left for BCSDConfig,
+    # mapping. It has to be popped out of `d` here rather than left for DownscalingConfig,
     # which rejects 'debias_approach' at the top level since it's a per-variable
     # setting everywhere else.
     run_wide_debias_approach = d.pop("debias_approach", None)
@@ -563,7 +568,7 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
     ):
         kwargs = dict(d)
         # When the key is missing, leave both downscaling_method and variable_config out
-        # of the kwargs so BCSDConfig raises the single "downscaling_method is required"
+        # of the kwargs so DownscalingConfig raises the single "downscaling_method is required"
         # error rather than a table lookup failure or a None-is-not-a-valid-method error.
         if method is not None:
             kwargs["downscaling_method"] = method
@@ -572,7 +577,7 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
                     variable, method, run_wide, overrides
                 )
         configs.append(
-            BCSDConfig(
+            DownscalingConfig(
                 gcm=gcm,
                 variable=variable,
                 ensemble_member=member,
@@ -583,11 +588,11 @@ def _expand_matrix_config(config_dict: dict) -> list[BCSDConfig]:
     return configs
 
 
-def load_configs(config_path: str) -> tuple[list[BCSDConfig], PipelineOptions]:
+def load_configs(config_path: str) -> tuple[list[DownscalingConfig], PipelineOptions]:
     """
     Load configuration(s) from YAML file or directory.
 
-    The same flat YAML is parsed into both BCSDConfig (run identity) and
+    The same flat YAML is parsed into both DownscalingConfig (run identity) and
     PipelineOptions (operational settings). Unknown keys are silently ignored
     by each class via extra="ignore".
 
@@ -598,7 +603,7 @@ def load_configs(config_path: str) -> tuple[list[BCSDConfig], PipelineOptions]:
 
     Returns
     -------
-    tuple[list[BCSDConfig], PipelineOptions]
+    tuple[list[DownscalingConfig], PipelineOptions]
         Loaded run configs and operational options (from the first YAML file).
     """
     path = Path(config_path)
@@ -612,7 +617,7 @@ def load_configs(config_path: str) -> tuple[list[BCSDConfig], PipelineOptions]:
         if _is_matrix_config(config_dict):
             configs.extend(_expand_matrix_config(config_dict))
         else:
-            configs.append(BCSDConfig(**config_dict))
+            configs.append(DownscalingConfig(**config_dict))
 
     elif path.is_dir():
         for yaml_file in sorted([*path.rglob("*.yaml"), *path.rglob("*.yml")]):
@@ -623,7 +628,7 @@ def load_configs(config_path: str) -> tuple[list[BCSDConfig], PipelineOptions]:
             if _is_matrix_config(config_dict):
                 configs.extend(_expand_matrix_config(config_dict))
             else:
-                configs.append(BCSDConfig(**config_dict))
+                configs.append(DownscalingConfig(**config_dict))
 
     else:
         raise ValueError(f"Config path does not exist: {config_path}")
@@ -662,9 +667,9 @@ def configs_from_matrix(
     disaggregation_clim_method: str | None = None,
     detrend_method: str | None = None,
     variable_overrides: dict[str, dict] | None = None,
-) -> tuple[list[BCSDConfig], PipelineOptions]:
+) -> tuple[list[DownscalingConfig], PipelineOptions]:
     """
-    Generate BCSDConfig objects for every cartesian-product combination of GCMs,
+    Generate DownscalingConfig objects for every cartesian-product combination of GCMs,
     variables, ensemble members, scenarios, and downscaling methods.
 
     Parameters
@@ -729,7 +734,7 @@ def configs_from_matrix(
 
     Returns
     -------
-    list[BCSDConfig]
+    list[DownscalingConfig]
         One config per cartesian-product combination.
     """
     options = PipelineOptions(
@@ -761,7 +766,7 @@ def configs_from_matrix(
         gcms, variables, members, scenarios, downscaling_methods
     ):
         configs.append(
-            BCSDConfig(
+            DownscalingConfig(
                 gcm=gcm,
                 variable=variable,
                 ensemble_member=member,
@@ -811,8 +816,8 @@ def _resolve_stage(stage: str | None) -> str | None:
 
 
 def _confirm_cost(
-    orchestrator: BCSDOrchestrator,
-    configs: list[BCSDConfig],
+    orchestrator: DownscalingOrchestrator,
+    configs: list[DownscalingConfig],
     executor: str | None,
     force: bool,
     assume_yes: bool,
@@ -842,7 +847,7 @@ def _confirm_cost(
     return typer.confirm("Submit these tasks?", default=False)
 
 
-def _render_run_environment(orchestrator: BCSDOrchestrator, executor_name: str) -> None:
+def _render_run_environment(orchestrator: DownscalingOrchestrator, executor_name: str) -> None:
     """Print where a run will execute and, for AWS Batch, which image it will run.
 
     The image answers "am I about to run the code I think I am", and the cost prompt is the
@@ -875,8 +880,8 @@ def _render_run_environment(orchestrator: BCSDOrchestrator, executor_name: str) 
 
 
 def _render_cost_plan(
-    orchestrator: BCSDOrchestrator,
-    configs: list[BCSDConfig],
+    orchestrator: DownscalingOrchestrator,
+    configs: list[DownscalingConfig],
     executor: str | None,
     force: bool,
     stage: str | None = None,
@@ -969,7 +974,7 @@ def run(
         False, "--save-intermediate", help="Save and display intermediate artifacts"
     ),
 ):
-    """Run BCSD pipeline with automatic caching and resumability"""
+    """Run downscaling pipeline with automatic caching and resumability"""
 
     # Load configs
     loaded = [load_configs(path) for path in config_path]
@@ -987,7 +992,7 @@ def run(
     _validate_lineage_members(configs)
     _validate_predict_periods(configs)
 
-    orchestrator = BCSDOrchestrator(options)
+    orchestrator = DownscalingOrchestrator(options)
 
     if dry_run:
         _render_cost_plan(orchestrator, configs, executor, force, stage=stage)
@@ -1075,18 +1080,18 @@ def _insert_group_path(node: Tree, segments: list[str]) -> None:
     _insert_group_path(node.add(label), segments[1:])
 
 
-def _coarse_hist_paths(configs: list[BCSDConfig], cache: ArtifactCache) -> list[str]:
+def _coarse_hist_paths(configs: list[DownscalingConfig], cache: ArtifactCache) -> list[str]:
     """Compute debiased_coarse_historical StoreLocation paths for each config."""
     paths = []
     for config in configs:
         cache.config = config
-        hist_member = BCSDOrchestrator._resolve_hist_member(config)
+        hist_member = DownscalingOrchestrator._resolve_hist_member(config)
         loc = cache.debiased_coarse_historical_loc(hist_member)
         paths.append(f"{loc.store_path}::{loc.group}")
     return paths
 
 
-def _coarse_scenario_paths(configs: list[BCSDConfig], cache: ArtifactCache) -> list[str]:
+def _coarse_scenario_paths(configs: list[DownscalingConfig], cache: ArtifactCache) -> list[str]:
     """Compute debiased_coarse_scenario StoreLocation paths for each config."""
     paths = []
     for config in configs:
@@ -1098,7 +1103,7 @@ def _coarse_scenario_paths(configs: list[BCSDConfig], cache: ArtifactCache) -> l
 
 def _print_paths_summary(
     paths: list[str],
-    _configs: list[BCSDConfig],
+    _configs: list[DownscalingConfig],
     stage: str,
     cache: ArtifactCache | None = None,
 ) -> None:
@@ -1400,7 +1405,7 @@ def run_matrix(
         console.print(table)
         return
 
-    orchestrator = BCSDOrchestrator(options)
+    orchestrator = DownscalingOrchestrator(options)
 
     if not _confirm_cost(orchestrator, configs, executor, force, yes, stage=stage):
         console.print("[yellow]Aborted; nothing was submitted.[/yellow]")
@@ -1449,7 +1454,7 @@ def status(
     options = loaded[0][1] if loaded else PipelineOptions()
     if branch is not None:
         options = options.model_copy(update={"branch": branch})
-    orchestrator = BCSDOrchestrator(options)
+    orchestrator = DownscalingOrchestrator(options)
 
     # Show cache configuration if verbose
     if verbose and configs:

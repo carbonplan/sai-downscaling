@@ -1,5 +1,5 @@
 """
-Unit tests for BCSDPipeline.
+Unit tests for DownscalingPipeline.
 
 All compute-heavy functions (get_obs, get_experiment, ibicus, xr.open_zarr, etc.)
 are mocked so no real data, S3 access, or science computation is required.
@@ -28,10 +28,10 @@ from conftest import make_icechunk_group as _make_icechunk_group
 from ibicus.debias import QuantileDeltaMapping, QuantileMapping
 from ibicus.utils import PrecipitationHurdleModelGamma
 
-from saidownscale.bcsd_config import BCSDConfig, PipelineOptions
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 from saidownscale.encoding import SHARD_LAT_COARSE, SHARD_LON_COARSE, SHARD_TIME_COARSE
 from saidownscale.pipeline import (
-    BCSDPipeline,
+    DownscalingPipeline,
     _assert_stitched_continuity,
     _location_seed,
     _make_debiaser,
@@ -54,7 +54,7 @@ def _mock_prepare_obs_compute():
         patch("saidownscale.pipeline.interpolate_fine_to_coarse_grid") as mock_interp,
         patch("saidownscale.pipeline.subset_space") as mock_subset,
         patch("saidownscale.pipeline.rechunk") as mock_rechunk,
-        patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
+        patch.object(DownscalingPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         yield mock_get_obs, mock_get_exp, mock_interp, mock_subset, mock_rechunk
 
@@ -73,8 +73,8 @@ def _mock_fit_historical_compute():
         patch("saidownscale.pipeline.assert_no_nans"),
         patch("saidownscale.pipeline._SeededQuantileMapping") as mock_qm,
         patch("saidownscale.pipeline.dask"),
-        patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
-        patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
+        patch.object(DownscalingPipeline, "_open_from_icechunk", return_value=MagicMock()),
+        patch.object(DownscalingPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         # debiaser.apply returns something downstream code treats as an array
         mock_qm.from_variable.return_value.apply.return_value = MagicMock()
@@ -100,10 +100,12 @@ def _mock_transform_scenario_compute():
         patch("saidownscale.pipeline.assert_no_nans"),
         patch("saidownscale.pipeline._SeededQuantileMapping") as mock_qm,
         patch("saidownscale.pipeline.dask"),
-        patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
-        patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
-        patch.object(BCSDPipeline, "_apply_bias_correction_scenario", return_value=MagicMock()),
-        patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
+        patch.object(DownscalingPipeline, "_open_from_icechunk", return_value=MagicMock()),
+        patch.object(DownscalingPipeline, "_build_ocean_mask", return_value=MagicMock()),
+        patch.object(
+            DownscalingPipeline, "_apply_bias_correction_scenario", return_value=MagicMock()
+        ),
+        patch.object(DownscalingPipeline, "_write_to_icechunk", return_value="snapshot-abc"),
     ):
         mock_qm.from_variable.return_value.apply.return_value = MagicMock()
         yield
@@ -125,9 +127,9 @@ def pipeline_options(tmp_path) -> PipelineOptions:
 
 
 @pytest.fixture
-def config() -> BCSDConfig:
+def config() -> DownscalingConfig:
     """Standard SSP245 config."""
-    return BCSDConfig(
+    return DownscalingConfig(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
@@ -139,9 +141,9 @@ def config() -> BCSDConfig:
 
 
 @pytest.fixture
-def pr_config() -> BCSDConfig:
+def pr_config() -> DownscalingConfig:
     """Precipitation config (no detrending, divide downscaling method)."""
-    return BCSDConfig(
+    return DownscalingConfig(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="pr",
@@ -153,17 +155,17 @@ def pr_config() -> BCSDConfig:
 
 
 @pytest.fixture
-def pipeline(config, pipeline_options) -> BCSDPipeline:
-    return BCSDPipeline(config, pipeline_options)
+def pipeline(config, pipeline_options) -> DownscalingPipeline:
+    return DownscalingPipeline(config, pipeline_options)
 
 
 @pytest.fixture
-def pipeline_pr(pr_config, pipeline_options) -> BCSDPipeline:
-    return BCSDPipeline(pr_config, pipeline_options)
+def pipeline_pr(pr_config, pipeline_options) -> DownscalingPipeline:
+    return DownscalingPipeline(pr_config, pipeline_options)
 
 
 @pytest.fixture
-def all_deps_present(pipeline) -> BCSDPipeline:
+def all_deps_present(pipeline) -> DownscalingPipeline:
     """Pipeline whose obs and historical dependencies are pre-created locally."""
     _make_icechunk_group(pipeline.cache.obs_loc, branch=pipeline.cache.branch)
     _make_icechunk_group(
@@ -261,7 +263,7 @@ class TestPrepareObservationsCompute:
         mock_subset.assert_not_called()
 
     def test_subset_space_called_twice_for_regional_run(self, tmp_path):
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
@@ -274,7 +276,7 @@ class TestPrepareObservationsCompute:
             verbose=False,
             rechunk_workflow=False,
         )
-        p = BCSDPipeline(cfg, opts)
+        p = DownscalingPipeline(cfg, opts)
         with _mock_prepare_obs_compute() as (_, _, _, mock_subset, _):
             p.prepare_observations()
         # Once for obs_fine, once for model_grid
@@ -287,7 +289,7 @@ class TestPrepareObservationsCompute:
         mock_rechunk.assert_not_called()
 
     def test_rechunk_called_when_enabled(self, tmp_path):
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
@@ -299,7 +301,7 @@ class TestPrepareObservationsCompute:
             verbose=False,
             rechunk_workflow=True,
         )
-        p = BCSDPipeline(cfg, opts)
+        p = DownscalingPipeline(cfg, opts)
         with _mock_prepare_obs_compute() as (_, _, _, _, mock_rechunk):
             p.prepare_observations()
         mock_rechunk.assert_called_once()
@@ -333,7 +335,7 @@ class TestBuildOceanMask:
             patch("rasterix.rasterize.geometry_mask", return_value=MagicMock()),
         ):
             mock_catalog.get.return_value.to_geodataframe.return_value = mock_gdf
-            BCSDPipeline._build_ocean_mask(self._make_da())
+            DownscalingPipeline._build_ocean_mask(self._make_da())
         mock_catalog.get.assert_called_once_with("ocean-mask")
 
     def test_passes_lat_sorted_descending_to_geometry_mask(self):
@@ -352,7 +354,7 @@ class TestBuildOceanMask:
         ):
             mock_catalog.get.return_value.to_geodataframe.return_value = mock_gdf
             da = self._make_da()  # lat already descending: [60, 30, 0, -30]
-            BCSDPipeline._build_ocean_mask(da)
+            DownscalingPipeline._build_ocean_mask(da)
 
         assert captured["lat"] == sorted(captured["lat"], reverse=True)
 
@@ -415,7 +417,7 @@ class TestFitHistoricalBehavior:
 
 class TestTransformScenarioBehavior:
     def test_raises_when_scenario_is_none(self, tmp_path):
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
@@ -427,7 +429,7 @@ class TestTransformScenarioBehavior:
             verbose=False,
         )
         with pytest.raises(ValueError, match="scenario must be specified"):
-            BCSDPipeline(cfg, opts).transform_scenario()
+            DownscalingPipeline(cfg, opts).transform_scenario()
 
     def test_raises_when_both_deps_missing(self, pipeline):
         with pytest.raises(ValueError, match="Missing dependencies"):
@@ -521,19 +523,19 @@ class TestTransformScenarioBehavior:
             rechunk_workflow=False,
             apply_ocean_mask=True,
         )
-        p = BCSDPipeline(pr_config, opts)
+        p = DownscalingPipeline(pr_config, opts)
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
         _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
         with _mock_transform_scenario_compute():
             with patch.object(
-                BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()
+                DownscalingPipeline, "_build_ocean_mask", return_value=MagicMock()
             ) as mock_mask:
                 p.transform_scenario()
         mock_mask.assert_called_once()
 
     def test_ocean_mask_not_applied_when_disabled(self, tmp_path):
         """_build_ocean_mask is not called when apply_ocean_mask=False."""
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="pr",
@@ -549,12 +551,12 @@ class TestTransformScenarioBehavior:
             rechunk_workflow=False,
             apply_ocean_mask=False,
         )
-        p = BCSDPipeline(cfg, opts)
+        p = DownscalingPipeline(cfg, opts)
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
         _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
         with _mock_transform_scenario_compute():
             with patch.object(
-                BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()
+                DownscalingPipeline, "_build_ocean_mask", return_value=MagicMock()
             ) as mock_mask:
                 p.transform_scenario()
         mock_mask.assert_not_called()
@@ -576,7 +578,7 @@ class TestTransformScenarioBehavior:
         _make_icechunk_group(p.cache.historical_loc(p._hist_member), branch=p.cache.branch)
         with _mock_transform_scenario_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+                DownscalingPipeline, "_write_to_icechunk", return_value="snap"
             ) as mock_write:
                 p.transform_scenario()
 
@@ -672,8 +674,8 @@ class TestTasminStageDispatch:
     """
 
     @pytest.fixture
-    def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
-        cfg = BCSDConfig(
+    def tasmin_pipeline(self, pipeline_options) -> DownscalingPipeline:
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tasmin",
@@ -682,7 +684,7 @@ class TestTasminStageDispatch:
             predict_period_start=2015,
             predict_period_end=2084,
         )
-        return BCSDPipeline(cfg, pipeline_options)
+        return DownscalingPipeline(cfg, pipeline_options)
 
     def test_transform_scenario_dispatches_tasmin(self, tasmin_pipeline):
         with patch.object(
@@ -735,8 +737,8 @@ class TestTasminEagerDisaggInput:
     """
 
     @pytest.fixture
-    def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
-        cfg = BCSDConfig(
+    def tasmin_pipeline(self, pipeline_options) -> DownscalingPipeline:
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tasmin",
@@ -745,7 +747,7 @@ class TestTasminEagerDisaggInput:
             predict_period_start=2015,
             predict_period_end=2084,
         )
-        return BCSDPipeline(cfg, pipeline_options)
+        return DownscalingPipeline(cfg, pipeline_options)
 
     @staticmethod
     def _lazy_coarse_pair() -> xr.Dataset:
@@ -1168,7 +1170,7 @@ class TestWeibullZeroBounded:
         rsds shares that gate in ``pipeline.py`` but no longer reaches it by default:
         its BCSD table entry is ``nonparametric`` as of #523, so ``pr`` stands in here.
         """
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="pr",
@@ -1178,7 +1180,7 @@ class TestWeibullZeroBounded:
             predict_period_end=2100,
         )
         assert cfg.variable_config.debias_approach == "nonparametric_hybrid_2sided"
-        pipeline = BCSDPipeline(cfg, pipeline_options)
+        pipeline = DownscalingPipeline(cfg, pipeline_options)
 
         time = pd.date_range("2015-01-01", periods=6)
         coords = {"time": time, "lat": [10.0, 20.0], "lon": [0.0, 1.0, 2.0]}
@@ -1255,7 +1257,7 @@ class TestFitHistoricalCoarseOutput:
             return "snapshot"
 
         with _mock_fit_historical_compute():
-            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+            with patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=capture_write):
                 pipeline.fit_historical()
 
         coarse_loc = pipeline.cache.debiased_coarse_historical_loc(pipeline._hist_member)
@@ -1273,7 +1275,7 @@ class TestFitHistoricalCoarseOutput:
             return "snapshot"
 
         with _mock_fit_historical_compute():
-            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+            with patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=capture_write):
                 pipeline.fit_historical()
 
         coarse_loc = pipeline.cache.debiased_coarse_historical_loc(pipeline._hist_member)
@@ -1292,7 +1294,7 @@ class TestFitHistoricalCoarseOutput:
 
         with _mock_fit_historical_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+                DownscalingPipeline, "_write_to_icechunk", return_value="snap"
             ) as mock_write:
                 pipeline.fit_historical()
 
@@ -1325,7 +1327,7 @@ class TestTransformScenarioCoarseOutput:
             return "snapshot"
 
         with _mock_transform_scenario_compute():
-            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+            with patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=capture_write):
                 p.transform_scenario()
 
         coarse_loc = p.cache.debiased_coarse_scenario_loc()
@@ -1345,7 +1347,7 @@ class TestTransformScenarioCoarseOutput:
             return "snapshot"
 
         with _mock_transform_scenario_compute():
-            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+            with patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=capture_write):
                 p.transform_scenario()
 
         coarse_loc = p.cache.debiased_coarse_scenario_loc()
@@ -1366,7 +1368,7 @@ class TestTransformScenarioCoarseOutput:
 
         with _mock_transform_scenario_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+                DownscalingPipeline, "_write_to_icechunk", return_value="snap"
             ) as mock_write:
                 p.transform_scenario()
 
@@ -1392,8 +1394,8 @@ class TestTransformScenarioCoarseOutput:
 
 
 @pytest.fixture
-def dtr_config() -> BCSDConfig:
-    return BCSDConfig(
+def dtr_config() -> DownscalingConfig:
+    return DownscalingConfig(
         gcm="CESM2-WACCM6",
         variable="dtr",
         ensemble_member="008",
@@ -1405,8 +1407,8 @@ def dtr_config() -> BCSDConfig:
 
 
 @pytest.fixture
-def dtr_pipeline(dtr_config, pipeline_options) -> BCSDPipeline:
-    return BCSDPipeline(dtr_config, pipeline_options)
+def dtr_pipeline(dtr_config, pipeline_options) -> DownscalingPipeline:
+    return DownscalingPipeline(dtr_config, pipeline_options)
 
 
 def _write_recorder(calls: list):
@@ -1427,7 +1429,7 @@ class TestCoarseOnlyFitHistorical:
 
         with _mock_fit_historical_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+                DownscalingPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
             ):
                 p.fit_historical()
 
@@ -1441,7 +1443,7 @@ class TestCoarseOnlyFitHistorical:
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
 
         with _mock_fit_historical_compute():
-            with patch.object(BCSDPipeline, "_apply_spatial_downscaling") as mock_disagg:
+            with patch.object(DownscalingPipeline, "_apply_spatial_downscaling") as mock_disagg:
                 p.fit_historical()
 
         mock_disagg.assert_not_called()
@@ -1477,7 +1479,7 @@ class TestCoarseOnlyFitHistorical:
 
         with _mock_fit_historical_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+                DownscalingPipeline, "_write_to_icechunk", return_value="snap"
             ) as mock_write:
                 p.fit_historical()
 
@@ -1486,7 +1488,7 @@ class TestCoarseOnlyFitHistorical:
 
 class TestCoarseOnlyTransformScenario:
     @staticmethod
-    def _seed_deps(p: BCSDPipeline) -> None:
+    def _seed_deps(p: DownscalingPipeline) -> None:
         _make_icechunk_group(p.cache.obs_loc, branch=p.cache.branch)
         _make_icechunk_group(
             p.cache.debiased_coarse_historical_loc(p._hist_member), branch=p.cache.branch
@@ -1499,7 +1501,7 @@ class TestCoarseOnlyTransformScenario:
 
         with _mock_transform_scenario_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+                DownscalingPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
             ):
                 p.transform_scenario()
 
@@ -1512,7 +1514,7 @@ class TestCoarseOnlyTransformScenario:
         self._seed_deps(p)
 
         with _mock_transform_scenario_compute():
-            with patch.object(BCSDPipeline, "_apply_spatial_downscaling") as mock_disagg:
+            with patch.object(DownscalingPipeline, "_apply_spatial_downscaling") as mock_disagg:
                 p.transform_scenario()
 
         mock_disagg.assert_not_called()
@@ -1549,7 +1551,7 @@ class TestNormalVariableStillPublishesFine:
 
         with _mock_transform_scenario_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+                DownscalingPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
             ):
                 p.transform_scenario()
 
@@ -1563,7 +1565,7 @@ class TestNormalVariableStillPublishesFine:
 
         with _mock_fit_historical_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
+                DownscalingPipeline, "_write_to_icechunk", side_effect=_write_recorder(write_calls)
             ):
                 p.fit_historical()
 
@@ -1578,8 +1580,8 @@ class TestNormalVariableStillPublishesFine:
 
 
 @pytest.fixture
-def tasmin_config() -> BCSDConfig:
-    return BCSDConfig(
+def tasmin_config() -> DownscalingConfig:
+    return DownscalingConfig(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tasmin",
@@ -1591,8 +1593,8 @@ def tasmin_config() -> BCSDConfig:
 
 
 @pytest.fixture
-def tasmin_pipeline(tasmin_config, pipeline_options) -> BCSDPipeline:
-    return BCSDPipeline(tasmin_config, pipeline_options)
+def tasmin_pipeline(tasmin_config, pipeline_options) -> DownscalingPipeline:
+    return DownscalingPipeline(tasmin_config, pipeline_options)
 
 
 class TestFitHistoricalTasminCoarseDeps:
@@ -1617,8 +1619,8 @@ class TestFitHistoricalTasminCoarseDeps:
             return MagicMock()
 
         with _mock_fit_historical_compute():
-            with patch.object(BCSDPipeline, "_open_from_icechunk", side_effect=capture_open):
-                with patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snap"):
+            with patch.object(DownscalingPipeline, "_open_from_icechunk", side_effect=capture_open):
+                with patch.object(DownscalingPipeline, "_write_to_icechunk", return_value="snap"):
                     try:
                         p.fit_historical_tasmin()
                     except Exception:
@@ -1655,7 +1657,7 @@ class TestFitHistoricalTasminCoarseDeps:
 
         with _mock_fit_historical_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+                DownscalingPipeline, "_write_to_icechunk", return_value="snap"
             ) as mock_write:
                 try:
                     p.fit_historical_tasmin()
@@ -1685,8 +1687,8 @@ class TestTransformScenarioTasminCoarseDeps:
             return MagicMock()
 
         with _mock_transform_scenario_compute():
-            with patch.object(BCSDPipeline, "_open_from_icechunk", side_effect=capture_open):
-                with patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snap"):
+            with patch.object(DownscalingPipeline, "_open_from_icechunk", side_effect=capture_open):
+                with patch.object(DownscalingPipeline, "_write_to_icechunk", return_value="snap"):
                     try:
                         p.transform_scenario_tasmin()
                     except Exception:
@@ -1719,7 +1721,7 @@ class TestTransformScenarioTasminCoarseDeps:
 
         with _mock_transform_scenario_compute():
             with patch.object(
-                BCSDPipeline, "_write_to_icechunk", return_value="snap"
+                DownscalingPipeline, "_write_to_icechunk", return_value="snap"
             ) as mock_write:
                 try:
                     p.transform_scenario_tasmin()
@@ -1813,15 +1815,17 @@ class TestTasminCoarseWriteChunkAlignment:
 
         with (
             patch.object(
-                BCSDPipeline,
+                DownscalingPipeline,
                 "_load_gcm_obs",
                 return_value=(MagicMock(), MagicMock(), MagicMock()),
             ),
-            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=_misaligned_coarse_ds()),
             patch.object(
-                BCSDPipeline, "_apply_spatial_downscaling", return_value=_tiny_fine_tasmin()
+                DownscalingPipeline, "_open_from_icechunk", return_value=_misaligned_coarse_ds()
             ),
-            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
+            patch.object(
+                DownscalingPipeline, "_apply_spatial_downscaling", return_value=_tiny_fine_tasmin()
+            ),
+            patch.object(DownscalingPipeline, "reconcile_temperature_extremes"),
         ):
             result = p.fit_historical_tasmin()
 
@@ -1843,16 +1847,18 @@ class TestTasminCoarseWriteChunkAlignment:
 
         with (
             patch.object(
-                BCSDPipeline,
+                DownscalingPipeline,
                 "_load_scenario_data",
                 return_value=(MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()),
             ),
-            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=_misaligned_coarse_ds()),
             patch.object(
-                BCSDPipeline, "_apply_spatial_downscaling", return_value=_tiny_fine_tasmin()
+                DownscalingPipeline, "_open_from_icechunk", return_value=_misaligned_coarse_ds()
             ),
-            patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
-            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
+            patch.object(
+                DownscalingPipeline, "_apply_spatial_downscaling", return_value=_tiny_fine_tasmin()
+            ),
+            patch.object(DownscalingPipeline, "_build_ocean_mask", return_value=MagicMock()),
+            patch.object(DownscalingPipeline, "reconcile_temperature_extremes"),
         ):
             result = p.transform_scenario_tasmin()
 
@@ -1943,16 +1949,20 @@ class TestTasminCoarseWriteTimeShardAlignment:
 
         with (
             patch.object(
-                BCSDPipeline,
+                DownscalingPipeline,
                 "_load_gcm_obs",
                 return_value=(MagicMock(), MagicMock(), MagicMock()),
             ),
             patch.object(
-                BCSDPipeline, "_open_from_icechunk", return_value=_time_straddling_coarse_ds()
+                DownscalingPipeline,
+                "_open_from_icechunk",
+                return_value=_time_straddling_coarse_ds(),
             ),
-            patch.object(BCSDPipeline, "_apply_spatial_downscaling", return_value=MagicMock()),
-            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
-            patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=side_effect),
+            patch.object(
+                DownscalingPipeline, "_apply_spatial_downscaling", return_value=MagicMock()
+            ),
+            patch.object(DownscalingPipeline, "reconcile_temperature_extremes"),
+            patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=side_effect),
         ):
             p.fit_historical_tasmin()
 
@@ -1973,17 +1983,21 @@ class TestTasminCoarseWriteTimeShardAlignment:
 
         with (
             patch.object(
-                BCSDPipeline,
+                DownscalingPipeline,
                 "_load_scenario_data",
                 return_value=(MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()),
             ),
             patch.object(
-                BCSDPipeline, "_open_from_icechunk", return_value=_time_straddling_coarse_ds()
+                DownscalingPipeline,
+                "_open_from_icechunk",
+                return_value=_time_straddling_coarse_ds(),
             ),
-            patch.object(BCSDPipeline, "_apply_spatial_downscaling", return_value=MagicMock()),
-            patch.object(BCSDPipeline, "_build_ocean_mask", return_value=MagicMock()),
-            patch.object(BCSDPipeline, "reconcile_temperature_extremes"),
-            patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=side_effect),
+            patch.object(
+                DownscalingPipeline, "_apply_spatial_downscaling", return_value=MagicMock()
+            ),
+            patch.object(DownscalingPipeline, "_build_ocean_mask", return_value=MagicMock()),
+            patch.object(DownscalingPipeline, "reconcile_temperature_extremes"),
+            patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=side_effect),
         ):
             p.transform_scenario_tasmin()
 
@@ -2024,9 +2038,9 @@ class TestReconcileTemperatureExtremes:
             return "snap"
 
         with patch.object(
-            BCSDPipeline, "_open_from_icechunk", return_value=tasmax_fine.to_dataset()
+            DownscalingPipeline, "_open_from_icechunk", return_value=tasmax_fine.to_dataset()
         ):
-            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+            with patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=capture_write):
                 p.reconcile_temperature_extremes(
                     tasmin_loc, tasmax_loc, tasmin_fine=tasmin_fine, force=force
                 )
@@ -2067,7 +2081,7 @@ class TestReconcileTemperatureExtremes:
             rechunk_workflow=False,
             environment="production",
         )
-        p = BCSDPipeline(tasmin_config, opts)
+        p = DownscalingPipeline(tasmin_config, opts)
         tasmax_fine, tasmin_fine = _fine_pair_with_inversion()
         with caplog.at_level(logging.INFO, logger="saidownscale.pipeline"):
             self._run_reconcile(p, tasmax_fine, tasmin_fine)
@@ -2122,8 +2136,8 @@ class TestReconcileTemperatureExtremes:
             writes[loc.group] = da
             return "snap"
 
-        with patch.object(BCSDPipeline, "_open_from_icechunk", side_effect=fake_open):
-            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+        with patch.object(DownscalingPipeline, "_open_from_icechunk", side_effect=fake_open):
+            with patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=capture_write):
                 p.reconcile_temperature_extremes(tasmin_loc, tasmax_loc)  # tasmin_fine=None
 
         assert writes[tasmax_loc.group].values[0, 0, 1] == 295.0
@@ -2154,8 +2168,8 @@ class TestReconcileTemperatureExtremes:
             src = tasmin_fine if loc.group == tasmin_loc.group else tasmax_fine
             return src.to_dataset()
 
-        with patch.object(BCSDPipeline, "_open_from_icechunk", side_effect=fake_open):
-            with patch.object(BCSDPipeline, "_write_to_icechunk", return_value="snap"):
+        with patch.object(DownscalingPipeline, "_open_from_icechunk", side_effect=fake_open):
+            with patch.object(DownscalingPipeline, "_write_to_icechunk", return_value="snap"):
                 p.reconcile_temperature_extremes(tasmin_loc, tasmax_loc)  # tasmin_fine=None
 
         shard = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
@@ -2179,9 +2193,9 @@ class TestReconcileTemperatureExtremes:
         tasmax_loc = p.cache.scenario_output_loc(variable="tasmax")
         _make_icechunk_group(tasmax_loc, branch=p.cache.branch)
         with patch.object(
-            BCSDPipeline, "_open_from_icechunk", return_value=tasmax_fine.to_dataset()
+            DownscalingPipeline, "_open_from_icechunk", return_value=tasmax_fine.to_dataset()
         ):
-            with patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write):
+            with patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=capture_write):
                 p.reconcile_temperature_extremes(tasmin_loc, tasmax_loc, tasmin_fine=tasmin_fine)
 
         assert schedulers_at_write == ["synchronous", "synchronous"]
@@ -2208,12 +2222,12 @@ class TestTasminReconcileSequencing:
 
         with (
             load_patch,
-            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=MagicMock()),
+            patch.object(DownscalingPipeline, "_open_from_icechunk", return_value=MagicMock()),
             patch("saidownscale.pipeline.derive_tasmin", return_value=MagicMock()),
-            patch.object(BCSDPipeline, "_apply_spatial_downscaling", return_value=sentinel),
-            patch.object(BCSDPipeline, "_write_to_icechunk", side_effect=capture_write),
+            patch.object(DownscalingPipeline, "_apply_spatial_downscaling", return_value=sentinel),
+            patch.object(DownscalingPipeline, "_write_to_icechunk", side_effect=capture_write),
             patch.object(
-                BCSDPipeline, "reconcile_temperature_extremes", side_effect=capture_reconcile
+                DownscalingPipeline, "reconcile_temperature_extremes", side_effect=capture_reconcile
             ),
         ):
             stage()
@@ -2233,7 +2247,7 @@ class TestTasminReconcileSequencing:
         )
         loc = p.cache.historical_loc(p._hist_member)
         load_patch = patch.object(
-            BCSDPipeline,
+            DownscalingPipeline,
             "_load_gcm_obs",
             return_value=(MagicMock(), MagicMock(), MagicMock()),
         )
@@ -2259,7 +2273,7 @@ class TestTasminReconcileSequencing:
         _make_icechunk_group(p.cache.scenario_output_loc(variable="tasmax"), branch=p.cache.branch)
         loc = p.cache.scenario_loc
         load_patch = patch.object(
-            BCSDPipeline,
+            DownscalingPipeline,
             "_load_scenario_data",
             return_value=(MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()),
         )
@@ -2281,7 +2295,7 @@ class TestTasminCacheShortCircuit:
         _make_icechunk_group(p.cache.scenario_loc, branch=p.cache.branch)
         _make_icechunk_group(p.cache.debiased_coarse_scenario_loc(), branch=p.cache.branch)
 
-        with patch.object(BCSDPipeline, "_write_to_icechunk") as mock_write:
+        with patch.object(DownscalingPipeline, "_write_to_icechunk") as mock_write:
             result = p.transform_scenario_tasmin()
 
         mock_write.assert_not_called()
@@ -2297,7 +2311,7 @@ class TestDetrendScenarioBridge:
     def test_detrend_off_sai_still_bridges(self, pipeline_options):
         # dtr has detrend_data=False; for a SAI scenario it must still stitch the
         # SSP245 bridge so the output spans the full predict window (issue #363).
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="dtr",
@@ -2306,7 +2320,7 @@ class TestDetrendScenarioBridge:
             predict_period_start=2015,
             predict_period_end=2084,
         )
-        pipe = BCSDPipeline(cfg, pipeline_options)
+        pipe = DownscalingPipeline(cfg, pipeline_options)
         assert cfg.variable_config.detrend_data is False and cfg.is_sai_scenario is True
 
         ssp = MagicMock(name="ssp_timeseries")
@@ -2325,7 +2339,7 @@ class TestDetrendScenarioBridge:
     def test_detrend_off_non_sai_returns_scenario_unchanged(self, pipeline_options):
         # pr has detrend_data=False; for a non-SAI scenario there is no bridge —
         # the scenario is returned unchanged (regression: no behavior change).
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="pr",
@@ -2334,7 +2348,7 @@ class TestDetrendScenarioBridge:
             predict_period_start=2015,
             predict_period_end=2099,
         )
-        pipe = BCSDPipeline(cfg, pipeline_options)
+        pipe = DownscalingPipeline(cfg, pipeline_options)
         assert cfg.variable_config.detrend_data is False and cfg.is_sai_scenario is False
 
         model_scenario = MagicMock(name="model_scenario")
@@ -2372,7 +2386,7 @@ class TestScenarioHistoricalSlice:
         obs = _spatial_daily_da("1978-01-01", "2014-12-31").to_dataset(name="tas")
         with (
             patch.object(
-                BCSDPipeline,
+                DownscalingPipeline,
                 "_open_from_icechunk",
                 return_value=obs,
             ),
@@ -2391,7 +2405,7 @@ class TestScenarioHistoricalSlice:
                 ),
             ),
             patch.object(
-                BCSDPipeline,
+                DownscalingPipeline,
                 "_load_ssp245_bridge",
                 return_value=_spatial_daily_da("2015-01-01", "2060-12-31"),
             ),
@@ -2404,7 +2418,7 @@ class TestScenarioHistoricalSlice:
             return pipeline._load_scenario_data()
 
     def test_sai_scenario_stops_at_train_period_end(self, pipeline_options):
-        config = BCSDConfig(
+        config = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
@@ -2414,7 +2428,7 @@ class TestScenarioHistoricalSlice:
             predict_period_start=2035,
             predict_period_end=2060,
         )
-        _, _, model_hist, _, _ = self._load(BCSDPipeline(config, pipeline_options))
+        _, _, model_hist, _, _ = self._load(DownscalingPipeline(config, pipeline_options))
 
         assert int(model_hist["time"].dt.year.max()) == 2014
         # The fifteen all-NaN days after 2015-01-01 must not be reachable at all.
@@ -2423,7 +2437,7 @@ class TestScenarioHistoricalSlice:
     def test_training_window_shorter_than_scenario_start_is_respected(self, pipeline_options):
         # configs/qa/obs-comparison/* pair train_period_end 2008 with a 2015 scenario start;
         # the old slice leaked six extra years into the reference pool.
-        config = BCSDConfig(
+        config = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
@@ -2433,13 +2447,13 @@ class TestScenarioHistoricalSlice:
             predict_period_start=2015,
             predict_period_end=2060,
         )
-        _, _, model_hist, _, _ = self._load(BCSDPipeline(config, pipeline_options))
+        _, _, model_hist, _, _ = self._load(DownscalingPipeline(config, pipeline_options))
 
         assert int(model_hist["time"].dt.year.max()) == 2008
 
     def test_matches_the_historical_stage_loader(self, pipeline_options):
         """_load_gcm_obs already slices correctly; the two loaders must agree."""
-        config = BCSDConfig(
+        config = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
@@ -2449,12 +2463,12 @@ class TestScenarioHistoricalSlice:
             predict_period_start=2035,
             predict_period_end=2060,
         )
-        pipeline = BCSDPipeline(config, pipeline_options)
+        pipeline = DownscalingPipeline(config, pipeline_options)
         _, _, scenario_hist, _, _ = self._load(pipeline)
 
         obs = _spatial_daily_da("1978-01-01", "2014-12-31").to_dataset(name="tas")
         with (
-            patch.object(BCSDPipeline, "_open_from_icechunk", return_value=obs),
+            patch.object(DownscalingPipeline, "_open_from_icechunk", return_value=obs),
             patch(
                 "saidownscale.pipeline.get_obs",
                 return_value=_spatial_daily_da("1978-01-01", "2014-12-31"),
@@ -2494,8 +2508,8 @@ class TestObservationAttrs:
 
     @staticmethod
     def _pipeline(method: str, member: str, scenario: str):
-        return BCSDPipeline(
-            BCSDConfig(
+        return DownscalingPipeline(
+            DownscalingConfig(
                 gcm="CESM2-WACCM6",
                 downscaling_method=method,
                 variable="tas",
@@ -2547,8 +2561,8 @@ class TestObservationAttrs:
 
     def test_attrs_omit_description_for_unknown_gcm(self):
         """A name with no catalog entry gets no description key, and no KeyError."""
-        pipeline = BCSDPipeline(
-            BCSDConfig(
+        pipeline = DownscalingPipeline(
+            DownscalingConfig(
                 gcm="SOME-OTHER-GCM",
                 downscaling_method="BCSD",
                 variable="tas",
@@ -2591,7 +2605,7 @@ class TestQDMScenarioWindow:
 
     @staticmethod
     def _pipeline(pipeline_options, variable="tas", **window):
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="QDMSD",
             variable=variable,
@@ -2603,7 +2617,7 @@ class TestQDMScenarioWindow:
         assert cfg.variable_config.debias_approach == "qdm"
         for key, value in window.items():
             setattr(cfg.variable_config, key, value)
-        return BCSDPipeline(cfg, pipeline_options)
+        return DownscalingPipeline(cfg, pipeline_options)
 
     @staticmethod
     @contextmanager
@@ -2734,7 +2748,7 @@ class TestQDMPreconditions:
 
     @staticmethod
     def _pipeline(pipeline_options, scenario="SSP245", predict_period_start=2015):
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="QDMSD",
             variable="tas",
@@ -2744,7 +2758,7 @@ class TestQDMPreconditions:
             predict_period_end=predict_period_start + 1,
         )
         assert cfg.variable_config.debias_approach == "qdm"
-        return BCSDPipeline(cfg, pipeline_options)
+        return DownscalingPipeline(cfg, pipeline_options)
 
     def test_missing_model_scenario_raises_before_the_stitch(self, pipeline_options):
         pipe = self._pipeline(pipeline_options)
@@ -2856,7 +2870,7 @@ class TestQDMReproducibility:
     @pytest.mark.parametrize("variable", ["pr", "rsds", "dtr", "tas"])
     def test_qdm_branch_builds_the_seeded_debiaser(self, pipeline_options, variable):
         """Every qdm construction site must use the seeded subclass, not stock ibicus."""
-        cfg = BCSDConfig(
+        cfg = DownscalingConfig(
             gcm="CESM2-WACCM6",
             downscaling_method="QDMSD",
             variable=variable,
@@ -2865,7 +2879,7 @@ class TestQDMReproducibility:
             predict_period_start=2015,
             predict_period_end=2016,
         )
-        pipe = BCSDPipeline(cfg, pipeline_options)
+        pipe = DownscalingPipeline(cfg, pipeline_options)
         captured: dict = {}
 
         def _fake_apply(self, **kwargs):
