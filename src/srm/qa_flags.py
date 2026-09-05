@@ -153,6 +153,12 @@ ATTRS_TIME_VARYING = {
 
 
 def calculate_thresholds(obs_max, obs_min, obs_max_std, obs_min_std):
+    """
+    Compute per-pixel outlier bounds from observational climatology stats.
+
+    outlier_thresh_high = obs_max + 5 * obs_max_std; outlier_thresh_low = obs_min - 5 * obs_min_std.
+    Used by prep_annual_threshold_inputs to build the thresholds consumed by flag_outliers.
+    """
     outlier_thresh_high = obs_max + (5 * obs_max_std)
     outlier_thresh_low = obs_min - (5 * obs_min_std)
 
@@ -161,7 +167,30 @@ def calculate_thresholds(obs_max, obs_min, obs_max_std, obs_min_std):
 
 def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = "annual"):
     """
-    Flags outliers based on the observational record
+    Flag values outside the observational-record thresholds.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Values to check, e.g. one variable's daily or annual data.
+    outlier_thresh_low, outlier_thresh_high : xr.DataArray
+        Per-pixel lower/upper bounds from calculate_thresholds: annual values
+        broadcastable against `da` directly, or per-dayofyear values
+        selected against `da`'s calendar day when ``timescale="dayofyear"``.
+    timescale : {"annual", "dayofyear"}
+        Whether the thresholds vary by day of year or are single annual
+        values.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean flag, True where `da` is above `outlier_thresh_high` or
+        below `outlier_thresh_low`.
+
+    Raises
+    ------
+    ValueError
+        If `timescale` is not one of ``{"annual", "dayofyear"}``.
     """
     accepted_timescales = {"dayofyear", "annual"}
     if timescale not in accepted_timescales:
@@ -183,7 +212,20 @@ def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = 
 
 def flag_rsds_above_max(da, zonal_doy_max_rsds):
     """
-    Flags days when rsds is above expected max (based on latitude and dayofyear)
+    Flag days when rsds exceeds the expected max for its latitude and day of year.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        rsds values to check.
+    zonal_doy_max_rsds : xr.DataArray
+        Per-latitude, per-dayofyear maximum plausible rsds, as loaded by
+        load_rsds_lims.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean flag, True where `da` exceeds the aligned max.
     """
     aligned_max = zonal_doy_max_rsds.sel(dayofyear=da.time.dt.dayofyear)
     exceeds_max = da > aligned_max
@@ -193,7 +235,23 @@ def flag_rsds_above_max(da, zonal_doy_max_rsds):
 
 def flag_global_exceedances(da, var: str, var_ranges: dict = VAR_SPATIAL_RANGES):
     """
-    Flags days when a variable is outside the globally-defined range of what is plausible.
+    Flag values outside the globally-defined plausible range for `var`.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Values to check.
+    var : str
+        Key into `var_ranges`.
+    var_ranges : dict
+        Mapping of variable name to ``{"min": (lo, hi), "max": (lo, hi)}``;
+        the plausible range applied here is ``[min[0], max[1]]`` -- see
+        VAR_SPATIAL_RANGES.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean flag, True where `da` is outside the plausible range.
     """
 
     var_range = var_ranges[var]
@@ -210,7 +268,16 @@ def flag_global_exceedances(da, var: str, var_ranges: dict = VAR_SPATIAL_RANGES)
 
 def flag_tasmax_tas_inconsistency(tas, tasmax):
     """
-    Flags days when tasmax < tas. This is physically inconsistent.
+    Flag days where tasmax < tas, which is physically inconsistent.
+
+    Parameters
+    ----------
+    tas, tasmax : xr.DataArray
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean flag, True where `tasmax` is below `tas`.
     """
     inconsistent_days = tasmax < tas
     return inconsistent_days
@@ -218,7 +285,16 @@ def flag_tasmax_tas_inconsistency(tas, tasmax):
 
 def flag_tasmin_tas_inconsistency(tas, tasmin):
     """
-    Flags days when tasmin > tas. This is physically inconsistent.
+    Flag days where tasmin > tas, which is physically inconsistent.
+
+    Parameters
+    ----------
+    tas, tasmin : xr.DataArray
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean flag, True where `tasmin` is above `tas`.
     """
     inconsistent_days = tasmin > tas
     return inconsistent_days
@@ -234,7 +310,37 @@ def write_individual_flags(
     branch: str = "main",
 ):
     """
-    Writes out an individual flags to icechunk store in scratch. These are intermediate flags that will be combined into higher-level flags that are saved alongside the output data.
+    Write one intermediate QA flag to `tag`'s icechunk store in scratch.
+
+    Intermediate flags are per-tag, per-check boolean arrays written here as
+    uint8; they are later read back by get_intermediate_flags and combined
+    into the two final flags by combine_intermediate_flags.
+
+    Parameters
+    ----------
+    flag_data : xr.DataArray
+        Boolean flag array; cast to uint8 before writing.
+    flag_name : str
+        Name to give the written variable, e.g. one entry of
+        FLAG_LIST_TIME_VARYING or FLAG_LIST_TIME_INVARIANT.
+    tag : str
+        Tag identifying which icechunk store to write to -- one store per
+        gcm/var/scenario/ens/method combination, as produced by
+        discover_leaves.
+    bucket, prefix : str
+        S3 location of the intermediate-flags stores; the store path is
+        ``s3://{bucket}/{prefix}/{tag}.icechunk``.
+    write_mode : {"w", "a"}
+        Passed through to `to_icechunk`. ``"a"`` appends `flag_name` to an
+        existing store (creating the store first if needed); ``"w"`` always
+        writes fresh variable-level encoding.
+    branch : str
+        icechunk branch to write to.
+
+    Raises
+    ------
+    TypeError
+        If `flag_data` is not boolean.
     """
     flag_data = flag_data.rename(flag_name)
     if flag_data.dtype != bool:
@@ -294,6 +400,25 @@ def write_individual_flags(
 
 
 def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=None):
+    """
+    Plot a coastline map of where a flag is set, for visual QA review.
+
+    Parameters
+    ----------
+    flags : xr.DataArray, or (low_flag, high_flag) tuple of xr.DataArray
+        A single flag array when ``separate_low_high=False``; a two-element
+        ``(low_flag, high_flag)`` pair plotted side by side when
+        ``separate_low_high=True``.
+    time_varying : bool
+        If True, each flag is summed over the "time" dim first to get a
+        cell-day count; if False, flags are already 2-D (lat, lon).
+    separate_low_high : bool
+        Which of the two `flags` shapes above is being passed.
+    vlims : (float, float), optional
+        Fixed (vmin, vmax) color limits; otherwise limits are auto-scaled.
+
+    Draws nothing (or prints "No flags found.") when no cells are flagged.
+    """
     if separate_low_high:
         low_flag = flags[0]
         high_flag = flags[1]
@@ -367,6 +492,21 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=N
 
 
 def parse_tag(tag):
+    """
+    Split a ``"{gcm}_{var}_{scenario}_{ens}_{method}"`` tag into its fields.
+
+    The inverse of the tag construction in discover_leaves. `scenario` may
+    itself contain underscores (e.g. ``"g6_1p5k"``), so it is recovered as
+    everything between the fixed-position leading ``gcm``/``var`` and
+    trailing ``ens``/``method`` fields, not by a fixed split index; `gcm`,
+    `var`, `ens`, and `method` must not themselves contain underscores for
+    this to round-trip correctly.
+
+    Returns
+    -------
+    tuple[str, str, str, str, str]
+        ``(gcm, var, scenario, ens, method)``.
+    """
     parts = tag.split("_")
     if len(parts) < 4:
         raise ValueError(f"Tag is expected to have 4 parts: gcm_var_scenario_ens_method: {tag}")
@@ -376,6 +516,25 @@ def parse_tag(tag):
 
 
 def get_data(tag, trees, var_to_analyze=None):
+    """
+    Look up the DataArray for `tag` within the already-opened `trees`.
+
+    Parameters
+    ----------
+    tag : str
+        A tag as produced by discover_leaves / parsed by parse_tag.
+    trees : dict[str, xr.DataTree]
+        Mapping of gcm name -> opened DataTree, as returned by discover_leaves.
+    var_to_analyze : str, optional
+        Variable to pull from the leaf group; defaults to the variable
+        encoded in `tag`. Pass this to pull a sibling variable from the same
+        group -- e.g. tasmax, while iterating over `tas` tags.
+
+    Returns
+    -------
+    xr.DataArray
+        The requested variable's data at that leaf.
+    """
     [gcm, var, scenario, ens, method] = parse_tag(tag)
     if method == "no-method-specified":
         group_path = f"{scenario}/{var}/{ens}"
@@ -402,9 +561,26 @@ def run_flag_loop(
 ):
     """Loop over tags, compute one flag per leaf, write it, optionally plot it.
 
-    compute_flag(da, var) -> flag DataArray. Bind whatever extra fixed arguments a
-    specific check needs (e.g. zonal_doy_max_rsds) with a lambda at the call site --
-    this loop doesn't need to know what they are.
+    Parameters
+    ----------
+    tags : list[str]
+        Tags to iterate, as produced by discover_leaves.
+    trees : dict[str, xr.DataTree]
+    flag_name : str
+        Name to write the computed flag under (see write_individual_flags).
+    compute_flag : callable
+        ``compute_flag(da, var) -> flag DataArray``. Bind whatever extra
+        fixed arguments a specific check needs (e.g. `zonal_doy_max_rsds`)
+        with a lambda at the call site -- this loop doesn't need to know
+        what they are.
+    var_filter : str, optional
+        If given, only process tags whose variable equals this.
+    write_mode : {"w", "a"}
+        Passed through to write_individual_flags.
+    plot : bool
+        If True, call plot_flags on each computed flag.
+    bucket, prefix : str
+        Passed through to write_individual_flags.
     """
     print(len(tags))
     for tag in tags:
@@ -441,6 +617,31 @@ def run_flag_loop_temperature_inconsistencies(
     bucket: str = "carbonplan-srm",
     prefix: str = "output/qa-intermediate-flags",
 ):
+    """Flag tas/tasmin/tasmax physical inconsistencies (tasmax < tas or tasmin > tas).
+
+    Iterates the `tas` tags in `tags`; for each one whose matching tasmin and
+    tasmax tags are also present, computes all three inconsistency flags
+    (flag_tasmax_tas_inconsistency, flag_tasmin_tas_inconsistency, and their
+    union for tas) and writes each to its own tag's intermediate store under
+    `flag_name`. `tas` tags with no matching tasmin/tasmax tag are skipped.
+
+    Parameters
+    ----------
+    tags : list[str]
+        Tags to iterate, as produced by discover_leaves.
+    trees : dict[str, xr.DataTree]
+    plot : bool
+        If True, call plot_flags on the combined tas flag.
+    flag_name : str
+        Name to write all three computed flags under.
+    write_mode : {"w", "a"}
+        Passed through to write_individual_flags.
+    var_filter : str
+        Restricts the outer loop to tags with this variable; the function
+        only makes sense for ``"tas"``.
+    bucket, prefix : str
+        Passed through to write_individual_flags.
+    """
     print(len(tags))
     for tag in tags:
         gcm, var, scenario, ens, method = parse_tag(tag)
@@ -518,6 +719,46 @@ def calculate_ensemble_mean_deltas(
     trees,
     is_downscaled: bool = True,
 ):
+    """
+    Compute the ensemble-mean scenario1->scenario2 change in the raw GCM vs.
+    the pipeline's (debiased/downscaled) output, for one gcm/variable/method.
+
+    Both scenarios' ensemble means are computed over their own time slice,
+    averaged across every ensemble member found in `tags_scenario1`/
+    `tags_scenario2`. The pipeline's ensemble means are also re-coarsened
+    onto the raw GCM's grid (when `is_downscaled`) so the two deltas are
+    directly comparable; this coarse-grid comparison is what
+    calculate_trend_distortion_flags flags for distortion/sign-flip.
+
+    Parameters
+    ----------
+    variable : str
+        Variable name as stored in the raw GCM catalog.
+    tags_scenario1, tags_scenario2 : array-like of str
+        Tags (one per ensemble member) for scenario1 and scenario2, already
+        filtered to one gcm/variable/method; must be non-empty.
+    gcm, scenario1, scenario2 : str
+    scenario1_time_slice, scenario2_time_slice : slice
+        Time ranges to average over within each scenario.
+    trees : dict[str, xr.DataTree]
+    is_downscaled : bool
+        If True, coarsen the pipeline's ensemble means onto the raw GCM grid
+        before differencing. If False, the pipeline data is already on the
+        coarse grid (e.g. debiased_coarse output).
+
+    Returns
+    -------
+    tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]
+        ``(delta_raw, delta_raw_pct, delta_ds_coarse, delta_ds_coarse_pct, delta_ds)``:
+        the raw-GCM and pipeline (coarse-grid) scenario2-scenario1 deltas, as
+        absolute and percent change, plus the pipeline delta on its native
+        (fine) grid.
+
+    Raises
+    ------
+    ValueError
+        If `tags_scenario1` or `tags_scenario2` is empty.
+    """
     # Construct data arrays including all relevant ensemble members
     das_scenario1 = []
     ens_scenario1 = []
@@ -612,6 +853,34 @@ def calculate_trend_distortion_flags(
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot: bool = True,
 ):
+    """
+    Compute and write the time-invariant trend-distortion/sign-flip flags.
+
+    For every (scenario_comparisons entry) x gcm x variable x method
+    combination, computes the raw-GCM vs. debiased/downscaled scenario
+    change at coarse resolution (calculate_ensemble_mean_deltas), flags grid
+    cells where that change is distorted beyond tolerance
+    (TREND_VARIABLE_SETTINGS, via calculate_distortion_flags) or flips sign
+    (sign_flip_mask), regrids both flags back to the fine grid, and writes
+    them -- named ``"trend_distortion_{scenario1}_{scenario2}"`` and
+    ``"flipped_sign_{scenario1}_{scenario2}"`` -- to every ensemble-member
+    tag involved in that comparison (see FLAG_LIST_TIME_INVARIANT).
+
+    Parameters
+    ----------
+    trees : dict[str, xr.DataTree]
+    gcms, variables, methods : list[str]
+        Values to loop over for each scenario comparison.
+    tags_np, gcms_np, scenarios_np, variables_np, methods_np : np.ndarray
+        Parallel per-leaf arrays returned by discover_leaves, used to select
+        the tags for each gcm/variable/method/scenario combination.
+    bucket, prefix : str
+        Passed through to write_individual_flags.
+    scenario_comparisons : dict
+        See SCENARIO_COMPARISONS.
+    plot : bool
+        If True, call plot_flags on each computed flag.
+    """
     for key in scenario_comparisons:
         print(key)
         comparison_dict = scenario_comparisons[key]
@@ -733,6 +1002,27 @@ def get_intermediate_flags(
     prefix: str = "output/qa-intermediate-flags",
     branch: str = "main",
 ):
+    """
+    Open the intermediate-flags icechunk store for `tag` and return it as a Dataset.
+
+    This is the store written by write_individual_flags; each data variable
+    in it is one intermediate flag (see FLAG_LIST_TIME_VARYING /
+    FLAG_LIST_TIME_INVARIANT), later combined by combine_intermediate_flags.
+
+    Parameters
+    ----------
+    tag : str
+        Tag identifying the store, as produced by discover_leaves.
+    bucket, prefix : str
+        S3 location of the intermediate-flags stores.
+    branch : str
+        icechunk branch to read from.
+
+    Returns
+    -------
+    xr.Dataset
+        One data variable per intermediate flag written for `tag`.
+    """
     storage = icechunk.s3_storage(bucket=bucket, prefix=f"{prefix}/{tag}.icechunk", from_env=True)
     repo = icechunk.Repository.open(storage)
     session = repo.readonly_session(branch)
@@ -748,8 +1038,33 @@ def combine_intermediate_flags(
     prefix: str = "output/qa-intermediate-flags",
 ):
     """
-    This calculates two single binary flags from multiple intermediate flags.
+    Combine a tag's intermediate flags into one time-varying and one time-invariant flag.
 
+    Each name in `flag_list_time_varying`/`flag_list_time_invariant` that is
+    present in `tag`'s intermediate-flags store (some checks don't apply to
+    every variable) is OR-ed together; a name that isn't present is silently
+    skipped rather than treated as all-False.
+
+    Parameters
+    ----------
+    tag : str
+        Tag identifying the intermediate-flags store to read, as produced by
+        discover_leaves.
+    flag_list_time_varying : list[str]
+        Intermediate flag names to OR together into the combined time-varying
+        flag, e.g. FLAG_LIST_TIME_VARYING.
+    flag_list_time_invariant : list[str]
+        Intermediate flag names to OR together into the combined
+        time-invariant flag, e.g. FLAG_LIST_TIME_INVARIANT.
+    bucket, prefix : str
+        S3 location of the intermediate-flags stores; passed to
+        get_intermediate_flags.
+
+    Returns
+    -------
+    tuple[xr.DataArray, xr.DataArray]
+        ``(overall_flag_time_varying, overall_flag_time_invariant)``, each
+        boolean, True wherever any contributing intermediate flag was True.
     """
 
     flags = get_intermediate_flags(tag=tag, bucket=bucket, prefix=prefix)
@@ -783,7 +1098,26 @@ FLAG_SINGLE_CHUNK_MAX_BYTES = 16 * 1024**2
 
 
 def _flag_encoding(existing: xr.Dataset, group: str, flag_data: xr.DataArray) -> dict:
-    """Chunk/shard shape for ``flag_data``, copied from the group's data variable."""
+    """Chunk/shard shape for ``flag_data``, copied from the group's data variable.
+
+    Parameters
+    ----------
+    existing : xr.Dataset
+        The production store's group already opened (via `xr.open_zarr`),
+        used to find a data variable to copy chunk/shard shape from.
+    group : str
+        The group path `flag_data` will be written into, e.g.
+        ``"{method}/{scenario}/{var}/{ens}"``; the second-to-last path
+        segment is taken as the data-variable name to prefer.
+    flag_data : xr.DataArray
+        The flag about to be written; only its dims/shape/nbytes are used.
+
+    Returns
+    -------
+    dict
+        ``{"chunks": tuple, "shards": tuple | None}`` in `flag_data`'s dim
+        order.
+    """
     dims = flag_data.dims
 
     if flag_data.nbytes <= FLAG_SINGLE_CHUNK_MAX_BYTES:
@@ -823,7 +1157,33 @@ def write_final_qa_flags(
     Refuses to replace a flag that already exists in the group unless ``overwrite=True``
     is passed explicitly -- this writes into the released production store.
 
-    Note: this doesn't commit the icechunk session, that is up to you.
+    Parameters
+    ----------
+    session : icechunk.Session
+        Writable session on the production store; not committed here.
+    group : str
+        Group path to write into, e.g. ``"{method}/{scenario}/{var}/{ens}"``.
+    flag_data : xr.DataArray
+        Boolean flag array; cast to uint8 before writing.
+    flag_name : str
+        Name to give the written variable, e.g. ``ATTRS_TIME_VARYING["short_name"]``.
+    attrs : dict
+        Attributes to attach to the written variable, e.g. ATTRS_TIME_VARYING
+        or ATTRS_TIME_INVARIANT.
+    overwrite : bool
+        If False (default) and `flag_name` already exists in `group`, raises
+        instead of replacing it.
+
+    Raises
+    ------
+    TypeError
+        If `flag_data` is not boolean.
+    ValueError
+        If `flag_name` already exists in `group` and `overwrite` is False.
+
+    Notes
+    -----
+    Doesn't commit the icechunk session -- that's the caller's responsibility.
     """
     if flag_data.dtype != bool:
         raise TypeError(f"flag_data must be boolean before casting to uint8, got {flag_data.dtype}")
@@ -879,7 +1239,31 @@ def discover_leaves(
 ):
     """Open each GCM's icechunk store and enumerate its (scenario, variable, ensemble) leaves.
 
-    Returns (trees, tags, gcms_np, scenarios_np, variables_np, tags_np).
+    A GCM whose store fails to open (e.g. a run still in flight) is skipped
+    rather than failing the whole call, so this can be run against a
+    partially-landed set of runs.
+
+    Parameters
+    ----------
+    gcms : list[str]
+        GCM names to open, matching the ``{gcm}-ERA5-{store_subset_id}.icechunk``
+        store naming under `root_dir`.
+    branch : str
+        icechunk branch to read.
+    root_dir : str
+        Directory containing each GCM's icechunk store.
+    store_subset_id : str
+        Spatial-subset identifier used in the store filename (e.g. "global").
+    is_downscaled : bool
+        If True, keep only fine-grid (non ``debiased_coarse``) leaves; if
+        False, keep only ``debiased_coarse`` leaves.
+
+    Returns
+    -------
+    tuple[dict, list, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        ``(trees, tags, gcms_np, scenarios_np, variables_np, tags_np, methods_np, debiased_coarse_flags_np)``:
+        `trees` maps gcm name to its opened DataTree; the remaining arrays
+        are parallel, one entry per discovered leaf.
     """
 
     trees: dict[str, xr.DataTree] = {}
@@ -999,6 +1383,23 @@ GRID_TYPES = ("downscaled", "cesm2-waccm6", "ukesm1-1-ll")
 def load_rsds_lims(key: str = "zonal_doy_max_rsds", grid_type: str = "downscaled") -> xr.DataArray:
     """
     Load the zonal/day-of-year maximum rsds values (from step 1 notebook) for use in the rsds-specific flag.
+
+    Parameters
+    ----------
+    key : str
+        Group name within the zarr store to load.
+    grid_type : str
+        Which grid's precomputed limits to load; one of GRID_TYPES.
+
+    Returns
+    -------
+    xr.DataArray
+        Maximum plausible rsds by latitude and day of year.
+
+    Raises
+    ------
+    ValueError
+        If `grid_type` is not one of GRID_TYPES.
     """
     if grid_type not in GRID_TYPES:
         raise ValueError(
@@ -1013,7 +1414,24 @@ def load_rsds_lims(key: str = "zonal_doy_max_rsds", grid_type: str = "downscaled
 
 def prep_annual_threshold_inputs(grid_type: str = "downscaled"):
     """
-    Reads in the thresholds output from step 1 notebook and prepares the annual thresholds for use in flag calculation
+    Read the step-1 observational threshold outputs and reduce them to annual bounds.
+
+    Parameters
+    ----------
+    grid_type : str
+        Which grid's precomputed thresholds to load; one of GRID_TYPES.
+
+    Returns
+    -------
+    tuple[xr.Dataset, xr.Dataset]
+        ``(outlier_thresh_low_annual, outlier_thresh_high_annual)``, one
+        value per variable per pixel, for use by flag_outliers with
+        ``timescale="annual"``.
+
+    Raises
+    ------
+    ValueError
+        If `grid_type` is not one of GRID_TYPES.
     """
     # Loading thresholds output from step 1 notebook. There are different stores for different grids
     if grid_type not in GRID_TYPES:
@@ -1063,6 +1481,33 @@ def calculate_all_flags(
     plot_flag_maps: bool = True,
     grid_type: str = "downscaled",
 ):
+    """
+    Run every intermediate QA-flag check -- time-varying and time-invariant --
+    over one already-discovered set of leaves, and write the results.
+
+    This is the shared body of run_step2, factored out so it can be called
+    once per grid via `grid_type` (see GRID_TYPES) -- e.g. once for the fine
+    downscaled output and again for a coarse ``debiased_coarse`` GCM grid --
+    since the observational thresholds/rsds limits loaded here
+    (prep_annual_threshold_inputs, load_rsds_lims) differ by grid.
+
+    Parameters
+    ----------
+    variables, gcms, methods : list[str]
+        Values to loop over for the trend-distortion/sign-flip checks.
+    bucket, prefix : str
+        Passed through to write_individual_flags.
+    trees, tags, gcms_np, scenarios_np, variables_np, tags_np, methods_np
+        Exactly the outputs of discover_leaves for the grid being processed.
+    scenario_comparisons : dict
+        See SCENARIO_COMPARISONS.
+    plot_flag_maps : bool
+        If True, plot each computed flag.
+    grid_type : str
+        Which grid's observational thresholds/rsds limits to load (one of
+        GRID_TYPES); should match the grid `trees`/`tags_np`/etc. were
+        discovered from.
+    """
     ########### Run time-varying flag loops that are the same for all grids ############################################
     # Flag 1. Global exceedances
     run_flag_loop(
@@ -1151,9 +1596,34 @@ def run_step2(
     is_downscaled: bool = True,
 ):
     """
-    Runs through all the intermediate flag calculations and writes them to icechunk stores on scratch.
-    This function goes through all the steps in the step2 qa flag notebook, but is designed to be run in a single script rather than interactively.
-    The intermediate icechunk stores from this step can then be used to write the final qa flags to the production store.
+    Run through all the intermediate flag calculations and write them to icechunk stores on scratch.
+
+    Goes through all the steps in the step2 QA-flag notebook, but is designed
+    to run as a single script call rather than interactively. The
+    intermediate icechunk stores this writes are later read by
+    combine_intermediate_flags / write_final_qa_flags to produce the final
+    QA flags on the production store.
+
+    Parameters
+    ----------
+    variables, gcms, methods : list[str]
+        Values to discover leaves for and compute flags over.
+    branch : str
+        icechunk branch to read.
+    root_dir : str
+        Directory containing each GCM's icechunk store.
+    store_subset_id : str
+        Spatial-subset identifier used in the store filename (e.g. "global").
+    bucket, prefix : str
+        S3 location to write intermediate flags to.
+    plot_flag_maps : bool
+        If True, plot each computed flag.
+    is_downscaled : bool
+        Passed to discover_leaves; selects fine-grid vs. debiased_coarse
+        leaves. Note calculate_all_flags is always called here with
+        ``grid_type="downscaled"`` regardless of this flag -- calling with
+        ``is_downscaled=False`` does not yet select the matching coarse-grid
+        thresholds.
     """
     ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
     [
