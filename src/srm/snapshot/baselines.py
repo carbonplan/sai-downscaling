@@ -54,17 +54,15 @@ CESM2_WACCM_GLOBAL = Baseline(
     executor="coiled",
 )
 
-# The store name still carries the pre-#598 model name because this data was written before
-# the rename. The next release's snapshot job rebuilds the baseline under
-# ``CESM2-WACCM6-ERA5-...`` and prints the new pointer; repoint both fields then.
-#
-# ``branch`` is writable, not a frozen tag: the ``bcsd release`` freeze step has never run
-# here, so a run with a matching ``BCSD_BRANCH`` could overwrite what this cites.
+# First baseline under the renamed store (#598). Written by the snapshot dispatch of main at
+# b6d0c5b, the merge of #673, and bit-identical to the pre-rename baseline v0.13.0.post45.
+# Frozen as icechunk tag ``snapshot-main-b6d0c5b-sep-4``; ``branch`` itself stays writable,
+# so a run with the same ``BCSD_BRANCH`` would move it, the tag would not.
 CESM2_WACCM_SOUTH_AFRICA = Baseline(
     uri=(
         "s3://carbonplan-srm/scratch/snapshot"
-        "/output/qa/CESM2-WACCM-ERA5-lat-38.0to-19.0_lon13.0to36.0.icechunk"
+        "/output/qa/CESM2-WACCM6-ERA5-lat-38.0to-19.0_lon13.0to36.0.icechunk"
     ),
-    branch="v0.13.0.post45",
+    branch="main-b6d0c5b-sep-4",
     executor="aws-batch",
 )
