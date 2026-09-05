@@ -173,7 +173,7 @@ def get_experiment(
     Parameters
     ----------
     gcm : str
-        Name of the GCM, e.g. "CESM2-WACCM"
+        Name of the GCM, e.g. "CESM2-WACCM6"
     scenario : str
         Scenario of experiment, e.g. "SSP245"
     var : str
@@ -202,7 +202,7 @@ def get_experiment(
 def get_historical_experiment(gcm: str, member: str, var: str) -> xr.DataArray:
     """Load a single historical ensemble member from the unified per-GCM icechunk store.
 
-    The unified historical group merges both NCAR and pangeo member families for CESM2-WACCM,
+    The unified historical group merges both NCAR and pangeo member families for CESM2-WACCM6,
     so no per-member routing is needed.
     """
     ds = _gcm_datatree(gcm)["historical"].to_dataset()
@@ -315,7 +315,7 @@ def detrend(
     # was low, it would go from a positive adjustment for january 31 (and entire month before) to a negative
     #  adjustment for february 1 (and the entire month after). thus, there could be noticeable
     # artificial discontinuities inserted into the timeseries between 1/31 and 2/1.
-    # resample("1D") anchors at midnight; UKESM uses noon timestamps.
+    # resample("1D") anchors at midnight; UKESM1-1-LL uses noon timestamps.
     # Floor da.time to midnight for reindex, then restore original coords to fix nan issue in #361
     da_time_midnight = da.time.values.astype("datetime64[D]").astype("datetime64[ns]")
     trend_on_daily_timestep = (
@@ -454,9 +454,9 @@ def _lon_spans_globe(lon_vals: np.ndarray) -> bool:
 def _lat_spans_poles(lat_vals: np.ndarray) -> bool:
     """Whether a latitude coordinate reaches both poles.
 
-    Cell-center grids stop half a step short of +/-90: UKESM ends at +/-89.375 on a 1.25 deg
+    Cell-center grids stop half a step short of +/-90: UKESM1-1-LL ends at +/-89.375 on a 1.25 deg
     grid. "Reaches the pole" therefore means within one grid step, not
-    exactly 90. CESM2-WACCM, which does land on +/-90, also satisfies this. Axes with fewer
+    exactly 90. CESM2-WACCM6, which does land on +/-90, also satisfies this. Axes with fewer
     than ``_MIN_SPAN_TEST_POINTS`` cells are rejected outright, since dlat is not
     trustworthy there.
     """

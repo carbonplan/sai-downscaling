@@ -9,7 +9,7 @@ Every command below runs through `uv`, and the produce step needs access to S3 a
 The comparison reads existing output stores; it does not produce them. Run the South Africa snapshot configs first, which write the `qa` output for the G6-1.5K and SSP245 legs over the small South Africa subset, so the check is cheap to produce and cheap to diff. These configs run over a domain with a ~3° **halo** around the region of interest, because BCSD's regridding and spatial disaggregation have edge effects at a truncated domain boundary; the comparison trims that halo away (Step 2). The baseline shares the halo, so trimming is a carry-over from the global-baseline era and only narrows coverage; see issue #592 review notes.
 
 ```bash
-uv run bcsd run --config-path configs/snapshot/cesm2-waccm/ \
+uv run bcsd run --config-path configs/snapshot/cesm2-waccm6/ \
   --executor "$(uv run python -c 'from srm.snapshot.baselines import CESM2_WACCM_SOUTH_AFRICA as b; print(b.executor)')"
 ```
 
@@ -40,7 +40,7 @@ Both baselines are rebuilt at release time. Publishing a GitHub release triggers
 
 | job | produces | pointer |
 |---|---|---|
-| `snapshot` | the regional baseline over `configs/snapshot/cesm2-waccm/`, then freezes it as icechunk tag `snapshot-<release tag>` | `CESM2_WACCM_SOUTH_AFRICA` |
+| `snapshot` | the regional baseline over `configs/snapshot/cesm2-waccm6/`, then freezes it as icechunk tag `snapshot-<release tag>` | `CESM2_WACCM_SOUTH_AFRICA` |
 | `production` | the global run | `CESM2_WACCM_GLOBAL` |
 
 The one manual step is repointing `src/srm/snapshot/baselines.py` at the new release. The `snapshot` job prints both fields in its workflow summary, the store URI as well as the branch. Paste the whole block: a release can move the URI too, and a pointer with a new branch on an old store resolves to a branch that does not exist. Do this in the release pull request, otherwise every subsequent comparison diffs against the previous release and inherits its already-approved changes as failures.
@@ -48,8 +48,8 @@ The one manual step is repointing `src/srm/snapshot/baselines.py` at the new rel
 To rebuild a baseline outside a release, run the same two commands the job runs:
 
 ```bash
-uv run bcsd run --config-path configs/snapshot/cesm2-waccm/
-uv run bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag snapshot-<name>
+uv run bcsd run --config-path configs/snapshot/cesm2-waccm6/
+uv run bcsd release --config-path configs/snapshot/cesm2-waccm6/ --tag snapshot-<name>
 ```
 
 `bcsd release` creates an icechunk tag. A branch stays writable, so without the tag a later `bcsd run` carrying a matching `BCSD_BRANCH` can overwrite the baseline in place, and the next comparison would then diff a candidate against itself and report a clean pass.

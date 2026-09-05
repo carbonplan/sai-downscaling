@@ -306,7 +306,7 @@ def test_find_exceedance_regions_rejects_bad_direction():
 # Trend-distortion analysis
 # ---------------------------------------------------------------------------
 
-# Leaves mirroring the v0.12.0 CESM2-WACCM store for the two variables whose g6 -> ssp245 bridge
+# Leaves mirroring the v0.12.0 CESM2-WACCM6 store for the two variables whose g6 -> ssp245 bridge
 # members differ: tas bridges ssp245/003, tasmax bridges ssp245/008.
 _CESM_LEAVES = [
     ("historical", "tas", "r3i1p1f1"),
@@ -336,10 +336,10 @@ def _stage_grids(value: float, *, lat=(0.0, 30.0)) -> dict[str, xr.DataArray]:
 def test_enumerate_scenario_comparisons_resolves_the_g6_ssp_bridge_per_variable():
     """The SAI comparison must pair each variable with ITS bridge member, not one fixed member.
 
-    This is issue #448: on CESM2-WACCM, g6_1p5k/003 bridges ssp245/003 for tas but ssp245/008 for
+    This is issue #448: on CESM2-WACCM6, g6_1p5k/003 bridges ssp245/003 for tas but ssp245/008 for
     tasmax. Hardcoding one member is what kept the notebook stuck on a single variable.
     """
-    comparisons, skipped = enumerate_scenario_comparisons(_CESM_LEAVES, gcm="CESM2-WACCM")
+    comparisons, skipped = enumerate_scenario_comparisons(_CESM_LEAVES, gcm="CESM2-WACCM6")
 
     g6_ssp = comparisons[comparisons.family == "g6_ssp"].set_index("variable")
     assert g6_ssp.loc["tas", "before_member"] == "003"
@@ -351,7 +351,7 @@ def test_enumerate_scenario_comparisons_resolves_the_g6_ssp_bridge_per_variable(
 
 def test_enumerate_scenario_comparisons_resolves_historical_baselines():
     """The tasmax family uses the corrected historical run, so the baseline differs from tas."""
-    comparisons, _ = enumerate_scenario_comparisons(_CESM_LEAVES, gcm="CESM2-WACCM")
+    comparisons, _ = enumerate_scenario_comparisons(_CESM_LEAVES, gcm="CESM2-WACCM6")
 
     hist_baselines = {
         (row.family, row.variable): row.before_member
@@ -365,7 +365,7 @@ def test_enumerate_scenario_comparisons_resolves_historical_baselines():
 
 
 def test_enumerate_scenario_comparisons_expected_totals():
-    comparisons, _ = enumerate_scenario_comparisons(_CESM_LEAVES, gcm="CESM2-WACCM")
+    comparisons, _ = enumerate_scenario_comparisons(_CESM_LEAVES, gcm="CESM2-WACCM6")
 
     counts = comparisons.family.value_counts().to_dict()
     # Two scenario leaves per family here: one tas, one tasmax.
@@ -385,7 +385,7 @@ def test_enumerate_scenario_comparisons_skips_when_the_bridge_leaf_is_absent():
         ("ssp245", "tasmax", "003"),
         ("g6_1p5k", "tasmax", "003"),
     ]
-    comparisons, skipped = enumerate_scenario_comparisons(leaves, gcm="CESM2-WACCM")
+    comparisons, skipped = enumerate_scenario_comparisons(leaves, gcm="CESM2-WACCM6")
 
     assert "g6_ssp" not in set(comparisons.family)
     reason = str(skipped.set_index("family").loc["g6_ssp", "reason"])
@@ -396,11 +396,11 @@ def test_enumerate_scenario_comparisons_skips_when_the_bridge_leaf_is_absent():
 
 def test_enumerate_scenario_comparisons_filters_variables_and_returns_typed_empties():
     comparisons, _ = enumerate_scenario_comparisons(
-        _CESM_LEAVES, gcm="CESM2-WACCM", variables=["tas"]
+        _CESM_LEAVES, gcm="CESM2-WACCM6", variables=["tas"]
     )
     assert set(comparisons.variable) == {"tas"}
 
-    empty, empty_skips = enumerate_scenario_comparisons([], gcm="CESM2-WACCM")
+    empty, empty_skips = enumerate_scenario_comparisons([], gcm="CESM2-WACCM6")
     # Columns must survive an empty result so downstream code does not need a special case.
     assert len(empty) == 0 and "comparison_id" in empty.columns
     assert len(empty_skips) == 0 and "reason" in empty_skips.columns
@@ -632,7 +632,7 @@ def test_check_ensemble_spread_still_flags_real_duplication():
 
 
 def test_check_ensemble_spread_splits_a_gap_filled_group_into_two_windows():
-    rows = check_ensemble_spread(_gap_filled_ds(), "CESM2-WACCM ssp245")
+    rows = check_ensemble_spread(_gap_filled_ds(), "CESM2-WACCM6 ssp245")
 
     assert [r["window"] for r in rows] == ["bridge", "native"]
     bridge, native = rows
@@ -653,7 +653,7 @@ def test_check_ensemble_spread_bridge_fails_when_the_member_map_is_miswired():
     ds = _gap_filled_ds()
     # Data still groups r01+r03+r04; the map now claims r04 came from rB.
     ds.attrs["gap_fill_member_map"] = "r01→rA, r02→rB, r03→rA, r04→rB"
-    bridge, native = check_ensemble_spread(ds, "CESM2-WACCM ssp245")
+    bridge, native = check_ensemble_spread(ds, "CESM2-WACCM6 ssp245")
 
     assert bridge["ok"] is False
     assert bridge["groups"] == "r01+r03+r04 | r02"
@@ -665,7 +665,7 @@ def test_check_ensemble_spread_checks_the_bridge_rather_than_skipping_it():
     ds = _gap_filled_ds()
     # Broken stitch: r04 should match r01/r03 over the bridge. Mid-record never sees it.
     ds["tas"].loc[{"ensemble_member": "r04", "time": ds.time.values[:2]}] = 9.0
-    bridge, native = check_ensemble_spread(ds, "CESM2-WACCM ssp245")
+    bridge, native = check_ensemble_spread(ds, "CESM2-WACCM6 ssp245")
 
     assert bridge["ok"] is False
     assert bridge["groups"] == "r01+r03 | r02 | r04"
@@ -673,7 +673,7 @@ def test_check_ensemble_spread_checks_the_bridge_rather_than_skipping_it():
 
 
 def test_check_ensemble_spread_day_index_offsets_within_each_window():
-    rows = check_ensemble_spread(_gap_filled_ds(), "CESM2-WACCM ssp245", day_index=1)
+    rows = check_ensemble_spread(_gap_filled_ds(), "CESM2-WACCM6 ssp245", day_index=1)
 
     assert [r["day"] for r in rows] == ["2016-01-01", "2018-01-01"]
     assert all(r["ok"] for r in rows)
@@ -802,7 +802,7 @@ def test_highlight_flags_counts_that_should_be_zero():
 def test_highlight_renders_a_multiindex_table():
     df = _summary()
     df.index = pd.MultiIndex.from_tuples(
-        [("CESM2-WACCM", "ssp245", "tas", "003"), ("UKESM", "g6_1p5k", "pr", "r2i1p1f2")],
+        [("CESM2-WACCM6", "ssp245", "tas", "003"), ("UKESM1-1-LL", "g6_1p5k", "pr", "r2i1p1f2")],
         names=["gcm", "scenario", "variable", "member"],
     )
 

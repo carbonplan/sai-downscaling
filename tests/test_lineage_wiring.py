@@ -35,7 +35,7 @@ def pipeline_options(tmp_path) -> PipelineOptions:
 def g6_001_tas_config() -> BCSDConfig:
     """G6-1.5K member 001, tas — lineage: historical=r1i1p1f1, SSP245 bridge=001."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
         ensemble_member="001",
@@ -49,7 +49,7 @@ def g6_001_tas_config() -> BCSDConfig:
 def g6_002_tas_config() -> BCSDConfig:
     """G6-1.5K member 002, tas — lineage: historical=r2i1p1f1, SSP245 bridge=002."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
         ensemble_member="002",
@@ -63,7 +63,7 @@ def g6_002_tas_config() -> BCSDConfig:
 def g6_001_tasmax_config() -> BCSDConfig:
     """G6-1.5K member 001, tasmax — lineage: historical=001, SSP245 bridge=009."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="001",
@@ -77,7 +77,7 @@ def g6_001_tasmax_config() -> BCSDConfig:
 def g6_002_tasmax_config() -> BCSDConfig:
     """G6-1.5K member 002, tasmax — lineage: historical=001, SSP245 bridge=007."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="002",
@@ -117,12 +117,12 @@ class TestLoadGcmObsMemberSelection:
             mock_deps.return_value = {"obs_regridded": (True, "/fake/obs")}
             pipeline._load_gcm_obs()
 
-        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM", member="r1i1p1f1", var="tas")
+        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM6", member="r1i1p1f1", var="tas")
 
     def test_falls_back_to_ensemble_member_when_no_lineage(self, tmp_path, pipeline_options):
         """For an unknown scenario, _hist_member falls back to ensemble_member."""
         config = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -144,7 +144,7 @@ class TestLoadGcmObsMemberSelection:
             mock_deps.return_value = {"obs_regridded": (True, "/fake/obs")}
             pipeline._load_gcm_obs()
 
-        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM", member="r1i1p1f1", var="tas")
+        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM6", member="r1i1p1f1", var="tas")
 
 
 # ---------------------------------------------------------------------------
@@ -190,12 +190,12 @@ class TestLoadScenarioDataMemberSelection:
             }
             pipeline._load_scenario_data()
 
-        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM", member="r1i1p1f1", var="tas")
+        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM6", member="r1i1p1f1", var="tas")
 
     def test_falls_back_to_ensemble_member_when_no_lineage(self, pipeline_options):
         """For unknown scenario, _hist_member falls back to ensemble_member."""
         config = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -218,7 +218,7 @@ class TestLoadScenarioDataMemberSelection:
             mock_deps.return_value = {"obs_regridded": (True, "/fake/obs")}
             pipeline._load_scenario_data()
 
-        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM", member="r1i1p1f1", var="tas")
+        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM6", member="r1i1p1f1", var="tas")
 
     def test_scenario_sel_uses_ensemble_member(self, g6_001_tas_config, pipeline_options):
         """G6 scenario data load must use ensemble_member (not hist override)."""
@@ -301,7 +301,7 @@ class TestHistoricalPathSharedParent:
     def test_historical_path_fallback_uses_ensemble_member(self, pipeline_options):
         """When no lineage is registered, ensemble_member fills the group."""
         config = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -333,7 +333,7 @@ class TestBuildOutputAttrs:
 
     def test_attrs_fall_back_to_ensemble_member_when_no_lineage(self, pipeline_options):
         config = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",

@@ -41,7 +41,7 @@ def local_cache_with_output(tmp_path) -> ArtifactCache:
 def base_config() -> BCSDConfig:
     """Standard SSP245 scenario config."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r1i1p1f1",
@@ -55,7 +55,7 @@ def base_config() -> BCSDConfig:
 def sai_config() -> BCSDConfig:
     """SAI G6 scenario config."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="pr",
         ensemble_member="r2i1p1f1",
@@ -69,7 +69,7 @@ def sai_config() -> BCSDConfig:
 def regional_config() -> BCSDConfig:
     """Config with a spatial subset (South Africa region)."""
     return BCSDConfig(
-        gcm="UKESM",
+        gcm="UKESM1-1-LL",
         downscaling_method="BCSD",
         variable="tasmax",
         ensemble_member="01",
@@ -84,7 +84,7 @@ def regional_config() -> BCSDConfig:
 def dtr_config() -> BCSDConfig:
     """dtr config — bias corrected so tasmin can be derived, never published fine."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         variable="dtr",
         ensemble_member="008",
         scenario="SSP245",
@@ -239,7 +239,13 @@ class TestStorePaths:
         assert "/qa/" in bound_cache._scratch_store
 
     def test_scratch_store_encodes_gcm_obs_subset(self, bound_cache):
-        assert "CESM2-WACCM-ERA5-global.icechunk" in bound_cache._scratch_store
+        assert "CESM2-WACCM6-ERA5-global.icechunk" in bound_cache._scratch_store
+
+    def test_regional_store_encodes_new_ukesm_name(self, local_cache, regional_config):
+        local_cache.config = regional_config
+        assert (
+            "UKESM1-1-LL-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk" in local_cache._scratch_store
+        )
 
     def test_output_store_uses_output_dir_when_set(self, bound_cache_with_output):
         assert bound_cache_with_output.output_dir in bound_cache_with_output._output_store
@@ -275,7 +281,7 @@ class TestObsLoc:
         assert bound_cache.obs_loc.store_path.endswith(".icechunk")
 
     def test_store_path_encodes_gcm_obs_subset(self, bound_cache):
-        assert "CESM2-WACCM-ERA5-global.icechunk" in bound_cache.obs_loc.store_path
+        assert "CESM2-WACCM6-ERA5-global.icechunk" in bound_cache.obs_loc.store_path
 
     def test_group_encodes_obs_and_variable(self, bound_cache):
         assert bound_cache.obs_loc.group == "obs/tas"
@@ -318,7 +324,7 @@ class TestHistoricalLoc:
 
     def test_store_path_encodes_gcm_obs_subset(self, bound_cache):
         loc = bound_cache.historical_loc("r1i1p1f1")
-        assert "CESM2-WACCM-ERA5-global.icechunk" in loc.store_path
+        assert "CESM2-WACCM6-ERA5-global.icechunk" in loc.store_path
 
     def test_variable_override_targets_sibling_group(self, bound_cache):
         # tasmin's swap step reads the sibling fine tasmax output (issue #331).
@@ -604,7 +610,7 @@ class TestStageLoc:
 
     def test_transform_scenario_without_scenario_raises(self, tmp_path):
         config = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             variable="tas",
             ensemble_member="r1i1p1f1",
             downscaling_method="BCSD",
@@ -626,7 +632,7 @@ class TestStageLoc:
             ("variable", "dtr"),
             ("scenario", "G6-1.5K"),
             ("ensemble_member", "008"),
-            ("gcm", "UKESM"),
+            ("gcm", "UKESM1-1-LL"),
         ):
             with subtests.test(field=field):
                 other = bound_cache_with_output.config.model_copy(update={field: value})
@@ -678,7 +684,7 @@ class TestCheckDependencies:
 
     def _tasmin_cache(self, tmp_path, scenario="SSP245"):
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tasmin",
             ensemble_member="r1i1p1f1",
@@ -803,7 +809,10 @@ class TestGetOutputPath:
 
     def test_transform_scenario_without_scenario_field_raises(self, tmp_path):
         config = BCSDConfig(
-            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+            downscaling_method="BCSD",
+            gcm="CESM2-WACCM6",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
         )
         cache = ArtifactCache.from_config(config, PipelineOptions(scratch_dir=str(tmp_path)))
         with pytest.raises(ValueError, match="scenario must be specified"):
@@ -956,7 +965,7 @@ class TestDownscalingMethodNamespacing:
     def _cache_for(method: str, tmp_path) -> ArtifactCache:
         return ArtifactCache.from_config(
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method=method,
                 variable="tas",
                 ensemble_member="r1i1p1f1",

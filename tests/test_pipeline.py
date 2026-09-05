@@ -128,7 +128,7 @@ def pipeline_options(tmp_path) -> PipelineOptions:
 def config() -> BCSDConfig:
     """Standard SSP245 config."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
         ensemble_member="r1i1p1f1",
@@ -142,7 +142,7 @@ def config() -> BCSDConfig:
 def pr_config() -> BCSDConfig:
     """Precipitation config (no detrending, divide downscaling method)."""
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="pr",
         ensemble_member="r1i1p1f1",
@@ -248,7 +248,7 @@ class TestPrepareObservationsCompute:
     def test_get_experiment_called_for_historical_scenario(self, pipeline):
         with _mock_prepare_obs_compute() as (_, mock_get_exp, *_):
             pipeline.prepare_observations()
-        mock_get_exp.assert_called_once_with(gcm="CESM2-WACCM", scenario="historical", var="tas")
+        mock_get_exp.assert_called_once_with(gcm="CESM2-WACCM6", scenario="historical", var="tas")
 
     def test_interpolate_called_exactly_once(self, pipeline):
         with _mock_prepare_obs_compute() as (_, _, mock_interp, *_):
@@ -262,7 +262,7 @@ class TestPrepareObservationsCompute:
 
     def test_subset_space_called_twice_for_regional_run(self, tmp_path):
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -288,7 +288,7 @@ class TestPrepareObservationsCompute:
 
     def test_rechunk_called_when_enabled(self, tmp_path):
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -416,7 +416,7 @@ class TestFitHistoricalBehavior:
 class TestTransformScenarioBehavior:
     def test_raises_when_scenario_is_none(self, tmp_path):
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -531,7 +531,7 @@ class TestTransformScenarioBehavior:
     def test_ocean_mask_not_applied_when_disabled(self, tmp_path):
         """_build_ocean_mask is not called when apply_ocean_mask=False."""
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="pr",
             ensemble_member="r1i1p1f1",
@@ -671,7 +671,7 @@ class TestTasminStageDispatch:
     @pytest.fixture
     def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tasmin",
             ensemble_member="001",
@@ -734,7 +734,7 @@ class TestTasminEagerDisaggInput:
     @pytest.fixture
     def tasmin_pipeline(self, pipeline_options) -> BCSDPipeline:
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tasmin",
             ensemble_member="001",
@@ -993,7 +993,7 @@ class TestAssertStitchedContinuity:
             _assert_stitched_continuity(da)
 
     def test_day_gap_within_year_is_tolerated(self):
-        """A single missing day within a year must NOT raise (known UKESM quirk)."""
+        """A single missing day within a year must NOT raise (known UKESM1-1-LL quirk)."""
         times = pd.date_range("2014-01-01", "2014-12-31", freq="D").delete(364)  # drop Dec 31
         da = xr.DataArray(np.ones(len(times)), coords={"time": times}, dims=["time"])
         _assert_stitched_continuity(da)  # should not raise
@@ -1166,7 +1166,7 @@ class TestWeibullZeroBounded:
         its BCSD table entry is ``nonparametric`` as of #523, so ``pr`` stands in here.
         """
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="pr",
             ensemble_member="r1i1p1f1",
@@ -1389,7 +1389,7 @@ class TestTransformScenarioCoarseOutput:
 @pytest.fixture
 def dtr_config() -> BCSDConfig:
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         variable="dtr",
         ensemble_member="008",
         scenario="SSP245",
@@ -1575,7 +1575,7 @@ class TestNormalVariableStillPublishesFine:
 @pytest.fixture
 def tasmin_config() -> BCSDConfig:
     return BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tasmin",
         ensemble_member="r1i1p1f1",
@@ -1786,7 +1786,7 @@ def _tiny_fine_tasmin() -> xr.DataArray:
 class TestTasminCoarseWriteChunkAlignment:
     """The derived coarse tasmin write must tile the coarse shard grid.
 
-    Regression for the production failure ``CESM2-WACCM_tasmin_003_G6-1.5K``: the tasmin
+    Regression for the production failure ``CESM2-WACCM6_tasmin_003_G6-1.5K``: the tasmin
     stages derive coarse tasmin from auto-chunked tasmax/dtr and wrote it with
     ``make_coarse_encoding`` (shard 24x48) without rechunking, so xarray's ``safe_chunks``
     check rejected the misaligned dask chunks. These tests drive the *real*
@@ -1859,7 +1859,7 @@ class TestTasminCoarseWriteChunkAlignment:
 def _time_straddling_coarse_ds() -> xr.Dataset:
     """Debiased-coarse tasmax/dtr whose dask *time* chunks straddle the coarse shard grid.
 
-    Mirrors the production scenario ``CESM2-WACCM_tasmin_003_G6-1.5K``: ``_open_from_icechunk``
+    Mirrors the production scenario ``CESM2-WACCM6_tasmin_003_G6-1.5K``: ``_open_from_icechunk``
     auto-chunks re-opened coarse inputs into sub-shard time pieces, and the scenario spans more
     than one ``SHARD_TIME_COARSE`` (16000-day) shard. Those ~600-step time chunks do not tile
     the shard boundary at 16000, which is exactly what tripped xarray's ``safe_chunks`` check on
@@ -2293,7 +2293,7 @@ class TestDetrendScenarioBridge:
         # dtr has detrend_data=False; for a SAI scenario it must still stitch the
         # SSP245 bridge so the output spans the full predict window (issue #363).
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="dtr",
             ensemble_member="003",
@@ -2319,7 +2319,7 @@ class TestDetrendScenarioBridge:
         # pr has detrend_data=False; for a non-SAI scenario there is no bridge —
         # the scenario is returned unchanged (regression: no behavior change).
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="pr",
             ensemble_member="003",
@@ -2397,7 +2397,7 @@ class TestScenarioHistoricalSlice:
 
     def test_sai_scenario_stops_at_train_period_end(self, pipeline_options):
         config = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="001",
@@ -2416,7 +2416,7 @@ class TestScenarioHistoricalSlice:
         # configs/qa/obs-comparison/* pair train_period_end 2008 with a 2015 scenario start;
         # the old slice leaked six extra years into the reference pool.
         config = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -2432,7 +2432,7 @@ class TestScenarioHistoricalSlice:
     def test_matches_the_historical_stage_loader(self, pipeline_options):
         """_load_gcm_obs already slices correctly; the two loaders must agree."""
         config = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member="001",
@@ -2488,7 +2488,7 @@ class TestObservationAttrs:
     def _pipeline(method: str, member: str, scenario: str):
         return BCSDPipeline(
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method=method,
                 variable="tas",
                 ensemble_member=member,
@@ -2507,7 +2507,7 @@ class TestObservationAttrs:
 
     def test_obs_attrs_keep_what_the_artifact_is_keyed_on(self):
         attrs = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_obs_attrs()
-        assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM"
+        assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM6"
         assert attrs["srm_downscaling:variable"] == "tas"
         assert "srm_downscaling:observation_dataset" in attrs
         assert "srm_downscaling:version" in attrs
@@ -2526,6 +2526,33 @@ class TestObservationAttrs:
         """The invariant: a method attr means the group depends on the method."""
         attrs = self._pipeline("QDMSD", "r1i1p1f1", "SSP245")._build_output_attrs()
         assert attrs["srm_downscaling:downscaling_method"] == "QDMSD"
+
+    def test_obs_attrs_carry_gcm_description(self):
+        attrs = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_obs_attrs()
+        assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM6"
+        assert attrs["srm_downscaling:gcm_description"] == "CESM2.1.5-WACCM6(TSMLT)"
+
+    def test_output_attrs_carry_gcm_description(self):
+        attrs = self._pipeline("BCSD", "r1i1p1f1", "SSP245")._build_output_attrs()
+        assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM6"
+        assert attrs["srm_downscaling:gcm_description"] == "CESM2.1.5-WACCM6(TSMLT)"
+
+    def test_attrs_omit_description_for_unknown_gcm(self):
+        """A name with no catalog entry gets no description key, and no KeyError."""
+        pipeline = BCSDPipeline(
+            BCSDConfig(
+                gcm="SOME-OTHER-GCM",
+                downscaling_method="BCSD",
+                variable="tas",
+                ensemble_member="r1i1p1f1",
+                scenario="SSP245",
+                predict_period_start=2015,
+                predict_period_end=2100,
+            ),
+            PipelineOptions(),
+        )
+        assert "srm_downscaling:gcm_description" not in pipeline._build_obs_attrs()
+        assert "srm_downscaling:gcm_description" not in pipeline._build_output_attrs()
 
 
 # ---------------------------------------------------------------------------
@@ -2557,7 +2584,7 @@ class TestQDMScenarioWindow:
     @staticmethod
     def _pipeline(pipeline_options, variable="tas", **window):
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="QDMSD",
             variable=variable,
             ensemble_member="r1i1p1f1",
@@ -2700,7 +2727,7 @@ class TestQDMPreconditions:
     @staticmethod
     def _pipeline(pipeline_options, scenario="SSP245", predict_period_start=2015):
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="QDMSD",
             variable="tas",
             ensemble_member="r1i1p1f1",
@@ -2822,7 +2849,7 @@ class TestQDMReproducibility:
     def test_qdm_branch_builds_the_seeded_debiaser(self, pipeline_options, variable):
         """Every qdm construction site must use the seeded subclass, not stock ibicus."""
         cfg = BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="QDMSD",
             variable=variable,
             ensemble_member="r1i1p1f1",

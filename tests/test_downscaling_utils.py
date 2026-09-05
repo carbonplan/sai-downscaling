@@ -589,11 +589,11 @@ def test_interpolate_coarse_to_fine_grid_regional_edge_stays_nan():
 # --- issue #554: real GCM grids must regrid to full global coverage --------------------
 #
 # The named-GCM coordinates below are the real ones, read from the input stores. They are
-# hardcoded so the tests stay offline. CESM2-WACCM is the grid that hid this bug for a long
+# hardcoded so the tests stay offline. CESM2-WACCM6 is the grid that hid this bug for a long
 # time: it is the only one whose lat includes +/-90 and whose lon includes exactly -180.
 
 _GCM_GRIDS: dict[str, tuple[np.ndarray, np.ndarray]] = {
-    "CESM2-WACCM": (np.linspace(-90.0, 90.0, 192), np.arange(-180.0, 180.0, 1.25)),
+    "CESM2-WACCM6": (np.linspace(-90.0, 90.0, 192), np.arange(-180.0, 180.0, 1.25)),
     # Gaussian T85 latitudes: unevenly spaced and stopping ~1.07 deg short of the poles. No
     # current input store uses this grid, but it is the only entry here with a non-uniform
     # latitude axis, so it stays as the regression case for pole padding on one.
@@ -602,7 +602,7 @@ _GCM_GRIDS: dict[str, tuple[np.ndarray, np.ndarray]] = {
         np.arange(-180.0, 180.0, 1.40625),
     ),
     # N96: lat stops at +/-89.375, and lon centers straddle -180 rather than landing on it.
-    "UKESM": (
+    "UKESM1-1-LL": (
         np.arange(-89.375, 89.376, 1.25),
         np.arange(-179.0625, 179.07, 1.875),
     ),
@@ -629,7 +629,7 @@ def _make_gcm_coarse(gcm: str) -> xr.DataArray:
 @pytest.mark.parametrize("gcm", sorted(_GCM_GRIDS))
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
 def test_real_gcm_grid_covers_full_globe(gcm: str, dtype: str):
-    # The direct guard against issue #554. Fails on the pre-fix implementation for UKESM
+    # The direct guard against issue #554. Fails on the pre-fix implementation for UKESM1-1-LL
     # (polar caps + a strip down the -180 seam) and Gaussian T85 (polar caps). Both dtypes,
     # because the stores hold float32 and the padding decisions come from the coordinates.
     lat, lon = (a.astype(dtype) for a in _GCM_GRIDS[gcm])
@@ -647,10 +647,10 @@ def test_real_gcm_grid_covers_full_globe(gcm: str, dtype: str):
 
 
 def test_interpolate_ukesm_west_seam_is_finite_and_periodic():
-    # UKESM lon starts at -179.0625, so fine cells at -180..-179.25 sit west of every
+    # UKESM1-1-LL lon starts at -179.0625, so fine cells at -180..-179.25 sit west of every
     # coarse center. The old right-only wrap left them NaN: a 4-column meridional strip
     # spanning all latitudes, which is the substantive data loss in issue #554.
-    coarse = _make_gcm_coarse("UKESM")
+    coarse = _make_gcm_coarse("UKESM1-1-LL")
     fine = _make_era5_fine_grid()
 
     result = interpolate_coarse_to_fine_grid(coarse, fine)
@@ -675,7 +675,7 @@ def test_interpolate_ukesm_west_seam_is_finite_and_periodic():
     )
 
 
-@pytest.mark.parametrize("gcm", ["gaussian-t85", "UKESM"])
+@pytest.mark.parametrize("gcm", ["gaussian-t85", "UKESM1-1-LL"])
 def test_interpolate_pole_row_is_zonally_constant(gcm: str):
     # Poles are filled with the zonal mean of the outermost coarse row (ESMF Pole="all"),
     # so the pole is single-valued rather than carrying each meridian's own value inward.
@@ -696,7 +696,7 @@ def test_linear_and_slinear_agree_and_stay_nonnegative(field: str):
     exactly bilinear on a rectilinear grid, so they agree to floating-point noise, and
     neither can turn non-negative input negative.
     """
-    lat, lon = _GCM_GRIDS["UKESM"]
+    lat, lon = _GCM_GRIDS["UKESM1-1-LL"]
     if field == "smooth":
         data = np.cos(np.deg2rad(lat))[:, None] * np.sin(np.deg2rad(lon))[None, :] + 2.0
     else:
@@ -725,7 +725,7 @@ def test_interpolate_coarse_to_fine_grid_handles_dayofyear_leading_dim():
     # The climatology path carries `dayofyear`, not `time`. xarray-regrid's accessor
     # defaults to time_dim="time", so this pins that a differently named leading
     # dimension still passes through untouched.
-    lat, lon = _GCM_GRIDS["UKESM"]
+    lat, lon = _GCM_GRIDS["UKESM1-1-LL"]
     coarse = xr.DataArray(
         np.random.default_rng(0).random((5, lat.size, lon.size)),
         dims=["dayofyear", "lat", "lon"],
@@ -806,9 +806,9 @@ def test_bypassing_regrid_linear_is_equivalent(gcm: str):
 @pytest.mark.parametrize(
     "gcm, member",
     [
-        ("CESM2-WACCM", "r1i1p1f1"),
-        ("CESM2-WACCM", "001"),
-        ("UKESM", "r2i1p1f2"),
+        ("CESM2-WACCM6", "r1i1p1f1"),
+        ("CESM2-WACCM6", "001"),
+        ("UKESM1-1-LL", "r2i1p1f2"),
     ],
 )
 def test_get_historical_experiment_uses_unified_store(gcm: str, member: str):
@@ -1023,10 +1023,10 @@ def _regional_grids(n_time: int = 40) -> tuple[xr.DataArray, xr.DataArray, xr.Da
 def _pole_gap_global_grids() -> tuple[xr.DataArray, xr.DataArray]:
     """Global coarse grid whose cell centers stop half a step short of the boundary.
 
-    This is the UKESM geometry at test scale. UKESM stores lat centers at
+    This is the UKESM1-1-LL geometry at test scale. UKESM1-1-LL stores lat centers at
     +/-89.375 on a 1.25 deg grid and lon centers from -179.0625 on a 1.875 deg grid, so the
     outermost ERA5 fine rows and columns used to fall outside the interpolation domain and
-    come back NaN. CESM2-WACCM does not, which is why the hole went unnoticed for so long
+    come back NaN. CESM2-WACCM6 does not, which is why the hole went unnoticed for so long
     (issues #553, #554).
     """
     coarse_lat = np.arange(-75.0, 90.0, 30.0)  # [-75, -45, -15, 15, 45, 75]
@@ -1107,7 +1107,7 @@ class TestIsGlobalGrid:
         assert is_global_grid(coarse)
 
     def test_cell_center_grid_short_of_the_poles_is_global(self):
-        """UKESM lat stops at +/-89.375. That is a global grid, not a subset."""
+        """UKESM1-1-LL lat stops at +/-89.375. That is a global grid, not a subset."""
         coarse, _ = _pole_gap_global_grids()
 
         assert is_global_grid(coarse)

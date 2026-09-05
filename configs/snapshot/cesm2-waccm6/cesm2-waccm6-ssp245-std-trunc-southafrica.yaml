@@ -1,0 +1,31 @@
+# Snapshot proxy: CESM2-WACCM6 / SSP245 / standard variables / truncated member 008 / South Africa.
+# Mirrors configs/production/cesm2-waccm6/cesm2-waccm6-ssp245-std-trunc.yaml with SA bounds + qa env.
+# Member 008 is the std bridge for G6-1.5K/003; its SSP245 data ends 2069-12-31 (CMIP6 truncation
+# of members 006-010), so predict_period_end is clamped to 2069 to avoid downscaling past the
+# valid extent.
+# Full-length member 003 lives in cesm2-waccm6-ssp245-std-southafrica.yaml (2099).
+gcm: "CESM2-WACCM6"
+variables: ["tas", "pr", "rsds"]
+ensemble_members: ["008"]
+scenarios: ["SSP245"]
+
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2069
+
+# === Downscaling Method ===
+# "BCSD" (detrend + quantile mapping) or "QDMSD" (quantile delta mapping). Required:
+# there is no default, so every config states which method produced its output.
+downscaling_method: ["BCSD","QDMSD"]
+
+# Run over a ~3 deg halo beyond the region of interest ([-35, -22, 16, 33]) so BCSD's
+# regrid + spatial disaggregation edge effects fall outside it. The comparison notebook
+# trims back to the region of interest (roi_bounds) before diffing.
+subset_bounds: [-38, -19, 13, 36]
+
+scratch_dir: "s3://carbonplan-srm/scratch/snapshot/cache"
+output_dir: "s3://carbonplan-srm/scratch/snapshot/output"
+environment: "qa"
+verbose: true
+save_intermediate: true

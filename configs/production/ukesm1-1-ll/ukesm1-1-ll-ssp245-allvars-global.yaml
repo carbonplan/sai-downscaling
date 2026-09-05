@@ -1,0 +1,30 @@
+# BCSD configuration: UKESM1-1-LL / tas / SSP245 / all members / global (production)
+
+# === Model and Scenario ===
+gcm: "UKESM1-1-LL"
+variables: ["tas", "tasmax", "tasmin", "rsds", "pr"]
+ensemble_members: ["r2i1p1f2"]
+scenarios: ["SSP245"]
+
+# === Downscaling Methods ===
+# Required: there is no default, so every config states which method produced its output.
+# Production publishes BCSD only for now; QDMSD is exercised in the qa configs, which list
+# both. Adding it here doubles every wave, so it is a deliberate separate decision.
+downscaling_methods: ["BCSD", "QDMSD"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2099
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-srm/scratch/cache"
+output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
+
+environment: "production"
+# version intentionally unset — derived from the installed package version at runtime
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true

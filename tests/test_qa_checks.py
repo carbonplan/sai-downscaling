@@ -61,8 +61,8 @@ class TestAssertNoNans:
     def test_error_includes_run_context(self):
         arr = np.full((2, 2), np.nan)
 
-        with pytest.raises(NaNCheckError, match="gcm=CESM2-WACCM"):
-            assert_no_nans(arr, name="obs", context={"gcm": "CESM2-WACCM", "variable": "pr"})
+        with pytest.raises(NaNCheckError, match="gcm=CESM2-WACCM6"):
+            assert_no_nans(arr, name="obs", context={"gcm": "CESM2-WACCM6", "variable": "pr"})
 
     def test_raises_on_dask_backed_array(self):
         values = np.ones((5, 3, 4))
@@ -116,7 +116,7 @@ def pipeline_options(tmp_path) -> PipelineOptions:
 @pytest.fixture
 def historical_pipeline(pipeline_options) -> BCSDPipeline:
     config = BCSDConfig(
-        downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+        downscaling_method="BCSD", gcm="CESM2-WACCM6", variable="tas", ensemble_member="r1i1p1f1"
     )
     return BCSDPipeline(config, pipeline_options)
 
@@ -124,7 +124,7 @@ def historical_pipeline(pipeline_options) -> BCSDPipeline:
 @pytest.fixture
 def scenario_pipeline(pipeline_options) -> BCSDPipeline:
     config = BCSDConfig(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
         ensemble_member="001",
@@ -138,7 +138,7 @@ def scenario_pipeline(pipeline_options) -> BCSDPipeline:
 class TestBiasCorrectionInputChecks:
     """The debiaser must never be handed NaN input (issue #517).
 
-    The all-NaN day mirrors a real defect in the input data. The CESM2-WACCM historical
+    The all-NaN day mirrors a real defect in the input data. The CESM2-WACCM6 historical
     store ends at 2015-01-16 with fifteen fully-NaN days, and every g6 config slices
     historical through ``predict_period_start - 1 == 2034``, so those days reach
     ``cm_hist`` (issues #514 and #518).

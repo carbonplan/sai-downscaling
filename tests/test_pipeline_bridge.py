@@ -20,7 +20,7 @@ from srm.pipeline import BCSDPipeline
 
 def _make_config(**overrides) -> BCSDConfig:
     defaults = dict(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
         ensemble_member="001",
@@ -88,7 +88,7 @@ def _esgf_pipeline(tmp_path) -> BCSDPipeline:
 
 def test_bridge_returns_primary_when_esgf_member_none(tmp_path):
     """When _ssp245_esgf_member is None, _load_ssp245_bridge returns only primary (no gap check)."""
-    config = _make_config(gcm="CESM2-WACCM", ensemble_member="001")
+    config = _make_config(gcm="CESM2-WACCM6", ensemble_member="001")
     pipeline = BCSDPipeline(config, _make_options(tmp_path))
     assert pipeline._ssp245_esgf_member is None
 
@@ -157,7 +157,7 @@ def test_bridge_prepends_esgf_when_gap_detected(tmp_path):
     assert result.attrs["bridge_esgf_years"] == "2015-2019"
     assert result.attrs["bridge_geomip_member"] == "001"
     assert result.attrs["bridge_geomip_years"] == "2020-2084"
-    assert result.attrs["bridge_gcm"] == "CESM2-WACCM"
+    assert result.attrs["bridge_gcm"] == "CESM2-WACCM6"
     assert result.attrs["bridge_variable"] == "tas"
 
 
@@ -255,7 +255,7 @@ def test_bridge_empty_esgf_gap_returns_primary(tmp_path):
 
 def _g6_end_config() -> BCSDConfig:
     return _make_config(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         ensemble_member="002",
         scenario="G6-1.5K-END",
         predict_period_start=2085,
@@ -333,7 +333,7 @@ def test_bridge_sai_parent_tmax_uses_truncated_ssp245_without_gap(tmp_path):
     variables, this case fails loudly rather than silently when it regresses.
     """
     config = _make_config(
-        gcm="CESM2-WACCM",
+        gcm="CESM2-WACCM6",
         variable="tasmax",
         ensemble_member="002",
         scenario="G6-1.5K-END",
@@ -359,7 +359,7 @@ def test_bridge_sai_parent_tmax_uses_truncated_ssp245_without_gap(tmp_path):
 
 def test_bridge_unchanged_when_no_sai_parent(tmp_path):
     """Plain G6-1.5K has no SAI parent, so the bridge stays SSP245-only."""
-    config = _make_config(gcm="CESM2-WACCM", ensemble_member="002", scenario="G6-1.5K")
+    config = _make_config(gcm="CESM2-WACCM6", ensemble_member="002", scenario="G6-1.5K")
     pipeline = BCSDPipeline(config, _make_options(tmp_path))
     assert pipeline._sai_parent is None
 

@@ -33,6 +33,8 @@ class VirtualChunkContainerConfig:
 @dataclass(kw_only=True)
 class BaseCatalogEntry:
     name: str
+    # Model description written to outputs as ``srm_downscaling:gcm_description`` (#598).
+    description: str | None = None
 
 
 @dataclass(kw_only=True)
@@ -241,12 +243,14 @@ class Catalog:
             VarStandards.PR,
         ]
         self.datasets: dict[str, BaseDataset] = {
-            "CESM2-WACCM": Datatree(
-                name="CESM2-WACCM",
+            "CESM2-WACCM6": Datatree(
+                name="CESM2-WACCM6",
+                description="CESM2.1.5-WACCM6(TSMLT)",
                 path="s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk",
             ),
-            "UKESM": Datatree(
-                name="UKESM",
+            "UKESM1-1-LL": Datatree(
+                name="UKESM1-1-LL",
+                description="UKESM1.1-LL",
                 path="s3://carbonplan-srm/input/processed/ukesm.icechunk",
             ),
             "ERA5": Dataset(
