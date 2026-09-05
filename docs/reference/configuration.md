@@ -42,7 +42,7 @@ For the first case, remove `variable_config` and rely on per-variable defaults (
 
 ## Prediction period and per-member data extents
 
-`predict_period_start` and `predict_period_end` must fall within the valid data extent of every ensemble member the config expands to. Those extents are not uniform: some members are truncated years before the nominal scenario end and the unified store NaN-pads them to that end, so a predict period that overshoots would silently downscale padding. `bcsd run` and `bcsd run-matrix` guard against this with `check_config_time_domain` before submitting any work, raising a blocking error that lists every config whose predict period falls outside its member's bounds.
+`predict_period_start` and `predict_period_end` must fall within the valid data extent of every ensemble member the config expands to. Those extents are not uniform: some members are truncated years before the nominal scenario end and the unified store NaN-pads them to that end, so a predict period that overshoots would silently downscale padding. `saidownscale run` and `saidownscale run-matrix` guard against this with `check_config_time_domain` before submitting any work, raising a blocking error that lists every config whose predict period falls outside its member's bounds.
 
 The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/saidownscale/validation.py`; the CESM2-WACCM6 SSP245 spread is representative:
 
@@ -118,7 +118,7 @@ There is no run-wide tier in YAML, deliberately. A top-level `debias_approach` w
 `variable_overrides` is keyed by variable name, so it is order-independent. A key naming a variable outside the run is an error, not a silent no-op. It is only valid in matrix configs; a single-variable config should use `variable_config` directly.
 
 ```bash
-bcsd run-matrix --gcm CESM2-WACCM6 \
+saidownscale run-matrix --gcm CESM2-WACCM6 \
   --variable tasmax --variable dtr \
   --member 007 --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2069 \
@@ -138,7 +138,7 @@ The pipeline detects this rather than preventing it. On a cache hit, it compares
 To run two configurations side by side, give each its own branch:
 
 ```bash
-SAIDOWNSCALE_BRANCH=v0.13.0-dtr-nonparam bcsd run-matrix ... --variable-override dtr:debias_approach=nonparametric
+SAIDOWNSCALE_BRANCH=v0.13.0-dtr-nonparam saidownscale run-matrix ... --variable-override dtr:debias_approach=nonparametric
 ```
 
 | Case | Behavior |
@@ -228,17 +228,17 @@ You can override the `environment` field using the `SAIDOWNSCALE_ENVIRONMENT` en
 
 ```bash
 # Override environment for this run
-SAIDOWNSCALE_ENVIRONMENT=production bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_ENVIRONMENT=production saidownscale run --config-path configs/example.yaml
 
 # Override branch for this run
-SAIDOWNSCALE_BRANCH=v1.0.post5 bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_BRANCH=v1.0.post5 saidownscale run --config-path configs/example.yaml
 ```
 
 You can also override `branch` directly on the CLI without editing the config file:
 
 ```bash
 # Pin to a specific branch's cache
-uv run bcsd run --config-path configs/example.yaml --branch v1.0.post5
+uv run saidownscale run --config-path configs/example.yaml --branch v1.0.post5
 ```
 
 This is useful for:
@@ -270,7 +270,7 @@ All variables use a `running_window_length` of `31` days and a `running_window_s
 
 All variables use a `running_window_length` of `91` days and a `running_window_step_length` of `31` days, with `debias_approach: qdm`. Quantile delta mapping carries the climate trend through its own quantile mapping, so `detrend_data` is `false` for every variable. The `detrend_method`, `disaggregation_method`, and `disaggregation_clim_method` columns match the BCSD table above.
 
-You can override these per run through the nested `variable_config` block in the config file, or with the `bcsd run-matrix` override flags (`--disaggregation-method`, `--detrend-data/--no-detrend-data`, etc.).
+You can override these per run through the nested `variable_config` block in the config file, or with the `saidownscale run-matrix` override flags (`--disaggregation-method`, `--detrend-data/--no-detrend-data`, etc.).
 
 ## Downscaling method
 
@@ -303,7 +303,7 @@ two runs because obs deduplication is deliberately method-blind. On the command 
 equivalent is a repeated flag:
 
 ```bash
-uv run bcsd run-matrix --gcm CESM2-WACCM6 --variable pr --member 003 --scenario SSP245 \
+uv run saidownscale run-matrix --gcm CESM2-WACCM6 --variable pr --member 003 --scenario SSP245 \
   --downscaling-method BCSD --downscaling-method QDMSD \
   --predict-period-start 2015 --predict-period-end 2099
 ```

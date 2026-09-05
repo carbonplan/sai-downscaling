@@ -85,7 +85,7 @@ jobs:
               uses: ./.github/actions/batch-run
               with:
                   name: validate-input-qa
-                  command: '["bcsd","validate","--config-path","${{ env.QA_CONFIG_PATH }}","--no-coiled"]'
+                  command: '["saidownscale","validate","--config-path","${{ env.QA_CONFIG_PATH }}","--no-coiled"]'
                   job-queue: ${{ env.SAIDOWNSCALE_BATCH_JOB_QUEUE }}
                   job-definition: ${{ needs.image.outputs.job_definition }}
 
@@ -100,7 +100,7 @@ jobs:
                   if [[ -n "$BRANCH" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
-                  uv run bcsd run --config-path "$QA_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
+                  uv run saidownscale run --config-path "$QA_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
 
             - name: Build the output validation command (QA)
               id: validate-output-cmd
@@ -117,9 +117,9 @@ jobs:
                   # implicit means the writer and the reader derive it separately.
                   RESOLVED="$BRANCH"
                   if [[ -z "$RESOLVED" ]]; then
-                    RESOLVED=$(uv run bcsd resolve-branch --config-path "$QA_CONFIG_PATH")
+                    RESOLVED=$(uv run saidownscale resolve-branch --config-path "$QA_CONFIG_PATH")
                   fi
-                  ARGS=(bcsd validate-output --config-path "$QA_CONFIG_PATH" --no-coiled --branch "$RESOLVED")
+                  ARGS=(saidownscale validate-output --config-path "$QA_CONFIG_PATH" --no-coiled --branch "$RESOLVED")
                   JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
                   if [[ -z "$JSON" || "$JSON" == "null" ]]; then
                     echo "::error::failed to build the validate-output command array"
@@ -184,7 +184,7 @@ jobs:
                   if [[ -n "$BRANCH" ]]; then
                     EXTRA_ARGS="--branch $BRANCH"
                   fi
-                  uv run bcsd run --config-path configs/snapshot/cesm2-waccm6/ --executor aws-batch $EXTRA_ARGS
+                  uv run saidownscale run --config-path configs/snapshot/cesm2-waccm6/ --executor aws-batch $EXTRA_ARGS
 
             - name: Build the output validation command (snapshot baseline)
               id: validate-output-cmd
@@ -195,9 +195,9 @@ jobs:
                   set -euo pipefail
                   RESOLVED="$BRANCH"
                   if [[ -z "$RESOLVED" ]]; then
-                    RESOLVED=$(uv run bcsd resolve-branch --config-path configs/snapshot/cesm2-waccm6/)
+                    RESOLVED=$(uv run saidownscale resolve-branch --config-path configs/snapshot/cesm2-waccm6/)
                   fi
-                  ARGS=(bcsd validate-output --config-path configs/snapshot/cesm2-waccm6/ --no-coiled --branch "$RESOLVED")
+                  ARGS=(saidownscale validate-output --config-path configs/snapshot/cesm2-waccm6/ --no-coiled --branch "$RESOLVED")
                   JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
                   if [[ -z "$JSON" || "$JSON" == "null" ]]; then
                     echo "::error::failed to build the validate-output command array"
@@ -219,12 +219,12 @@ jobs:
               # pull request branch has not been reviewed or pointed at by baselines.py.
               # It would also have no release tag to name itself after.
               if: github.event_name == 'release'
-              # No Coiled token: `bcsd release` only moves an icechunk ref and opens no
+              # No Coiled token: `saidownscale release` only moves an icechunk ref and opens no
               # cluster at all, so it never needed one.
               # The branch this wrote to stays writable, so a later qa run with a matching
               # SAIDOWNSCALE_BRANCH could overwrite the baseline in place and a comparison would then
               # diff a candidate against itself. The tag pins the snapshot id.
-              run: uv run bcsd release --config-path configs/snapshot/cesm2-waccm6/ --tag "snapshot-$TAG"
+              run: uv run saidownscale release --config-path configs/snapshot/cesm2-waccm6/ --tag "snapshot-$TAG"
 
             - name: Report the pointer to update
               # Print both fields: `branch` changes every release and `uri` changes when the
@@ -338,7 +338,7 @@ jobs:
                     EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
                   set +e
-                  uv run bcsd run --config-path "$PLAN_CONFIG_PATH" \
+                  uv run saidownscale run --config-path "$PLAN_CONFIG_PATH" \
                     --executor aws-batch --dry-run $EXTRA_ARGS >plan.txt 2>&1
                   STATUS=$?
                   set -e
@@ -367,7 +367,7 @@ jobs:
             # ({gcm}-{obs_dataset}-{subset_id}.icechunk), so parallel models never commit
             # to the same branch and cannot race each other. Splitting any finer, per
             # config file, would break that: the scenario configs of a single GCM share
-            # one store, and `bcsd run` also deduplicates the obs and historical stages
+            # one store, and `saidownscale run` also deduplicates the obs and historical stages
             # across every config under the path it is given.
             #
             # Each job gets its own 6h AWS session rather than sharing one across models,
@@ -402,7 +402,7 @@ jobs:
               uses: ./.github/actions/batch-run
               with:
                   name: validate-input-production
-                  command: '["bcsd","validate","--config-path","${{ env.PROD_CONFIG_PATH }}","--no-coiled"]'
+                  command: '["saidownscale","validate","--config-path","${{ env.PROD_CONFIG_PATH }}","--no-coiled"]'
                   job-queue: ${{ env.SAIDOWNSCALE_BATCH_JOB_QUEUE }}
                   job-definition: ${{ needs.image.outputs.job_definition }}
                   # Global stores, so twice the regional default on both axes.
@@ -420,7 +420,7 @@ jobs:
                   if [[ -n "$BRANCH" ]]; then
                     EXTRA_ARGS="$EXTRA_ARGS --branch $BRANCH"
                   fi
-                  uv run bcsd run --config-path "$PROD_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
+                  uv run saidownscale run --config-path "$PROD_CONFIG_PATH" --executor aws-batch $EXTRA_ARGS
 
             - name: Build the output validation command (production)
               id: validate-output-cmd
@@ -437,9 +437,9 @@ jobs:
                   # implicit means the writer and the reader derive it separately.
                   RESOLVED="$BRANCH"
                   if [[ -z "$RESOLVED" ]]; then
-                    RESOLVED=$(uv run bcsd resolve-branch --config-path "$PROD_CONFIG_PATH")
+                    RESOLVED=$(uv run saidownscale resolve-branch --config-path "$PROD_CONFIG_PATH")
                   fi
-                  ARGS=(bcsd validate-output --config-path "$PROD_CONFIG_PATH" --no-coiled --branch "$RESOLVED")
+                  ARGS=(saidownscale validate-output --config-path "$PROD_CONFIG_PATH" --no-coiled --branch "$RESOLVED")
                   JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
                   if [[ -z "$JSON" || "$JSON" == "null" ]]; then
                     echo "::error::failed to build the validate-output command array"

@@ -1233,7 +1233,7 @@ class TestJobName:
 
     def test_short_name_is_left_alone(self, orchestrator, config):
         name = orchestrator._job_name("fit_historical", [config])
-        assert name.startswith("bcsd-fit_historical-CESM2-WACCM6-tas-")
+        assert name.startswith("saidownscale-fit_historical-CESM2-WACCM6-tas-")
         assert len(name) < 128
 
 

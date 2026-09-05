@@ -1,7 +1,7 @@
 # BCSD configuration: CESM2-WACCM6 / G6-1.5K / all variables / global (production)
 #
 # Equivalent CLI command:
-#   uv run bcsd run --config-path configs/production/cesm2-waccm6-g6.yaml
+#   uv run saidownscale run --config-path configs/production/cesm2-waccm6-g6.yaml
 
 # Member 002 is published alongside 003 because it is the realization the termination
 # run continues (see cesm2-waccm6-g6-end.yaml). Without it, the only way to compare SAI

@@ -40,7 +40,7 @@
     requires-python = ">=3.13, <3.13.14"
 
 [project.scripts]
-    bcsd = "saidownscale.cli:app"
+    saidownscale = "saidownscale.cli:app"
 
 [build-system]
     build-backend = "setuptools.build_meta"

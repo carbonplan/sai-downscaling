@@ -202,7 +202,7 @@ class TestValidatePredictPeriods:
 
 
 class TestValidateOutputConfigPath:
-    """Tests for `bcsd validate-output --config-path`: store discovery + branch default."""
+    """Tests for `saidownscale validate-output --config-path`: store discovery + branch default."""
 
     _CONFIG_YAML = """
 gcm: "CESM2-WACCM6"
@@ -341,7 +341,7 @@ class TestEmptyStoreIsBlocking:
         return config_file
 
     def test_no_leaves_without_a_filter_exits_nonzero(self, tmp_path):
-        # validate-output runs right after `bcsd run` over the same configs, so an empty
+        # validate-output runs right after `saidownscale run` over the same configs, so an empty
         # read means the run wrote nothing or this process resolved a different branch
         # than the writer. Warning and exiting 0 passes a deploy gate that checked nothing.
         config_file = self._write_config(tmp_path)
@@ -904,7 +904,7 @@ class TestRunMatrixOverrideFlag:
 
 
 class TestReleaseCommand:
-    """`bcsd release` freezes the stores a config set writes to under an icechunk tag."""
+    """`saidownscale release` freezes the stores a config set writes to under an icechunk tag."""
 
     _CONFIG_YAML = """
 gcm: "CESM2-WACCM6"

@@ -111,7 +111,7 @@ graph TB
 
 Daily minimum temperature is **not** bias-corrected directly. Bias-correcting `tasmax` and `tasmin` independently can leave the pair physically inconsistent, so the pipeline instead bias-corrects `tasmax` and the diurnal temperature range `dtr` (`= tasmax − tasmin`) and reconstructs `tasmin = tasmax − dtr` from their debiased-coarse outputs. This mirrors the NASA-NEX approach and is implemented in the dedicated stage variants `fit_historical_tasmin` and `transform_scenario_tasmin`, which read the `debiased_coarse` `tasmax` and `dtr` groups written by those stages (see [Managing the Cache](../how-to/manage-cache.md)). The reconstruction helper (`derive_tasmin`) requires its two inputs to share an identical time axis and raises if they do not, so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result (issue #363).
 
-`tasmax` and `tasmin` are still spatially disaggregated **independently**, and that final interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step (`reconcile_temperature_extremes`) closes this gap: once both fine fields exist it swaps the offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields (issue #331). The swap is NaN-safe and structurally monotone, and the `bcsd validate-output` gate blocks any run whose stored output still contains an inversion.
+`tasmax` and `tasmin` are still spatially disaggregated **independently**, and that final interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step (`reconcile_temperature_extremes`) closes this gap: once both fine fields exist it swaps the offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields (issue #331). The swap is NaN-safe and structurally monotone, and the `saidownscale validate-output` gate blocks any run whose stored output still contains an inversion.
 
 Both behaviors are keyed on the **variable**, not on which entry point runs the stage. `fit_historical` and `transform_scenario` route a `tasmin` config to their `_tasmin` variants at the top of the method, so the distributed `batch_runner`, the local `run_full_pipeline`, and the CLI all produce derived-and-reconciled `tasmin` identically. Because the derivation reads the `tasmax` and `dtr` outputs, `tasmin` must run after them; `DownscalingOrchestrator` enforces this by scheduling `tasmin` in a later intra-stage dependency wave.
 
@@ -204,7 +204,7 @@ The sequence below is the Coiled path specifically. The AWS Batch path differs o
 
 ```mermaid
 sequenceDiagram
-    participant CLI as bcsd CLI
+    participant CLI as saidownscale CLI
     participant Orch as DownscalingOrchestrator
     participant Coiled as Coiled Batch API
     participant S3 as S3 Cache
@@ -300,7 +300,7 @@ The CLI is built on several key components:
 
 ## Batch Execution Flow (Coiled)
 
-Detailed flow when running `uv run bcsd run --config-path configs/ --executor coiled`. Under `--executor aws-batch` the middle of this flow changes shape: the orchestrator writes one S3 manifest instead of per-task variables, submits a single array job instead of N VMs, and each child reads its entry by `AWS_BATCH_JOB_ARRAY_INDEX`. The cache verification at the end is identical.
+Detailed flow when running `uv run saidownscale run --config-path configs/ --executor coiled`. Under `--executor aws-batch` the middle of this flow changes shape: the orchestrator writes one S3 manifest instead of per-task variables, submits a single array job instead of N VMs, and each child reads its entry by `AWS_BATCH_JOB_ARRAY_INDEX`. The cache verification at the end is identical.
 
 ```mermaid
 flowchart TD

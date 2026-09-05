@@ -1,7 +1,7 @@
 """
 Command-line interface for the downscaling pipeline.
 
-Provides a typer-based ``bcsd`` command with subcommands for running, validating, and
+Provides a typer-based ``saidownscale`` command with subcommands for running, validating, and
 inspecting the pipeline. Supports both single-config and matrix-expansion execution
 with automatic caching and optional Coiled integration.
 """
@@ -1274,7 +1274,7 @@ def run_matrix(
 
     Example (2 GCMs x 2 variables x 3 members x 2 scenarios x 1 method = 24 runs):
 
-        bcsd run-matrix \\
+        saidownscale run-matrix \\
           --gcm CESM2-WACCM6 --gcm UKESM1-1-LL \\
           --variable tas --variable pr \\
           --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1 \\
@@ -1288,7 +1288,7 @@ def run_matrix(
     methods share one regridded observation artifact and write to separate group
     prefixes, so nothing collides:
 
-        bcsd run-matrix \\
+        saidownscale run-matrix \\
           --gcm CESM2-WACCM6 --variable pr --member 003 --scenario SSP245 \\
           --downscaling-method BCSD --downscaling-method QDMSD \\
           --predict-period-start 2015 --predict-period-end 2100
@@ -1296,7 +1296,7 @@ def run_matrix(
     Give one variable a different setting with --variable-override
     (repeatable, 'variable:field=value'):
 
-        bcsd run-matrix \\
+        saidownscale run-matrix \\
           --gcm CESM2-WACCM6 \\
           --variable tasmax --variable dtr \\
           --member 007 --scenario ssp245 \\
@@ -1885,7 +1885,7 @@ def validate_output(
     matching subtrees (defaulting to the whole store).
 
     Store URIs can be given explicitly, or derived from the same config(s) used for
-    `bcsd run` via --config-path; in the latter case --branch defaults to the branch
+    `saidownscale run` via --config-path; in the latter case --branch defaults to the branch
     those configs resolve to (the same branch `run` would write).
 
     When $GITHUB_STEP_SUMMARY is set, a markdown report is appended there in addition
@@ -1894,8 +1894,8 @@ def validate_output(
     By default the store's lazy dask reductions run on a short-lived Coiled Dask cluster
     (the driver, tables, exit-code gate, and step summary stay local); only scalar results
     return to the driver. Pass ``--no-coiled`` to run everything in-process instead.
-    local: `uv run bcsd validate-output <store_uri> [<store_uri> ...] --no-coiled`
-    coiled: `uv run bcsd validate-output <store_uri> [<store_uri> ...]`
+    local: `uv run saidownscale validate-output <store_uri> [<store_uri> ...] --no-coiled`
+    coiled: `uv run saidownscale validate-output <store_uri> [<store_uri> ...]`
 
     """
     from saidownscale.config import SCENARIO_TO_GROUP
@@ -1952,7 +1952,7 @@ def validate_output(
             if not results:
                 # Blocking whether or not a filter is set. An explicit filter matching
                 # nothing is an error, and so is an unfiltered read of an empty store:
-                # this command runs immediately after `bcsd run` over the same configs, so
+                # this command runs immediately after `saidownscale run` over the same configs, so
                 # nothing to validate means the run wrote nothing, or that this process
                 # resolved a different branch than the writer did. Reporting either as a
                 # warning exits 0 and passes a deploy gate that checked nothing.

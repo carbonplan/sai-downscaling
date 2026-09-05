@@ -7,7 +7,7 @@
 # downscaling past its valid extent.
 #
 # Equivalent CLI command:
-#   uv run bcsd run --config-path configs/production/
+#   uv run saidownscale run --config-path configs/production/
 
 # === DownscalingConfig: Run Identity ===
 gcm: "CESM2-WACCM6"

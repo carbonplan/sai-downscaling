@@ -9,7 +9,7 @@ A cheap South Africa run produces candidate output, and `compare_runs` diffs it 
 ```mermaid
 graph TB
     REL[release published] -->|deploy.yml snapshot job| SNAP
-    RUN[bcsd run<br/>South Africa configs] -->|produces| CAND[Candidate output store]
+    RUN[saidownscale run<br/>South Africa configs] -->|produces| CAND[Candidate output store]
     SNAP[("Regional baseline, same extent<br/>pointer in baselines.py")]
 
     SNAP --> CMP

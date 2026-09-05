@@ -855,7 +855,7 @@ class DownscalingPipeline:
         # Data-quality diagnostic (issue #331): how many fine cells were inverted
         # (tasmax < tasmin) before the swap, plus the worst inversion. Unlike the residual
         # count in qaqc.validate_tasmax_ge_tasmin (which runs on the final output via
-        # `bcsd validate-output` and, being post-reconcile, is ~0), the *swap* count is only
+        # `saidownscale validate-output` and, being post-reconcile, is ~0), the *swap* count is only
         # available here, pre-swap. It costs one extra streaming read pass over both fields,
         # so restrict it to QA runs (always spatial subsets — cheap); production skips it and
         # relies on the qaqc consistency gate. NaN cells (e.g. ocean) compare False, excluded.

@@ -36,7 +36,7 @@ The indirection is necessary because AWS Batch `containerOverrides` cannot overr
 
 ### Cost approval
 
-The `plan` job runs `bcsd run --dry-run` and writes the per-stage cost estimate into the workflow run summary. Enabling **required reviewers** on the `production` environment (Settings → Environments → production) pauses the run there, so the reviewer approves against a concrete number rather than a blank prompt. Without that setting the job is informational only, and the run proceeds unattended.
+The `plan` job runs `saidownscale run --dry-run` and writes the per-stage cost estimate into the workflow run summary. Enabling **required reviewers** on the `production` environment (Settings → Environments → production) pauses the run there, so the reviewer approves against a concrete number rather than a blank prompt. Without that setting the job is informational only, and the run proceeds unattended.
 
 ## Config structure
 
@@ -74,9 +74,9 @@ QA runs execute all configs in `configs/qa/` against a small South Africa spatia
 
 The job runs three steps in order, against `configs/qa/` or the narrower path implied by **model**:
 
-1. `bcsd validate --config-path configs/qa/` — checks input datasets for the GCMs and scenarios referenced by the configs. Exits with code 1 on any blocking failure before any compute is spent.
-2. `bcsd run --config-path configs/qa/` — runs the full pipeline.
-3. `bcsd validate-output --config-path configs/qa/` — checks the written output datasets.
+1. `saidownscale validate --config-path configs/qa/` — checks input datasets for the GCMs and scenarios referenced by the configs. Exits with code 1 on any blocking failure before any compute is spent.
+2. `saidownscale run --config-path configs/qa/` — runs the full pipeline.
+3. `saidownscale validate-output --config-path configs/qa/` — checks the written output datasets.
 
 ## Production runs
 
@@ -105,17 +105,17 @@ The matrix is an explicit list in `deploy.yml` rather than a directory listing, 
 
 Each job checks out the ref, installs the package at it (so the `branch` in all configs resolves to the package version), then runs:
 
-1. `bcsd validate --config-path configs/production/{model}/`
-2. `bcsd run --config-path configs/production/{model}/`
-3. `bcsd validate-output --config-path configs/production/{model}/`
+1. `saidownscale validate --config-path configs/production/{model}/`
+2. `saidownscale run --config-path configs/production/{model}/`
+3. `saidownscale validate-output --config-path configs/production/{model}/`
 
 ## Snapshot baseline runs
 
 The `snapshot` job runs `configs/snapshot/` at the release tag and produces the regional baseline the per-pull-request check compares against. It runs three steps:
 
-1. `bcsd run --config-path configs/snapshot/cesm2-waccm6/` — writes to the branch named for the release's package version.
-2. `bcsd validate-output --config-path configs/snapshot/cesm2-waccm6/`
-3. `bcsd release --config-path configs/snapshot/cesm2-waccm6/ --tag snapshot-<release tag>` — creates an icechunk tag so the state cannot be overwritten by a later run on the same branch.
+1. `saidownscale run --config-path configs/snapshot/cesm2-waccm6/` — writes to the branch named for the release's package version.
+2. `saidownscale validate-output --config-path configs/snapshot/cesm2-waccm6/`
+3. `saidownscale release --config-path configs/snapshot/cesm2-waccm6/ --tag snapshot-<release tag>` — creates an icechunk tag so the state cannot be overwritten by a later run on the same branch.
 
 ### Producing an ad-hoc snapshot from a pull request
 
@@ -134,7 +134,7 @@ gh workflow run deploy.yml --ref <pr-branch> -f environment=snapshot -f branch=m
 | Freeze under a tag | yes | **no** — an ad-hoc run must not mint something that looks blessed |
 | Image | built from the release tag | built from the dispatched commit, and the job definition is pinned to it |
 
-Dispatching is preferable to running `bcsd run` locally for the same purpose, because the workflow builds the image from the commit you dispatched and pins the job definition to it. A local run resolves `srm-downscaling` to whatever revision happens to be newest in ECR, which need not be the code you are testing.
+Dispatching is preferable to running `saidownscale run` locally for the same purpose, because the workflow builds the image from the commit you dispatched and pins the job definition to it. A local run resolves `srm-downscaling` to whatever revision happens to be newest in ECR, which need not be the code you are testing.
 
 The checkout uses `fetch-depth: 0` for this reason: `setuptools_scm` names the icechunk branch, and a shallow checkout off a non-tag ref falls back to version `999`, so the run would write to a branch literally named `v999`. A release tag survives a shallow checkout because `git describe` finds the tag on `HEAD`; a pull request's head does not.
 

@@ -34,7 +34,7 @@ COPY src/ ./src/
 RUN uv sync --frozen --no-dev
 
 # Configs last, so editing one rebuilds only this layer rather than re-running the sync.
-# They ship because the deploy workflow submits `bcsd validate --config-path configs/...`
+# They ship because the deploy workflow submits `saidownscale validate --config-path configs/...`
 # as a Batch job, and the image is always built from the commit that submits it, so the
 # two cannot drift.
 COPY configs/ ./configs/

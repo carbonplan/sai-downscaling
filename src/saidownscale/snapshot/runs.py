@@ -57,7 +57,7 @@ def _check_tasmax_ge_tasmin(candidate) -> list[InvariantCheck]:
     reconcile that leaves each field matching the snapshot yet inverts the pair would pass
     every leaf. This pairs the sibling ``{group}/tasmax/{member}`` and
     ``{group}/tasmin/{member}`` final-product leaves and runs the same NaN-safe gate
-    ``bcsd validate`` uses (:meth:`~saidownscale.qaqc.DatasetChecker.validate_tasmax_ge_tasmin`,
+    ``saidownscale validate`` uses (:meth:`~saidownscale.qaqc.DatasetChecker.validate_tasmax_ge_tasmin`,
     issue #331), so the snapshot comparison catches the inversion end-to-end.
 
     tasmin is derived (``tasmax - dtr``) then reconciled against tasmax, so this is the

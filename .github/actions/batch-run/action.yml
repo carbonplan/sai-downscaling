@@ -8,7 +8,7 @@ inputs:
   command:
     description: >-
       Command to run, as a JSON array. The image's ENTRYPOINT is `uv run --no-sync`, so
-      this names the rest of the invocation, e.g. ["bcsd","validate","--config-path","configs/qa/"].
+      this names the rest of the invocation, e.g. ["saidownscale","validate","--config-path","configs/qa/"].
     required: true
   job-queue:
     description: AWS Batch job queue to submit to
@@ -119,7 +119,7 @@ runs:
           sleep "$POLL_SECONDS"
         done
 
-        # The container's stdout is the report: bcsd validate-output renders the same
+        # The container's stdout is the report: saidownscale validate-output renders the same
         # tables it renders locally, and its markdown summary is a subset of them.
         LOG=$(mktemp)
         if [[ -n "$STREAM" && "$STREAM" != "None" ]]; then

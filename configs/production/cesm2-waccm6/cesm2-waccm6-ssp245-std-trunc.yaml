@@ -9,7 +9,7 @@
 # cesm2-waccm6-ssp245-tmx.yaml (also clamped to 2069).
 #
 # Equivalent CLI command:
-#   uv run bcsd run --config-path configs/production/
+#   uv run saidownscale run --config-path configs/production/
 
 # === DownscalingConfig: Run Identity ===
 gcm: "CESM2-WACCM6"

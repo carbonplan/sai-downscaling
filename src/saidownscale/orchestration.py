@@ -181,7 +181,7 @@ class DownscalingOrchestrator:
         batch_hash = hashlib.sha256(
             "".join(sorted(c.config_hash for c in configs)).encode()
         ).hexdigest()[:8]
-        name = f"bcsd-{stage}-{gcms}-{variables}-{batch_hash}"
+        name = f"saidownscale-{stage}-{gcms}-{variables}-{batch_hash}"
         if len(name) > self._MAX_JOB_NAME:
             head = name[: self._MAX_JOB_NAME - len(batch_hash) - 1].rstrip("-")
             name = f"{head}-{batch_hash}"
