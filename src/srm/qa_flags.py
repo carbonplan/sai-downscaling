@@ -368,6 +368,8 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=N
 
 def parse_tag(tag):
     parts = tag.split("_")
+    if len(parts) < 4:
+        raise ValueError(f"Tag is expected to have 4 parts: gcm_var_scenario_ens_method: {tag}")
     gcm, var, ens, method = parts[0], parts[1], parts[-2], parts[-1]
     scenario = "_".join(parts[2:-2])
     return gcm, var, scenario, ens, method
@@ -1017,6 +1019,7 @@ def prep_annual_threshold_inputs(grid_type: str = "downscaled"):
 def run_step2(
     variables: list,
     gcms: list,
+    methods: list,
     branch: str,
     root_dir: str,
     store_subset_id: str,
@@ -1111,6 +1114,7 @@ def run_step2(
         trees=trees,
         gcms=gcms,
         variables=variables,
+        methods=methods,
         tags_np=tags_np,
         gcms_np=gcms_np,
         scenarios_np=scenarios_np,
