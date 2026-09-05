@@ -416,6 +416,71 @@ def run_flag_loop(
             plt.close()
 
 
+def run_flag_loop_temperature_inconsistencies(
+    tags,
+    trees,
+    plot: bool = True,
+    flag_name: str = "temperature_inconsistency",
+    write_mode: str = "a",
+    var_filter: str = "tas",
+    bucket: str = "carbonplan-srm",
+    prefix: str = "output/qa-intermediate-flags",
+):
+    print(len(tags))
+    for tag in tags:
+        gcm, var, scenario, ens, method = parse_tag(tag)
+        if var_filter is not None and var != var_filter:
+            continue
+
+        tag_tasmin = f"{gcm}_tasmin_{scenario}_{ens}_{method}"
+        tag_tasmax = f"{gcm}_tasmax_{scenario}_{ens}_{method}"
+        if (tag_tasmin in tags) and (tag_tasmax in tags):
+            print(tag)
+
+            tas = get_data(tag=tag, trees=trees)
+            tasmin = get_data(tag=tag_tasmin, trees=trees)
+            tasmax = get_data(tag=tag_tasmax, trees=trees)
+
+            flag_tas_tasmax = flag_tasmax_tas_inconsistency(tas, tasmax)
+            flag_tas_tasmin = flag_tasmin_tas_inconsistency(tas, tasmin)
+
+            flag_tas = (flag_tas_tasmax + flag_tas_tasmin) > 0
+            flag_tasmin = flag_tas_tasmin
+            flag_tasmax = flag_tas_tasmax
+
+            write_individual_flags(
+                flag_data=flag_tas,
+                flag_name=flag_name,
+                tag=tag,
+                write_mode=write_mode,
+                bucket=bucket,
+                prefix=prefix,
+            )
+
+            write_individual_flags(
+                flag_data=flag_tasmax,
+                flag_name=flag_name,
+                tag=tag,
+                write_mode=write_mode,
+                bucket=bucket,
+                prefix=prefix,
+            )
+
+            write_individual_flags(
+                flag_data=flag_tasmin,
+                flag_name=flag_name,
+                tag=tag,
+                write_mode=write_mode,
+                bucket=bucket,
+                prefix=prefix,
+            )
+
+            if plot:
+                plot_flags(flags=flag_tas, time_varying=True, separate_low_high=False)
+                plt.show()
+                plt.close()
+
+
 def calculate_ensemble_mean_deltas(
     variable,
     tags_scenario1,
