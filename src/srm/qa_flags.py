@@ -159,6 +159,13 @@ def calculate_thresholds(obs_max, obs_min, obs_max_std, obs_min_std):
     return outlier_thresh_low, outlier_thresh_high
 
 
+def load_rsds_lims(
+    key: str = "zonal_doy_max_rsds",
+    fpath: str = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds.zarr",
+) -> xr.DataArray:
+    return xr.open_zarr(fpath, group=key)["data"].load()
+
+
 def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = "annual"):
     """
     Flags outliers based on the observational record
@@ -984,6 +991,20 @@ def run_step2(
         prefix=prefix,
         flag_name="outside_global_plausible_range",
         compute_flag=lambda da, var: flag_global_exceedances(da=da, var=var),
+        write_mode="a",
+    )
+
+    zonal_doy_max_rsds = load_rsds_lims()
+    run_flag_loop(
+        tags=tags,
+        trees=trees,
+        flag_name="rsds_max_exceeded",
+        compute_flag=lambda da, var: flag_rsds_above_max(
+            da=da, zonal_doy_max_rsds=zonal_doy_max_rsds
+        ),
+        var_filter="rsds",
+        bucket=bucket,
+        prefix=prefix,
         write_mode="a",
     )
 
