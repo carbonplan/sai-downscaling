@@ -159,7 +159,7 @@ def calculate_thresholds(
     obs_min: xr.DataArray,
     obs_max_std: xr.DataArray,
     obs_min_std: xr.DataArray,
-):
+) -> tuple[xr.DataArray, xr.DataArray]:
     """
     Compute per-pixel outlier bounds from observational climatology stats.
 
@@ -322,7 +322,7 @@ def write_individual_flags(
     prefix: str,
     write_mode: str = "a",
     branch: str = "main",
-):
+) -> None:
     """
     Write one intermediate QA flag to `tag`'s icechunk store in scratch.
 
@@ -413,7 +413,7 @@ def write_individual_flags(
     )
 
 
-def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=None):
+def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=None) -> None:
     """
     Plot a map of where a flag is set, for visual QA review.
 
@@ -505,7 +505,7 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=N
             print("No flags found.")
 
 
-def parse_tag(tag: str):
+def parse_tag(tag: str) -> tuple[str, str, str, str, str]:
     """
     Split a ``"{gcm}_{var}_{scenario}_{ens}_{method}"`` tag into its fields.
 
@@ -529,7 +529,9 @@ def parse_tag(tag: str):
     return gcm, var, scenario, ens, method
 
 
-def get_data(tag: str, trees, is_downscaled: bool, var_to_analyze=None) -> xr.DataArray:
+def get_data(
+    tag: str, trees: dict[str, xr.DataTree], is_downscaled: bool, var_to_analyze: str | None = None
+) -> xr.DataArray:
     """
     Look up the DataArray for `tag` within the already-opened `trees`.
 
@@ -539,12 +541,12 @@ def get_data(tag: str, trees, is_downscaled: bool, var_to_analyze=None) -> xr.Da
         A tag as produced by discover_leaves / parsed by parse_tag.
     trees : dict[str, xr.DataTree]
         Mapping of gcm name -> opened DataTree, as returned by discover_leaves.
+    is_downscaled : bool
+        Whether the data is downscaled (False means debiased_coarse output).
     var_to_analyze : str, optional
         Variable to pull from the leaf group; defaults to the variable
         encoded in `tag`. Pass this to pull a sibling variable from the same
         group -- e.g. tasmax, while iterating over `tas` tags.
-    is_downscaled : bool, optional
-        Whether the data is downscaled (False means debiased_coarse output). Defaults to True.
 
     Returns
     -------
@@ -575,17 +577,17 @@ def get_data(tag: str, trees, is_downscaled: bool, var_to_analyze=None) -> xr.Da
 
 
 def run_flag_loop(
-    tags,
-    trees,
-    flag_name,
+    tags: list[str],
+    trees: dict[str, xr.DataTree],
+    flag_name: str,
     compute_flag,
     bucket: str,
     prefix: str,
     is_downscaled: bool,
-    var_filter: list = None,
+    var_filter: list[str] | None = None,
     write_mode: str = "a",
     plot: bool = True,
-):
+) -> None:
     """Loop over tags, compute one flag per leaf, write it, optionally plot it.
 
     Parameters
@@ -608,6 +610,8 @@ def run_flag_loop(
         If True, call plot_flags on each computed flag.
     bucket, prefix : str
         Passed through to write_individual_flags.
+    is_downscaled : bool
+        Passed through to get_data.
     """
     print(len(tags))
     for tag in tags:
@@ -635,15 +639,15 @@ def run_flag_loop(
 
 
 def run_flag_loop_temperature_inconsistencies(
-    tags,
-    trees,
+    tags: list[str],
+    trees: dict[str, xr.DataTree],
     bucket: str,
     prefix: str,
     is_downscaled: bool,
     plot: bool = True,
     flag_name: str = "temperature_inconsistency",
     write_mode: str = "a",
-):
+) -> None:
     """Flag tas/tasmin/tasmax physical inconsistencies (tasmax < tas or tasmin > tas).
 
     Iterates the `tas` tags in `tags`; for each one whose matching tasmin and
@@ -665,6 +669,8 @@ def run_flag_loop_temperature_inconsistencies(
         Passed through to write_individual_flags.
     bucket, prefix : str
         Passed through to write_individual_flags.
+    is_downscaled : bool
+        Passed through to get_data.
     """
     print(len(tags))
     for tag in tags:
@@ -732,15 +738,15 @@ GCM_CATALOG_NAME_OVERRIDES = {
 
 
 def calculate_ensemble_mean_deltas(
-    variable,
-    tags_scenario1,
-    tags_scenario2,
-    gcm,
-    scenario1,
-    scenario2,
-    scenario1_time_slice,
-    scenario2_time_slice,
-    trees,
+    variable: str,
+    tags_scenario1: np.ndarray,
+    tags_scenario2: np.ndarray,
+    gcm: str,
+    scenario1: str,
+    scenario2: str,
+    scenario1_time_slice: slice,
+    scenario2_time_slice: slice,
+    trees: dict[str, xr.DataTree],
     is_downscaled: bool,
 ):
     """
@@ -864,9 +870,9 @@ def calculate_ensemble_mean_deltas(
 
 def calculate_trend_distortion_flags(
     trees: dict,
-    gcms: list,
-    variables: list,
-    methods: list,
+    gcms: list[str],
+    variables: list[str],
+    methods: list[str],
     tags_np: np.ndarray,
     gcms_np: np.ndarray,
     scenarios_np: np.ndarray,
@@ -877,7 +883,7 @@ def calculate_trend_distortion_flags(
     is_downscaled: bool,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot: bool = True,
-):
+) -> None:
     """
     Compute and write the time-invariant trend-distortion/sign-flip flags.
 
@@ -901,6 +907,8 @@ def calculate_trend_distortion_flags(
         the tags for each gcm/variable/method/scenario combination.
     bucket, prefix : str
         Passed through to write_individual_flags.
+    is_downscaled : bool
+        Passed through to calculate_ensemble_mean_deltas.
     scenario_comparisons : dict
         See SCENARIO_COMPARISONS.
     plot : bool
@@ -1058,11 +1066,11 @@ def get_intermediate_flags(
 
 def combine_intermediate_flags(
     tag: str,
-    flag_list_time_varying: list,
-    flag_list_time_invariant: list,
+    flag_list_time_varying: list[str],
+    flag_list_time_invariant: list[str],
     bucket: str,
     prefix: str,
-):
+) -> tuple[xr.DataArray, xr.DataArray]:
     """
     Combine a tag's intermediate flags into one time-varying and one time-invariant flag.
 
@@ -1411,10 +1419,10 @@ def load_rsds_lims(grid_type: str, key: str = "zonal_doy_max_rsds") -> xr.DataAr
 
     Parameters
     ----------
-    key : str
-        Group name within the zarr store to load.
     grid_type : str
         Which grid's precomputed limits to load; one of GRID_TYPES.
+    key : str
+        Group name within the zarr store to load.
 
     Returns
     -------
@@ -1439,7 +1447,7 @@ def load_rsds_lims(grid_type: str, key: str = "zonal_doy_max_rsds") -> xr.DataAr
     return xr.open_zarr(fpath, group=key)["data"].load()
 
 
-def prep_annual_threshold_inputs(grid_type: str):
+def prep_annual_threshold_inputs(grid_type: str) -> tuple[xr.Dataset, xr.Dataset]:
     """
     Read the step-1 observational threshold outputs and reduce them to annual bounds.
 
@@ -1494,23 +1502,23 @@ def prep_annual_threshold_inputs(grid_type: str):
 
 
 def calculate_all_flags(
-    variables: list,
-    gcms: list,
-    methods: list,
+    variables: list[str],
+    gcms: list[str],
+    methods: list[str],
     bucket: str,
     prefix: str,
-    trees,
-    tags,
-    gcms_np,
-    scenarios_np,
-    variables_np,
-    tags_np,
-    methods_np,
+    trees: dict[str, xr.DataTree],
+    tags: list[str],
+    gcms_np: np.ndarray,
+    scenarios_np: np.ndarray,
+    variables_np: np.ndarray,
+    tags_np: np.ndarray,
+    methods_np: np.ndarray,
     grid_type: str,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot_flag_maps: bool = True,
     verbose: bool = True,
-):
+) -> None:
     """
     Run every intermediate QA-flag check -- time-varying and time-invariant --
     over one already-discovered set of leaves, and write the results.
@@ -1529,14 +1537,16 @@ def calculate_all_flags(
         Passed through to write_individual_flags.
     trees, tags, gcms_np, scenarios_np, variables_np, tags_np, methods_np
         Exactly the outputs of discover_leaves for the grid being processed.
-    scenario_comparisons : dict
-        See SCENARIO_COMPARISONS.
-    plot_flag_maps : bool
-        If True, plot each computed flag.
     grid_type : str
         Which grid's observational thresholds/rsds limits to load (one of
         GRID_TYPES); should match the grid `trees`/`tags_np`/etc. were
         discovered from.
+    scenario_comparisons : dict
+        See SCENARIO_COMPARISONS.
+    plot_flag_maps : bool
+        If True, plot each computed flag.
+    verbose : bool
+        If True, print progress and timing for each of the five flag loops.
     """
 
     if verbose:
@@ -1665,7 +1675,7 @@ def run_step2(
     plot_flag_maps: bool = True,
     verbose: bool = True,
     mode: str = "downscaled_only",
-):
+) -> None:
     """
     Run through all the intermediate flag calculations and write them to icechunk stores on scratch.
 
@@ -1689,6 +1699,9 @@ def run_step2(
         S3 location to write intermediate flags to.
     plot_flag_maps : bool
         If True, plot each computed flag.
+    verbose : bool
+        If True, print progress and timing for leaf discovery and each grid's
+        calculate_all_flags call.
     mode: str (allowed values: "downscaled_only", "debiased_coarse_only", "both")
     """
     valid_modes = ("downscaled_only", "debiased_coarse_only", "both")
