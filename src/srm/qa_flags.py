@@ -439,7 +439,10 @@ def save_figure_to_s3(fig, bucket: str, s3_key: str) -> None:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     buf.seek(0)
-    boto3.client("s3").put_object(Bucket=bucket, Key=s3_key, Body=buf.getvalue())
+    try:
+        boto3.client("s3").put_object(Bucket=bucket, Key=s3_key, Body=buf.getvalue())
+    except Exception as exc:
+        logger.warning("Failed to upload plot to s3://%s/%s: %s", bucket, s3_key, exc)
 
 
 def plot_flags(
@@ -875,7 +878,9 @@ def calculate_ensemble_mean_deltas(
             f"no leaves found for gcm={gcm!r}, scenario={scenario1!r}, variable={variable!r}"
         )
 
-    var_scenario1 = xr.concat(das_scenario1, dim=pd.Index(ens_scenario1, name="ensemble_member"))
+    var_scenario1 = xr.concat(
+        das_scenario1, dim=pd.Index(ens_scenario1, name="ensemble_member"), join="outer"
+    )
 
     das_scenario2 = []
     ens_scenario2 = []
@@ -890,7 +895,9 @@ def calculate_ensemble_mean_deltas(
             f"no leaves found for gcm={gcm!r}, scenario={scenario2!r}, variable={variable!r}"
         )
 
-    var_scenario2 = xr.concat(das_scenario2, dim=pd.Index(ens_scenario2, name="ensemble_member"))
+    var_scenario2 = xr.concat(
+        das_scenario2, dim=pd.Index(ens_scenario2, name="ensemble_member"), join="outer"
+    )
 
     # Take ensemble mean across comparison time periods
     ens_mean_var_scenario1 = var_scenario1.sel(time=scenario1_time_slice).mean(

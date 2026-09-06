@@ -10,7 +10,7 @@ script:
 
     import coiled
     coiled.batch.run(
-        command=["python", "-m", "srm.run_step2_job"],
+        command=["python", "-m", "srm.run_qaflag_step2"],
         name="qa-flags-step2",
         vm_type=["c8g.xlarge"],  # small driver VM; the actual flag computation runs on
                                   # the multi-worker Dask cluster this script creates
@@ -23,7 +23,7 @@ script:
 
 or run directly on any machine with Coiled credentials configured:
 
-    >> uv run python src/srm/run_step2_job.py
+    >> uv run python src/srm/run_qaflag_step2.py
 
 Plots
 -----
@@ -123,7 +123,7 @@ def main() -> None:
                 plot_flag_maps=PLOT_FLAG_MAPS,
                 save_plots=SAVE_PLOTS,
                 verbose=VERBOSE,
-                mode="debiased_coarse_only",  # "both",
+                mode="both",
             )
 
         logger.info("run_step2 job finished in %.1fs", time.time() - t_start)
