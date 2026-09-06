@@ -127,6 +127,12 @@ def main() -> None:
             )
 
         logger.info("run_step2 job finished in %.1fs", time.time() - t_start)
+    except Exception:
+        # logger.exception logs this message plus the full traceback through the same
+        # handlers as everything else (console and LOG_PATH) -- without this, an uncaught
+        # exception would only ever print to stderr, bypassing the log file entirely.
+        logger.exception("run_step2 job failed")
+        raise
     finally:
         boto3.client("s3").upload_file(str(LOG_PATH), BUCKET, LOG_S3_KEY)
         logger.info("Uploaded log to s3://%s/%s", BUCKET, LOG_S3_KEY)
