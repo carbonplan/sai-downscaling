@@ -1,5 +1,7 @@
+import io
 import time
 
+import boto3
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import icechunk
@@ -413,7 +415,38 @@ def write_individual_flags(
     )
 
 
-def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=None) -> None:
+def save_figure_to_s3(fig, bucket: str, s3_key: str) -> None:
+    """
+    Save a matplotlib figure directly to S3, without writing a local file first.
+
+    matplotlib's savefig() only writes to a local path or file-like object -- there's
+    no direct-to-S3 write -- so this renders the figure into an in-memory PNG buffer
+    and uploads that buffer's bytes with boto3. No local file is ever created.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure to save, e.g. from ``plt.gcf()``.
+    bucket : str
+        S3 bucket name.
+    s3_key : str
+        Full S3 object key (path within the bucket) to write to, e.g.
+        ``"scratch/output/qa-intermediate-flags/_plots/annual_outlier_flag_{tag}.png"``.
+    """
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    buf.seek(0)
+    boto3.client("s3").put_object(Bucket=bucket, Key=s3_key, Body=buf.getvalue())
+
+
+def plot_flags(
+    flags,
+    time_varying: bool = True,
+    separate_low_high: bool = True,
+    vlims=None,
+    bucket: str | None = None,
+    s3_key: str | None = None,
+) -> None:
     """
     Plot a map of where a flag is set, for visual QA review.
 
@@ -430,8 +463,12 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=N
         Which of the two `flags` shapes above is being passed.
     vlims : (float, float), optional
         Fixed (vmin, vmax) color limits; otherwise limits are auto-scaled.
+    bucket, s3_key : str, optional
+        If both are given (and a figure is actually drawn -- see below), also
+        upload the figure to ``s3://{bucket}/{s3_key}`` via save_figure_to_s3.
 
-    Draws nothing (or prints "No flags found.") when no cells are flagged.
+    Draws nothing (or prints "No flags found.") when no cells are flagged --
+    in that case, nothing is uploaded either even if bucket/s3_key are given.
     """
     if separate_low_high:
         low_flag = flags[0]
@@ -475,6 +512,8 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=N
                     )
                 ax2.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
             plt.tight_layout()
+            if bucket is not None and s3_key is not None:
+                save_figure_to_s3(plt.gcf(), bucket=bucket, s3_key=s3_key)
             plt.show()
     else:
         flag = flags
@@ -501,6 +540,8 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=N
             ax1.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="0.4")
             unit = "cell-days" if time_varying else "cells"
             ax1.set_title(f"{count_flag.name}: {float(contains_flags):,.0f} flagged {unit}")
+            if bucket is not None and s3_key is not None:
+                save_figure_to_s3(plt.gcf(), bucket=bucket, s3_key=s3_key)
         else:
             print("No flags found.")
 
@@ -587,6 +628,7 @@ def run_flag_loop(
     var_filter: list[str] | None = None,
     write_mode: str = "a",
     plot: bool = True,
+    save_plots: bool = False,
 ) -> None:
     """Loop over tags, compute one flag per leaf, write it, optionally plot it.
 
@@ -608,6 +650,9 @@ def run_flag_loop(
         Passed through to write_individual_flags.
     plot : bool
         If True, call plot_flags on each computed flag.
+    save_plots : bool
+        If True (and plot is also True), also upload each plotted figure to
+        S3 under ``{bucket}/{prefix}/_plots/{flag_name}_{tag}.png``.
     bucket, prefix : str
         Passed through to write_individual_flags.
     is_downscaled : bool
@@ -633,7 +678,14 @@ def run_flag_loop(
         )
 
         if plot:
-            plot_flags(flags=flag_data, time_varying=True, separate_low_high=False)
+            s3_key = f"{prefix}/_plots/{flag_name}_{tag}.png" if save_plots else None
+            plot_flags(
+                flags=flag_data,
+                time_varying=True,
+                separate_low_high=False,
+                bucket=bucket,
+                s3_key=s3_key,
+            )
             plt.show()
             plt.close()
 
@@ -645,6 +697,7 @@ def run_flag_loop_temperature_inconsistencies(
     prefix: str,
     is_downscaled: bool,
     plot: bool = True,
+    save_plots: bool = False,
     flag_name: str = "temperature_inconsistency",
     write_mode: str = "a",
 ) -> None:
@@ -663,6 +716,9 @@ def run_flag_loop_temperature_inconsistencies(
     trees : dict[str, xr.DataTree]
     plot : bool
         If True, call plot_flags on the combined tas flag.
+    save_plots : bool
+        If True (and plot is also True), also upload the plotted figure to
+        S3 under ``{bucket}/{prefix}/_plots/{flag_name}_{tag}.png``.
     flag_name : str
         Name to write all three computed flags under.
     write_mode : {"w", "a"}
@@ -722,7 +778,14 @@ def run_flag_loop_temperature_inconsistencies(
             )
 
             if plot:
-                plot_flags(flags=flag_tas, time_varying=True, separate_low_high=False)
+                s3_key = f"{prefix}/_plots/{flag_name}_{tag}.png" if save_plots else None
+                plot_flags(
+                    flags=flag_tas,
+                    time_varying=True,
+                    separate_low_high=False,
+                    bucket=bucket,
+                    s3_key=s3_key,
+                )
                 plt.show()
                 plt.close()
 
@@ -883,6 +946,7 @@ def calculate_trend_distortion_flags(
     is_downscaled: bool,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot: bool = True,
+    save_plots: bool = False,
 ) -> None:
     """
     Compute and write the time-invariant trend-distortion/sign-flip flags.
@@ -913,6 +977,11 @@ def calculate_trend_distortion_flags(
         See SCENARIO_COMPARISONS.
     plot : bool
         If True, call plot_flags on each computed flag.
+    save_plots : bool
+        If True (and plot is also True), also upload each plotted figure to
+        S3 under
+        ``{bucket}/{prefix}/_plots/{gcm}_{var}_{method}_trend_distortion_{scenario1}_{scenario2}.png``
+        (and the ``flipped_sign_`` equivalent).
     """
     for key in scenario_comparisons:
         print(key)
@@ -990,10 +1059,26 @@ def calculate_trend_distortion_flags(
                     flipped_sign_flag_fine = flipped_sign_flag_fine_frac > 0
 
                     if plot:
+                        if save_plots:
+                            name_prefix = f"{gcm}_{var}_{method}"
+                            s3_key_trend_distortion = (
+                                f"{prefix}/_plots/{name_prefix}_trend_distortion_"
+                                f"{scenario1}_{scenario2}.png"
+                            )
+                            s3_key_sign_flip = (
+                                f"{prefix}/_plots/{name_prefix}_flipped_sign_"
+                                f"{scenario1}_{scenario2}.png"
+                            )
+                        else:
+                            s3_key_trend_distortion = None
+                            s3_key_sign_flip = None
+
                         plot_flags(
                             flags=trend_distortion_flag_fine,
                             time_varying=False,
                             separate_low_high=False,
+                            bucket=bucket,
+                            s3_key=s3_key_trend_distortion,
                         )
                         plt.show()
                         plt.close()
@@ -1002,6 +1087,8 @@ def calculate_trend_distortion_flags(
                             flags=flipped_sign_flag_fine,
                             time_varying=False,
                             separate_low_high=False,
+                            bucket=bucket,
+                            s3_key=s3_key_sign_flip,
                         )
                         plt.show()
                         plt.close()
@@ -1517,6 +1604,7 @@ def calculate_all_flags(
     grid_type: str,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot_flag_maps: bool = True,
+    save_plots: bool = False,
     verbose: bool = True,
 ) -> None:
     """
@@ -1545,6 +1633,9 @@ def calculate_all_flags(
         See SCENARIO_COMPARISONS.
     plot_flag_maps : bool
         If True, plot each computed flag.
+    save_plots : bool
+        If True (and plot_flag_maps is also True), also upload each plotted
+        figure to S3 under ``{bucket}/{prefix}/_plots/``.
     verbose : bool
         If True, print progress and timing for each of the five flag loops.
     """
@@ -1571,6 +1662,8 @@ def calculate_all_flags(
         compute_flag=lambda da, var: flag_global_exceedances(da=da, var=var),
         write_mode="a",
         is_downscaled=is_downscaled,
+        plot=plot_flag_maps,
+        save_plots=save_plots,
     )
     if verbose:
         print(f"  flag loop 1/5 completed in {time.time() - t0:.1f}s")
@@ -1582,11 +1675,12 @@ def calculate_all_flags(
     run_flag_loop_temperature_inconsistencies(
         tags,
         trees,
-        plot=plot_flag_maps,
         flag_name="temperature_inconsistency",
         bucket=bucket,
         prefix=prefix,
         is_downscaled=is_downscaled,
+        plot=plot_flag_maps,
+        save_plots=save_plots,
     )
     if verbose:
         print(f"  flag loop 2/5 completed in {time.time() - t0:.1f}s")
@@ -1613,6 +1707,8 @@ def calculate_all_flags(
         prefix=prefix,
         write_mode="a",
         is_downscaled=is_downscaled,
+        plot=plot_flag_maps,
+        save_plots=save_plots,
     )
     if verbose:
         print(f"  flag loop 3/5 completed in {time.time() - t0:.1f}s")
@@ -1634,6 +1730,8 @@ def calculate_all_flags(
         prefix=prefix,
         write_mode="a",
         is_downscaled=is_downscaled,
+        plot=plot_flag_maps,
+        save_plots=save_plots,
     )
     if verbose:
         print(f"  flag loop 4/5 completed in {time.time() - t0:.1f}s")
@@ -1655,8 +1753,9 @@ def calculate_all_flags(
         bucket=bucket,
         prefix=prefix,
         scenario_comparisons=scenario_comparisons,
-        plot=plot_flag_maps,
         is_downscaled=is_downscaled,
+        plot=plot_flag_maps,
+        save_plots=save_plots,
     )
     if verbose:
         print(f"  flag loop 5/5 completed in {time.time() - t0:.1f}s")
@@ -1673,6 +1772,7 @@ def run_step2(
     bucket: str,
     prefix: str,
     plot_flag_maps: bool = True,
+    save_plots: bool = False,
     verbose: bool = True,
     mode: str = "downscaled_only",
 ) -> None:
@@ -1699,6 +1799,10 @@ def run_step2(
         S3 location to write intermediate flags to.
     plot_flag_maps : bool
         If True, plot each computed flag.
+    save_plots : bool
+        If True (and plot_flag_maps is also True), also upload each plotted
+        figure to S3 under ``{bucket}/{prefix}/_plots/`` (and the
+        ``debiased_coarse`` variant for the coarse-grid branch).
     verbose : bool
         If True, print progress and timing for leaf discovery and each grid's
         calculate_all_flags call.
@@ -1758,9 +1862,10 @@ def run_step2(
             variables_np=variables_np_downscaled,
             tags_np=tags_np_downscaled,
             methods_np=methods_np_downscaled,
-            plot_flag_maps=plot_flag_maps,
             grid_type="downscaled",
             verbose=verbose,
+            plot_flag_maps=plot_flag_maps,
+            save_plots=save_plots,
         )
         if verbose:
             print(f"  flags on downscaled data completed in {time.time() - t0:.1f}s")
@@ -1793,9 +1898,10 @@ def run_step2(
                 variables_np=variables_np_coarse,
                 tags_np=tags_np_coarse,
                 methods_np=methods_np_coarse,
-                plot_flag_maps=plot_flag_maps,
                 grid_type=gcm,
                 verbose=verbose,
+                plot_flag_maps=plot_flag_maps,
+                save_plots=save_plots,
             )
             if verbose:
                 print(
