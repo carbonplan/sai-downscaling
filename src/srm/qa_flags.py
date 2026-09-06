@@ -318,9 +318,9 @@ def write_individual_flags(
     flag_data: xr.DataArray,
     flag_name: str,
     tag: str,
-    bucket: str = "carbonplan-srm",
-    prefix: str = "output/qa-intermediate-flags",
-    write_mode: str = "w",
+    bucket: str,
+    prefix: str,
+    write_mode: str = "a",
     branch: str = "main",
 ):
     """
@@ -529,7 +529,7 @@ def parse_tag(tag: str):
     return gcm, var, scenario, ens, method
 
 
-def get_data(tag: str, trees, var_to_analyze=None, is_downscaled: bool = True) -> xr.DataArray:
+def get_data(tag: str, trees, is_downscaled: bool, var_to_analyze=None) -> xr.DataArray:
     """
     Look up the DataArray for `tag` within the already-opened `trees`.
 
@@ -581,10 +581,10 @@ def run_flag_loop(
     compute_flag,
     bucket: str,
     prefix: str,
+    is_downscaled: bool,
     var_filter: list = None,
     write_mode: str = "a",
     plot: bool = True,
-    is_downscaled: bool = True,
 ):
     """Loop over tags, compute one flag per leaf, write it, optionally plot it.
 
@@ -639,10 +639,10 @@ def run_flag_loop_temperature_inconsistencies(
     trees,
     bucket: str,
     prefix: str,
+    is_downscaled: bool,
     plot: bool = True,
     flag_name: str = "temperature_inconsistency",
     write_mode: str = "a",
-    is_downscaled: bool = True,
 ):
     """Flag tas/tasmin/tasmax physical inconsistencies (tasmax < tas or tasmin > tas).
 
@@ -741,7 +741,7 @@ def calculate_ensemble_mean_deltas(
     scenario1_time_slice,
     scenario2_time_slice,
     trees,
-    is_downscaled: bool = True,
+    is_downscaled: bool,
 ):
     """
     Compute the ensemble-mean scenario1->scenario2 change in the raw GCM vs.
@@ -874,7 +874,7 @@ def calculate_trend_distortion_flags(
     methods_np: np.ndarray,
     bucket: str,
     prefix: str,
-    is_downscaled: bool = True,
+    is_downscaled: bool,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot: bool = True,
 ):
@@ -1024,8 +1024,8 @@ def calculate_trend_distortion_flags(
 
 def get_intermediate_flags(
     tag: str,
-    bucket: str = "carbonplan-srm",
-    prefix: str = "output/qa-intermediate-flags",
+    bucket: str,
+    prefix: str,
     branch: str = "main",
 ) -> xr.Dataset:
     """
@@ -1060,8 +1060,8 @@ def combine_intermediate_flags(
     tag: str,
     flag_list_time_varying: list,
     flag_list_time_invariant: list,
-    bucket: str = "carbonplan-srm",
-    prefix: str = "output/qa-intermediate-flags",
+    bucket: str,
+    prefix: str,
 ):
     """
     Combine a tag's intermediate flags into one time-varying and one time-invariant flag.
@@ -1261,7 +1261,7 @@ def write_final_qa_flags(
 
 
 def discover_leaves(
-    gcms: list[str], branch: str, root_dir: str, store_subset_id: str, is_downscaled: bool = True
+    gcms: list[str], branch: str, root_dir: str, store_subset_id: str, is_downscaled: bool
 ):
     """Open each GCM's icechunk store and enumerate its (scenario, variable, ensemble) leaves.
 
@@ -1405,7 +1405,7 @@ def discover_leaves(
 GRID_TYPES = ("downscaled", "CESM2-WACCM", "UKESM")
 
 
-def load_rsds_lims(key: str = "zonal_doy_max_rsds", grid_type: str = "downscaled") -> xr.DataArray:
+def load_rsds_lims(grid_type: str, key: str = "zonal_doy_max_rsds") -> xr.DataArray:
     """
     Load the zonal/day-of-year maximum rsds values (from step 1 notebook) for use in the rsds-specific flag.
 
@@ -1433,11 +1433,13 @@ def load_rsds_lims(key: str = "zonal_doy_max_rsds", grid_type: str = "downscaled
     elif grid_type == "downscaled":
         fpath = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds.zarr"
     else:
-        fpath = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds_" + grid_type + ".zarr"
+        # step 1 wrote these files under the catalog's GCM name, not the pipeline's
+        catalog_name = GCM_CATALOG_NAME_OVERRIDES.get(grid_type, grid_type)
+        fpath = DIR_QA_FLAG_CONSTANT_INPUTS + "zonal_doy_max_rsds_" + catalog_name + ".zarr"
     return xr.open_zarr(fpath, group=key)["data"].load()
 
 
-def prep_annual_threshold_inputs(grid_type: str = "downscaled"):
+def prep_annual_threshold_inputs(grid_type: str):
     """
     Read the step-1 observational threshold outputs and reduce them to annual bounds.
 
@@ -1466,7 +1468,9 @@ def prep_annual_threshold_inputs(grid_type: str = "downscaled"):
     elif grid_type == "downscaled":
         store = DIR_QA_FLAG_CONSTANT_INPUTS + "doy_obs_thresholds_global.zarr"
     else:
-        store = DIR_QA_FLAG_CONSTANT_INPUTS + "doy_obs_thresholds_global_" + grid_type + ".zarr"
+        # step 1 wrote these files under the catalog's GCM name, not the pipeline's
+        catalog_name = GCM_CATALOG_NAME_OVERRIDES.get(grid_type, grid_type)
+        store = DIR_QA_FLAG_CONSTANT_INPUTS + "doy_obs_thresholds_global_" + catalog_name + ".zarr"
 
     combined = xr.open_zarr(store)
 
@@ -1502,9 +1506,9 @@ def calculate_all_flags(
     variables_np,
     tags_np,
     methods_np,
+    grid_type: str,
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot_flag_maps: bool = True,
-    grid_type: str = "downscaled",
     verbose: bool = True,
 ):
     """
