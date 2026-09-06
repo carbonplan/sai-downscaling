@@ -977,6 +977,12 @@ def calculate_trend_distortion_flags(
     ``"flipped_sign_{scenario1}_{scenario2}"`` -- to every ensemble-member
     tag involved in that comparison (see FLAG_LIST_TIME_INVARIANT).
 
+    A (gcm, variable, method, comparison) combination with no tags for either
+    scenario (e.g. a GCM that never ran the comparison's second scenario) is
+    skipped with a logged warning rather than raising -- those tags simply
+    never get this comparison's flag written, which combine_intermediate_flags
+    already treats as "not applicable" rather than "known issue".
+
     Parameters
     ----------
     trees : dict[str, xr.DataTree]
@@ -1024,6 +1030,23 @@ def calculate_trend_distortion_flags(
                         * (variables_np == var)
                         * (methods_np == method)
                     ]
+
+                    if len(tags_scenario1) == 0 or len(tags_scenario2) == 0:
+                        logger.warning(
+                            "Skipping trend-distortion check for gcm=%s, var=%s, method=%s, "
+                            "comparison=%s (%s->%s): %d tags found for %s, %d tags found for %s",
+                            gcm,
+                            var,
+                            method,
+                            key,
+                            scenario1,
+                            scenario2,
+                            len(tags_scenario1),
+                            scenario1,
+                            len(tags_scenario2),
+                            scenario2,
+                        )
+                        continue
 
                     # Calculate distortions
                     [delta_raw, delta_raw_pct, delta_ds_coarse, delta_ds_coarse_pct, delta_ds] = (
@@ -1517,7 +1540,7 @@ def discover_leaves(
 
 
 # Using old model names temporarily
-GRID_TYPES = ("downscaled", "CESM2-WACCM", "UKESM")
+GRID_TYPES = ("downscaled", "CESM2-WACCM6", "UKESM1-1-LL")
 
 
 def load_rsds_lims(grid_type: str, key: str = "zonal_doy_max_rsds") -> xr.DataArray:

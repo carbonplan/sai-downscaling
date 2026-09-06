@@ -70,15 +70,15 @@ from srm.qa_flags import run_step2  # noqa: E402 -- must come after matplotlib.u
 # --- Run parameters, matching flag_step2_generate-intermediate-qa-flags_inprogress.ipynb ---
 # Update these per experiment before submitting.
 VARIABLES = ["tas", "tasmax", "tasmin", "pr", "rsds"]
-GCMS = ["CESM2-WACCM"]
-METHODS = ["qdmsd"]  # set to whichever method(s) this branch's data tree actually has
+GCMS = ["CESM2-WACCM6", "UKESM1-1-LL"]
+METHODS = ["bcsd", "qdmsd"]
 
-BRANCH = "pr-638-global"
-ROOT_DIR = "s3://carbonplan-srm/scratch/output/qa/"
+BRANCH = "v0.14.1"
+ROOT_DIR = "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/"
 STORE_SUBSET_ID = "global"
 
 BUCKET = "carbonplan-srm"
-PREFIX = "scratch/output/qa-intermediate-flags-v2"
+PREFIX = "scratch/output/qa-intermediate-flags-v0.14.1"
 
 PLOT_FLAG_MAPS = True  # compute flag-map figures
 SAVE_PLOTS = True  # and upload them to S3 under {BUCKET}/{PREFIX}/_plots/ (see qa_flags.plot_flags)
