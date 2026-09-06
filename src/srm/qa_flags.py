@@ -154,7 +154,12 @@ ATTRS_TIME_VARYING = {
 }
 
 
-def calculate_thresholds(obs_max, obs_min, obs_max_std, obs_min_std):
+def calculate_thresholds(
+    obs_max: xr.DataArray,
+    obs_min: xr.DataArray,
+    obs_max_std: xr.DataArray,
+    obs_min_std: xr.DataArray,
+):
     """
     Compute per-pixel outlier bounds from observational climatology stats.
 
@@ -167,7 +172,12 @@ def calculate_thresholds(obs_max, obs_min, obs_max_std, obs_min_std):
     return outlier_thresh_low, outlier_thresh_high
 
 
-def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = "annual"):
+def flag_outliers(
+    da: xr.DataArray,
+    outlier_thresh_low: xr.DataArray,
+    outlier_thresh_high: xr.DataArray,
+    timescale: str = "annual",
+) -> xr.DataArray:
     """
     Flag values outside the observational-record thresholds.
 
@@ -212,7 +222,7 @@ def flag_outliers(da, outlier_thresh_low, outlier_thresh_high, timescale: str = 
     return any_outlier
 
 
-def flag_rsds_above_max(da, zonal_doy_max_rsds):
+def flag_rsds_above_max(da: xr.DataArray, zonal_doy_max_rsds: xr.DataArray) -> xr.DataArray:
     """
     Flag days when rsds exceeds the expected max for its latitude and day of year.
 
@@ -235,7 +245,9 @@ def flag_rsds_above_max(da, zonal_doy_max_rsds):
     return exceeds_max
 
 
-def flag_global_exceedances(da, var: str, var_ranges: dict = VAR_SPATIAL_RANGES):
+def flag_global_exceedances(
+    da: xr.DataArray, var: str, var_ranges: dict = VAR_SPATIAL_RANGES
+) -> xr.DataArray:
     """
     Flag values outside the globally-defined plausible range for `var`.
 
@@ -268,7 +280,7 @@ def flag_global_exceedances(da, var: str, var_ranges: dict = VAR_SPATIAL_RANGES)
     return outside_range
 
 
-def flag_tasmax_tas_inconsistency(tas, tasmax):
+def flag_tasmax_tas_inconsistency(tas: xr.DataArray, tasmax: xr.DataArray) -> xr.DataArray:
     """
     Flag days where tasmax < tas, which is physically inconsistent.
 
@@ -285,7 +297,7 @@ def flag_tasmax_tas_inconsistency(tas, tasmax):
     return inconsistent_days
 
 
-def flag_tasmin_tas_inconsistency(tas, tasmin):
+def flag_tasmin_tas_inconsistency(tas: xr.DataArray, tasmin: xr.DataArray) -> xr.DataArray:
     """
     Flag days where tasmin > tas, which is physically inconsistent.
 
@@ -403,7 +415,7 @@ def write_individual_flags(
 
 def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=None):
     """
-    Plot a coastline map of where a flag is set, for visual QA review.
+    Plot a map of where a flag is set, for visual QA review.
 
     Parameters
     ----------
@@ -493,7 +505,7 @@ def plot_flags(flags, time_varying: bool = True, separate_low_high=True, vlims=N
             print("No flags found.")
 
 
-def parse_tag(tag):
+def parse_tag(tag: str):
     """
     Split a ``"{gcm}_{var}_{scenario}_{ens}_{method}"`` tag into its fields.
 
@@ -517,7 +529,7 @@ def parse_tag(tag):
     return gcm, var, scenario, ens, method
 
 
-def get_data(tag, trees, var_to_analyze=None, is_downscaled: bool = True):
+def get_data(tag: str, trees, var_to_analyze=None, is_downscaled: bool = True) -> xr.DataArray:
     """
     Look up the DataArray for `tag` within the already-opened `trees`.
 
@@ -567,11 +579,11 @@ def run_flag_loop(
     trees,
     flag_name,
     compute_flag,
-    var_filter=None,
+    bucket: str,
+    prefix: str,
+    var_filter: list = None,
     write_mode: str = "a",
     plot: bool = True,
-    bucket: str = "carbonplan-srm",
-    prefix: str = "output/qa-intermediate-flags",
     is_downscaled: bool = True,
 ):
     """Loop over tags, compute one flag per leaf, write it, optionally plot it.
@@ -588,7 +600,7 @@ def run_flag_loop(
         fixed arguments a specific check needs (e.g. `zonal_doy_max_rsds`)
         with a lambda at the call site -- this loop doesn't need to know
         what they are.
-    var_filter : str, optional
+    var_filter : list of str, optional
         If given, only process tags whose variable equals this.
     write_mode : {"w", "a"}
         Passed through to write_individual_flags.
@@ -600,7 +612,7 @@ def run_flag_loop(
     print(len(tags))
     for tag in tags:
         [gcm, var, scenario, ens, method] = parse_tag(tag)
-        if var_filter is not None and var != var_filter:
+        if var_filter is not None and var not in var_filter:
             continue
         print(tag)
 
@@ -625,11 +637,11 @@ def run_flag_loop(
 def run_flag_loop_temperature_inconsistencies(
     tags,
     trees,
+    bucket: str,
+    prefix: str,
     plot: bool = True,
     flag_name: str = "temperature_inconsistency",
     write_mode: str = "a",
-    bucket: str = "carbonplan-srm",
-    prefix: str = "output/qa-intermediate-flags",
     is_downscaled: bool = True,
 ):
     """Flag tas/tasmin/tasmax physical inconsistencies (tasmax < tas or tasmin > tas).
@@ -1015,7 +1027,7 @@ def get_intermediate_flags(
     bucket: str = "carbonplan-srm",
     prefix: str = "output/qa-intermediate-flags",
     branch: str = "main",
-):
+) -> xr.Dataset:
     """
     Open the intermediate-flags icechunk store for `tag` and return it as a Dataset.
 
@@ -1523,6 +1535,9 @@ def calculate_all_flags(
         discovered from.
     """
 
+    if verbose:
+        t_start = time.time()
+
     if grid_type == "downscaled":
         is_downscaled = True
     else:
@@ -1600,7 +1615,7 @@ def calculate_all_flags(
         compute_flag=lambda da, var: flag_rsds_above_max(
             da=da, zonal_doy_max_rsds=zonal_doy_max_rsds
         ),
-        var_filter="rsds",
+        var_filter=["rsds"],
         bucket=bucket,
         prefix=prefix,
         write_mode="a",
@@ -1631,6 +1646,7 @@ def calculate_all_flags(
     )
     if verbose:
         print(f"  flag loop 5/5 completed in {time.time() - t0:.1f}s")
+        print(f"calculate_all_flags total time: {time.time() - t_start:.1f}s")
 
 
 def run_step2(
@@ -1644,6 +1660,7 @@ def run_step2(
     prefix: str,
     plot_flag_maps: bool = True,
     verbose: bool = True,
+    mode: str = "downscaled_only",
 ):
     """
     Run through all the intermediate flag calculations and write them to icechunk stores on scratch.
@@ -1668,9 +1685,15 @@ def run_step2(
         S3 location to write intermediate flags to.
     plot_flag_maps : bool
         If True, plot each computed flag.
+    mode: str (allowed values: "downscaled_only", "debiased_coarse_only", "both")
     """
+    valid_modes = ("downscaled_only", "debiased_coarse_only", "both")
+    if mode not in valid_modes:
+        raise ValueError(f"mode must be one of {valid_modes}, got {mode!r}")
+
     ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
     if verbose:
+        t_start = time.time()
         print("Discovering leaves of the data tree...")
         t0 = time.time()
     [
@@ -1692,72 +1715,79 @@ def run_step2(
     if verbose:
         print(f"  leaf discovery completed in {time.time() - t0:.1f}s")
 
-    keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
-    tags_np_downscaled = tags_np[keep_idx]
-    gcms_np_downscaled = gcms_np[keep_idx]
-    scenarios_np_downscaled = scenarios_np[keep_idx]
-    variables_np_downscaled = variables_np[keep_idx]
-    tags_np_downscaled = tags_np[keep_idx]
-    methods_np_downscaled = methods_np[keep_idx]
+    if mode in ["downscaled_only", "both"]:
+        keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
+        tags_np_downscaled = tags_np[keep_idx]
+        gcms_np_downscaled = gcms_np[keep_idx]
+        scenarios_np_downscaled = scenarios_np[keep_idx]
+        variables_np_downscaled = variables_np[keep_idx]
+        tags_np_downscaled = tags_np[keep_idx]
+        methods_np_downscaled = methods_np[keep_idx]
 
-    # Calculate the flags for the downscaled output
-    if verbose:
-        print("Calculating flags on downscaled data...")
-        t0 = time.time()
-    calculate_all_flags(
-        variables=variables,
-        gcms=gcms,
-        methods=methods,
-        bucket=bucket,
-        prefix=prefix,
-        trees=trees,
-        tags=tags_np_downscaled,
-        gcms_np=gcms_np_downscaled,
-        scenarios_np=scenarios_np_downscaled,
-        variables_np=variables_np_downscaled,
-        tags_np=tags_np_downscaled,
-        methods_np=methods_np_downscaled,
-        plot_flag_maps=plot_flag_maps,
-        grid_type="downscaled",
-        verbose=verbose,
-    )
-    if verbose:
-        print(f"  flags on downscaled data completed in {time.time() - t0:.1f}s")
-
-    # Calculate the flags for the coarse debiased output
-    if verbose:
-        print("Calculating flags on coarse debiased data...")
-        t0 = time.time()
-    for gcm in gcms:
-        mask = (debiased_coarse_flags_np == "debiased_coarse") & (gcms_np == gcm)
-        gcms_np_coarse = gcms_np[mask]
-        scenarios_np_coarse = scenarios_np[mask]
-        variables_np_coarse = variables_np[mask]
-        tags_np_coarse = tags_np[mask]
-        methods_np_coarse = methods_np[mask]
-
+        # Calculate the flags for the downscaled output
         if verbose:
-            t_gcm = time.time()
+            print("Calculating flags on downscaled data...")
+            t0 = time.time()
         calculate_all_flags(
             variables=variables,
-            gcms=[gcm],
+            gcms=gcms,
             methods=methods,
             bucket=bucket,
-            prefix=prefix + "/debiased_coarse",
+            prefix=prefix,
             trees=trees,
-            tags=tags_np_coarse,
-            gcms_np=gcms_np_coarse,
-            scenarios_np=scenarios_np_coarse,
-            variables_np=variables_np_coarse,
-            tags_np=tags_np_coarse,
-            methods_np=methods_np_coarse,
+            tags=tags_np_downscaled,
+            gcms_np=gcms_np_downscaled,
+            scenarios_np=scenarios_np_downscaled,
+            variables_np=variables_np_downscaled,
+            tags_np=tags_np_downscaled,
+            methods_np=methods_np_downscaled,
             plot_flag_maps=plot_flag_maps,
-            grid_type=gcm,
+            grid_type="downscaled",
             verbose=verbose,
         )
         if verbose:
-            print(
-                f"  flags on coarse debiased data for {gcm} completed in {time.time() - t_gcm:.1f}s"
+            print(f"  flags on downscaled data completed in {time.time() - t0:.1f}s")
+
+    if mode in ["debiased_coarse_only", "both"]:
+        # Calculate the flags for the coarse debiased output
+        if verbose:
+            print("Calculating flags on coarse debiased data...")
+            t0 = time.time()
+        for gcm in gcms:
+            mask = (debiased_coarse_flags_np == "debiased_coarse") & (gcms_np == gcm)
+            gcms_np_coarse = gcms_np[mask]
+            scenarios_np_coarse = scenarios_np[mask]
+            variables_np_coarse = variables_np[mask]
+            tags_np_coarse = tags_np[mask]
+            methods_np_coarse = methods_np[mask]
+
+            if verbose:
+                t_gcm = time.time()
+            calculate_all_flags(
+                variables=variables,
+                gcms=[gcm],
+                methods=methods,
+                bucket=bucket,
+                prefix=prefix + "/debiased_coarse",
+                trees=trees,
+                tags=tags_np_coarse,
+                gcms_np=gcms_np_coarse,
+                scenarios_np=scenarios_np_coarse,
+                variables_np=variables_np_coarse,
+                tags_np=tags_np_coarse,
+                methods_np=methods_np_coarse,
+                plot_flag_maps=plot_flag_maps,
+                grid_type=gcm,
+                verbose=verbose,
             )
+            if verbose:
+                print(
+                    f"  flags on coarse debiased data for {gcm} completed in {time.time() - t_gcm:.1f}s"
+                )
+        if verbose:
+            print(
+                f"  flags on coarse debiased data (all gcms) completed in {time.time() - t0:.1f}s"
+            )
+
     if verbose:
-        print(f"  flags on coarse debiased data (all gcms) completed in {time.time() - t0:.1f}s")
+        print(f"run_step2 total time: {time.time() - t_start:.1f}s")
