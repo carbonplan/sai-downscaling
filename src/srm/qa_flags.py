@@ -1628,6 +1628,17 @@ def prep_annual_threshold_inputs(grid_type: str) -> tuple[xr.Dataset, xr.Dataset
     outlier_thresh_low_annual = outlier_thresh_low.min(dim="dayofyear")
     outlier_thresh_high_annual = outlier_thresh_high.max(dim="dayofyear")
 
+    # Match the lat/lon chunk grid flag_outliers' `da` is opened with (INPUT_CHUNKS), so
+    # comparing against it doesn't force dask to reconcile two different chunk grids --
+    # without this, every tag in the annual-outlier flag loop hits a
+    # "PerformanceWarning: Increasing number of chunks" from the mismatch.
+    outlier_thresh_low_annual = outlier_thresh_low_annual.chunk(
+        {"lat": SHARD_LAT, "lon": SHARD_LON}
+    )
+    outlier_thresh_high_annual = outlier_thresh_high_annual.chunk(
+        {"lat": SHARD_LAT, "lon": SHARD_LON}
+    )
+
     return outlier_thresh_low_annual, outlier_thresh_high_annual
 
 
@@ -1960,3 +1971,206 @@ def run_step2(
 
     if verbose:
         logger.info("run_step2 total time: %.1fs", time.time() - t_start)
+
+
+def run_step3(
+    gcms: list,
+    branch: str,
+    root_dir: str,
+    store_subset_id: str,
+    bucket: str,
+    prefix: str,
+    overwrite: bool = False,
+    verbose: bool = True,
+    mode: str = "both",
+) -> None:
+    """
+    Combine each tag's intermediate flags and write the two final flags to the production store.
+
+    Goes through all the steps in the step3 QA-flag notebook
+    (flag_step3_combine_and_write_to_source_coop.ipynb), but is designed to
+    run as a single script call rather than interactively, and covers both
+    the downscaled and debiased_coarse intermediate flags written by
+    run_step2 (e.g. with mode="both") -- not just downscaled, as the notebook
+    currently does.
+
+    combine_intermediate_flags itself needs no changes to support this: it
+    already reads from whatever `prefix` it's given, so this function just
+    calls it once per tag with `prefix` for the downscaled grid and
+    `f"{prefix}/debiased_coarse"` for the coarse grid, matching where
+    run_step2 wrote each grid's intermediate flags.
+
+    Parameters
+    ----------
+    gcms : list[str]
+        GCMs to discover leaves for and write final flags for.
+    branch : str
+        icechunk branch to read intermediate flags from and write final
+        flags to.
+    root_dir : str
+        Directory containing each GCM's production icechunk store.
+    store_subset_id : str
+        Spatial-subset identifier used in the store filename (e.g. "global").
+    bucket, prefix : str
+        S3 location of the intermediate flags written by run_step2. The
+        debiased_coarse intermediate flags are read from
+        ``{prefix}/debiased_coarse``, not `prefix` itself.
+    overwrite : bool
+        Passed through to write_final_qa_flags; if False (default), refuses
+        to replace a flag that has already been written for a given
+        tag/group.
+    verbose : bool
+        If True, print progress and timing for leaf discovery and each
+        grid's write loop.
+    mode : str (allowed values: "downscaled_only", "debiased_coarse_only", "both")
+
+    Notes
+    -----
+    A tag with no intermediate-flags store at a given grid's prefix (e.g. a
+    gcm/var/scenario/ens/method combination that was only run at one
+    resolution) is skipped with a logged warning rather than raising.
+    """
+    valid_modes = ("downscaled_only", "debiased_coarse_only", "both")
+    if mode not in valid_modes:
+        raise ValueError(f"mode must be one of {valid_modes}, got {mode!r}")
+
+    flag_time_varying_name = ATTRS_TIME_VARYING["short_name"]
+    flag_time_invariant_name = ATTRS_TIME_INVARIANT["short_name"]
+
+    ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
+    if verbose:
+        t_start = time.time()
+        logger.info("Discovering leaves of the data tree...")
+        t0 = time.time()
+    [_, _, _, _, _, tags_np, _, debiased_coarse_flags_np] = discover_leaves(
+        gcms=gcms,
+        branch=branch,
+        root_dir=root_dir,
+        store_subset_id=store_subset_id,
+        is_downscaled=False,
+    )
+    if verbose:
+        logger.info("  leaf discovery completed in %.1fs", time.time() - t0)
+
+    # One writable repo per gcm's production store, opened once and reused across all its tags.
+    repos: dict[str, icechunk.Repository] = {}
+    for gcm in gcms:
+        uri = f"{root_dir}{gcm}-ERA5-{store_subset_id}.icechunk"
+        repos[gcm] = icechunk.Repository.open(_icechunk_storage_for_path(uri))
+
+    if mode in ["downscaled_only", "both"]:
+        keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
+        tags_np_downscaled = tags_np[keep_idx]
+
+        if verbose:
+            logger.info("Writing final flags for downscaled data...")
+            logger.info("%d tags to process", len(tags_np_downscaled))
+            t0 = time.time()
+
+        for tag in tags_np_downscaled:
+            [gcm, var, scenario, ens, method] = parse_tag(tag)
+            logger.info(tag)
+            try:
+                [overall_flag_time_varying, overall_flag_time_invariant] = (
+                    combine_intermediate_flags(
+                        tag=tag,
+                        flag_list_time_varying=FLAG_LIST_TIME_VARYING,
+                        flag_list_time_invariant=FLAG_LIST_TIME_INVARIANT,
+                        bucket=bucket,
+                        prefix=prefix,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- a tag with no intermediate-flags store at
+                # this prefix (e.g. never ran for this gcm/var combo) shouldn't stop the rest of
+                # step 3
+                logger.warning("Skipping %s: no intermediate flags at %s: %s", tag, prefix, exc)
+                continue
+
+            group = f"{method}/{scenario}/{var}/{ens}"
+            session = repos[gcm].writable_session(branch)
+
+            write_final_qa_flags(
+                session=session,
+                group=group,
+                flag_data=overall_flag_time_varying,
+                flag_name=flag_time_varying_name,
+                attrs=ATTRS_TIME_VARYING,
+                overwrite=overwrite,
+            )
+            write_final_qa_flags(
+                session=session,
+                group=group,
+                flag_data=overall_flag_time_invariant,
+                flag_name=flag_time_invariant_name,
+                attrs=ATTRS_TIME_INVARIANT,
+                overwrite=overwrite,
+            )
+            commit = session.commit(f"write qa flags for {tag}")
+            logger.info("  commit %s", commit)
+
+        if verbose:
+            logger.info("  final flags for downscaled data completed in %.1fs", time.time() - t0)
+
+    if mode in ["debiased_coarse_only", "both"]:
+        keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s == "debiased_coarse"]
+        tags_np_coarse = tags_np[keep_idx]
+        coarse_prefix = f"{prefix}/debiased_coarse"
+
+        if verbose:
+            logger.info("Writing final flags for coarse debiased data...")
+            logger.info("%d tags to process", len(tags_np_coarse))
+            t0 = time.time()
+
+        for tag in tags_np_coarse:
+            [gcm, var, scenario, ens, method] = parse_tag(tag)
+            logger.info(tag)
+            try:
+                [overall_flag_time_varying, overall_flag_time_invariant] = (
+                    combine_intermediate_flags(
+                        tag=tag,
+                        flag_list_time_varying=FLAG_LIST_TIME_VARYING,
+                        flag_list_time_invariant=FLAG_LIST_TIME_INVARIANT,
+                        bucket=bucket,
+                        prefix=coarse_prefix,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- a tag with no intermediate-flags store at
+                # this prefix (e.g. never ran at coarse resolution for this gcm/var combo)
+                # shouldn't stop the rest of step 3
+                logger.warning(
+                    "Skipping %s: no intermediate flags at %s: %s", tag, coarse_prefix, exc
+                )
+                continue
+
+            # The production tree nests debiased_coarse output between method and scenario
+            # (see e.g. srm.cache.debiased_coarse_scenario_loc), so the write group mirrors
+            # that layout, not the downscaled group above.
+            group = f"{method}/debiased_coarse/{scenario}/{var}/{ens}"
+            session = repos[gcm].writable_session(branch)
+
+            write_final_qa_flags(
+                session=session,
+                group=group,
+                flag_data=overall_flag_time_varying,
+                flag_name=flag_time_varying_name,
+                attrs=ATTRS_TIME_VARYING,
+                overwrite=overwrite,
+            )
+            write_final_qa_flags(
+                session=session,
+                group=group,
+                flag_data=overall_flag_time_invariant,
+                flag_name=flag_time_invariant_name,
+                attrs=ATTRS_TIME_INVARIANT,
+                overwrite=overwrite,
+            )
+            commit = session.commit(f"write qa flags for {tag}")
+            logger.info("  commit %s", commit)
+
+        if verbose:
+            logger.info(
+                "  final flags for coarse debiased data completed in %.1fs", time.time() - t0
+            )
+
+    if verbose:
+        logger.info("run_step3 total time: %.1fs", time.time() - t_start)
