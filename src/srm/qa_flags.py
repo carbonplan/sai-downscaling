@@ -1419,7 +1419,7 @@ def discover_leaves(
         Spatial-subset identifier used in the store filename (e.g. "global").
     is_downscaled : bool
         If True, keep only fine-grid (non ``debiased_coarse``) leaves; if
-        False, keep only ``debiased_coarse`` leaves.
+        False, keep all leaves (both downscaled and ``debiased_coarse``).
 
     Returns
     -------
