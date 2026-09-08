@@ -156,6 +156,11 @@
         "node_modules",
         "site-packages",
         "venv",
+        # Frozen notebook areas, kept in step with .pre-commit-config.yaml so a
+        # direct `ruff check .` matches what CI enforces.
+        "notebooks/archive",
+        "notebooks/check_BCSD_implementation",
+        "notebooks/issues",
     ]
     extend-include = ["*.ipynb"]
     line-length = 100
@@ -175,7 +180,7 @@
 
 [tool.ruff.lint.isort]
     combine-as-imports = true
-    known-first-party  = []
+    known-first-party  = ["saidownscale"]
 
 [tool.ruff.format]
     docstring-code-format = true
