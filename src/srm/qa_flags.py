@@ -2398,3 +2398,175 @@ def calculate_summary_stats(
         summary_df.to_csv(summary_csv_fname, index=False)
 
     return summary_df
+
+
+def run_step4(
+    gcms: list,
+    branch: str,
+    root_dir: str,
+    store_subset_id: str,
+    summary_csv_base_fname: str,
+    verbose: bool = True,
+    mode: str = "both",
+) -> None:
+    """
+    Summarize final QA-flag prevalence and write it to local CSV(s).
+
+    Goes through the steps in the step4 QA-flag notebook
+    (flag_step4_evaluate_flag_prevalence.ipynb), but is designed to run as a
+    single function call rather than interactively. Reads the *final*
+    combined flags already written by run_step3 (not the intermediate
+    per-check flags from run_step2), via calculate_land_mask and
+    calculate_summary_stats, and writes the results to local CSV files --
+    there's no S3 upload here, unlike run_step2's log upload.
+
+    Parameters
+    ----------
+    gcms : list[str]
+        GCMs to discover leaves for and summarize.
+    branch : str
+        icechunk branch to read final flags from.
+    root_dir : str
+        Directory containing each GCM's production icechunk store.
+    store_subset_id : str
+        Spatial-subset identifier used in the store filename (e.g. "global").
+    summary_csv_base_fname : str
+        Base path/filename to write the summary CSV(s) to, without a
+        ``.csv`` extension -- e.g. ``"qa_flag_summary_v0.14.1"`` produces
+        ``"qa_flag_summary_v0.14.1_downscaled.csv"`` and/or
+        ``"qa_flag_summary_v0.14.1_debiased_coarse.csv"`` depending on
+        `mode`.
+    verbose : bool
+        If True, print progress and timing for leaf discovery and each
+        grid's summary.
+    mode : str (allowed values: "downscaled_only", "debiased_coarse_only", "both")
+        Which grid(s) to summarize.
+
+    Notes
+    -----
+    The downscaled grid is shared by every gcm/method, so it gets one land
+    mask (from the first downscaled tag discovered) and one combined CSV.
+    The debiased_coarse grid is *not* shared across gcms -- each gcm has its
+    own coarse grid -- so this computes a separate land mask per gcm (from
+    that gcm's first coarse tag) and concatenates every gcm's summary rows
+    into the single ``_debiased_coarse`` CSV, rather than writing one CSV per
+    gcm. Both CSVs get a ``resolution`` column (``"downscaled"`` or
+    ``"debiased_coarse"``) so rows stay identifiable after concatenation;
+    combined with the ``gcm`` column calculate_summary_stats already writes,
+    that's enough to tell which physical grid any given row came from.
+    """
+    valid_modes = ("downscaled_only", "debiased_coarse_only", "both")
+    if mode not in valid_modes:
+        raise ValueError(f"mode must be one of {valid_modes}, got {mode!r}")
+
+    flag_time_varying_name = ATTRS_TIME_VARYING["short_name"]
+    flag_time_invariant_name = ATTRS_TIME_INVARIANT["short_name"]
+
+    ########### Get the leaves of the data tree to traverse and the tags for each leaf ##########
+    if verbose:
+        t_start = time.time()
+        logger.info("Discovering leaves of the data tree...")
+        t0 = time.time()
+    [trees, _, gcms_np, _, _, tags_np, _, debiased_coarse_flags_np] = discover_leaves(
+        gcms=gcms,
+        branch=branch,
+        root_dir=root_dir,
+        store_subset_id=store_subset_id,
+        is_downscaled=False,
+    )
+    if verbose:
+        logger.info("  leaf discovery completed in %.1fs", time.time() - t0)
+
+    if mode in ["downscaled_only", "both"]:
+        keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
+        tags_np_downscaled = tags_np[keep_idx]
+
+        if verbose:
+            logger.info("Summarizing downscaled data...")
+            logger.info("%d tags to process", len(tags_np_downscaled))
+            t0 = time.time()
+
+        example_tag = tags_np_downscaled[0]
+        land_mask = calculate_land_mask(
+            example_tag=example_tag,
+            trees=trees,
+            is_downscaled=True,
+            var_to_analyze=flag_time_invariant_name,
+        )
+        land_mask.load()
+        land_mask_u8 = land_mask.astype(np.uint8)
+
+        summary_df_downscaled = calculate_summary_stats(
+            tags=tags_np_downscaled,
+            trees=trees,
+            flag_time_varying_name=flag_time_varying_name,
+            flag_time_invariant_name=flag_time_invariant_name,
+            land_mask_u8=land_mask_u8,
+            summary_csv_fname=None,
+            is_downscaled=True,
+            verbose=verbose,
+        )
+        summary_df_downscaled["resolution"] = "downscaled"
+        summary_df_downscaled.to_csv(f"{summary_csv_base_fname}_downscaled.csv", index=False)
+
+        if verbose:
+            logger.info("  summary for downscaled data completed in %.1fs", time.time() - t0)
+
+    if mode in ["debiased_coarse_only", "both"]:
+        if verbose:
+            logger.info("Summarizing coarse debiased data...")
+            t0 = time.time()
+
+        coarse_summary_dfs = []
+        for gcm in gcms:
+            mask = (debiased_coarse_flags_np == "debiased_coarse") & (gcms_np == gcm)
+            tags_np_coarse_gcm = tags_np[mask]
+            if len(tags_np_coarse_gcm) == 0:
+                logger.warning("Skipping %s: no debiased_coarse tags found", gcm)
+                continue
+
+            if verbose:
+                logger.info("%s: %d tags to process", gcm, len(tags_np_coarse_gcm))
+                t_gcm = time.time()
+
+            example_tag = tags_np_coarse_gcm[0]
+            land_mask = calculate_land_mask(
+                example_tag=example_tag,
+                trees=trees,
+                is_downscaled=False,
+                var_to_analyze=flag_time_invariant_name,
+            )
+            land_mask.load()
+            land_mask_u8 = land_mask.astype(np.uint8)
+
+            summary_df_gcm = calculate_summary_stats(
+                tags=tags_np_coarse_gcm,
+                trees=trees,
+                flag_time_varying_name=flag_time_varying_name,
+                flag_time_invariant_name=flag_time_invariant_name,
+                land_mask_u8=land_mask_u8,
+                summary_csv_fname=None,
+                is_downscaled=False,
+                verbose=verbose,
+            )
+            coarse_summary_dfs.append(summary_df_gcm)
+
+            if verbose:
+                logger.info(
+                    "  summary for coarse debiased data for %s completed in %.1fs",
+                    gcm,
+                    time.time() - t_gcm,
+                )
+
+        summary_df_coarse = pd.concat(coarse_summary_dfs, ignore_index=True)
+        summary_df_coarse["resolution"] = "debiased_coarse"
+        summary_df_coarse.to_csv(f"{summary_csv_base_fname}_debiased_coarse.csv", index=False)
+
+        if verbose:
+            logger.info(
+                "  summary for coarse debiased data (all gcms) completed in %.1fs",
+                time.time() - t0,
+            )
+
+    if verbose:
+        logger.info("run_step4 total time: %.1fs", time.time() - t_start)
