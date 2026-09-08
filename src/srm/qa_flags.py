@@ -5,12 +5,15 @@ import time
 import boto3
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import dask
 import icechunk
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import rusterize as _rusterize_pkg
 import xarray as xr
 from icechunk.xarray import to_icechunk
+from rasterix.rasterize import geometry_mask
 
 from srm import catalog
 from srm.config import _icechunk_storage_for_path
@@ -2174,3 +2177,138 @@ def run_step3(
 
     if verbose:
         logger.info("run_step3 total time: %.1fs", time.time() - t_start)
+
+
+def calculate_land_mask(example_tag: str, trees, is_downscaled: bool, var_to_analyze: str):
+    ocean_mask_geoparquet = catalog.get("ocean-mask")
+
+    # Claude-generated patch to get the geoparquet -> gridded mask to work
+    _original_rusterize = _rusterize_pkg.rusterize
+
+    def _rusterize_patched(*args, **kwargs):
+        if kwargs.get("res") is not None and kwargs.get("out_shape") is not None:
+            kwargs = dict(kwargs)
+            kwargs.pop("res")
+        return _original_rusterize(*args, **kwargs)
+
+    _rusterize_pkg.rusterize = _rusterize_patched
+
+    [gcm, var, scenario, ens, method] = parse_tag(example_tag)
+    target_grid_da = get_data(
+        tag=example_tag, trees=trees, var_to_analyze=var_to_analyze, is_downscaled=is_downscaled
+    )
+
+    # rusterize requires lat sorted descending; reorder target_grid_da first if needed
+    template = target_grid_da.sortby("lat", ascending=False).proj.assign_crs(
+        spatial_ref="epsg:4326"
+    )
+
+    land_mask = ~geometry_mask(
+        template,
+        ocean_mask_geoparquet.to_geodataframe()[["geom"]],
+        all_touched=True,
+        engine="rusterize",
+        xdim="lon",
+        ydim="lat",
+    ).drop_vars("spatial_ref", errors="ignore")
+
+    return land_mask
+
+
+def calculate_summary_stats(
+    tags: list[str],
+    trees: dict[str, xr.DataTree],
+    flag_time_varying_name: str,
+    flag_time_invariant_name: str,
+    land_mask_u8: xr.DataArray,
+    summary_csv_fname: str | None,
+    is_downscaled: bool = True,
+    verbose: bool = True,
+):
+    summary_rows = []
+
+    n_land_time_invariant = int(land_mask_u8.sum())  # land pixel count, compute once
+
+    # time-varying: land count is per-timestep-constant since land_mask has no time dim
+    n_land = n_land_time_invariant
+
+    for i, tag in enumerate(tags):
+        [gcm, var, scenario, ens, method] = parse_tag(tag)
+
+        flag_time_varying = get_data(
+            tag=tag, trees=trees, var_to_analyze=flag_time_varying_name, is_downscaled=is_downscaled
+        )
+        flag_time_invariant = get_data(
+            tag=tag,
+            trees=trees,
+            var_to_analyze=flag_time_invariant_name,
+            is_downscaled=is_downscaled,
+        )
+        flag_time_varying_land = flag_time_varying * land_mask_u8
+        flag_time_invariant_land = flag_time_invariant * land_mask_u8
+        n_time = flag_time_varying.sizes["time"]
+
+        # We calculate the land_frac means with sum() divided by n_land instead of
+        # mean() with a mask so it goes quickly with the uint8 data type
+        (
+            frac_flagged_time_varying,
+            frac_space_flagged_time_varying,
+            frac_space_flagged_time_invariant,
+            land_frac_flagged_time_varying,
+            land_frac_space_flagged_time_varying,
+            land_frac_space_flagged_time_invariant,
+        ) = dask.compute(
+            np.nanmean(flag_time_varying),
+            np.nanmean(flag_time_varying.sum(dim="time") > 0),
+            np.nanmean(flag_time_invariant),
+            flag_time_varying_land.sum() / (n_land * n_time),
+            (flag_time_varying_land.sum(dim="time") > 0).sum() / n_land,
+            flag_time_invariant_land.sum() / n_land,
+        )
+
+        # Sanity check: these should each be 0 or 1
+        # logger.info(f"  check flag_time_varying max/min:   {np.nanmax(flag_time_varying)} / {np.nanmin(flag_time_varying)}")
+        # logger.info(f"  check flag_time_invariant max/min: {np.nanmax(flag_time_invariant)} / {np.nanmin(flag_time_invariant)}")
+
+        if verbose:
+            logger.info(f"{tag}:")
+            logger.info(
+                f"  frac of dataset [time, lat, lon] flagged (time-varying):     {frac_flagged_time_varying:.4g}"
+            )
+            logger.info(
+                f"  frac of space [lat, lon] with >=1 flagged timestep:          {frac_space_flagged_time_varying:.4g}"
+            )
+            logger.info(
+                f"  frac of space [lat, lon] with time-invariant flag:           {frac_space_flagged_time_invariant:.4g}"
+            )
+            logger.info(
+                f"  land frac of dataset [time, lat, lon] flagged (time-varying):{land_frac_flagged_time_varying:.4g}"
+            )
+            logger.info(
+                f"  land frac of space [lat, lon] with >=1 flagged timestep:     {land_frac_space_flagged_time_varying:.4g}"
+            )
+            logger.info(
+                f"  land frac of space [lat, lon] with time-invariant flag:      {land_frac_space_flagged_time_invariant:.4g}"
+            )
+
+        summary_rows.append(
+            {
+                "tag": tag,
+                "gcm": gcm,
+                "variable": var,
+                "scenario": scenario,
+                "ensemble_member": ens,
+                "frac_flagged_time_varying": float(frac_flagged_time_varying),
+                "frac_space_flagged_time_varying": float(frac_space_flagged_time_varying),
+                "frac_space_flagged_time_invariant": float(frac_space_flagged_time_invariant),
+                "land_frac_flagged_time_varying": float(land_frac_flagged_time_varying),
+                "land_frac_space_flagged_time_varying": float(land_frac_space_flagged_time_varying),
+                "land_frac_space_flagged_time_invariant": float(
+                    land_frac_space_flagged_time_invariant
+                ),
+            }
+        )
+
+        summary_df = pd.DataFrame(summary_rows)
+        if summary_csv_fname is not None:
+            summary_df.to_csv(summary_csv_fname, index=False)
