@@ -15,13 +15,13 @@ s3://carbonplan-srm/scratch/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.
 s3://carbonplan-srm/scratch/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
 
-# Examples for CESM2-WACCM, ERA5, global run:
-s3://carbonplan-srm/scratch/cache/qa/CESM2-WACCM-ERA5-global.icechunk
-s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM-ERA5-global.icechunk
+# Examples for CESM2-WACCM6, ERA5, global run:
+s3://carbonplan-srm/scratch/cache/qa/CESM2-WACCM6-ERA5-global.icechunk
+s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM6-ERA5-global.icechunk
 
 # Regional subset (South Africa):
-s3://carbonplan-srm/scratch/cache/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
-s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+s3://carbonplan-srm/scratch/cache/qa/CESM2-WACCM6-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
+s3://carbonplan-srm/scratch/output/qa/CESM2-WACCM6-ERA5-lat-35.0to-22.0_lon16.0to33.0.icechunk
 ```
 
 The paths above are the defaults, which every non-production config uses. Production configs
@@ -155,7 +155,7 @@ uv run bcsd cache-list --config-path configs/example.yaml
 uv run bcsd cache-list --config-path configs/example.yaml --stage obs
 
 # Filter by GCM and variable
-uv run bcsd cache-list --config-path configs/example.yaml --gcm CESM2-WACCM --variable tas
+uv run bcsd cache-list --config-path configs/example.yaml --gcm CESM2-WACCM6 --variable tas
 ```
 
 See [CLI reference — bcsd cache-list](../reference/cli.md#bcsd-cache-list--list-cached-artifacts)
@@ -171,7 +171,7 @@ uv run bcsd cache-clear --config-path configs/example.yaml
 uv run bcsd cache-clear --config-path configs/example.yaml --stage scenarios --yes
 
 # Clear only a specific GCM
-uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM --yes
+uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM6 --yes
 ```
 
 :::{admonition} Environment-scoped clearing

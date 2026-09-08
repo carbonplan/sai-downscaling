@@ -1,0 +1,48 @@
+# BCSD configuration: CESM2-WACCM6 / all variables / SSP245 / truncated members 006-010 / South Africa (QA)
+# Members 006-010's data ends in 2069 (per srm.validation._MEMBER_TIME_BOUNDS: 007-010 on
+# 2069-12-31, 006 a day earlier), so predict_period_end is clamped; see the note above it
+# for why it lands on 2068 rather than 2069. Two configs are folded in here:
+# cesm2-waccm6-ssp245-std-trunc-2070-southafrica.yaml, whose 2070 end was the last 2069 daily
+# mean carrying an end-of-interval stamp (corrected at the ETL by issue #521), and
+# cesm2-waccm6-ssp245-tmx-2069-southafrica.yaml, which covered tasmax/tasmin/dtr.
+# tasmax/tasmin/dtr exist only for members 006-010, via the corrected historical run ("001").
+# Full-length members 001-005 carry the CMIP6 tasmax/tasmin bug and are standard-variables-only
+# in cesm2-waccm6-ssp245-std-southafrica.yaml.
+
+# === Model and Scenario ===
+gcm: "CESM2-WACCM6"
+variables: ["tasmax", "tasmin", "dtr", "tas", "pr", "rsds"]
+ensemble_members: ["006", "007", "008", "009", "010"]
+scenarios: ["SSP245"]
+
+# === Time Periods ===
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+# 2068 not 2069: member 006 ends 2069-12-30 (a day short of 007-010's 2069-12-31), and
+# predict_period_end is year-granularity only, so 2069 pulls in a NaN-padded last day for 006, triggering the NaN check/assert failure.
+predict_period_end: 2068
+
+# === Downscaling Methods ===
+# "BCSD" (detrend + quantile mapping) and "QDMSD" (quantile delta mapping). Required:
+# there is no default, so every config states which methods produced its output.
+# Listing both expands the matrix over the pair, so QA exercises each method on
+# identical inputs. They share one regridded observation artifact and write under
+# separate bcsd/ and qdmsd/ group prefixes, so nothing collides.
+downscaling_methods: ["BCSD", "QDMSD"]
+
+# === Spatial Subsetting ===
+# All of South Africa ([-35, -22, 16, 33]) plus a ~3 deg halo. subset_space applies a hard
+# slice with no padding, so the regrid and spatial disaggregation edge effects land on the
+# box boundary; the halo keeps them outside the region of interest. Matches the bounds used
+# by configs/snapshot/cesm2-waccm6/.
+subset_bounds: [-38, -19, 13, 36]
+
+# === Storage ===
+scratch_dir: "s3://carbonplan-srm/scratch/cache"
+output_dir: "s3://carbonplan-srm/scratch/output"
+environment: "qa"
+
+# === Additional Options ===
+verbose: true
+save_intermediate: true

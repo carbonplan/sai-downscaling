@@ -284,7 +284,7 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     """
 
     # Model and data identifiers
-    gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM', 'UKESM')")
+    gcm: str = Field(..., description="GCM name (e.g., 'CESM2-WACCM6', 'UKESM1-1-LL')")
     variable: VariableName = Field(..., description="Variable to downscale")
     ensemble_member: str = Field(..., description="Ensemble member label (e.g. 'r1i1p1f1', '01')")
     scenario: str | None = Field(
@@ -297,6 +297,24 @@ class BCSDConfig(pydantic_settings.BaseSettings):
     def normalize_scenario(cls, v: str | None) -> str | None:
         """Uppercase scenario so 'ssp245' and 'SSP245' are equivalent."""
         return v.upper() if v is not None else v
+
+    # Names retired by #598. ``gcm`` is a real field, so a stale spelling would otherwise load
+    # fine, get a store path under the old name, and only fail at catalog.get inside a Batch task.
+    _LEGACY_GCM_NAMES: ClassVar[dict[str, str]] = {
+        "CESM2-WACCM": "CESM2-WACCM6",
+        "UKESM": "UKESM1-1-LL",
+    }
+
+    @field_validator("gcm")
+    @classmethod
+    def _reject_legacy_gcm_name(cls, v: str) -> str:
+        """Fail on a pre-#598 model name instead of building a store path under it."""
+        replacement = cls._LEGACY_GCM_NAMES.get(v)
+        if replacement is not None:
+            raise ValueError(
+                f"gcm {v!r} was renamed to {replacement!r} (issue #598). Update the config."
+            )
+        return v
 
     # Time periods.
     # Ensure that the train period end and start fall between 1950 and 2014
@@ -668,7 +686,7 @@ Usage Examples:
 
 # 1. Minimal config (auto-populates variable config)
 config = BCSDConfig(
-    gcm="CESM2-WACCM",
+    gcm="CESM2-WACCM6",
     variable="tas",
     ensemble_member=0,
     scenario="ssp245",
@@ -677,13 +695,13 @@ config = BCSDConfig(
     predict_period_end=2100
 )
 
-print(config.run_id)  # "CESM2-WACCM_tas_e00_ssp245"
+print(config.run_id)  # "CESM2-WACCM6_tas_e00_ssp245"
 print(config.variable_config.detrend_data)  # True (auto-loaded from variable config)
 print(config.variable_config.disaggregation_method)  # "additive"
 
 # 2. SAI scenario
 sai_config = BCSDConfig(
-    gcm="CESM2-WACCM",
+    gcm="CESM2-WACCM6",
     variable="pr",
     ensemble_member=1,
     scenario="G6-1.5K",
@@ -697,7 +715,7 @@ print(sai_config.variable_config.detrend_data)  # False (precipitation doesn't d
 
 # 3. Regional subset
 subset_config = BCSDConfig(
-    gcm="UKESM",
+    gcm="UKESM1-1-LL",
     variable="tasmax",
     ensemble_member=0,
     scenario="ssp245",
@@ -709,7 +727,7 @@ subset_config = BCSDConfig(
 
 # 4. Override variable config
 custom_config = BCSDConfig(
-    gcm="UKESM",
+    gcm="UKESM1-1-LL",
     variable="tas",
     ensemble_member=2,
     scenario="ssp245",
@@ -732,7 +750,7 @@ custom_config = BCSDConfig(
 # 5. Load from YAML
 # Config file: configs/cesm_tas.yaml
 """
-gcm: CESM2-WACCM
+gcm: CESM2-WACCM6
 variable: tas
 ensemble_member: 0
 scenario: ssp245

@@ -28,7 +28,7 @@ class TestConfigsFromMatrix:
 
     def test_single_combination_returns_one_config(self):
         configs, _ = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tas"],
             members=["r1i1p1f1"],
@@ -38,7 +38,7 @@ class TestConfigsFromMatrix:
 
     def test_cartesian_product_count(self):
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM", "UKESM"],
+            gcms=["CESM2-WACCM6", "UKESM1-1-LL"],
             downscaling_methods=["BCSD"],
             variables=["tas", "pr"],
             members=["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"],
@@ -50,7 +50,7 @@ class TestConfigsFromMatrix:
 
     def test_returns_bcsd_config_instances(self):
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tas"],
             members=["r1i1p1f1"],
@@ -60,7 +60,7 @@ class TestConfigsFromMatrix:
 
     def test_historical_only_scenario_is_none(self):
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tas"],
             members=["r1i1p1f1", "r2i1p1f1"],
@@ -70,7 +70,7 @@ class TestConfigsFromMatrix:
         assert all(c.scenario is None for c in configs)
 
     def test_all_combinations_present(self):
-        gcms = ["CESM2-WACCM", "UKESM"]
+        gcms = ["CESM2-WACCM6", "UKESM1-1-LL"]
         variables = ["tas", "pr"]
         members = ["r1i1p1f1", "r2i1p1f1"]
         scenarios = ["ssp245"]
@@ -89,7 +89,7 @@ class TestConfigsFromMatrix:
 
     def test_shared_params_applied_to_all_configs(self):
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM", "UKESM"],
+            gcms=["CESM2-WACCM6", "UKESM1-1-LL"],
             downscaling_methods=["BCSD"],
             variables=["tas"],
             members=["r1i1p1f1"],
@@ -107,7 +107,7 @@ class TestConfigsFromMatrix:
     def test_subset_bounds_propagated(self):
         bounds = (-35.0, -22.0, 16.0, 33.0)
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tas"],
             members=["r1i1p1f1"],
@@ -120,7 +120,7 @@ class TestConfigsFromMatrix:
         """BCSDConfig raises ValidationError when scenario is set but predict periods are missing."""
         with pytest.raises(ValidationError):
             configs_from_matrix(
-                gcms=["CESM2-WACCM"],
+                gcms=["CESM2-WACCM6"],
                 downscaling_methods=["BCSD"],
                 variables=["tas"],
                 members=["r1i1p1f1"],
@@ -131,7 +131,7 @@ class TestConfigsFromMatrix:
     def test_multiple_scenarios_all_present(self):
         scenarios = ["ssp245", "G6-1pt5k", "G6-termination"]
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tas"],
             members=["r1i1p1f1"],
@@ -144,7 +144,7 @@ class TestConfigsFromMatrix:
 
     def test_empty_members_returns_empty_list(self):
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tas"],
             members=[],
@@ -154,7 +154,7 @@ class TestConfigsFromMatrix:
 
     def test_fields_assigned_correctly(self):
         configs, options = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["pr"],
             members=["r3i1p1f1"],
@@ -163,7 +163,7 @@ class TestConfigsFromMatrix:
             predict_period_end=2080,
         )
         cfg = configs[0]
-        assert cfg.gcm == "CESM2-WACCM"
+        assert cfg.gcm == "CESM2-WACCM6"
         assert cfg.variable == "pr"
         assert cfg.ensemble_member == "r3i1p1f1"
         assert cfg.scenario == "SSP245"
@@ -177,7 +177,7 @@ class TestValidatePredictPeriods:
 
     def test_truncated_member_overrun_raises(self):
         configs, _ = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tasmax"],
             members=["007"],
@@ -190,7 +190,7 @@ class TestValidatePredictPeriods:
 
     def test_truncated_member_within_extent_does_not_raise(self):
         configs, _ = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tasmax"],
             members=["007"],
@@ -205,7 +205,7 @@ class TestValidateOutputConfigPath:
     """Tests for `bcsd validate-output --config-path`: store discovery + branch default."""
 
     _CONFIG_YAML = """
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr"]
 ensemble_members: ["001"]
 scenarios: ["SSP245"]
@@ -228,7 +228,7 @@ branch: "v9"
         config_file = self._write_config(tmp_path)
         passing_result = CheckResult(
             check_id="lat_valid",
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             scenario="ssp245/tas/001",
             status=CheckStatus.PASS,
         )
@@ -251,7 +251,7 @@ branch: "v9"
         config_file = self._write_config(tmp_path)
         passing_result = CheckResult(
             check_id="lat_valid",
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             scenario="ssp245/tas/001",
             status=CheckStatus.PASS,
         )
@@ -371,7 +371,7 @@ class TestEmptyStoreIsBlocking:
         config_file = self._write_config(tmp_path)
         passing = CheckResult(
             check_id="lat_valid",
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             scenario="ssp245/tas/001",
             status=CheckStatus.PASS,
         )
@@ -427,7 +427,7 @@ class TestExpandMatrixConfigOverrides:
     def test_per_variable_debias_approach(self):
         configs = _expand_matrix_config(
             {
-                "gcm": "CESM2-WACCM",
+                "gcm": "CESM2-WACCM6",
                 "variables": ["tasmax", "dtr"],
                 "ensemble_member": "007",
                 "scenario": "ssp245",
@@ -447,7 +447,7 @@ class TestExpandMatrixConfigOverrides:
         with pytest.raises(ValueError, match="variable_overrides"):
             _expand_matrix_config(
                 {
-                    "gcm": "CESM2-WACCM",
+                    "gcm": "CESM2-WACCM6",
                     "variables": ["tas", "pr"],
                     "ensemble_member": "007",
                     "downscaling_method": "BCSD",
@@ -458,7 +458,7 @@ class TestExpandMatrixConfigOverrides:
     def test_single_variable_config_still_allowed(self):
         configs = _expand_matrix_config(
             {
-                "gcm": "CESM2-WACCM",
+                "gcm": "CESM2-WACCM6",
                 "variables": ["tas"],
                 "ensemble_members": ["007", "008"],
                 "downscaling_method": "BCSD",
@@ -472,7 +472,7 @@ class TestExpandMatrixConfigOverrides:
         with pytest.raises(ValueError, match="Cannot combine"):
             _expand_matrix_config(
                 {
-                    "gcm": "CESM2-WACCM",
+                    "gcm": "CESM2-WACCM6",
                     "variables": ["tas"],
                     "ensemble_member": "007",
                     "downscaling_method": "BCSD",
@@ -489,7 +489,7 @@ class TestExpandMatrixConfigOverrides:
         """
         with pytest.raises(ValidationError, match="variable_overrides"):
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="007",
@@ -510,7 +510,7 @@ class TestExpandMatrixConfigRunWideDebiasApproach:
     @staticmethod
     def _matrix(**extra):
         base = {
-            "gcm": "CESM2-WACCM",
+            "gcm": "CESM2-WACCM6",
             "downscaling_method": "BCSD",
             "variables": ["tasmax", "dtr"],
             "ensemble_member": "007",
@@ -589,7 +589,7 @@ class TestMatrixDownscalingMethodAxis:
     @staticmethod
     def _matrix(**extra):
         base = {
-            "gcm": "CESM2-WACCM",
+            "gcm": "CESM2-WACCM6",
             "variables": ["pr"],
             "ensemble_member": "003",
             "scenario": "ssp245",
@@ -603,12 +603,12 @@ class TestMatrixDownscalingMethodAxis:
     def test_plural_key_alone_makes_it_a_matrix_config(self):
         """The method list is enough, even with every other axis scalar."""
         assert _is_matrix_config(
-            {"gcm": "CESM2-WACCM", "variable": "pr", "downscaling_methods": ["BCSD", "QDMSD"]}
+            {"gcm": "CESM2-WACCM6", "variable": "pr", "downscaling_methods": ["BCSD", "QDMSD"]}
         )
 
     def test_scalar_key_is_still_not_a_matrix_config(self):
         assert not _is_matrix_config(
-            {"gcm": "CESM2-WACCM", "variable": "pr", "downscaling_method": "BCSD"}
+            {"gcm": "CESM2-WACCM6", "variable": "pr", "downscaling_method": "BCSD"}
         )
 
     def test_expands_one_config_per_method(self):
@@ -685,7 +685,7 @@ class TestMatrixDownscalingMethodAxis:
 
     def test_configs_from_matrix_expands_over_methods(self):
         configs, _ = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD", "QDMSD"],
             variables=["pr"],
             members=["003"],
@@ -696,7 +696,7 @@ class TestMatrixDownscalingMethodAxis:
     def test_configs_from_matrix_rejects_run_wide_debias_approach(self):
         with pytest.raises(ValueError, match="run-wide 'debias_approach'"):
             configs_from_matrix(
-                gcms=["CESM2-WACCM"],
+                gcms=["CESM2-WACCM6"],
                 downscaling_methods=["BCSD", "QDMSD"],
                 variables=["pr"],
                 members=["003"],
@@ -707,7 +707,7 @@ class TestMatrixDownscalingMethodAxis:
     def test_configs_from_matrix_rejects_override_debias_approach(self):
         with pytest.raises(ValueError, match=r"variable_overrides for \['pr'\]"):
             configs_from_matrix(
-                gcms=["CESM2-WACCM"],
+                gcms=["CESM2-WACCM6"],
                 downscaling_methods=["BCSD", "QDMSD"],
                 variables=["pr"],
                 members=["003"],
@@ -722,7 +722,7 @@ class TestMatrixDownscalingMethodAxis:
                 [
                     "run-matrix",
                     "--gcm",
-                    "CESM2-WACCM",
+                    "CESM2-WACCM6",
                     "--variable",
                     "pr",
                     "--member",
@@ -786,7 +786,7 @@ class TestParseVariableOverrides:
 class TestConfigsFromMatrixOverrides:
     def test_per_variable_debias_approach(self):
         configs, _ = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tasmax", "dtr"],
             members=["007"],
@@ -800,7 +800,7 @@ class TestConfigsFromMatrixOverrides:
 
     def test_run_wide_flag_still_applies_to_all(self):
         configs, _ = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tasmax", "dtr"],
             members=["007"],
@@ -811,7 +811,7 @@ class TestConfigsFromMatrixOverrides:
 
     def test_override_beats_run_wide_flag(self):
         configs, _ = configs_from_matrix(
-            gcms=["CESM2-WACCM"],
+            gcms=["CESM2-WACCM6"],
             downscaling_methods=["BCSD"],
             variables=["tasmax", "dtr"],
             members=["007"],
@@ -825,7 +825,7 @@ class TestConfigsFromMatrixOverrides:
     def test_invalid_override_value_raises(self):
         with pytest.raises(ValidationError):
             configs_from_matrix(
-                gcms=["CESM2-WACCM"],
+                gcms=["CESM2-WACCM6"],
                 downscaling_methods=["BCSD"],
                 variables=["tas"],
                 members=["007"],
@@ -837,7 +837,7 @@ class TestConfigsFromMatrixOverrides:
         """Regression: model_copy accepted bad values; validated construction must not."""
         with pytest.raises(ValidationError):
             configs_from_matrix(
-                gcms=["CESM2-WACCM"],
+                gcms=["CESM2-WACCM6"],
                 variables=["tas"],
                 members=["007"],
                 scenarios=[None],
@@ -858,7 +858,7 @@ class TestRunMatrixOverrideFlag:
                     "--downscaling-method",
                     "BCSD",
                     "--gcm",
-                    "CESM2-WACCM",
+                    "CESM2-WACCM6",
                     "--variable",
                     "tasmax",
                     "--variable",
@@ -890,7 +890,7 @@ class TestRunMatrixOverrideFlag:
                 "--downscaling-method",
                 "BCSD",
                 "--gcm",
-                "CESM2-WACCM",
+                "CESM2-WACCM6",
                 "--variable",
                 "tas",
                 "--member",
@@ -907,7 +907,7 @@ class TestReleaseCommand:
     """`bcsd release` freezes the stores a config set writes to under an icechunk tag."""
 
     _CONFIG_YAML = """
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr"]
 ensemble_members: ["001"]
 scenarios: ["SSP245"]
@@ -995,7 +995,7 @@ class TestConfirmCost:
     def configs(self):
         return [
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",
@@ -1076,7 +1076,7 @@ class TestStageScopedCostPlan:
     def configs(self):
         return [
             BCSDConfig(
-                gcm="CESM2-WACCM",
+                gcm="CESM2-WACCM6",
                 downscaling_method="BCSD",
                 variable="tas",
                 ensemble_member="r1i1p1f1",

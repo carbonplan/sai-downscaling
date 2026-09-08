@@ -131,7 +131,7 @@ class TestDecodeTimeFromBounds:
             decode_time_from_bounds(ds)
 
     def test_midpoint_stamped_data_stays_on_the_same_day(self):
-        """UKESM stamps at 12:00, so decoding must be a no-op by calendar day."""
+        """UKESM1-1-LL stamps at 12:00, so decoding must be a no-op by calendar day."""
         ds = _bounded_ds(
             lower=["2015-01-01", "2015-01-02"],
             upper=["2015-01-02", "2015-01-03"],

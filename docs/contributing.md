@@ -43,7 +43,7 @@ uv run pytest tests/ -n auto -vv
 uv run pytest 'tests/test_input_data.py::TestCatalogDatasets::test_variable_units[ERA5]'
 
 # Run a slow test (requires source data access)
-uv run pytest 'tests/test_input_data.py::TestCatalogDatasets::test_negative_precip[CESM2-WACCM-historical-icechunk]' -vv -m slow
+uv run pytest 'tests/test_input_data.py::TestCatalogDatasets::test_negative_precip[CESM2-WACCM6-historical-icechunk]' -vv -m slow
 ```
 
 Slow tests are decorated with `@pytest.mark.slow` and are intentionally excluded from the default run — only run them when source data is modified.

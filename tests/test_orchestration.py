@@ -48,7 +48,7 @@ def orchestrator(pipeline_options) -> BCSDOrchestrator:
 
 
 def _make_config(
-    gcm="CESM2-WACCM",
+    gcm="CESM2-WACCM6",
     variable="tas",
     ensemble_member="r1i1p1f1",
     scenario="SSP245",
@@ -76,10 +76,10 @@ def config() -> BCSDConfig:
 def multi_configs() -> list[BCSDConfig]:
     """Three configs covering two GCMs and two variables for deduplication tests."""
     return [
-        _make_config(gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"),
-        _make_config(gcm="CESM2-WACCM", variable="tas", ensemble_member="r2i1p1f1"),
-        _make_config(gcm="CESM2-WACCM", variable="pr", ensemble_member="r1i1p1f1"),
-        _make_config(gcm="UKESM", variable="tas", ensemble_member="01"),
+        _make_config(gcm="CESM2-WACCM6", variable="tas", ensemble_member="r1i1p1f1"),
+        _make_config(gcm="CESM2-WACCM6", variable="tas", ensemble_member="r2i1p1f1"),
+        _make_config(gcm="CESM2-WACCM6", variable="pr", ensemble_member="r1i1p1f1"),
+        _make_config(gcm="UKESM1-1-LL", variable="tas", ensemble_member="01"),
     ]
 
 
@@ -121,22 +121,22 @@ class TestGetCache:
 
 class TestDeduplicateObs:
     def test_same_gcm_variable_deduplicates(self, orchestrator, multi_configs):
-        # multi_configs has CESM2-WACCM/tas ensemble 0 and 1 → should deduplicate to 1
-        cesm_tas = [c for c in multi_configs if c.gcm == "CESM2-WACCM" and c.variable == "tas"]
+        # multi_configs has CESM2-WACCM6/tas ensemble 0 and 1 → should deduplicate to 1
+        cesm_tas = [c for c in multi_configs if c.gcm == "CESM2-WACCM6" and c.variable == "tas"]
         result = orchestrator._deduplicate_obs_configs(cesm_tas)
         assert len(result) == 1
 
     def test_preserves_first_config_of_duplicate_group(self, orchestrator, multi_configs):
-        cesm_tas = [c for c in multi_configs if c.gcm == "CESM2-WACCM" and c.variable == "tas"]
+        cesm_tas = [c for c in multi_configs if c.gcm == "CESM2-WACCM6" and c.variable == "tas"]
         result = orchestrator._deduplicate_obs_configs(cesm_tas)
         assert result[0] is cesm_tas[0]
 
     def test_different_gcm_not_deduplicated(self, orchestrator, multi_configs):
         result = orchestrator._deduplicate_obs_configs(multi_configs)
         gcm_var_pairs = [(c.gcm, c.variable) for c in result]
-        assert ("CESM2-WACCM", "tas") in gcm_var_pairs
-        assert ("CESM2-WACCM", "pr") in gcm_var_pairs
-        assert ("UKESM", "tas") in gcm_var_pairs
+        assert ("CESM2-WACCM6", "tas") in gcm_var_pairs
+        assert ("CESM2-WACCM6", "pr") in gcm_var_pairs
+        assert ("UKESM1-1-LL", "tas") in gcm_var_pairs
 
     def test_four_configs_produce_three_unique_obs_tasks(self, orchestrator, multi_configs):
         result = orchestrator._deduplicate_obs_configs(multi_configs)
@@ -163,7 +163,7 @@ class TestDeduplicateHistorical:
 
     def test_different_ensemble_not_deduplicated(self, orchestrator, multi_configs):
         result = orchestrator._deduplicate_historical_configs(multi_configs)
-        # two CESM2-WACCM/tas (ens 0 and 1) + one CESM2-WACCM/pr + one UKESM/tas = 4
+        # two CESM2-WACCM6/tas (ens 0 and 1) + one CESM2-WACCM6/pr + one UKESM1-1-LL/tas = 4
         assert len(result) == 4
 
     def test_all_unique_combinations_preserved(self, orchestrator, multi_configs, subtests):
@@ -259,7 +259,7 @@ class TestSubmitStage:
     def test_mixed_cached_and_uncached(self, orchestrator, multi_configs):
         """Cached tasks return paths directly; uncached tasks go to _run_local."""
         # Use configs with DIFFERENT variables so their obs paths are distinct.
-        # multi_configs[0] = CESM2-WACCM/tas, multi_configs[2] = CESM2-WACCM/pr
+        # multi_configs[0] = CESM2-WACCM6/tas, multi_configs[2] = CESM2-WACCM6/pr
         cfg_cached = multi_configs[0]  # tas
         cfg_uncached = multi_configs[2]  # pr
 
@@ -1064,6 +1064,83 @@ class TestAwaitBatchJobQueueStall:
                 )
 
 
+class TestAwaitBatchJobArrayParent:
+    """An array parent stays PENDING for its whole life, so it is not a start signal.
+
+    AWS Batch reports the parent of an array job as ``PENDING`` from submission until the
+    last child terminates; it never becomes ``RUNNING`` and never gets a ``startedAt``.
+    Reading the parent alone therefore leaves ``started`` false forever and turns the queue
+    guard into a hard cap on total runtime. That killed both stage 3 waves of the v0.14.1
+    production run at exactly 60 minutes with 40 children already finished.
+    """
+
+    @staticmethod
+    def _summary(**counts):
+        base = dict.fromkeys(
+            ("STARTING", "RUNNING", "SUCCEEDED", "FAILED", "RUNNABLE", "SUBMITTED", "PENDING"), 0
+        )
+        return base | counts
+
+    def _parent(self, **counts):
+        return {
+            "status": "PENDING",
+            "arrayProperties": {"size": 20, "statusSummary": self._summary(**counts)},
+        }
+
+    def test_running_children_count_as_started(self, orchestrator):
+        # Observed shape of job 7aa5e59b: parent PENDING, 21 children RUNNING.
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [self._parent(RUNNING=21)]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            status = orchestrator._await_batch_job(
+                client, "array-1", poll_seconds=0, max_queued_seconds=0
+            )
+        assert status == "SUCCEEDED"
+        client.terminate_job.assert_not_called()
+
+    def test_finished_children_count_as_started(self, orchestrator):
+        # Observed shape of job 716641f6 at the moment it was wrongly killed.
+        client = MagicMock()
+        client.describe_jobs.side_effect = [
+            {"jobs": [self._parent(SUCCEEDED=15, FAILED=5)]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]
+        with patch("time.sleep"):
+            status = orchestrator._await_batch_job(
+                client, "array-2", poll_seconds=0, max_queued_seconds=0
+            )
+        assert status == "SUCCEEDED"
+        client.terminate_job.assert_not_called()
+
+    def test_an_array_whose_children_never_place_still_stalls(self, orchestrator):
+        # The guard must survive the fix: no child has left the queue, so this is the real
+        # capacity failure the deadline exists to catch.
+        client = MagicMock()
+        client.describe_jobs.return_value = {"jobs": [self._parent(RUNNABLE=20)]}
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="without starting"):
+                orchestrator._await_batch_job(
+                    client, "stuck-array", poll_seconds=0, max_queued_seconds=0
+                )
+        assert client.terminate_job.call_args.kwargs["jobId"] == "stuck-array"
+
+    def test_an_array_with_no_summary_yet_still_stalls(self, orchestrator):
+        # Between submission and the first status roll-up the summary is empty. Absence of
+        # evidence is not a start.
+        client = MagicMock()
+        client.describe_jobs.return_value = {
+            "jobs": [{"status": "PENDING", "arrayProperties": {"size": 20, "statusSummary": {}}}]
+        }
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="without starting"):
+                orchestrator._await_batch_job(
+                    client, "fresh-array", poll_seconds=0, max_queued_seconds=0
+                )
+
+
 class TestSubmitToAwsBatch:
     def test_returns_paths_when_cache_confirms_every_task(self, orchestrator, multi_configs):
         client = MagicMock()
@@ -1156,7 +1233,7 @@ class TestJobName:
 
     def test_short_name_is_left_alone(self, orchestrator, config):
         name = orchestrator._job_name("fit_historical", [config])
-        assert name.startswith("bcsd-fit_historical-CESM2-WACCM-tas-")
+        assert name.startswith("bcsd-fit_historical-CESM2-WACCM6-tas-")
         assert len(name) < 128
 
 

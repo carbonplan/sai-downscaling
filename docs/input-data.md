@@ -24,7 +24,8 @@ s3://carbonplan-srm/
 ├── input/                    # permanent, never removed by a cleanup sweep
 │   ├── raw/                  # source NetCDF exactly as fetched from the modeling centers
 │   │   ├── CESM2-WACCM/netcdf/{historical,ssp245,g6-1p5k,g6-1p5k-end}/
-│   │   └── UKESM/netcdf/{historical,ssp245,g6-1p5k,ssp245-t-pr,g6-1p5k-t-pr}/
+│   │   ├── UKESM/netcdf/{historical,ssp245,g6-1p5k,ssp245-t-pr,g6-1p5k-t-pr}/
+│   │   └── UKESM1-1LL/netcdf/ssp245/ # 09-2026 data provider update
 │   ├── processed/            # unified per-GCM icechunk stores with scenario zarr groups
 │   └── vector/               # vector assets (ocean mask)
 └── scratch/                  # transient pipeline data, cleaned as a single prefix
@@ -65,10 +66,9 @@ maps each drop directory to the key the ETL modules use to request it:
 | `CESM2-WACCM` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI, 2035-2084 |
 | `CESM2-WACCM` | `g6-1p5k-end` | `G6-1.5K-END` | G6-1.5K termination run, 2085-2100 |
 | `UKESM` | `historical` | `historical` | CMIP6 historical |
-| `UKESM` | `ssp245` | `SSP245` | SSP2-4.5, primary source |
 | `UKESM` | `g6-1p5k` | `G6-1.5K` | G6-1.5K SAI, primary source |
-| `UKESM` | `ssp245-t-pr` | `SSP245` | private T/PR archive, source for `pr`/`tas`/`tasmin`/`tasmax` |
-| `UKESM` | `g6-1p5k-t-pr` | `G6-1.5K` | private T/PR archive, source for `pr`/`tas`/`tasmin`/`tasmax` |
+| `UKESM` | `g6-1p5k-t-pr` | `G6-1.5K` | source for `pr`/`tas`/`tasmin`/`tasmax` |
+| `UKESM1-1LL` | `ssp245` | `SSP245` | SSP2-4.5, 2015-2100, 09-2026 update |
 
 ERA5, GDEX-GMF and NASA-NEX have no raw copy in this bucket. Their ETLs stream directly from
 ARCO-ERA5 on GCS, from OSDF/DTN over HTTPS, and by virtual reference into `s3://nex-gddp-cmip6`
@@ -86,15 +86,15 @@ catalog.list()
 
 | Name | Type | S3 path |
 | --- | --- | --- |
-| `CESM2-WACCM` | `Datatree` | `s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk` |
-| `UKESM` | `Datatree` | `s3://carbonplan-srm/input/processed/ukesm.icechunk` |
+| `CESM2-WACCM6` | `Datatree` | `s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk` |
+| `UKESM1-1-LL` | `Datatree` | `s3://carbonplan-srm/input/processed/ukesm.icechunk` |
 | `ERA5` | `Dataset` | `s3://carbonplan-srm/input/processed/era5.icechunk` |
 | `NASA-NEX-SSP245` | `VirtualDataset` | `s3://carbonplan-srm/input/processed/nasa-nex/ssp245/virtual.icechunk` |
 | `NASA-NEX-historical` | `VirtualDataset` | `s3://carbonplan-srm/input/processed/nasa-nex/historical/virtual.icechunk` |
 | `GDEX-GMF` | `Dataset` | `s3://carbonplan-srm/input/processed/gdex-gmf.icechunk` |
 | `ocean-mask` | `VectorDataset` | `s3://carbonplan-srm/input/vector/GSHHS/GSHHS.parquet` |
 
-## Opening a Datatree dataset (CESM2-WACCM, UKESM)
+## Opening a Datatree dataset (CESM2-WACCM6, UKESM1-1-LL)
 
 `Datatree` entries hold multiple scenarios as zarr group nodes within a single icechunk store.
 Calling `.to_xarray()` with no arguments returns the full `xr.DataTree`; passing a `group`
@@ -103,29 +103,29 @@ returns a flat `xr.Dataset` for that node only.
 ```{code-cell} python
 from srm import catalog
 
-cesm2_waccm = catalog.get("CESM2-WACCM").to_xarray()
+cesm2_waccm = catalog.get("CESM2-WACCM6").to_xarray()
 cesm2_waccm
 ```
 
 ```{code-cell} python
-cesm2_waccm_historical = catalog.get("CESM2-WACCM").to_xarray(group="historical")
+cesm2_waccm_historical = catalog.get("CESM2-WACCM6").to_xarray(group="historical")
 cesm2_waccm_historical
 ```
 
 ```{code-cell} python
-cesm2_waccm_ssp245 = catalog.get("CESM2-WACCM").to_xarray(group="ssp245")
+cesm2_waccm_ssp245 = catalog.get("CESM2-WACCM6").to_xarray(group="ssp245")
 cesm2_waccm_ssp245
 ```
 
 ```{code-cell} python
-cesm2_waccm_g6 = catalog.get("CESM2-WACCM").to_xarray(group="g6_1p5k")
+cesm2_waccm_g6 = catalog.get("CESM2-WACCM6").to_xarray(group="g6_1p5k")
 cesm2_waccm_g6
 ```
 
 `g6_1p5k_end` is the termination-shock continuation of `g6_1p5k` member `002`: SAI stops at the end of year 2084 and then the termination shock run continues to the end of 2100. The group holds only those years — the 2035–2084 SAI years it continues stay in `g6_1p5k`.`
 
 ```{code-cell} python
-cesm2_waccm_g6_end = catalog.get("CESM2-WACCM").to_xarray(group="g6_1p5k_end")
+cesm2_waccm_g6_end = catalog.get("CESM2-WACCM6").to_xarray(group="g6_1p5k_end")
 cesm2_waccm_g6_end
 ```
 
@@ -165,7 +165,7 @@ If you need direct control over the icechunk session (e.g. to pin a specific sna
 import icechunk
 import xarray as xr
 
-entry = catalog.get("CESM2-WACCM")
+entry = catalog.get("CESM2-WACCM6")
 storage = icechunk.s3_storage(bucket=entry.bucket, prefix=entry.prefix, from_env=True)
 repo = icechunk.Repository.open(storage)
 session = repo.readonly_session("main")

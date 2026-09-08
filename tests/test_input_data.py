@@ -48,7 +48,7 @@ _SKIP_TEMP_CONSISTENCY = frozenset({"ERA5"})
 # xfail (not skipped) so that an unexpected pass signals the upstream issue was resolved.
 # Maps ds_info.name → human-readable reason.
 _XFAIL_IDENTICAL_VARS: dict[str, str] = {
-    "CESM2-WACCM/ssp245": (
+    "CESM2-WACCM6/ssp245": (
         "tasmax, tasmin, and tas are identical — known upstream data issue in the unified SSP245 store"
     ),
 }
@@ -273,9 +273,9 @@ class TestDataIntegrity:
         """
         import numpy as np
 
-        entry = catalog.get("CESM2-WACCM")
+        entry = catalog.get("CESM2-WACCM6")
         if entry is None or not isinstance(entry, Datatree):
-            pytest.skip("No unified datatree found for CESM2-WACCM")
+            pytest.skip("No unified datatree found for CESM2-WACCM6")
 
         dt = entry.to_xarray()
         issues = []

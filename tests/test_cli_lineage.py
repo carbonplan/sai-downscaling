@@ -20,7 +20,7 @@ from srm.lineage import resolve_member_lineage
 # ---------------------------------------------------------------------------
 
 _G6_BASE = dict(
-    gcm="CESM2-WACCM",
+    gcm="CESM2-WACCM6",
     downscaling_method="BCSD",
     ensemble_member="001",
     scenario="G6-1.5K",
@@ -74,40 +74,40 @@ def _mock_dt_entry(
 
 class TestResolveLineage:
     def test_g6_member_001_standard_vars(self):
-        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", "tas")
+        entry = resolve_member_lineage("CESM2-WACCM6", "G6-1.5K", "001", "tas")
         assert entry.historical == "r1i1p1f1"
         assert entry.ssp245_bridge == "001"
 
     def test_g6_member_002_standard_vars(self):
-        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", "pr")
+        entry = resolve_member_lineage("CESM2-WACCM6", "G6-1.5K", "002", "pr")
         assert entry.historical == "r2i1p1f1"
         assert entry.ssp245_bridge == "002"
 
     def test_g6_member_003_standard_vars(self):
-        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", "tas")
+        entry = resolve_member_lineage("CESM2-WACCM6", "G6-1.5K", "003", "tas")
         assert entry.historical == "r3i1p1f1"
         assert entry.ssp245_bridge == "003"
 
     def test_g6_member_001_tasmax_uses_corrected_historical(self):
         """tasmax member 001 → corrected historical run '001', SSP245 bridge '009'."""
-        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", "tasmax")
+        entry = resolve_member_lineage("CESM2-WACCM6", "G6-1.5K", "001", "tasmax")
         assert entry.historical == "001"
         assert entry.ssp245_bridge == "009"
 
     def test_g6_member_002_tasmax_uses_corrected_historical(self):
-        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "002", "tasmax")
+        entry = resolve_member_lineage("CESM2-WACCM6", "G6-1.5K", "002", "tasmax")
         assert entry.historical == "001"
         assert entry.ssp245_bridge == "007"
 
     def test_g6_member_003_tasmax_uses_corrected_historical(self):
-        entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "003", "tasmax")
+        entry = resolve_member_lineage("CESM2-WACCM6", "G6-1.5K", "003", "tasmax")
         assert entry.historical == "001"
         assert entry.ssp245_bridge == "008"
 
     def test_all_supported_g6_variables_resolved(self, subtests):
         for var in ("tas", "pr", "rsds", "tasmax"):
             with subtests.test(variable=var):
-                entry = resolve_member_lineage("CESM2-WACCM", "G6-1.5K", "001", var)
+                entry = resolve_member_lineage("CESM2-WACCM6", "G6-1.5K", "001", var)
                 assert entry.historical is not None
 
     def test_unknown_gcm_raises_key_error(self):
@@ -116,7 +116,7 @@ class TestResolveLineage:
 
     def test_unknown_scenario_raises_key_error(self):
         with pytest.raises(KeyError):
-            resolve_member_lineage("CESM2-WACCM", "ssp585", "001", "tas")
+            resolve_member_lineage("CESM2-WACCM6", "ssp585", "001", "tas")
 
 
 # ---------------------------------------------------------------------------
@@ -173,12 +173,15 @@ class TestValidateLineageMembers:
             with pytest.raises(ValueError) as exc_info:
                 _validate_lineage_members([cfg])
         msg = str(exc_info.value)
-        assert "CESM2-WACCM" in msg
+        assert "CESM2-WACCM6" in msg
 
     def test_skips_configs_without_scenario(self):
         """Configs with scenario=None are skipped — no catalog lookup."""
         cfg = BCSDConfig(
-            downscaling_method="BCSD", gcm="CESM2-WACCM", variable="tas", ensemble_member="r1i1p1f1"
+            downscaling_method="BCSD",
+            gcm="CESM2-WACCM6",
+            variable="tas",
+            ensemble_member="r1i1p1f1",
         )
         with patch("srm.datasets.catalog") as cat:
             _validate_lineage_members([cfg])
@@ -227,4 +230,4 @@ class TestValidateLineageMembers:
             _validate_lineage_members(cfgs)
         # All 4 variables share the same GCM → catalog opened once
         assert cat.get.call_count == 1
-        assert cat.get.call_args.args[0] == "CESM2-WACCM"
+        assert cat.get.call_args.args[0] == "CESM2-WACCM6"

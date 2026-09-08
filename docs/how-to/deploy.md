@@ -45,14 +45,14 @@ Configs are organized by environment under `configs/`, with one subdirectory per
 ```
 configs/
   qa/                    # regional (South Africa subset) end-to-end checks
-    cesm2-waccm/         # e.g. cesm2-waccm-ssp245-std-southafrica.yaml, ...-g6-southafrica.yaml
-    ukesm/
+    cesm2-waccm6/         # e.g. cesm2-waccm6-ssp245-std-southafrica.yaml, ...-g6-southafrica.yaml
+    ukesm1-1-ll/
     obs-comparison/      # ERA5 vs GDEX observation-dataset comparison configs
   production/            # global runs
-    cesm2-waccm/         # e.g. cesm2-waccm-ssp245-std.yaml, cesm2-waccm-g6.yaml, ...
-    ukesm/
+    cesm2-waccm6/         # e.g. cesm2-waccm6-ssp245-std.yaml, cesm2-waccm6-g6.yaml, ...
+    ukesm1-1-ll/
   snapshot/              # configs used by the snapshot regression tests
-    cesm2-waccm/
+    cesm2-waccm6/
 ```
 
 Pointing `--config-path` at a directory (e.g. `configs/qa/`) loads every YAML beneath it. Each file is a [BCSD config](../reference/configuration.md) and supports the matrix format: list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods` are expanded into one run per cartesian-product combination. For example, `ensemble_members: ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]` in a single file produces three runs without any extra files.
@@ -67,7 +67,7 @@ QA runs execute all configs in `configs/qa/` against a small South Africa spatia
 
 1. Go to **Actions → deploy → Run workflow**
 2. Leave **environment** set to `qa`, which is the default
-3. Optionally name a **model** to run one GCM subfolder (e.g. `ukesm`), or a single config file relative to `configs/qa/` (e.g. `cesm2-waccm/cesm2-waccm-g6-southafrica.yaml`). Leave it blank to run every model.
+3. Optionally name a **model** to run one GCM subfolder (e.g. `ukesm1-1-ll`), or a single config file relative to `configs/qa/` (e.g. `cesm2-waccm6/cesm2-waccm6-g6-southafrica.yaml`). Leave it blank to run every model.
 4. Optionally enable **Force recompute** to bypass the S3 cache
 5. Optionally provide a **branch** override to pin a specific cache namespace (passed to the pipeline's `--branch` flag)
 6. Click **Run workflow**
@@ -86,8 +86,8 @@ The matrix is an explicit list in `deploy.yml` rather than a directory listing, 
 
 | GCM | In the release matrix | Reason |
 | --- | --- | --- |
-| `cesm2-waccm` | Yes | |
-| `ukesm` | No | Issue #529 leaves a 0.70 K discontinuity at 2015 between the UKESM1.0 historical and the UKESM1.1 ARISE runs |
+| `cesm2-waccm6` | Yes | |
+| `ukesm1-1-ll` | Yes | |
 
 **To run every model in the matrix:**
 
@@ -99,7 +99,7 @@ The matrix is an explicit list in `deploy.yml` rather than a directory listing, 
 
 1. Go to **Actions → deploy → Run workflow**
 2. Set **environment** to `production`
-3. Set **model** to a GCM subfolder (e.g. `ukesm`), or to a single config file relative to `configs/production/`. Leave it blank to run every model in the matrix.
+3. Set **model** to a GCM subfolder (e.g. `ukesm1-1-ll`), or to a single config file relative to `configs/production/`. Leave it blank to run every model in the matrix.
 4. Set **branch** explicitly. At a release tag the default resolves to the release version, but off any other ref `setuptools_scm` resolves a development version such as `v0.12.0.post28`, which no documentation page or `baselines.py` entry cites.
 5. Click **Run workflow**
 
@@ -113,9 +113,9 @@ Each job checks out the ref, installs the package at it (so the `branch` in all 
 
 The `snapshot` job runs `configs/snapshot/` at the release tag and produces the regional baseline the per-pull-request check compares against. It runs three steps:
 
-1. `bcsd run --config-path configs/snapshot/cesm2-waccm/` — writes to the branch named for the release's package version.
-2. `bcsd validate-output --config-path configs/snapshot/cesm2-waccm/`
-3. `bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag snapshot-<release tag>` — creates an icechunk tag so the state cannot be overwritten by a later run on the same branch.
+1. `bcsd run --config-path configs/snapshot/cesm2-waccm6/` — writes to the branch named for the release's package version.
+2. `bcsd validate-output --config-path configs/snapshot/cesm2-waccm6/`
+3. `bcsd release --config-path configs/snapshot/cesm2-waccm6/ --tag snapshot-<release tag>` — creates an icechunk tag so the state cannot be overwritten by a later run on the same branch.
 
 ### Producing an ad-hoc snapshot from a pull request
 
@@ -151,7 +151,7 @@ To add a variable, member, or scenario to a GCM that already runs in production:
 
 To add a **new GCM**, do the same in a new `configs/production/{model}/` folder, then add that folder name to the list emitted by the `models` job in `.github/workflows/deploy.yml`. Both steps are required: that list is a deliberate allowlist, so a config folder not named there is never run. The `plan` and `production` jobs both read it, which keeps the cost estimate covering exactly the models that then run.
 
-Two GCMs are deliberately excluded. `ukesm` is held back by issue #529, which leaves a 0.70 K discontinuity at 2015 between our UKESM1.0 historical and the UKESM1.1 ARISE runs. `miroc-es2h` is out of scope for the deliverable and its configs have been removed outright.
+One GCM is deliberately excluded: `miroc-es2h` is out of scope for the deliverable and its configs have been removed outright.
 
 ## Prerequisites
 

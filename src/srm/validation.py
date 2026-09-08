@@ -39,7 +39,7 @@ BLOCKING_CHECKS = {
 }
 
 
-GCM_OPTIONS = ("CESM2-WACCM", "UKESM")
+GCM_OPTIONS = ("CESM2-WACCM6", "UKESM1-1-LL")
 SCENARIO_OPTIONS = ("historical", "SSP245", "G6-1.5K", "G6-1.5K-END")
 # On-disk variable group names; canonical (lowercase), so no translation needed.
 VARIABLE_OPTIONS = get_args(VariableName)
@@ -53,7 +53,7 @@ VARIABLE_OPTIONS = get_args(VariableName)
 # from time_bnds via srm.utils.decode_time_from_bounds, which is where that convention is
 # documented in full, and TIME_RANGE in srm.input_data.cesm2_waccm clamps what remains.
 _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
-    "CESM2-WACCM": {
+    "CESM2-WACCM6": {
         # historical merges ESGF '001' (1978–2014) + Pangeo r*i1p1f1 (1850–2014);
         # the union time axis starts at 1850.
         "historical": ("1850-01-01", "2014-12-31"),
@@ -62,7 +62,7 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
         # Termination-shock continuation of G6-1.5K member 002
         "G6-1.5K-END": ("2085-01-01", "2100-12-31"),
     },
-    "UKESM": {
+    "UKESM1-1-LL": {
         "historical": ("1850-01-01", "2014-12-31"),
         "SSP245": ("2015-01-01", "2099-12-31"),
         "G6-1.5K": ("2035-01-01", "2084-12-31"),
@@ -71,7 +71,7 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
 
 # Per-member valid daily extent, keyed gcm -> scenario -> ensemble_member -> (start, end).
 # First/last non-NaN day per member. Members not listed fall back to _SCENARIO_TIME_BOUNDS.
-# Note CESM2-WACCM SSP245 members 006-010 are truncated (~2069) while 001-005 reach 2099.
+# Note CESM2-WACCM6 SSP245 members 006-010 are truncated (~2069) while 001-005 reach 2099.
 # These CESM end dates are one day earlier than they read before issue #521: the axis is now
 # decoded from time_bnds, so each daily mean is stamped at the start of its interval rather
 # than the end. What looked like a stray non-NaN day at 2070-01-01 on 007-010 was the last
@@ -80,7 +80,7 @@ _SCENARIO_TIME_BOUNDS: dict[str, dict[str, tuple[str, str]]] = {
 # check_config_time_domain compares years only, so these day-level shifts do not move any
 # config's valid predict period.
 _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
-    "CESM2-WACCM": {
+    "CESM2-WACCM6": {
         "G6-1.5K": {
             "001": ("2035-01-01", "2084-12-31"),
             "002": ("2035-01-01", "2084-12-31"),
@@ -108,7 +108,7 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "010": ("2015-01-01", "2069-12-31"),
         },
     },
-    "UKESM": {
+    "UKESM1-1-LL": {
         "G6-1.5K": {
             "r12i1p1f2": ("2035-01-01", "2084-12-31"),
             "r2i1p1f2": ("2035-01-01", "2084-12-31"),
@@ -119,10 +119,9 @@ _MEMBER_TIME_BOUNDS: dict[str, dict[str, dict[str, tuple[str, str]]]] = {
             "r2i1p1f2": ("2015-01-01", "2099-12-31"),
             "r3i1p1f2": ("2015-01-01", "2099-12-31"),
         },
+        # Single UM suite (not a ripf realization); parent of all three scenario members.
         "historical": {
-            "r12i1p1f2": ("1850-01-01", "2014-12-31"),
-            "r2i1p1f2": ("1850-01-01", "2014-12-31"),
-            "r3i1p1f2": ("1850-01-01", "2014-12-31"),
+            "u-by791": ("1850-01-01", "2014-12-31"),
         },
     },
 }
@@ -142,7 +141,7 @@ def resolve_member_time_bounds(
     return _SCENARIO_TIME_BOUNDS.get(gcm, {}).get(scenario)
 
 
-_FAST: dict = {"isel_kwargs": {"time": slice(0, 5)}}
+_FAST: dict = {"isel_kwargs": {"time": slice(0, 10)}}
 
 _DS_CHECKER_CHECKS: list[tuple[str, str, dict]] = [
     ("ensemble_member_dim", "validate_ensemble_member_dim", {}),
@@ -205,7 +204,7 @@ def check_config_time_domain(config: BCSDConfig) -> CheckResult:
     """C1: config predict period must fit the member's valid data extent.
 
     Guards against configs whose ``predict_period`` extends past (or starts before) the
-    real time coverage of a specific ensemble member — e.g. CESM2-WACCM SSP245 member
+    real time coverage of a specific ensemble member — e.g. CESM2-WACCM6 SSP245 member
     007 ends 2069-12-31 but is NaN-padded to the scenario end in the unified store.
     Without this guard the pipeline slices the padded range and the downscaler emits
     garbage for years with no real input: a partially-NaN month yields a monthly mean
@@ -320,7 +319,7 @@ class DatasetValidator(pydantic.BaseModel):
 
     Examples
     --------
-    >>> validator = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245")
+    >>> validator = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245")
     >>> results = validator.run_checks()  # all checks
     >>> result = validator.check_temporal_coverage()  # single check
     """

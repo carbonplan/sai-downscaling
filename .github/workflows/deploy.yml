@@ -14,11 +14,12 @@ on:
                     - production
                     - snapshot
             model:
-                description: "GCM subfolder to run (e.g. cesm2-waccm, ukesm), or a single
+                description: "GCM subfolder to run (e.g. cesm2-waccm6, ukesm1-1-ll), or a single
                     config file relative to the chosen config root (e.g.
-                    cesm2-waccm/cesm2-waccm-g6-southafrica.yaml). Leave blank to run every model
+                    cesm2-waccm6/cesm2-waccm6-g6-southafrica.yaml). Leave blank to run every model
                     for that environment. Production accepts only the models on the allowlist in
-                    the `models` job, currently cesm2-waccm; qa accepts any subfolder."
+                    the `models` job, currently cesm2-waccm6 and ukesm1-1-ll; qa accepts any
+                    subfolder."
                 required: false
                 default: ""
                 type: string
@@ -183,7 +184,7 @@ jobs:
                   if [[ -n "$BRANCH" ]]; then
                     EXTRA_ARGS="--branch $BRANCH"
                   fi
-                  uv run bcsd run --config-path configs/snapshot/cesm2-waccm/ --executor aws-batch $EXTRA_ARGS
+                  uv run bcsd run --config-path configs/snapshot/cesm2-waccm6/ --executor aws-batch $EXTRA_ARGS
 
             - name: Build the output validation command (snapshot baseline)
               id: validate-output-cmd
@@ -194,9 +195,9 @@ jobs:
                   set -euo pipefail
                   RESOLVED="$BRANCH"
                   if [[ -z "$RESOLVED" ]]; then
-                    RESOLVED=$(uv run bcsd resolve-branch --config-path configs/snapshot/cesm2-waccm/)
+                    RESOLVED=$(uv run bcsd resolve-branch --config-path configs/snapshot/cesm2-waccm6/)
                   fi
-                  ARGS=(bcsd validate-output --config-path configs/snapshot/cesm2-waccm/ --no-coiled --branch "$RESOLVED")
+                  ARGS=(bcsd validate-output --config-path configs/snapshot/cesm2-waccm6/ --no-coiled --branch "$RESOLVED")
                   JSON=$(printf '%s\n' "${ARGS[@]}" | jq -Rsc 'split("\n")[:-1]')
                   if [[ -z "$JSON" || "$JSON" == "null" ]]; then
                     echo "::error::failed to build the validate-output command array"
@@ -223,7 +224,7 @@ jobs:
               # The branch this wrote to stays writable, so a later qa run with a matching
               # BCSD_BRANCH could overwrite the baseline in place and a comparison would then
               # diff a candidate against itself. The tag pins the snapshot id.
-              run: uv run bcsd release --config-path configs/snapshot/cesm2-waccm/ --tag "snapshot-$TAG"
+              run: uv run bcsd release --config-path configs/snapshot/cesm2-waccm6/ --tag "snapshot-$TAG"
 
             - name: Report the pointer to update
               # Print both fields: `branch` changes every release and `uri` changes when the
@@ -234,13 +235,13 @@ jobs:
                   from srm.cache import ArtifactCache
                   from srm.cli import load_configs
 
-                  configs, options = load_configs("configs/snapshot/cesm2-waccm/")
+                  configs, options = load_configs("configs/snapshot/cesm2-waccm6/")
                   stores = {ArtifactCache.from_config(c, options)._output_store for c in configs}
                   # One store per (gcm, obs, subset); every snapshot config shares that triple.
                   assert len(stores) == 1, f"expected one snapshot output store, got {sorted(stores)}"
                   print(stores.pop())
                   PY
-                  ) || URI="<read output_dir from configs/snapshot/cesm2-waccm/>"
+                  ) || URI="<read output_dir from configs/snapshot/cesm2-waccm6/>"
                   {
                       echo "### Snapshot baseline produced"
                       echo ""
@@ -270,15 +271,13 @@ jobs:
                   MODEL: ${{ inputs.model }}
                   # The allowlist itself. A dispatch is checked against it too, so the
                   # comment below holds for every trigger rather than releases alone.
-                  ALLOWED: cesm2-waccm
+                  ALLOWED: cesm2-waccm6 ukesm1-1-ll
               # The release list is explicit rather than derived from the directory listing,
               # so adding a folder under configs/production/ cannot silently start a global
               # run at the next release.
               #
-              # ukesm is absent because issue #529 leaves a 0.70 K discontinuity at 2015
-              # between our UKESM1.0 historical and the UKESM1.1 ARISE runs, so it is not fit
-              # to publish. miroc-es2h is absent because the deliverable is CESM and UKESM
-              # only; its configs have been removed outright rather than left unloadable.
+              # miroc-es2h is absent because the deliverable is CESM and UKESM only; its
+              # configs have been removed outright rather than left unloadable.
               run: |
                   if [[ -n "$MODEL" ]]; then
                     # A model may name a folder or a single config file beneath it.

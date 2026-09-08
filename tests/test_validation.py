@@ -81,8 +81,8 @@ def mock_datasets(monkeypatch):
 
 class TestDatasetValidatorConstruction:
     def test_valid_inputs(self):
-        v = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245")
-        assert v.gcm == "CESM2-WACCM"
+        v = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245")
+        assert v.gcm == "CESM2-WACCM6"
         assert v.scenario == "SSP245"
 
     def test_invalid_gcm_raises(self):
@@ -91,12 +91,12 @@ class TestDatasetValidatorConstruction:
 
     def test_invalid_scenario_raises(self):
         with pytest.raises(pydantic.ValidationError, match="scenario"):
-            DatasetValidator(gcm="CESM2-WACCM", scenario="RCP85")
+            DatasetValidator(gcm="CESM2-WACCM6", scenario="RCP85")
 
     def test_frozen(self):
-        v = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245")
+        v = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245")
         with pytest.raises(pydantic.ValidationError):
-            v.gcm = "UKESM"  # type: ignore[misc]
+            v.gcm = "UKESM1-1-LL"  # type: ignore[misc]
 
 
 # ── check_ensemble_member_dim ─────────────────────────────────────────────────
@@ -104,118 +104,116 @@ class TestDatasetValidatorConstruction:
 
 class TestCheckEnsembleMemberDim:
     def test_pass(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(ssp245=_ds_with_members("r1i1p1f1"))
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_ensemble_member_dim()
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(ssp245=_ds_with_members("r1i1p1f1"))
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_ensemble_member_dim()
         assert result.status == CheckStatus.PASS
 
     def test_fail_missing_dim(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(ssp245=_ds_no_members())
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_ensemble_member_dim()
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(ssp245=_ds_no_members())
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_ensemble_member_dim()
         assert result.status == CheckStatus.FAIL
         assert "missing" in result.message
 
     def test_fail_dataset_not_in_catalog(self, mock_datasets):
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_ensemble_member_dim()
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_ensemble_member_dim()
         assert result.status == CheckStatus.FAIL
         assert "not found" in result.message
 
     def test_fail_load_error(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _failing_entry()
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_ensemble_member_dim()
+        mock_datasets["CESM2-WACCM6"] = _failing_entry()
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_ensemble_member_dim()
         assert result.status == CheckStatus.FAIL
         assert "traceback" in result.detail
 
 
 # ── check_lineage_member_availability ────────────────────────────────────────
 
-# CESM2-WACCM G6-1.5K requires SSP245 bridge members: 001-003, 007-009
+# CESM2-WACCM6 G6-1.5K requires SSP245 bridge members: 001-003, 007-009
 _CESM2_G6_SSP245_MEMBERS = ("001", "002", "003", "007", "008", "009")
 
-# Historical members needed for CESM2-WACCM (merged from standard + pangeo stores)
+# Historical members needed for CESM2-WACCM6 (merged from standard + pangeo stores)
 _CESM2_HIST_MEMBERS = ("001", "r1i1p1f1", "r2i1p1f1", "r3i1p1f1")
 
 
 class TestCheckLineageMemberAvailability:
     def test_fail_ukesm_datatree_missing(self, mock_datasets):
         result = DatasetValidator(
-            gcm="UKESM", scenario="SSP245"
+            gcm="UKESM1-1-LL", scenario="SSP245"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.FAIL
         assert "not found" in result.message
 
     def test_pass_ukesm_ssp245_all_hist_present(self, mock_datasets):
-        mock_datasets["UKESM"] = _datatree_entry(
-            historical=_ds_with_members("r2i1p1f2", "r3i1p1f2", "r12i1p1f2")
-        )
+        mock_datasets["UKESM1-1-LL"] = _datatree_entry(historical=_ds_with_members("u-by791"))
         result = DatasetValidator(
-            gcm="UKESM", scenario="SSP245"
+            gcm="UKESM1-1-LL", scenario="SSP245"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.PASS
 
     def test_skip_historical_scenario(self, mock_datasets):
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="historical"
+            gcm="CESM2-WACCM6", scenario="historical"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.SKIP
 
     def test_fail_datatree_missing(self, mock_datasets):
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="SSP245"
+            gcm="CESM2-WACCM6", scenario="SSP245"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.FAIL
         assert "not found" in result.message
 
     def test_pass_ssp245_all_hist_present(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             historical=_ds_with_members(*_CESM2_HIST_MEMBERS)
         )
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="SSP245"
+            gcm="CESM2-WACCM6", scenario="SSP245"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.PASS
         assert "historical" in result.message
 
     def test_fail_ssp245_hist_member_missing(self, mock_datasets):
         # Missing "001" from historical — needed for tasmax/tasmin members 007-010
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             historical=_ds_with_members("r1i1p1f1", "r2i1p1f1", "r3i1p1f1")  # "001" absent
         )
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="SSP245"
+            gcm="CESM2-WACCM6", scenario="SSP245"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.FAIL
         assert "001" in result.detail["missing_historical"]
 
     def test_pass_g6_all_members_present(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             historical=_ds_with_members(*_CESM2_HIST_MEMBERS),
             ssp245=_ds_with_members(*_CESM2_G6_SSP245_MEMBERS),
         )
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.PASS
         assert "SSP245" in result.message
 
     def test_fail_g6_ssp245_bridge_member_missing(self, mock_datasets):
         # Missing SSP245 "009" — bridge for G6 member 001 tasmax/tasmin
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             historical=_ds_with_members(*_CESM2_HIST_MEMBERS),
             ssp245=_ds_with_members("001", "002", "003", "007", "008"),  # 009 missing
         )
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.FAIL
         assert "009" in result.detail["missing_ssp245"]
 
     def test_fail_g6_ssp245_group_missing(self, mock_datasets):
         # Datatree has historical but no ssp245 group
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             historical=_ds_with_members(*_CESM2_HIST_MEMBERS)
         )
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_lineage_member_availability()
         assert result.status == CheckStatus.FAIL
         assert "not present" in result.message
@@ -241,67 +239,67 @@ def _ds_with_data(value: float, member: str = "r1i1p1f1") -> xr.Dataset:
 class TestCheckG6NotIdenticalToSsp245:
     def test_skip_wrong_scenario(self, mock_datasets):
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="SSP245"
+            gcm="CESM2-WACCM6", scenario="SSP245"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.SKIP
 
     def test_skip_g6_group_missing(self, mock_datasets):
         # Datatree exists but no g6_1p5k group
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(ssp245=_ds_with_data(1.0))
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(ssp245=_ds_with_data(1.0))
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.SKIP
 
     def test_fail_datatree_not_in_catalog(self, mock_datasets):
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.FAIL
 
     def test_skip_ssp245_group_missing(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(g6_1p5k=_ds_with_data(1.0))
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(g6_1p5k=_ds_with_data(1.0))
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.SKIP
 
     def test_fail_load_datatree(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _failing_entry()
+        mock_datasets["CESM2-WACCM6"] = _failing_entry()
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.FAIL
         assert "traceback" in result.detail
 
     def test_pass_data_differs(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             g6_1p5k=_ds_with_data(1.0),
             ssp245=_ds_with_data(2.0),
         )
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.PASS
 
     def test_fail_data_identical(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             g6_1p5k=_ds_with_data(1.0),
             ssp245=_ds_with_data(1.0),
         )
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.FAIL
         assert "identical" in result.message.lower()
 
     def test_skip_no_shared_members(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             g6_1p5k=_ds_with_data(1.0, "r1i1p1f1"),
             ssp245=_ds_with_data(1.0, "r2i1p1f1"),
         )
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.SKIP
         assert "No shared ensemble members" in result.message
@@ -309,9 +307,9 @@ class TestCheckG6NotIdenticalToSsp245:
     def test_skip_no_common_vars(self, mock_datasets):
         g6_ds = xr.Dataset({"tas": (["time"], np.zeros(3))}, coords={"time": range(3)})
         ssp245_ds = xr.Dataset({"pr": (["time"], np.zeros(3))}, coords={"time": range(3)})
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(g6_1p5k=g6_ds, ssp245=ssp245_ds)
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(g6_1p5k=g6_ds, ssp245=ssp245_ds)
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="G6-1.5K"
+            gcm="CESM2-WACCM6", scenario="G6-1.5K"
         ).check_g6_not_identical_to_ssp245()
         assert result.status == CheckStatus.SKIP
         assert "No common variables" in result.message
@@ -323,59 +321,59 @@ class TestCheckG6NotIdenticalToSsp245:
 class TestCheckTemporalCoverage:
     def test_fail_datatree_missing(self, mock_datasets):
         # GCM datatree absent → FAIL (not SKIP; can't determine temporal coverage at all)
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
 
     def test_skip_scenario_group_missing(self, mock_datasets):
         # Datatree exists but SSP245 group absent → SKIP
-        mock_datasets["CESM2-WACCM"] = _datatree_entry()
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry()
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.SKIP
 
     def test_skip_no_time_dim(self, mock_datasets):
         ds = xr.Dataset({"tas": (["lat"], np.zeros(3))}, coords={"lat": range(3)})
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(ssp245=ds)
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(ssp245=ds)
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.SKIP
 
     def test_fail_load_error(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _failing_entry()
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
+        mock_datasets["CESM2-WACCM6"] = _failing_entry()
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
 
     def test_pass_correct_ssp245_coverage(self, mock_datasets):
         ds = _ds_with_time("2015-01-01", "2099-12-31")
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(ssp245=ds)
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(ssp245=ds)
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
         assert result.detail["actual_start"] == "2015-01-01"
         assert result.detail["actual_end"] == "2099-12-31"
 
     def test_fail_wrong_start_date(self, mock_datasets):
         ds = _ds_with_time("2016-01-01", "2100-12-31")
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(ssp245=ds)
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(ssp245=ds)
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
         assert "start date" in result.message
 
     def test_fail_wrong_end_date(self, mock_datasets):
         ds = _ds_with_time("2015-01-01", "2098-12-31")
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(ssp245=ds)
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").check_temporal_coverage()
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(ssp245=ds)
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").check_temporal_coverage()
         assert result.status == CheckStatus.FAIL
         assert "end date" in result.message
 
     def test_pass_correct_g6_coverage(self, mock_datasets):
         ds = _ds_with_time("2035-01-01", "2084-12-31")
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(g6_1p5k=ds)
-        result = DatasetValidator(gcm="CESM2-WACCM", scenario="G6-1.5K").check_temporal_coverage()
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(g6_1p5k=ds)
+        result = DatasetValidator(gcm="CESM2-WACCM6", scenario="G6-1.5K").check_temporal_coverage()
         assert result.status == CheckStatus.PASS
 
     def test_pass_correct_historical_coverage(self, mock_datasets):
         ds = _ds_with_time("1850-01-01", "2014-12-31")
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(historical=ds)
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(historical=ds)
         result = DatasetValidator(
-            gcm="CESM2-WACCM", scenario="historical"
+            gcm="CESM2-WACCM6", scenario="historical"
         ).check_temporal_coverage()
         assert result.status == CheckStatus.PASS
 
@@ -386,23 +384,23 @@ class TestCheckTemporalCoverage:
 class TestValidate:
     def test_returns_list_of_results(self, mock_datasets):
         # Need cftime time axis so check_temporal_coverage doesn't error on ds.time.dt.calendar
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             ssp245=_ds_with_time("2020-01-01", "2020-01-10")
         )
-        results = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").run_checks()
+        results = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").run_checks()
         assert len(results) == len(_DS_CHECKER_CHECKS) + 3
 
     def test_returns_single_error_when_open_fails(self, mock_datasets):
         # No datatree in catalog → _open_scenario_ds fails → run_checks returns [err]
-        results = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").run_checks()
+        results = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").run_checks()
         assert len(results) == 1
         assert results[0].status == CheckStatus.FAIL
 
     def test_check_ids_stamped(self, mock_datasets):
-        mock_datasets["CESM2-WACCM"] = _datatree_entry(
+        mock_datasets["CESM2-WACCM6"] = _datatree_entry(
             ssp245=_ds_with_time("2020-01-01", "2020-01-10")
         )
-        results = DatasetValidator(gcm="CESM2-WACCM", scenario="SSP245").run_checks()
+        results = DatasetValidator(gcm="CESM2-WACCM6", scenario="SSP245").run_checks()
         check_ids = [r.check_id for r in results]
         for check_id, _, _ in _DS_CHECKER_CHECKS:
             assert check_id in check_ids
@@ -411,9 +409,9 @@ class TestValidate:
         assert "g6_not_identical_to_ssp245" in check_ids
 
     def test_all_results_have_correct_gcm_scenario(self, mock_datasets):
-        results = DatasetValidator(gcm="UKESM", scenario="historical").run_checks()
+        results = DatasetValidator(gcm="UKESM1-1-LL", scenario="historical").run_checks()
         for r in results:
-            assert r.gcm == "UKESM"
+            assert r.gcm == "UKESM1-1-LL"
             assert r.scenario == "historical"
 
 
@@ -624,7 +622,7 @@ class TestCheckConfigTimeDomain:
         from srm.bcsd_config import BCSDConfig
 
         return BCSDConfig(
-            gcm="CESM2-WACCM",
+            gcm="CESM2-WACCM6",
             downscaling_method="BCSD",
             variable="tas",
             ensemble_member=member,
@@ -728,7 +726,7 @@ class TestCheckConfigTimeDomain:
         from srm.validation import check_config_time_domain
 
         cfg = BCSDConfig(
-            gcm="UKESM",
+            gcm="UKESM1-1-LL",
             variable="tas",
             ensemble_member="r2i1p1f2",
             scenario=None,

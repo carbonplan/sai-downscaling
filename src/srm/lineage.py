@@ -70,6 +70,10 @@ class LineageEntry:
 # The one SAI run that another scenario continues.
 _G6_002 = ScenarioMember(scenario="G6-1.5K", member="002")
 
+# UKESM1-1-LL historical is a single UM suite, not a CMIP6 realization, so its ID is the suite name
+# rather than a ripf label. Every UKESM1-1-LL scenario member and variable branches from this one run.
+_UKESM_HIST = "u-by791"
+
 
 def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     table: dict[tuple[str, str, str, str], LineageEntry] = {}
@@ -100,18 +104,18 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     )
     _tmx = ("tasmax", "tasmin", "dtr")
 
-    # CESM2-WACCM G6-1.5K
+    # CESM2-WACCM6 G6-1.5K
     # Standard variables branch from r1/r2/r3i1p1f1 historical and SSP245 001/002/003 bridge.
     # tasmax/tasmin use the corrected historical run ("001") due to the CMIP6 tasmax/tasmin bug;
     # their SSP245 bridges are 009/007/008 (provisional for 001: some open questions).
-    add("CESM2-WACCM", "G6-1.5K", "001", _std, "r1i1p1f1", "001")
-    add("CESM2-WACCM", "G6-1.5K", "001", _tmx, "001", "009")
-    add("CESM2-WACCM", "G6-1.5K", "002", _std, "r2i1p1f1", "002")
-    add("CESM2-WACCM", "G6-1.5K", "002", _tmx, "001", "007")
-    add("CESM2-WACCM", "G6-1.5K", "003", _std, "r3i1p1f1", "003")
-    add("CESM2-WACCM", "G6-1.5K", "003", _tmx, "001", "008")
+    add("CESM2-WACCM6", "G6-1.5K", "001", _std, "r1i1p1f1", "001")
+    add("CESM2-WACCM6", "G6-1.5K", "001", _tmx, "001", "009")
+    add("CESM2-WACCM6", "G6-1.5K", "002", _std, "r2i1p1f1", "002")
+    add("CESM2-WACCM6", "G6-1.5K", "002", _tmx, "001", "007")
+    add("CESM2-WACCM6", "G6-1.5K", "003", _std, "r3i1p1f1", "003")
+    add("CESM2-WACCM6", "G6-1.5K", "003", _tmx, "001", "008")
 
-    # CESM2-WACCM G6-1.5K-END: SAI stops after 2084 and member 002 runs on to 2100.
+    # CESM2-WACCM6 G6-1.5K-END: SAI stops after 2084 and member 002 runs on to 2100.
     # The store holds only 2085-2100, so the bridge spans two runs: SSP245 for 2015-2034,
     # then the parent G6-1.5K 002 for the 2035-2084 SAI years the termination continues.
     # All three parents come from the provenance sheet, which records this run's chain as
@@ -119,40 +123,43 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     # variables and [('historical','001'),('ssp245','007'),('g6_1p5k','002')] for
     # tasmax/tasmin. The first two match G6-1.5K 002 exactly, as expected for a run that
     # continues that realization rather than branching afresh.
-    add("CESM2-WACCM", "G6-1.5K-END", "002", _std, "r2i1p1f1", "002", sai_parent=_G6_002)
-    add("CESM2-WACCM", "G6-1.5K-END", "002", _tmx, "001", "007", sai_parent=_G6_002)
+    add("CESM2-WACCM6", "G6-1.5K-END", "002", _std, "r2i1p1f1", "002", sai_parent=_G6_002)
+    add("CESM2-WACCM6", "G6-1.5K-END", "002", _tmx, "001", "007", sai_parent=_G6_002)
 
-    # CESM2-WACCM SSP245 (no SAI bridge, ssp245_bridge is always None)
+    # CESM2-WACCM6 SSP245 (no SAI bridge, ssp245_bridge is always None)
     # Members 001-005: standard variables only (tasmax/tasmin have the CMIP6 bug: not usable).
     # Members 006-010: tasmax/tasmin available via corrected run ("001"); all end in 2069
     # (007-010 on 2069-12-31, 006 a day earlier - see _MEMBER_TIME_BOUNDS in srm.validation).
     # Scenario label matches catalog key case: "SSP245".
-    add("CESM2-WACCM", "SSP245", "001", _std, "r1i1p1f1")
-    add("CESM2-WACCM", "SSP245", "002", _std, "r2i1p1f1")
-    add("CESM2-WACCM", "SSP245", "003", _std, "r3i1p1f1")
-    add("CESM2-WACCM", "SSP245", "004", _std, "r2i1p1f1")
-    add("CESM2-WACCM", "SSP245", "005", _std, "r3i1p1f1")
-    add("CESM2-WACCM", "SSP245", "006", _std, "r1i1p1f1")
-    add("CESM2-WACCM", "SSP245", "006", _tmx, "001")
-    add("CESM2-WACCM", "SSP245", "007", _std, "r2i1p1f1")
-    add("CESM2-WACCM", "SSP245", "007", _tmx, "001")
-    add("CESM2-WACCM", "SSP245", "008", _std, "r3i1p1f1")
-    add("CESM2-WACCM", "SSP245", "008", _tmx, "001")
-    add("CESM2-WACCM", "SSP245", "009", _std, "r2i1p1f1")
-    add("CESM2-WACCM", "SSP245", "009", _tmx, "001")
-    add("CESM2-WACCM", "SSP245", "010", _std, "r3i1p1f1")
-    add("CESM2-WACCM", "SSP245", "010", _tmx, "001")
+    add("CESM2-WACCM6", "SSP245", "001", _std, "r1i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "002", _std, "r2i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "003", _std, "r3i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "004", _std, "r2i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "005", _std, "r3i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "006", _std, "r1i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "006", _tmx, "001")
+    add("CESM2-WACCM6", "SSP245", "007", _std, "r2i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "007", _tmx, "001")
+    add("CESM2-WACCM6", "SSP245", "008", _std, "r3i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "008", _tmx, "001")
+    add("CESM2-WACCM6", "SSP245", "009", _std, "r2i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "009", _tmx, "001")
+    add("CESM2-WACCM6", "SSP245", "010", _std, "r3i1p1f1")
+    add("CESM2-WACCM6", "SSP245", "010", _tmx, "001")
 
     _all = _std + _tmx
 
-    # UKESM1-0-LL (code gcm name: "UKESM")
-    # As of #355, SSP245 and G6-1.5K are each consolidated into a single icechunk
-    # store keyed by ripf members (r2/r3/r12i1p1f2) covering all variables, matching
-    # the historical store's member IDs. Lineage is therefore self-referential:
-    # hist=self for both scenarios, ssp245_bridge=self for the G6-1.5K SAI bridge.
+    # UKESM1-1-LL
+    # Every file from this delivery is UKESM1-1-LL: source metadata and filenames that say
+    # UKESM1-0-LL / UKESM1-1 are supplier labelling typos (confirmed by email), corrected on
+    # ingest in srm.input_data.ukesm.
+    # SSP245 and G6-1.5K are each a single icechunk (r2/r3/r12i1p1f2) covering all variables.
+    # The Historical scenario has a single ensemble_member: u-by791, so scenario members share that single historical parent.
+    # SSP245 has no hurs.
+    _ukesm_ssp245 = tuple(v for v in _all if v != "hurs")
     for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):
-        add("UKESM", "SSP245", _m, _all, _m)
-        add("UKESM", "G6-1.5K", _m, _all, _m, _m)
+        add("UKESM1-1-LL", "SSP245", _m, _ukesm_ssp245, _UKESM_HIST)
+        add("UKESM1-1-LL", "G6-1.5K", _m, _all, _UKESM_HIST, _m)
 
     return table
 
@@ -205,8 +212,9 @@ def all_lineage_keys() -> list[tuple[str, str, str, str]]:
 # sheet's MIROC-ES2H rows stay out of the reconciliation without being deleted from a
 # verbatim re-export.
 PROVENANCE_GCM_ALIASES: dict[str, str] = {
-    "CESM2(WACCM)": "CESM2-WACCM",
-    "UKESM1-0-LL": "UKESM",
+    "CESM2(WACCM)": "CESM2-WACCM6",
+    # Identity, kept so the sheet's UKESM rows are reconciled instead of skipped.
+    "UKESM1-1-LL": "UKESM1-1-LL",
 }
 PROVENANCE_SCENARIO_ALIASES: dict[str, str] = {
     "G6-1.5K-end": "G6-1.5K-END",
@@ -227,23 +235,16 @@ def diff_against_provenance(
     re-export and must not be hand-patched: an edit there is clobbered by the next export
     and hides the very disagreement this function exists to surface.
 
-    Returns a dict with five keys. ``only_in_code`` and ``only_in_sheet`` hold
+    Returns a dict with four keys. ``only_in_code`` and ``only_in_sheet`` hold
     ``(gcm, scenario, member, variable)`` keys present on one side alone,
     ``parent_mismatch`` holds human-readable descriptions of keys both sides carry but
-    disagree about, ``uncertain`` lists keys whose sheet entry is prefixed ``???``, and
-    ``malformed`` lists cells the sheet writes in a form that cannot be parsed.
-    ``historical`` rows in the sheet are ignored, since the lineage table registers
-    scenarios only.
-
-    The ``???`` prefix is the sheet's own marker for a parent nobody has confirmed. Those
-    rows are still compared, because a flagged row that disagrees with the code is exactly
-    what needs resolving, but they are reported separately so an unconfirmed value is never
-    mistaken for a verified one.
+    disagree about, and ``malformed`` lists cells the sheet writes in a form that cannot
+    be parsed. ``historical`` rows in the sheet are ignored, since the lineage table
+    registers scenarios only.
     """
     import csv as _csv
 
     sheet: dict[tuple[str, str, str, str], dict[str, str]] = {}
-    uncertain: list[tuple[str, str, str, str]] = []
     malformed: list[str] = []
     with open(csv_path, newline="") as handle:
         for row in _csv.DictReader(handle):
@@ -256,9 +257,6 @@ def diff_against_provenance(
             member = (row["ensemble_id"] or "").strip()
             variable = (row["variable"] or "").strip()
             key = (gcm, scenario, member, variable)
-            if parents_raw.startswith("???"):
-                uncertain.append(key)
-                parents_raw = parents_raw.removeprefix("???").strip()
             try:
                 parents = dict(ast.literal_eval(parents_raw))
             except (SyntaxError, ValueError):
@@ -293,6 +291,5 @@ def diff_against_provenance(
         "only_in_code": only_in_code,
         "only_in_sheet": only_in_sheet,
         "parent_mismatch": parent_mismatch,
-        "uncertain": sorted(uncertain),
         "malformed": sorted(malformed),
     }
