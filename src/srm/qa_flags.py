@@ -2179,7 +2179,48 @@ def run_step3(
         logger.info("run_step3 total time: %.1fs", time.time() - t_start)
 
 
-def calculate_land_mask(example_tag: str, trees, is_downscaled: bool, var_to_analyze: str):
+def calculate_land_mask(
+    example_tag: str, trees: dict[str, xr.DataTree], is_downscaled: bool, var_to_analyze: str
+) -> xr.DataArray:
+    """
+    Rasterize the catalog's ocean-mask geometry onto one tag's lat/lon grid.
+
+    Meant to be called once per grid (downscaled vs. debiased_coarse each
+    have their own, but every tag *within* a grid shares the same lat/lon
+    coordinates) rather than once per tag -- `example_tag` only supplies the
+    grid to rasterize onto via get_data, not data that's otherwise used.
+
+    Parameters
+    ----------
+    example_tag : str
+        Any tag on the grid to build the mask for, as produced by
+        discover_leaves. Its lat/lon coordinates are used as the rasterize
+        target; its actual data values are discarded.
+    trees : dict[str, xr.DataTree]
+    is_downscaled : bool
+        Passed through to get_data.
+    var_to_analyze : str
+        Variable to pull from `example_tag`'s leaf to use as the grid
+        template, e.g. an already-written flag name.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean, True over land, on `example_tag`'s lat/lon grid. Not
+        loaded -- call `.load()` (and typically `.astype(np.uint8)`) before
+        reusing it across many calculate_summary_stats calls, since rerunning
+        the rasterization each time would otherwise recompute the same mask.
+
+    Notes
+    -----
+    Fully Claude generated patch: Monkeypatches ``rusterize.rusterize`` for the life of the process (not
+    scoped to this call, and never restored) to drop the ``res`` keyword
+    when ``out_shape`` is also given -- rasterix's `geometry_mask` currently
+    passes both, which the installed rusterize version rejects. Calling this
+    function more than once re-wraps the already-patched function each time;
+    harmless since the check is idempotent, but each call adds one more
+    layer of indirection that's never cleaned up.
+    """
     ocean_mask_geoparquet = catalog.get("ocean-mask")
 
     # Claude-generated patch to get the geoparquet -> gridded mask to work
@@ -2193,7 +2234,6 @@ def calculate_land_mask(example_tag: str, trees, is_downscaled: bool, var_to_ana
 
     _rusterize_pkg.rusterize = _rusterize_patched
 
-    [gcm, var, scenario, ens, method] = parse_tag(example_tag)
     target_grid_da = get_data(
         tag=example_tag, trees=trees, var_to_analyze=var_to_analyze, is_downscaled=is_downscaled
     )
@@ -2224,7 +2264,44 @@ def calculate_summary_stats(
     summary_csv_fname: str | None,
     is_downscaled: bool = True,
     verbose: bool = True,
-):
+) -> pd.DataFrame:
+    """
+    Summarize how often each tag's combined QA flags fire, over all space and over land only.
+
+    For each tag, reads back the two flags already written by
+    combine_intermediate_flags / write_final_qa_flags (`flag_time_varying_name`,
+    `flag_time_invariant_name`) and computes six prevalence fractions -- three
+    over the full grid and three restricted to `land_mask_u8` -- in one
+    dask.compute() call per tag, rather than six separate `.compute()` calls.
+
+    Parameters
+    ----------
+    tags : list[str]
+        Tags to summarize, as produced by discover_leaves.
+    trees : dict[str, xr.DataTree]
+    flag_time_varying_name, flag_time_invariant_name : str
+        Variable names to read from each tag's leaf, e.g.
+        ``ATTRS_TIME_VARYING["short_name"]`` / ``ATTRS_TIME_INVARIANT["short_name"]``.
+    land_mask_u8 : xr.DataArray
+        Land mask as 0/1 uint8 (see calculate_land_mask), on the same
+        lat/lon grid as `tags`.
+    summary_csv_fname : str or None
+        If given, path to write the running summary to as CSV -- rewritten
+        in full after every tag, not just at the end, so a run interrupted
+        partway through still leaves a valid, complete-so-far CSV on disk
+        (at the cost of re-writing the whole file each iteration).
+    is_downscaled : bool
+        Passed through to get_data.
+    verbose : bool
+        If True, log each tag's six fractions as they're computed.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per tag, with columns ``tag``, ``gcm``, ``variable``,
+        ``scenario``, ``ensemble_member``, ``method``, and the six fraction
+        columns described above.
+    """
     summary_rows = []
 
     n_land_time_invariant = int(land_mask_u8.sum())  # land pixel count, compute once
@@ -2271,24 +2348,30 @@ def calculate_summary_stats(
         # logger.info(f"  check flag_time_invariant max/min: {np.nanmax(flag_time_invariant)} / {np.nanmin(flag_time_invariant)}")
 
         if verbose:
-            logger.info(f"{tag}:")
+            logger.info("%s:", tag)
             logger.info(
-                f"  frac of dataset [time, lat, lon] flagged (time-varying):     {frac_flagged_time_varying:.4g}"
+                "  frac of dataset [time, lat, lon] flagged (time-varying):     %.4g",
+                frac_flagged_time_varying,
             )
             logger.info(
-                f"  frac of space [lat, lon] with >=1 flagged timestep:          {frac_space_flagged_time_varying:.4g}"
+                "  frac of space [lat, lon] with >=1 flagged timestep:          %.4g",
+                frac_space_flagged_time_varying,
             )
             logger.info(
-                f"  frac of space [lat, lon] with time-invariant flag:           {frac_space_flagged_time_invariant:.4g}"
+                "  frac of space [lat, lon] with time-invariant flag:           %.4g",
+                frac_space_flagged_time_invariant,
             )
             logger.info(
-                f"  land frac of dataset [time, lat, lon] flagged (time-varying):{land_frac_flagged_time_varying:.4g}"
+                "  land frac of dataset [time, lat, lon] flagged (time-varying):%.4g",
+                land_frac_flagged_time_varying,
             )
             logger.info(
-                f"  land frac of space [lat, lon] with >=1 flagged timestep:     {land_frac_space_flagged_time_varying:.4g}"
+                "  land frac of space [lat, lon] with >=1 flagged timestep:     %.4g",
+                land_frac_space_flagged_time_varying,
             )
             logger.info(
-                f"  land frac of space [lat, lon] with time-invariant flag:      {land_frac_space_flagged_time_invariant:.4g}"
+                "  land frac of space [lat, lon] with time-invariant flag:      %.4g",
+                land_frac_space_flagged_time_invariant,
             )
 
         summary_rows.append(
@@ -2298,6 +2381,7 @@ def calculate_summary_stats(
                 "variable": var,
                 "scenario": scenario,
                 "ensemble_member": ens,
+                "method": method,
                 "frac_flagged_time_varying": float(frac_flagged_time_varying),
                 "frac_space_flagged_time_varying": float(frac_space_flagged_time_varying),
                 "frac_space_flagged_time_invariant": float(frac_space_flagged_time_invariant),
@@ -2309,6 +2393,8 @@ def calculate_summary_stats(
             }
         )
 
-        summary_df = pd.DataFrame(summary_rows)
-        if summary_csv_fname is not None:
-            summary_df.to_csv(summary_csv_fname, index=False)
+    summary_df = pd.DataFrame(summary_rows)
+    if summary_csv_fname is not None:
+        summary_df.to_csv(summary_csv_fname, index=False)
+
+    return summary_df
