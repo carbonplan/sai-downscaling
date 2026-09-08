@@ -33,7 +33,7 @@ jobs:
                   RELEVANT="$(echo "$FILES" \
                     | grep -E '^src/srm/' \
                     | grep -vE '^src/srm/(snapshot|input_data)/' \
-                    | grep -vE '^src/srm/(analysis|batch_runner|cache|cli|encoding|plotting|validation|qaqc|qa_flags)\.py$' \
+                    | grep -vE '^src/srm/(analysis|batch_runner|cache|cli|encoding|plotting|validation|qaqc|qa_flags|run_qaflag_step2)\.py$' \
                     || true)"
                   echo "modeling-relevant files:"; echo "$RELEVANT"
                   if [[ -z "$RELEVANT" ]]; then
