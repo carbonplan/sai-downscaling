@@ -11,7 +11,7 @@
 # === BCSDConfig: Run Identity ===
 gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
-ensemble_members: ["002", "003"]
+ensemble_members: ["001","002", "003"]
 scenarios: ["G6-1.5K"]
 
 # === Downscaling Methods ===
