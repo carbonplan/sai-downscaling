@@ -1930,31 +1930,33 @@ def calculate_all_flags(
             )
 
     # Flag 6. Day of year outliers based on observations
-    if verbose:
-        logger.info("Running flag loop 6/6: day of year outlier flag...")
-        t0 = time.time()
-    [outlier_thresh_low_doy, outlier_thresh_high_doy] = prep_threshold_inputs(
-        grid_type=grid_type, timescale="dayofyear"
-    )
-    run_flag_loop(
-        tags=tags,
-        trees=trees,
-        flag_name="annual_outlier_flag",
-        compute_flag=lambda da, var: flag_outliers(
-            da=da,
-            outlier_thresh_low=outlier_thresh_low_doy[var],
-            outlier_thresh_high=outlier_thresh_high_doy[var],
-            timescale="dayofyear",
-        ),
-        bucket=bucket,
-        prefix=prefix,
-        write_mode="a",
-        is_downscaled=is_downscaled,
-        plot=plot_flag_maps,
-        save_plots=save_plots,
-    )
-    if verbose:
-        logger.info("  flag loop 3/6 completed in %.1fs", time.time() - t0)
+    # Note: commenting this out for current run because this flag calculation does not work with
+    # current cluster setting of spot_policy="spot_with_fallback"
+    # if verbose:
+    #    logger.info("Running flag loop 6/6: day of year outlier flag...")
+    #    t0 = time.time()
+    # [outlier_thresh_low_doy, outlier_thresh_high_doy] = prep_threshold_inputs(
+    #    grid_type=grid_type, timescale="dayofyear"
+    # )
+    # run_flag_loop(
+    #    tags=tags,
+    #    trees=trees,
+    #    flag_name="annual_outlier_flag",
+    #    compute_flag=lambda da, var: flag_outliers(
+    #        da=da,
+    #        outlier_thresh_low=outlier_thresh_low_doy[var],
+    #        outlier_thresh_high=outlier_thresh_high_doy[var],
+    #        timescale="dayofyear",
+    #    ),
+    #    bucket=bucket,
+    #    prefix=prefix,
+    #    write_mode="a",
+    #    is_downscaled=is_downscaled,
+    #    plot=plot_flag_maps,
+    #    save_plots=save_plots,
+    # )
+    # if verbose:
+    #    logger.info("  flag loop 3/6 completed in %.1fs", time.time() - t0)
 
     ########### Run time-invariant flag loops ##################################################
     if verbose:
@@ -1976,6 +1978,7 @@ def calculate_all_flags(
         is_downscaled=is_downscaled,
         plot=plot_flag_maps,
         save_plots=save_plots,
+        distortion_flag_calculation_type="v2",
     )
     if verbose:
         logger.info("  flag loop 6/6 completed in %.1fs", time.time() - t0)
