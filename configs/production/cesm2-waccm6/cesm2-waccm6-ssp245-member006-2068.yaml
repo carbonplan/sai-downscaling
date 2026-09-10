@@ -5,15 +5,11 @@
 # Members 007-010 in cesm2-waccm6-ssp245-*-trunc*.yaml.
 
 # === BCSDConfig: Run Identity ===
-gcm: "CESM2-WACCM"
+gcm: "CESM2-WACCM6"
 variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
 ensemble_members: ["006"]
 scenarios: ["SSP245"]
 
-# === Downscaling Methods ===
-# Required: there is no default, so every config states which method produced its output.
-# Production publishes BCSD only for now; QDMSD is exercised in the qa configs, which list
-# both. Adding it here doubles every wave, so it is a deliberate separate decision.
 downscaling_methods: ["BCSD", "QDMSD"]
 
 train_period_start: 1978
