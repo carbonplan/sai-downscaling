@@ -42,6 +42,7 @@ successfully or not, so there's a permanent record afterward at LOG_S3_KEY.
 """
 
 import logging
+import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +50,9 @@ from pathlib import Path
 import boto3
 import coiled
 import matplotlib
+from frisky import hijack
+
+os.environ.setdefault("FRISKY_SUMMARY", "off")
 
 RUN_ID = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 LOG_PATH = Path(f"run_step2_{RUN_ID}.log")
@@ -71,6 +75,7 @@ from srm.qa_flags import run_step2  # noqa: E402 -- must come after matplotlib.u
 # Update these per experiment before submitting.
 VARIABLES = ["tas", "tasmax", "tasmin", "pr", "rsds"]
 GCMS = ["CESM2-WACCM6", "UKESM1-1-LL"]
+
 METHODS = ["bcsd", "qdmsd"]
 
 BRANCH = "v0.14.1"
@@ -91,13 +96,13 @@ CLUSTER_KWARGS = dict(
     name="srm-qaqc-flags-step2-job",
     region="us-west-2",
     n_workers=12,
-    worker_vm_types=["m8gn.xlarge"],
+    worker_vm_types=["c9g.2xlarge"],
     scheduler_vm_types="c8g.xlarge",
     spot_policy="spot_with_fallback",
     use_best_zone=True,
     tags={"Project": "SRM"},
-    worker_options={"nthreads": 8},
     environ={"ZARR_ASYNC__CONCURRENCY": "128"},
+    idle_timeout="30 minutes",
 )
 
 
@@ -109,7 +114,7 @@ def main() -> None:
         # The `with` block guarantees the cluster shuts down when run_step2 returns --
         # or if it raises, so a failed run doesn't leave workers billing in the background.
         with coiled.Cluster(**CLUSTER_KWARGS) as cluster:
-            cluster.get_client()  # connect Dask to this cluster for the life of the run_step2 call
+            hijack(cluster.get_client())
 
             run_step2(
                 variables=VARIABLES,
