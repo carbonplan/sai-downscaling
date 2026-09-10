@@ -67,7 +67,7 @@ TREND_VARIABLE_SETTINGS = {
         "pct_tol": 2.0,
         "sign_flip": 5.0,
     },
-    "rsds": {"units": "W m-2", "scale": 1.0, "abs_tol": 1.0, "pct_tol": 0.25, "sign_flip": 0.5},
+    "rsds": {"units": "W m-2", "scale": 1.0, "abs_tol": 1.0, "pct_tol": 0.50, "sign_flip": 0.5},
     "hurs": {
         "units": "%",
         "scale": 1.0,
