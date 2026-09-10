@@ -10,7 +10,7 @@ script:
 
     import coiled
     coiled.batch.run(
-        command=["python", "-m", "srm.run_qaflag_step2"],
+        command=["python", "-m", "srm.qa_flags_runner"],
         name="qa-flags-step2",
         vm_type=["c8g.xlarge"],  # small driver VM; the actual flag computation runs on
                                   # the multi-worker Dask cluster this script creates
@@ -23,7 +23,7 @@ script:
 
 or run directly on any machine with Coiled credentials configured:
 
-    >> uv run python src/srm/run_qaflag_step2.py
+    >> uv run python src/srm/qa_flags_runner.py
 
 Plots
 -----
@@ -78,12 +78,12 @@ GCMS = ["CESM2-WACCM6", "UKESM1-1-LL"]
 
 METHODS = ["bcsd", "qdmsd"]
 
-BRANCH = "v0.14.1"
+BRANCH = "v1.0.0"
 ROOT_DIR = "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/"
 STORE_SUBSET_ID = "global"
 
 BUCKET = "carbonplan-srm"
-PREFIX = "scratch/output/qa-intermediate-flags-v0.14.1"
+PREFIX = "scratch/output/qa-intermediate-flags-v1.0.0"
 
 PLOT_FLAG_MAPS = True  # compute flag-map figures
 SAVE_PLOTS = True  # and upload them to S3 under {BUCKET}/{PREFIX}/_plots/ (see qa_flags.plot_flags)
