@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import rusterize as _rusterize_pkg
 import xarray as xr
+import zarr
 from icechunk.xarray import to_icechunk
 from rasterix.rasterize import geometry_mask
 
@@ -30,6 +31,7 @@ from srm.encoding import (
 from srm.qaqc import VAR_SPATIAL_RANGES, calculate_distortion_flags, sign_flip_mask
 
 logger = logging.getLogger(__name__)
+zarr.config.set({"async.concurrency": 128})
 
 # Per-dim view of the pipeline's *current* output chunk/shard shapes. srm.encoding.make_encoding
 # hardcodes the 3-D (time, lat, lon) tuple order, which can't encode the 2-D time-invariant flag,
@@ -40,7 +42,7 @@ logger = logging.getLogger(__name__)
 FLAG_CHUNKS = {"time": CHUNK_TIME, "lat": CHUNK_LAT, "lon": CHUNK_LON}
 FLAG_SHARDS = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
 
-INPUT_CHUNKS = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+INPUT_CHUNKS = {"time": CHUNK_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
 
 # directory where outputs from step 1 are saved for use in calculating flags in step 2
 DIR_QA_FLAG_CONSTANT_INPUTS = "s3://carbonplan-srm/output/qa_flag_inputs/"
@@ -691,8 +693,11 @@ def run_flag_loop(
                 s3_key = f"{prefix}/_plots/{flag_name}_{tag}.png"
             else:
                 s3_key = None
+            # Read the flag back rather than re-deriving it: `flag_data` is still a lazy graph
+            # over the float32 source, so plotting it would recompute the whole check.
+            written = get_intermediate_flags(tag=tag, bucket=bucket, prefix=prefix)[flag_name]
             plot_flags(
-                flags=flag_data,
+                flags=written,
                 time_varying=True,
                 separate_low_high=False,
                 bucket=bucket,
@@ -794,8 +799,10 @@ def run_flag_loop_temperature_inconsistencies(
                     s3_key = f"{prefix}/_plots/{flag_name}_{tag}.png"
                 else:
                     s3_key = None
+                # Read the flag back rather than re-deriving it.
+                written = get_intermediate_flags(tag=tag, bucket=bucket, prefix=prefix)[flag_name]
                 plot_flags(
-                    flags=flag_tas,
+                    flags=written,
                     time_varying=True,
                     separate_low_high=False,
                     bucket=bucket,
@@ -1100,6 +1107,10 @@ def calculate_trend_distortion_flags(
                     )
                     flipped_sign_flag_fine = flipped_sign_flag_fine_frac > 0
 
+                    # let's materialize this once, instead of each loop cycle.
+                    trend_distortion_flag_fine, flipped_sign_flag_fine = dask.compute(
+                        trend_distortion_flag_fine, flipped_sign_flag_fine
+                    )
                     if plot:
                         if save_plots:
                             name_prefix = f"{gcm}_{var}_{method}"
@@ -1631,17 +1642,9 @@ def prep_annual_threshold_inputs(grid_type: str) -> tuple[xr.Dataset, xr.Dataset
     outlier_thresh_low_annual = outlier_thresh_low.min(dim="dayofyear")
     outlier_thresh_high_annual = outlier_thresh_high.max(dim="dayofyear")
 
-    # Match the lat/lon chunk grid flag_outliers' `da` is opened with (INPUT_CHUNKS), so
-    # comparing against it doesn't force dask to reconcile two different chunk grids --
-    # without this, every tag in the annual-outlier flag loop hits a
-    # "PerformanceWarning: Increasing number of chunks" from the mismatch.
-    outlier_thresh_low_annual = outlier_thresh_low_annual.chunk(
-        {"lat": SHARD_LAT, "lon": SHARD_LON}
-    )
-    outlier_thresh_high_annual = outlier_thresh_high_annual.chunk(
-        {"lat": SHARD_LAT, "lon": SHARD_LON}
-    )
-
+    # Materialize the thresholds instead of leaving them lazy
+    outlier_thresh_low_annual = outlier_thresh_low_annual.load()
+    outlier_thresh_high_annual = outlier_thresh_high_annual.load()
     return outlier_thresh_low_annual, outlier_thresh_high_annual
 
 
