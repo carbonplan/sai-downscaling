@@ -28,7 +28,12 @@ from srm.encoding import (
     SHARD_LON,
     SHARD_TIME,
 )
-from srm.qaqc import VAR_SPATIAL_RANGES, calculate_distortion_flags, sign_flip_mask
+from srm.qaqc import (
+    VAR_SPATIAL_RANGES,
+    calculate_distortion_flags,
+    calculate_distortion_flags_v2,
+    sign_flip_mask,
+)
 
 logger = logging.getLogger(__name__)
 zarr.config.set({"async.concurrency": 128})
@@ -59,23 +64,47 @@ TREND_VARIABLE_SETTINGS = {
         "abs_tol": 0.25,
         "pct_tol": 0.0,
         "sign_flip": 0.1,
+        "pct_tol_relative_to_signal": 30,
     },
-    "tasmax": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.1},
-    "tasmin": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.1},
+    "tasmax": {
+        "units": "K",
+        "scale": 1.0,
+        "abs_tol": 0.25,
+        "pct_tol": 0.0,
+        "sign_flip": 0.1,
+        "pct_tol_relative_to_signal": 30,
+    },
+    "tasmin": {
+        "units": "K",
+        "scale": 1.0,
+        "abs_tol": 0.25,
+        "pct_tol": 0.0,
+        "sign_flip": 0.1,
+        "pct_tol_relative_to_signal": 30,
+    },
     "pr": {
         "units": "mm/yr",
         "scale": 31536000.0,  # factor to convert from kg/m2/sec to mm/year
         "abs_tol": 10.0,
         "pct_tol": 2.0,
         "sign_flip": 5.0,
+        "pct_tol_relative_to_signal": 30,
     },
-    "rsds": {"units": "W m-2", "scale": 1.0, "abs_tol": 1.0, "pct_tol": 0.50, "sign_flip": 0.5},
+    "rsds": {
+        "units": "W m-2",
+        "scale": 1.0,
+        "abs_tol": 0.50,
+        "pct_tol": 0.50,
+        "sign_flip": 0.5,
+        "pct_tol_relative_to_signal": 30,
+    },
     "hurs": {
         "units": "%",
         "scale": 1.0,
         "abs_tol": 5.0,
         "pct_tol": 1.0,
         "sign_flip": 0.5,
+        "pct_tol_relative_to_signal": 30,
     },
 }
 
@@ -305,6 +334,12 @@ def flag_tasmax_tas_inconsistency(tas: xr.DataArray, tasmax: xr.DataArray) -> xr
     """
     inconsistent_days = tasmax < tas
     return inconsistent_days
+
+
+def flag_select_doy(da: xr.DataArray, doy_to_flag: xr.DataArray) -> xr.DataArray:
+    doy = da.time.dt.dayofyear
+    flags_with_da_dims = doy_to_flag.sel(dayofyear=doy)
+    return flags_with_da_dims
 
 
 def flag_tasmin_tas_inconsistency(tas: xr.DataArray, tasmin: xr.DataArray) -> xr.DataArray:
@@ -970,6 +1005,7 @@ def calculate_trend_distortion_flags(
     bucket: str,
     prefix: str,
     is_downscaled: bool,
+    distortion_flag_calculation_type: str = "v1",
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot: bool = True,
     save_plots: bool = False,
@@ -1082,13 +1118,26 @@ def calculate_trend_distortion_flags(
                     pct_tol = TREND_VARIABLE_SETTINGS[var]["pct_tol"]
                     sign_flip_tol = TREND_VARIABLE_SETTINGS[var]["sign_flip"]
                     scale = TREND_VARIABLE_SETTINGS[var]["scale"]
+                    pct_tol_relative_to_signal = TREND_VARIABLE_SETTINGS[var][
+                        "pct_tol_relative_to_signal"
+                    ]
 
-                    trend_distortion_flag = calculate_distortion_flags(
-                        distortion_absolute=distortion_absolute * scale,
-                        distortion_pct=distortion_pct,
-                        tolerance_absolute=abs_tol,
-                        tolerance_pct=pct_tol,
-                    )
+                    if distortion_flag_calculation_type == "v1":
+                        trend_distortion_flag = calculate_distortion_flags(
+                            distortion_absolute=distortion_absolute * scale,
+                            distortion_pct=distortion_pct,
+                            tolerance_absolute=abs_tol,
+                            tolerance_pct=pct_tol,
+                        )
+                    elif distortion_flag_calculation_type == "v2":
+                        trend_distortion_flag = calculate_distortion_flags_v2(
+                            delta_ds_coarse=delta_ds_coarse,
+                            delta_raw=delta_raw,
+                            delta_ds_coarse_pct=delta_ds_coarse_pct,
+                            delta_raw_pct=delta_raw_pct,
+                            tolerance_absolute=abs_tol,
+                            tolerance_pct=pct_tol_relative_to_signal,
+                        )
 
                     flipped_sign_flag = sign_flip_mask(
                         delta_ds_coarse * scale, delta_raw * scale, threshold=sign_flip_tol
@@ -1711,7 +1760,7 @@ def calculate_all_flags(
     ########### Run time-varying flag loops that are the same for all grids ############################################
     # Flag 1. Global exceedances
     if verbose:
-        logger.info("Running flag loop 1/5: global exceedance flag...")
+        logger.info("Running flag loop 1/6: global exceedance flag...")
         t0 = time.time()
     run_flag_loop(
         tags=tags,
@@ -1726,11 +1775,11 @@ def calculate_all_flags(
         save_plots=save_plots,
     )
     if verbose:
-        logger.info("  flag loop 1/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop 1/6 completed in %.1fs", time.time() - t0)
 
     # Flag 2. Temperature inconsistencies (tas vs. tasmin/tasmax)
     if verbose:
-        logger.info("Running flag loop 2/5: temperature inconsistency flag...")
+        logger.info("Running flag loop 2/6: temperature inconsistency flag...")
         t0 = time.time()
     run_flag_loop_temperature_inconsistencies(
         tags,
@@ -1743,12 +1792,12 @@ def calculate_all_flags(
         save_plots=save_plots,
     )
     if verbose:
-        logger.info("  flag loop 2/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop 2/6 completed in %.1fs", time.time() - t0)
 
     ########### Run time-varying flag loops that use different pre-computed inputs for different grids ###################
     # Flag 3. Outliers based on observations
     if verbose:
-        logger.info("Running flag loop 3/5: annual outlier flag...")
+        logger.info("Running flag loop 3/6: annual outlier flag...")
         t0 = time.time()
     [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_annual_threshold_inputs(
         grid_type=grid_type
@@ -1771,11 +1820,11 @@ def calculate_all_flags(
         save_plots=save_plots,
     )
     if verbose:
-        logger.info("  flag loop 3/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop 3/6 completed in %.1fs", time.time() - t0)
 
     # Flag 4. rsds-specific latitude/day-of-year check
     if verbose:
-        logger.info("Running flag loop 4/5: rsds max exceedance flag...")
+        logger.info("Running flag loop 4/6: rsds max exceedance flag...")
         t0 = time.time()
     zonal_doy_max_rsds = load_rsds_lims(grid_type=grid_type)
     run_flag_loop(
@@ -1794,11 +1843,42 @@ def calculate_all_flags(
         save_plots=save_plots,
     )
     if verbose:
-        logger.info("  flag loop 4/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop 4/6 completed in %.1fs", time.time() - t0)
+
+    # Flag 5. tiny threshold flag for multiplicative vars
+    if is_downscaled:
+        if verbose:
+            logger.info("Running flag loop 5/6: tiny threshold flag...")
+            t0 = time.time()
+        doy_below_tiny_thresh = xr.open_zarr(
+            DIR_QA_FLAG_CONSTANT_INPUTS + "doy_below_tiny_threshold.zarr"
+        )
+        run_flag_loop(
+            tags=tags,
+            trees=trees,
+            flag_name="below_tiny_threshold",
+            compute_flag=lambda da, var: flag_select_doy(
+                da=da, doy_to_flag=doy_below_tiny_thresh[f"{var}_below_tiny_thresh"]
+            ),
+            var_filter=["rsds", "pr"],
+            bucket=bucket,
+            prefix=prefix,
+            write_mode="a",
+            is_downscaled=is_downscaled,
+            plot=plot_flag_maps,
+            save_plots=save_plots,
+        )
+        if verbose:
+            logger.info("  flag loop 5/6 completed in %.1fs", time.time() - t0)
+    else:
+        if verbose:
+            logger.info(
+                "Skipping flag loop 5/6 because this flag does not apply to debiased coarse data"
+            )
 
     ########### Run time-invariant flag loops ##################################################
     if verbose:
-        logger.info("Running flag loop 5/5: trend distortion flag...")
+        logger.info("Running flag loop 6/6: trend distortion flag...")
         t0 = time.time()
     calculate_trend_distortion_flags(
         trees=trees,
@@ -1818,7 +1898,7 @@ def calculate_all_flags(
         save_plots=save_plots,
     )
     if verbose:
-        logger.info("  flag loop 5/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop 6/6 completed in %.1fs", time.time() - t0)
         logger.info("calculate_all_flags total time: %.1fs", time.time() - t_start)
 
 
