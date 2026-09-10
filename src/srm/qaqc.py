@@ -1591,6 +1591,30 @@ def calculate_distortion_flags(
     return is_distorted & (abs(distortion_pct) > tolerance_pct)
 
 
+def calculate_distortion_flags_v2(
+    delta_ds_coarse: xr.DataArray,
+    delta_raw: xr.DataArray,
+    delta_ds_coarse_pct: xr.DataArray,
+    delta_raw_pct: xr.DataArray,
+    tolerance_absolute: float,
+    tolerance_pct: float,
+) -> xr.DataArray:
+    """Flag cells where a distortion exceeds *both* tolerances."""
+    distortion_absolute = delta_ds_coarse - delta_raw
+    is_distorted = abs(distortion_absolute) > tolerance_absolute
+    abs_comparison_pct_signal = (delta_ds_coarse - delta_raw) * 100 / delta_raw
+    pct_comparison_pct_signal = (delta_ds_coarse_pct - delta_raw_pct) * 100 / delta_raw_pct
+
+    if tolerance_pct == 0:
+        is_flagged = is_distorted
+    else:
+        is_flagged_pct = abs(abs_comparison_pct_signal) > tolerance_pct
+        is_flagged_abs = abs(pct_comparison_pct_signal) > tolerance_pct
+        is_flagged = is_flagged_pct & is_flagged_abs
+
+    return is_flagged
+
+
 def sign_flip_mask(
     delta_tested: xr.DataArray, delta_reference: xr.DataArray, *, threshold: float
 ) -> xr.DataArray:
