@@ -203,7 +203,7 @@ def calculate_thresholds(
     Compute per-pixel outlier bounds from observational climatology stats.
 
     outlier_thresh_high = obs_max + 5 * obs_max_std; outlier_thresh_low = obs_min - 5 * obs_min_std.
-    Used by prep_annual_threshold_inputs to build the thresholds consumed by flag_outliers.
+    Used by prep_threshold_inputs to build the thresholds consumed by flag_outliers.
     """
     outlier_thresh_high = obs_max + (5 * obs_max_std)
     outlier_thresh_low = obs_min - (5 * obs_min_std)
@@ -1640,7 +1640,9 @@ def load_rsds_lims(grid_type: str, key: str = "zonal_doy_max_rsds") -> xr.DataAr
     return xr.open_zarr(fpath, group=key)["data"].load()
 
 
-def prep_annual_threshold_inputs(grid_type: str) -> tuple[xr.Dataset, xr.Dataset]:
+def prep_threshold_inputs(
+    grid_type: str, timescale: str = "annual"
+) -> tuple[xr.Dataset, xr.Dataset]:
     """
     Read the step-1 observational threshold outputs and reduce them to annual bounds.
 
@@ -1661,6 +1663,12 @@ def prep_annual_threshold_inputs(grid_type: str) -> tuple[xr.Dataset, xr.Dataset
     ValueError
         If `grid_type` is not one of GRID_TYPES.
     """
+    accepted_timescales = {"dayofyear", "annual"}
+    if timescale not in accepted_timescales:
+        raise ValueError(
+            f"unsupported timescale value: {timescale}. Valid values include: {accepted_timescales}"
+        )
+
     # Loading thresholds output from step 1 notebook. There are different stores for different grids
     if grid_type not in GRID_TYPES:
         raise ValueError(
@@ -1687,14 +1695,17 @@ def prep_annual_threshold_inputs(grid_type: str) -> tuple[xr.Dataset, xr.Dataset
     [outlier_thresh_low, outlier_thresh_high] = calculate_thresholds(
         obs_max, obs_min, obs_max_std, obs_min_std
     )
-
-    outlier_thresh_low_annual = outlier_thresh_low.min(dim="dayofyear")
-    outlier_thresh_high_annual = outlier_thresh_high.max(dim="dayofyear")
+    if timescale == "annual":
+        outlier_thresh_low_final = outlier_thresh_low.min(dim="dayofyear")
+        outlier_thresh_high_final = outlier_thresh_high.max(dim="dayofyear")
+    elif timescale == "dayofyear":
+        outlier_thresh_low_final = outlier_thresh_low
+        outlier_thresh_high_final = outlier_thresh_high
 
     # Materialize the thresholds instead of leaving them lazy
-    outlier_thresh_low_annual = outlier_thresh_low_annual.load()
-    outlier_thresh_high_annual = outlier_thresh_high_annual.load()
-    return outlier_thresh_low_annual, outlier_thresh_high_annual
+    outlier_thresh_low_final = outlier_thresh_low_final.load()
+    outlier_thresh_high_final = outlier_thresh_high_final.load()
+    return outlier_thresh_low_final, outlier_thresh_high_final
 
 
 def calculate_all_flags(
@@ -1724,7 +1735,7 @@ def calculate_all_flags(
     once per grid via `grid_type` (see GRID_TYPES) -- e.g. once for the fine
     downscaled output and again for a coarse ``debiased_coarse`` GCM grid --
     since the observational thresholds/rsds limits loaded here
-    (prep_annual_threshold_inputs, load_rsds_lims) differ by grid.
+    (prep_threshold_inputs, load_rsds_lims) differ by grid.
 
     Parameters
     ----------
@@ -1795,12 +1806,12 @@ def calculate_all_flags(
         logger.info("  flag loop 2/6 completed in %.1fs", time.time() - t0)
 
     ########### Run time-varying flag loops that use different pre-computed inputs for different grids ###################
-    # Flag 3. Outliers based on observations
+    # Flag 3. Annual outliers based on observations
     if verbose:
         logger.info("Running flag loop 3/6: annual outlier flag...")
         t0 = time.time()
-    [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_annual_threshold_inputs(
-        grid_type=grid_type
+    [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_threshold_inputs(
+        grid_type=grid_type, timescale="annual"
     )
     run_flag_loop(
         tags=tags,
@@ -1875,6 +1886,33 @@ def calculate_all_flags(
             logger.info(
                 "Skipping flag loop 5/6 because this flag does not apply to debiased coarse data"
             )
+
+    # Flag 6. Day of year outliers based on observations
+    if verbose:
+        logger.info("Running flag loop 6/6: day of year outlier flag...")
+        t0 = time.time()
+    [outlier_thresh_low_doy, outlier_thresh_high_doy] = prep_threshold_inputs(
+        grid_type=grid_type, timescale="dayofyear"
+    )
+    run_flag_loop(
+        tags=tags,
+        trees=trees,
+        flag_name="annual_outlier_flag",
+        compute_flag=lambda da, var: flag_outliers(
+            da=da,
+            outlier_thresh_low=outlier_thresh_low_doy[var],
+            outlier_thresh_high=outlier_thresh_high_doy[var],
+            timescale="dayofyear",
+        ),
+        bucket=bucket,
+        prefix=prefix,
+        write_mode="a",
+        is_downscaled=is_downscaled,
+        plot=plot_flag_maps,
+        save_plots=save_plots,
+    )
+    if verbose:
+        logger.info("  flag loop 3/6 completed in %.1fs", time.time() - t0)
 
     ########### Run time-invariant flag loops ##################################################
     if verbose:
