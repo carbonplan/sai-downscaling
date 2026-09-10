@@ -53,8 +53,15 @@ INPUT_CHUNKS = {"time": CHUNK_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
 DIR_QA_FLAG_CONSTANT_INPUTS = "s3://carbonplan-srm/output/qa_flag_inputs/"
 
 # Variable-specific tolerances for differences in scenario comparisons (i.e. trends) between the raw GCM and  debiased, downscaled output (re-coarsened to native GCM grid). Grid cells where the scenario comparison differs by more than the absolute tolerance (in that variable's units defined in this dictionary) AND the percent tolerance are flagged.
+# `pct_tol` is used by calculate_distortion_flags (v1): the percent condition there is a plain
+# percent-of-baseline change, in the same percentage-point units for every variable.
+# `pct_tol_relative_to_signal` is used by calculate_distortion_flags_v2 instead: its percent
+# condition is normalized by the size of the reference signal itself (delta_raw_pct), so it means
+# "flag where the distortion exceeds this fraction of the signal" rather than a fixed
+# percentage-point cutoff. calculate_trend_distortion_flags's `distortion_flag_calculation_type`
+# argument selects which of the two (and therefore which of these two keys) is used.
 # the sign flip flag occurs when the GCM scenario comparison is above the sign_flip threshold and the downscaled scenario comparison is below the negative of that threshold (or vice versa)
-# E.g. if the raw GCM G6-1.5K-SAI scenario is 0.3 degrees cooler than the SSP245 scenario, but the downscaled G6-1.5K-SAI scenario is 0.4 degrees warmer than the SSP245 scenario in a grid cell, that would trigger a sign flip flag for that grid cell because the GCM and downscaled scenario comparisons have opposite signs of change and the absolute magnitude of those changes are both greater than the sign_flip threshold of 0.25 degrees.
+# E.g. if the raw GCM G6-1.5K-SAI scenario is 0.3 degrees cooler than the SSP245 scenario, but the downscaled G6-1.5K-SAI scenario is 0.4 degrees warmer than the SSP245 scenario in a grid cell, that would trigger a sign flip flag for that grid cell because the GCM and downscaled scenario comparisons have opposite signs of change and the absolute magnitude of those changes are both greater than the sign_flip threshold of 0.1 degrees.
 # We use a sign_flip threshold to avoid flagging grid cells where scenario comparisons are different signs but essentially zero. As an example, we wouldn't want to flag a grid cell where the raw GCM G6-1.5K-SAI -> SSP245 precipitation change is -0.00001 mm/day and the downscaled G6-1.5K-SAI -> SSP245 change is +0.00001 mm/day, even though they are different signs, because the absolute magnitude of those changes is extremely close to zero.
 
 TREND_VARIABLE_SETTINGS = {
@@ -337,7 +344,34 @@ def flag_tasmax_tas_inconsistency(tas: xr.DataArray, tasmax: xr.DataArray) -> xr
 
 
 def flag_select_doy(da: xr.DataArray, doy_to_flag: xr.DataArray) -> xr.DataArray:
+    """Broadcast a per-day-of-year flag onto every timestep of `da`.
+
+    `doy_to_flag` (e.g. one variable of doy_below_tiny_threshold.zarr) holds one boolean per
+    `dayofyear` (and lat/lon); this looks up the matching value for each of `da`'s own timesteps
+    via `da.time.dt.dayofyear`, so the result has `da`'s exact time/lat/lon shape rather than a
+    reduced `dayofyear` one. It's a vectorized/pointwise `.sel()`, not a reduction, so a day-of-year
+    that happens to be False everywhere doesn't get dropped -- it's just False at those timesteps.
+
+    If `doy_to_flag` has no `dayofyear=366` entry (its source climatology never saw a leap day),
+    a leap year in `da` would otherwise raise a KeyError on Dec 31; that day is folded onto 365
+    instead, since climatologically Dec 30/31 are effectively the same day.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Data with a `time` dimension to broadcast the flag onto.
+    doy_to_flag : xr.DataArray
+        Boolean, indexed by `dayofyear` (see calculate_doy_means), with dims matching `da` on
+        every axis except `time`/`dayofyear`.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean, with `da`'s exact dims/coords.
+    """
     doy = da.time.dt.dayofyear
+    if 366 not in doy_to_flag["dayofyear"].values:
+        doy = doy.where(doy <= 365, 365)
     flags_with_da_dims = doy_to_flag.sel(dayofyear=doy)
     return flags_with_da_dims
 
@@ -1016,8 +1050,9 @@ def calculate_trend_distortion_flags(
     For every (scenario_comparisons entry) x gcm x variable x method
     combination, computes the raw-GCM vs. debiased/downscaled scenario
     change at coarse resolution (calculate_ensemble_mean_deltas), flags grid
-    cells where that change is distorted beyond tolerance
-    (TREND_VARIABLE_SETTINGS, via calculate_distortion_flags) or flips sign
+    cells where that change is distorted beyond tolerance (TREND_VARIABLE_SETTINGS, via
+    calculate_distortion_flags or calculate_distortion_flags_v2 -- see
+    `distortion_flag_calculation_type`) or flips sign
     (sign_flip_mask), regrids both flags back to the fine grid, and writes
     them -- named ``"trend_distortion_{scenario1}_{scenario2}"`` and
     ``"flipped_sign_{scenario1}_{scenario2}"`` -- to every ensemble-member
@@ -1041,6 +1076,13 @@ def calculate_trend_distortion_flags(
         Passed through to write_individual_flags.
     is_downscaled : bool
         Passed through to calculate_ensemble_mean_deltas.
+    distortion_flag_calculation_type : {"v1", "v2"}
+        Which trend-distortion flag function to use. ``"v1"`` (default) is
+        calculate_distortion_flags: distortion beyond both an absolute tolerance and a plain
+        percent-of-baseline tolerance (TREND_VARIABLE_SETTINGS's `abs_tol`/`pct_tol`). ``"v2"`` is
+        calculate_distortion_flags_v2: distortion beyond both an absolute tolerance and a
+        percent-*of-the-reference-signal* tolerance (`abs_tol`/`pct_tol_relative_to_signal`) --
+        see the comment above TREND_VARIABLE_SETTINGS for how the two percent tolerances differ.
     scenario_comparisons : dict
         See SCENARIO_COMPARISONS.
     plot : bool
@@ -1757,7 +1799,7 @@ def calculate_all_flags(
         If True (and plot_flag_maps is also True), also upload each plotted
         figure to S3 under ``{bucket}/{prefix}/_plots/``.
     verbose : bool
-        If True, print progress and timing for each of the five flag loops.
+        If True, print progress and timing for each of the six flag loops.
     """
 
     if verbose:
