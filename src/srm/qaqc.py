@@ -1601,16 +1601,16 @@ def calculate_distortion_flags_v2(
 ) -> xr.DataArray:
     """Flag cells where a distortion exceeds *both* tolerances."""
     distortion_absolute = delta_ds_coarse - delta_raw
-    is_distorted = abs(distortion_absolute) > tolerance_absolute
+    is_distorted_abs = abs(distortion_absolute) > tolerance_absolute
     abs_comparison_pct_signal = (delta_ds_coarse - delta_raw) * 100 / delta_raw
     pct_comparison_pct_signal = (delta_ds_coarse_pct - delta_raw_pct) * 100 / delta_raw_pct
 
     if tolerance_pct == 0:
-        is_flagged = is_distorted
+        is_flagged = is_distorted_abs
     else:
         is_flagged_pct = abs(pct_comparison_pct_signal) > tolerance_pct
         is_flagged_abs = abs(abs_comparison_pct_signal) > tolerance_pct
-        is_flagged = is_flagged_pct & is_flagged_abs
+        is_flagged = is_flagged_pct & is_flagged_abs & is_distorted_abs
 
     return is_flagged
 
