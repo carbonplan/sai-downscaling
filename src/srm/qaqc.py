@@ -1608,8 +1608,8 @@ def calculate_distortion_flags_v2(
     if tolerance_pct == 0:
         is_flagged = is_distorted
     else:
-        is_flagged_pct = abs(abs_comparison_pct_signal) > tolerance_pct
-        is_flagged_abs = abs(pct_comparison_pct_signal) > tolerance_pct
+        is_flagged_pct = abs(pct_comparison_pct_signal) > tolerance_pct
+        is_flagged_abs = abs(abs_comparison_pct_signal) > tolerance_pct
         is_flagged = is_flagged_pct & is_flagged_abs
 
     return is_flagged
