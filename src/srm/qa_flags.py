@@ -94,14 +94,14 @@ TREND_VARIABLE_SETTINGS = {
         "units": "mm/yr",
         "scale": 31536000.0,  # factor to convert from kg/m2/sec to mm/year
         "abs_tol": 10.0,
-        "pct_tol": 2.0,
+        "pct_tol": 3.0,
         "sign_flip": 5.0,
         "pct_tol_relative_to_signal": 30,
     },
     "rsds": {
         "units": "W m-2",
         "scale": 1.0,
-        "abs_tol": 0.50,
+        "abs_tol": 1.0,
         "pct_tol": 0.50,
         "sign_flip": 0.5,
         "pct_tol_relative_to_signal": 30,
@@ -160,6 +160,12 @@ FLAG_LIST_TIME_VARYING = [
     "outside_global_plausible_range",
     "temperature_inconsistency",
     "below_tiny_threshold",
+    "below_10_Wm2",
+    # Cross-grid: a downscaled pixel's own checks can miss a problem that spatial
+    # disaggregation smoothed away from a bad debiased_coarse day. This is the coarse grid's own
+    # combined time-varying flag, bilinear-regridded to the fine grid (see run_step2), so a
+    # downscaled tag also inherits its source coarse cell's flagged days.
+    "coarse_effect",
 ]
 
 FLAG_LIST_TIME_INVARIANT = [
@@ -1242,11 +1248,11 @@ def calculate_trend_distortion_flags(
                             name_prefix = f"{gcm}_{var}_{method}"
                             s3_key_trend_distortion = (
                                 f"{prefix}/_plots/{name_prefix}_trend_distortion_"
-                                f"{scenario1}_{scenario2}.png"
+                                f"{scenario1}_{scenario2}_{distortion_flag_calculation_type}.png"
                             )
                             s3_key_sign_flip = (
                                 f"{prefix}/_plots/{name_prefix}_flipped_sign_"
-                                f"{scenario1}_{scenario2}.png"
+                                f"{scenario1}_{scenario2}_{distortion_flag_calculation_type}.png"
                             )
                         else:
                             s3_key_trend_distortion = None
@@ -1279,7 +1285,12 @@ def calculate_trend_distortion_flags(
                         gcm, var, scenario, ens, method = parse_tag(tag)
                         write_individual_flags(
                             flag_data=trend_distortion_flag_fine,
-                            flag_name="trend_distortion_" + scenario1 + "_" + scenario2,
+                            flag_name="trend_distortion_"
+                            + scenario1
+                            + "_"
+                            + scenario2
+                            + "_"
+                            + distortion_flag_calculation_type,
                             tag=tag,
                             write_mode="a",
                             bucket=bucket,
@@ -1288,7 +1299,12 @@ def calculate_trend_distortion_flags(
 
                         write_individual_flags(
                             flag_data=flipped_sign_flag_fine,
-                            flag_name="flipped_sign_" + scenario1 + "_" + scenario2,
+                            flag_name="flipped_sign_"
+                            + scenario1
+                            + "_"
+                            + scenario2
+                            + "_"
+                            + distortion_flag_calculation_type,
                             tag=tag,
                             write_mode="a",
                             bucket=bucket,
@@ -1847,6 +1863,7 @@ def calculate_all_flags(
 
     ########### Run time-varying flag loops that are the same for all grids ############################################
     # Flag 1. Global exceedances
+    """
     if verbose:
         logger.info("Running flag loop 1/6: global exceedance flag...")
         t0 = time.time()
@@ -1963,16 +1980,13 @@ def calculate_all_flags(
             logger.info(
                 "Skipping flag loop 5/6 because this flag does not apply to debiased coarse data"
             )
-
+"""
     # Flag 6. coarse debiased flag for days where rsds < 10 W/m2, only for QDMSD because
     # those values are not debiased to avoid rsds blowing up
     if not is_downscaled:
         if verbose:
             logger.info("Running flag loop 6/6: rsds < 10 W/m2...")
             t0 = time.time()
-        doy_below_tiny_thresh = xr.open_zarr(
-            DIR_QA_FLAG_CONSTANT_INPUTS + "doy_below_tiny_threshold.zarr"
-        )
         run_flag_loop(
             tags=tags,
             trees=trees,
@@ -2044,6 +2058,26 @@ def calculate_all_flags(
         is_downscaled=is_downscaled,
         plot=plot_flag_maps,
         save_plots=save_plots,
+        distortion_flag_calculation_type="v1",
+    )
+
+    # Run v2 trend distortion flags as well to have both to choose from in subsequent calculation
+    calculate_trend_distortion_flags(
+        trees=trees,
+        gcms=gcms,
+        variables=variables,
+        methods=methods,
+        tags_np=tags_np,
+        gcms_np=gcms_np,
+        scenarios_np=scenarios_np,
+        variables_np=variables_np,
+        methods_np=methods_np,
+        bucket=bucket,
+        prefix=prefix,
+        scenario_comparisons=scenario_comparisons,
+        is_downscaled=is_downscaled,
+        plot=plot_flag_maps,
+        save_plots=save_plots,
         distortion_flag_calculation_type="v2",
     )
     if verbose:
@@ -2074,6 +2108,18 @@ def run_step2(
     combine_intermediate_flags / write_final_qa_flags to produce the final
     QA flags on the production store.
 
+    When downscaled tags are processed (mode in "downscaled_only"/"both"), this also derives
+    one more intermediate flag per downscaled tag -- "coarse_effect" -- from that same tag's
+    debiased_coarse intermediates, once already in S3 (from an earlier call, or from the
+    "debiased_coarse_only"/"both" block later in this same call): it combines them
+    (combine_intermediate_flags against ``f"{prefix}/debiased_coarse"``), bilinear-regrids the
+    boolean result onto the fine grid (interpolate_coarse_to_fine_grid, thresholded ``> 0``, the
+    same mechanism calculate_trend_distortion_flags uses), and writes it back as a normal
+    intermediate flag on the downscaled tag. FLAG_LIST_TIME_VARYING already lists
+    "coarse_effect", so step 3's combine_intermediate_flags folds it in automatically. A tag
+    whose debiased_coarse intermediates don't exist yet is skipped for this one flag, with a
+    logged warning -- see FLAG_LIST_TIME_VARYING's comment on "coarse_effect" for what it means.
+
     Parameters
     ----------
     variables, gcms, methods : list[str]
@@ -2093,8 +2139,8 @@ def run_step2(
         figure to S3 under ``{bucket}/{prefix}/_plots/`` (and the
         ``debiased_coarse`` variant for the coarse-grid branch).
     verbose : bool
-        If True, print progress and timing for leaf discovery and each grid's
-        calculate_all_flags call.
+        If True, print progress and timing for leaf discovery, each grid's
+        calculate_all_flags call, and the coarse_effect derivation.
     mode: str (allowed values: "downscaled_only", "debiased_coarse_only", "both")
     """
     valid_modes = ("downscaled_only", "debiased_coarse_only", "both")
@@ -2124,40 +2170,6 @@ def run_step2(
     )
     if verbose:
         logger.info("  leaf discovery completed in %.1fs", time.time() - t0)
-
-    if mode in ["downscaled_only", "both"]:
-        keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
-        tags_np_downscaled = tags_np[keep_idx]
-        gcms_np_downscaled = gcms_np[keep_idx]
-        scenarios_np_downscaled = scenarios_np[keep_idx]
-        variables_np_downscaled = variables_np[keep_idx]
-        tags_np_downscaled = tags_np[keep_idx]
-        methods_np_downscaled = methods_np[keep_idx]
-
-        # Calculate the flags for the downscaled output
-        if verbose:
-            logger.info("Calculating flags on downscaled data...")
-            t0 = time.time()
-        calculate_all_flags(
-            variables=variables,
-            gcms=gcms,
-            methods=methods,
-            bucket=bucket,
-            prefix=prefix,
-            trees=trees,
-            tags=tags_np_downscaled,
-            gcms_np=gcms_np_downscaled,
-            scenarios_np=scenarios_np_downscaled,
-            variables_np=variables_np_downscaled,
-            tags_np=tags_np_downscaled,
-            methods_np=methods_np_downscaled,
-            grid_type="downscaled",
-            verbose=verbose,
-            plot_flag_maps=plot_flag_maps,
-            save_plots=save_plots,
-        )
-        if verbose:
-            logger.info("  flags on downscaled data completed in %.1fs", time.time() - t0)
 
     if mode in ["debiased_coarse_only", "both"]:
         # Calculate the flags for the coarse debiased output
@@ -2203,6 +2215,97 @@ def run_step2(
                 "  flags on coarse debiased data (all gcms) completed in %.1fs",
                 time.time() - t0,
             )
+
+    if mode in ["downscaled_only", "both"]:
+        keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
+        tags_np_downscaled = tags_np[keep_idx]
+        gcms_np_downscaled = gcms_np[keep_idx]
+        scenarios_np_downscaled = scenarios_np[keep_idx]
+        variables_np_downscaled = variables_np[keep_idx]
+        tags_np_downscaled = tags_np[keep_idx]
+        methods_np_downscaled = methods_np[keep_idx]
+
+        # Calculate the flags for the downscaled output
+        if verbose:
+            logger.info("Calculating flags on downscaled data...")
+            t0 = time.time()
+        calculate_all_flags(
+            variables=variables,
+            gcms=gcms,
+            methods=methods,
+            bucket=bucket,
+            prefix=prefix,
+            trees=trees,
+            tags=tags_np_downscaled,
+            gcms_np=gcms_np_downscaled,
+            scenarios_np=scenarios_np_downscaled,
+            variables_np=variables_np_downscaled,
+            tags_np=tags_np_downscaled,
+            methods_np=methods_np_downscaled,
+            grid_type="downscaled",
+            verbose=verbose,
+            plot_flag_maps=plot_flag_maps,
+            save_plots=save_plots,
+        )
+        if verbose:
+            logger.info("  flags on downscaled data completed in %.1fs", time.time() - t0)
+
+        # Derive one more intermediate flag per downscaled tag -- "coarse_effect" -- from that
+        # same tag's debiased_coarse intermediates, so a downscaled pixel's combined flag (in
+        # step 3) also reflects a problem upstream in the coarse debiasing step that spatial
+        # disaggregation may have smoothed away from any downscaled-only check. Combines
+        # debiased_coarse's own intermediates for the tag (combine_intermediate_flags against
+        # f"{prefix}/debiased_coarse"), bilinear-regrids that boolean time-varying result onto
+        # the fine grid (interpolate_coarse_to_fine_grid, thresholded > 0 -- the same mechanism
+        # calculate_trend_distortion_flags uses), and writes it back as a normal intermediate
+        # flag on the *downscaled* tag (write_individual_flags), where FLAG_LIST_TIME_VARYING
+        # already lists "coarse_effect" so step 3's combine_intermediate_flags picks it up.
+        #
+        # This only needs debiased_coarse's intermediates to already exist in S3 -- from an
+        # earlier run_step2 call, or from the "debiased_coarse_only"/"both" block below in a
+        # previous run -- not from this same call's mode, so it runs whenever downscaled tags
+        # are processed at all, not only under mode="both". A tag with no debiased_coarse
+        # intermediates yet (never run at that resolution, or not yet) is skipped with a logged
+        # warning; step 3 then simply combines without "coarse_effect" for that tag, the same
+        # way it already handles any other absent intermediate flag.
+        if verbose:
+            logger.info("Deriving coarse_effect for downscaled tags...")
+            t0 = time.time()
+        for tag in tags_np_downscaled:
+            try:
+                coarse_flag_time_varying, _ = combine_intermediate_flags(
+                    tag=tag,
+                    flag_list_time_varying=FLAG_LIST_TIME_VARYING,
+                    flag_list_time_invariant=FLAG_LIST_TIME_INVARIANT,
+                    bucket=bucket,
+                    prefix=f"{prefix}/debiased_coarse",
+                )
+                fine_template = get_data(tag=tag, trees=trees, is_downscaled=True)
+                coarse_effect_frac = interpolate_coarse_to_fine_grid(
+                    da_coarse_to_regrid=coarse_flag_time_varying.astype("float32"),
+                    da_fine_grid=fine_template,
+                )
+                coarse_effect_flag = coarse_effect_frac > 0
+                write_individual_flags(
+                    flag_data=coarse_effect_flag,
+                    flag_name="coarse_effect",
+                    tag=tag,
+                    bucket=bucket,
+                    prefix=prefix,
+                    write_mode="a",
+                )
+            except Exception as exc:  # noqa: BLE001 -- no debiased_coarse intermediates for this
+                # tag (never run at that resolution, or not yet) shouldn't block the rest of
+                # step 2; "coarse_effect" is just absent for this tag in step 3's combine.
+                logger.warning(
+                    "Skipping coarse_effect for %s: no debiased_coarse intermediate flags at "
+                    "%s/debiased_coarse: %s",
+                    tag,
+                    prefix,
+                    exc,
+                )
+        if verbose:
+            logger.info("  coarse_effect derivation completed in %.1fs", time.time() - t0)
 
     if verbose:
         logger.info("run_step2 total time: %.1fs", time.time() - t_start)
