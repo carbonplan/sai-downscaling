@@ -30,6 +30,7 @@ from srm.encoding import (
 )
 from srm.qaqc import (
     VAR_SPATIAL_RANGES,
+    area_weights,
     calculate_distortion_flags,
     calculate_distortion_flags_v2,
     sign_flip_mask,
@@ -158,6 +159,7 @@ FLAG_LIST_TIME_VARYING = [
     "rsds_max_exceeded",
     "outside_global_plausible_range",
     "temperature_inconsistency",
+    "below_tiny_threshold",
 ]
 
 FLAG_LIST_TIME_INVARIANT = [
@@ -175,15 +177,17 @@ ATTRS_TIME_INVARIANT = {
     "long_name": "Change distortion flag",
     "description": (
         "This flag identifies pixels where debiasing and/or downscaling meaningfully changes "
-        "common scenario intercomparisons. For each variable and ensemble member, it evaluates "
-        "future scenarios (G6-1.5k, G6-1.5k-end, and SSP2-4.5) and assesses whether the change "
-        "signals either (1) among them or (2) between them and the historical scenario are "
-        "distorted meaningfully in either magnitude or sign of change (using a 5% threshold "
-        "window). A distortion in any scenario-intercomparison flags the entire ensemble. This "
-        "flag is time-invariant. See repo for details about each distortion test."
+        "common scenario intercomparisons, relative to raw GCM output. For each variable and "
+        "ensemble member, it evaluates future scenarios (G6-1.5k, G6-1.5k-end, and SSP2-4.5) and "
+        "assesses whether the change signals either (1) among them or (2) between them and the "
+        "historical scenario are distorted meaningfully in either magnitude or sign of change. We "
+        "conduct this evaluation in theensemble mean to focus on scenario differences rather than "
+        "the effects of internal variability. A distortion in any scenario-intercomparison flags "
+        "the entire ensemble for both scenarios in the comparison. This flag is time-invariant. "
+        "See repo for details about each distortion test."
     ),
     "possible_values": "This is a binary flag: 0=no known issue; 1=known issue",
-    "short_name": "qa_flag_time_invariant",
+    "short_name": "trend_distortion_flag",
 }
 
 ATTRS_TIME_VARYING = {
@@ -324,6 +328,34 @@ def flag_global_exceedances(
     outside_range = (too_low | too_high) > 0
 
     return outside_range
+
+
+def flag_specific_extremes(
+    da: xr.DataArray,
+    low_extreme_thresh: float,
+) -> xr.DataArray:
+    """
+    Flag values below a specific extreme threshold. Used to flag rsds values < 10 W/m2 for QDMSD
+    because raw GCM input < 10 W/m2 is not debiased. When applied for that purpose on debiased coarse output, this is a conservative
+    flag: it captures all instances when that raw GCM is not debiased (because those values are <10 W/m2),
+    and it will also flag some days when the debiased coarse is < 10 W/m2 but the raw GCM is > 10 W/m2.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Values to check.
+    low_extreme_thresh: float
+        Low-end extreme to use
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean flag, True where `da` is outside the defined extreme threshold
+    """
+
+    flagged_vals = da < low_extreme_thresh
+
+    return flagged_vals
 
 
 def flag_tasmax_tas_inconsistency(tas: xr.DataArray, tasmax: xr.DataArray) -> xr.DataArray:
@@ -706,6 +738,7 @@ def run_flag_loop(
     prefix: str,
     is_downscaled: bool,
     var_filter: list[str] | None = None,
+    method_filter: list[str] | None = None,
     write_mode: str = "a",
     plot: bool = True,
     save_plots: bool = False,
@@ -742,6 +775,8 @@ def run_flag_loop(
     for tag in tags:
         [gcm, var, scenario, ens, method] = parse_tag(tag)
         if var_filter is not None and var not in var_filter:
+            continue
+        if method_filter is not None and method not in method_filter:
             continue
         logger.info(tag)
 
@@ -1173,8 +1208,8 @@ def calculate_trend_distortion_flags(
                         )
                     elif distortion_flag_calculation_type == "v2":
                         trend_distortion_flag = calculate_distortion_flags_v2(
-                            delta_ds_coarse=delta_ds_coarse,
-                            delta_raw=delta_raw,
+                            delta_ds_coarse=delta_ds_coarse * scale,
+                            delta_raw=delta_raw * scale,
                             delta_ds_coarse_pct=delta_ds_coarse_pct,
                             delta_raw_pct=delta_raw_pct,
                             tolerance_absolute=abs_tol,
@@ -1929,7 +1964,38 @@ def calculate_all_flags(
                 "Skipping flag loop 5/6 because this flag does not apply to debiased coarse data"
             )
 
-    # Flag 6. Day of year outliers based on observations
+    # Flag 6. coarse debiased flag for days where rsds < 10 W/m2, only for QDMSD because
+    # those values are not debiased to avoid rsds blowing up
+    if not is_downscaled:
+        if verbose:
+            logger.info("Running flag loop 6/6: rsds < 10 W/m2...")
+            t0 = time.time()
+        doy_below_tiny_thresh = xr.open_zarr(
+            DIR_QA_FLAG_CONSTANT_INPUTS + "doy_below_tiny_threshold.zarr"
+        )
+        run_flag_loop(
+            tags=tags,
+            trees=trees,
+            flag_name="below_10_Wm2",
+            compute_flag=lambda da, var: flag_specific_extremes(da=da, low_extreme_thresh=10),
+            var_filter=["rsds"],
+            method_filter=["qdmsd"],
+            bucket=bucket,
+            prefix=prefix,
+            write_mode="a",
+            is_downscaled=is_downscaled,
+            plot=plot_flag_maps,
+            save_plots=save_plots,
+        )
+        if verbose:
+            logger.info("  flag loop 6/6 completed in %.1fs", time.time() - t0)
+    else:
+        if verbose:
+            logger.info(
+                "Skipping flag loop 6/6 because this flag does not apply to downscaled data"
+            )
+
+    # Flag . Day of year outliers based on observations
     # Note: commenting this out for current run because this flag calculation does not work with
     # current cluster setting of spot_policy="spot_with_fallback"
     # if verbose:
@@ -1960,7 +2026,7 @@ def calculate_all_flags(
 
     ########### Run time-invariant flag loops ##################################################
     if verbose:
-        logger.info("Running flag loop 6/6: trend distortion flag...")
+        logger.info("Running flag loop: trend distortion flag...")
         t0 = time.time()
     calculate_trend_distortion_flags(
         trees=trees,
@@ -1981,7 +2047,7 @@ def calculate_all_flags(
         distortion_flag_calculation_type="v2",
     )
     if verbose:
-        logger.info("  flag loop 6/6 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop completed in %.1fs", time.time() - t0)
         logger.info("calculate_all_flags total time: %.1fs", time.time() - t_start)
 
 
@@ -2436,9 +2502,20 @@ def calculate_summary_stats(
 
     For each tag, reads back the two flags already written by
     combine_intermediate_flags / write_final_qa_flags (`flag_time_varying_name`,
-    `flag_time_invariant_name`) and computes six prevalence fractions -- three
+    `flag_time_invariant_name`) and computes six area-weighted prevalence fractions -- three
     over the full grid and three restricted to `land_mask_u8` -- in one
     dask.compute() call per tag, rather than six separate `.compute()` calls.
+
+    Every spatial average here is weighted by ``cos(latitude)`` (srm.qaqc.area_weights), not a
+    naive per-pixel mean: an unweighted mean overstates the high-latitude signal, since a 0.25
+    degree cell near the pole covers a fraction of the area of one at the equator (see the
+    ocean:land stratification in output-integrity-checks.ipynb for the same reasoning applied to
+    the temperature-ordering flags). `time` is not weighted -- each timestep counts equally --
+    only `lat`/`lon`: for the three ``*_time_varying`` fractions, this means an area-weighted
+    spatial mean is taken at every timestep first, then those per-timestep values are averaged
+    uniformly over time. A NaN in a flag array (e.g. a structural interpolation border) is
+    excluded from both the numerator and its cell's weight, rather than only from the numerator
+    the way the old ``sum()``-based land fractions did.
 
     Parameters
     ----------
@@ -2465,15 +2542,15 @@ def calculate_summary_stats(
     -------
     pd.DataFrame
         One row per tag, with columns ``tag``, ``gcm``, ``variable``,
-        ``scenario``, ``ensemble_member``, ``method``, and the six fraction
-        columns described above.
+        ``scenario``, ``ensemble_member``, ``method``, and the six
+        area-weighted fraction columns described above.
     """
     summary_rows = []
 
-    n_land_time_invariant = int(land_mask_u8.sum())  # land pixel count, compute once
-
-    # time-varying: land count is per-timestep-constant since land_mask has no time dim
-    n_land = n_land_time_invariant
+    # cos(latitude) weights, broadcast to the full grid so a value can be zeroed outside land;
+    # depends only on the (shared, tag-independent) lat/lon grid, so this is computed once.
+    weights = area_weights(land_mask_u8["lat"]).broadcast_like(land_mask_u8)
+    land_weights = weights.where(land_mask_u8 > 0, 0.0)
 
     for i, tag in enumerate(tags):
         [gcm, var, scenario, ens, method] = parse_tag(tag)
@@ -2487,12 +2564,12 @@ def calculate_summary_stats(
             var_to_analyze=flag_time_invariant_name,
             is_downscaled=is_downscaled,
         )
-        flag_time_varying_land = flag_time_varying * land_mask_u8
-        flag_time_invariant_land = flag_time_invariant * land_mask_u8
-        n_time = flag_time_varying.sizes["time"]
+        ever_flagged_time_varying = flag_time_varying.sum(dim="time") > 0
 
-        # We calculate the land_frac means with sum() divided by n_land instead of
-        # mean() with a mask so it goes quickly with the uint8 data type
+        # DataArray.weighted(...).mean(...) zeroes a NaN cell's weight along with its value, so
+        # NaN is excluded from both the numerator and denominator rather than deflating only the
+        # numerator. For the *_time_varying fractions, only lat/lon are weighted; the resulting
+        # per-timestep values are then averaged uniformly over time with a second, plain .mean().
         (
             frac_flagged_time_varying,
             frac_space_flagged_time_varying,
@@ -2501,12 +2578,12 @@ def calculate_summary_stats(
             land_frac_space_flagged_time_varying,
             land_frac_space_flagged_time_invariant,
         ) = dask.compute(
-            np.nanmean(flag_time_varying),
-            np.nanmean(flag_time_varying.sum(dim="time") > 0),
-            np.nanmean(flag_time_invariant),
-            flag_time_varying_land.sum() / (n_land * n_time),
-            (flag_time_varying_land.sum(dim="time") > 0).sum() / n_land,
-            flag_time_invariant_land.sum() / n_land,
+            flag_time_varying.weighted(weights).mean(dim=("lat", "lon")).mean(dim="time"),
+            ever_flagged_time_varying.weighted(weights).mean(dim=("lat", "lon")),
+            flag_time_invariant.weighted(weights).mean(dim=("lat", "lon")),
+            flag_time_varying.weighted(land_weights).mean(dim=("lat", "lon")).mean(dim="time"),
+            ever_flagged_time_varying.weighted(land_weights).mean(dim=("lat", "lon")),
+            flag_time_invariant.weighted(land_weights).mean(dim=("lat", "lon")),
         )
 
         # Sanity check: these should each be 0 or 1
@@ -2516,27 +2593,27 @@ def calculate_summary_stats(
         if verbose:
             logger.info("%s:", tag)
             logger.info(
-                "  frac of dataset [time, lat, lon] flagged (time-varying):     %.4g",
+                "  area-wtd frac of dataset [time, lat, lon] flagged (time-varying):     %.4g",
                 frac_flagged_time_varying,
             )
             logger.info(
-                "  frac of space [lat, lon] with >=1 flagged timestep:          %.4g",
+                "  area-wtd frac of space [lat, lon] with >=1 flagged timestep:          %.4g",
                 frac_space_flagged_time_varying,
             )
             logger.info(
-                "  frac of space [lat, lon] with time-invariant flag:           %.4g",
+                "  area-wtd frac of space [lat, lon] with time-invariant flag:           %.4g",
                 frac_space_flagged_time_invariant,
             )
             logger.info(
-                "  land frac of dataset [time, lat, lon] flagged (time-varying):%.4g",
+                "  area-wtd land frac of dataset [time, lat, lon] flagged (time-varying):%.4g",
                 land_frac_flagged_time_varying,
             )
             logger.info(
-                "  land frac of space [lat, lon] with >=1 flagged timestep:     %.4g",
+                "  area-wtd land frac of space [lat, lon] with >=1 flagged timestep:     %.4g",
                 land_frac_space_flagged_time_varying,
             )
             logger.info(
-                "  land frac of space [lat, lon] with time-invariant flag:      %.4g",
+                "  area-wtd land frac of space [lat, lon] with time-invariant flag:      %.4g",
                 land_frac_space_flagged_time_invariant,
             )
 
