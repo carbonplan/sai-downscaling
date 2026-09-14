@@ -83,7 +83,7 @@ ROOT_DIR = "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/outpu
 STORE_SUBSET_ID = "global"
 
 BUCKET = "carbonplan-srm"
-PREFIX = "scratch/output/qa-intermediate-flags-v1.0.0"
+PREFIX = "scratch/output/qa-intermediate-flags-v1.0.0-qa-run2"
 
 PLOT_FLAG_MAPS = True  # compute flag-map figures
 SAVE_PLOTS = True  # and upload them to S3 under {BUCKET}/{PREFIX}/_plots/ (see qa_flags.plot_flags)
@@ -98,7 +98,7 @@ CLUSTER_KWARGS = dict(
     n_workers=12,
     worker_vm_types=["c9g.2xlarge"],
     scheduler_vm_types="c8g.xlarge",
-    spot_policy="spot_with_fallback",
+    spot_policy="spot_with_fallback",  # sometimes switch to "on-demand" if it crashes
     use_best_zone=True,
     tags={"Project": "SRM"},
     environ={"ZARR_ASYNC__CONCURRENCY": "128"},

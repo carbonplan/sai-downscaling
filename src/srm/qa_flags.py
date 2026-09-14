@@ -295,7 +295,15 @@ def flag_rsds_above_max(da: xr.DataArray, zonal_doy_max_rsds: xr.DataArray) -> x
     xr.DataArray
         Boolean flag, True where `da` exceeds the aligned max.
     """
-    aligned_max = zonal_doy_max_rsds.sel(dayofyear=da.time.dt.dayofyear)
+    # .sel(dayofyear=<a DataArray indexed by time>) carries the indexer's own "dayofyear"
+    # coordinate into the result, riding along on the "time" dimension. Left in place, this
+    # coordinate gets written alongside the flag; since intermediate flags for one tag all
+    # share one zarr group, it then reappears as a (differently-chunked, spurious) coordinate
+    # on every other flag sharing "time" once the group is reopened as one Dataset -- which
+    # breaks unrelated operations, e.g. xarray-regrid's chunk-consistency check in
+    # interpolate_coarse_to_fine_grid. Drop it here, at the source, rather than leaving every
+    # downstream reader to clean it up.
+    aligned_max = zonal_doy_max_rsds.sel(dayofyear=da.time.dt.dayofyear).drop_vars("dayofyear")
     exceeds_max = da > aligned_max
 
     return exceeds_max
@@ -1863,7 +1871,6 @@ def calculate_all_flags(
 
     ########### Run time-varying flag loops that are the same for all grids ############################################
     # Flag 1. Global exceedances
-    """
     if verbose:
         logger.info("Running flag loop 1/6: global exceedance flag...")
         t0 = time.time()
@@ -1980,7 +1987,7 @@ def calculate_all_flags(
             logger.info(
                 "Skipping flag loop 5/6 because this flag does not apply to debiased coarse data"
             )
-"""
+
     # Flag 6. coarse debiased flag for days where rsds < 10 W/m2, only for QDMSD because
     # those values are not debiased to avoid rsds blowing up
     if not is_downscaled:
