@@ -11,9 +11,9 @@
 :::{tab-item} Using SRM Downscaled Data
 If you want to **access and analyze the downscaled data**:
 
-1. Visit [Access data](./access-data.md) for how to open downscaled output stores, navigate scenarios, and discover available groups.
+1. Visit the Access the data pages to see [what's available](./access-data/whats-available.md), find the [access utilities](./access-data/access-utilities.md), and review the [access terms](./access-data/access-terms.md).
 2. Visit [Input data catalog](./input-data.md) for an overview of the raw GCM, ERA5, and NASA-NEX datasets fed into the pipeline.
-3. Check out the [Subsetting and exporting data](./data-access-notebooks/subsetting-and-exporting.ipynb) guide to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
+3. Check out the [Subsetting and exporting data](https://github.com/carbonplan/srm-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb) notebook in the `srm-downscaling-data-utils` repository to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
 :::
 :::{tab-item} Running the Pipeline
 If you want to **run the downscaling pipeline**:
@@ -38,11 +38,18 @@ SRM Downscaling code is released under the MIT License. See [LICENSE](https://gi
 ```{toctree}
 :hidden:
 :maxdepth: 2
-access-data
 input-data
 terms-of-data-access
-data-access-notebooks/subsetting-and-exporting
 contributing
+```
+
+```{toctree}
+:hidden:
+:maxdepth: 2
+:caption: Access the data
+access-data/whats-available
+access-data/access-utilities
+access-data/access-terms
 ```
 
 ```{toctree}
