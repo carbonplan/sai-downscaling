@@ -96,6 +96,8 @@ Project documentation and code: https://carbonplan.github.io/srm-downscaling/
 
 - [Data access](https://carbonplan.github.io/srm-downscaling/access-data.html) — how to list and open input datasets
 - [Scientific approach](https://carbonplan.github.io/srm-downscaling/explanation/scientific-approach.html) — BCSD and QDMSD downscaling approaches
+- [Explainer article](https://carbonplan.org/research/sai-downscaling-explainer)
+
 
 
 ## License
