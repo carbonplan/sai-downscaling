@@ -1,6 +1,6 @@
 # Access utilities
 
-We've made utilities to help you access the data. They're all housed in the
+We've made a set of utilities to help you access the data stored on Source Cooperative, even if you don't have expertise in python, Zarr files, or working in the cloud. The utilities are all housed in the
 [srm-downscaling-data-utils](https://github.com/carbonplan/srm-downscaling-data-utils) repository.
 Follow the instructions in that repository's
 [README](https://github.com/carbonplan/srm-downscaling-data-utils/blob/main/README.md) to learn how

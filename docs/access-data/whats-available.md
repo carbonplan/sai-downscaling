@@ -14,6 +14,8 @@ global 0.25° grid with two methods. The current release is `v1.0.0`.
 | Temporal resolution | Daily |
 | Spatial extent | Global |
 
+In addition to the historical period (`historical`) and the baseline climate scenario (`ssp245`), we downscale two stratospheric aerosol injection scenarios. In the scenario `g6_1p5k`, greenhouse gas emissions continue at `ssp245` levels while sulfate aerosols are injected into the stratosphere to hold warming to 1.5 °C. The termination shock scenario (`g6_1p5k_end`) extends `g6_1p5k` ensemble member `002` to 2100, simulated an abrupt end of aerosol injection at the end of 2084.
+
 | Scenario | Group name | Years | GCMs |
 | --- | --- | --- | --- |
 | Historical | `historical` | 1978 to 2014 | Both |
@@ -83,15 +85,13 @@ methods publish the same set of groups.
 {method}/debiased_coarse/{scenario}/{variable}/{member}    # bias-corrected coarse
 ```
 
-`dtr` appears only under `debiased_coarse`, because the pipeline bias-corrects it only to
-reconstruct `tasmin`. At 0.25°, compute the diurnal temperature range as `tasmax - tasmin`.
 
 Input stores are organized differently. They hold one group per scenario, with every variable on
-`(ensemble_member, time, lat, lon)`.
+Input data stores are organized differently. Groups are defined by per scenario. Opening a single group therefore gives you an array for each variable with the dimensions `(ensemble_member, time, lat, lon)`.
 
 ### Ensemble members
 
-Available members depend on the GCM, scenario, and variable. Both products and both methods publish
+Available ensemble members depend on the GCM, scenario, and variable. Both output data products and both methods publish
 the same members, and under `debiased_coarse`, `dtr` has the same members as `tasmax` and `tasmin`.
 
 **`CESM2-WACCM6`**
@@ -106,8 +106,8 @@ the same members, and under `debiased_coarse`, `dtr` has the same members as `ta
 | `g6_1p5k` | All five | `001`, `002`, `003` | 2035 to 2084 |
 | `g6_1p5k_end` | All five | `002` | 2085 to 2100 |
 
-On `CESM2-WACCM6`, no historical member carries all five variables, and in `ssp245` only members
-`006` to `010` do. To avoid mixing realizations, pick a member that carries every variable you
+For the model `CESM2-WACCM6`, no historical ensemble member carries all five variables, and in `ssp245` only members
+`006` to `010` do. To avoid mixing realizations, we advise you pick a member that carries every variable you
 need.
 
 **`UKESM1-1-LL`**
