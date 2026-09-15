@@ -28,7 +28,7 @@ data they were built from. The table below summarizes all 3.
 | --- | --- | --- | --- |
 | Downscaled | Bias-corrected and spatially disaggregated. This is the main product. | 0.25° | `tas`, `tasmax`, `tasmin`, `pr`, `rsds` |
 | Bias-corrected coarse (`debiased_coarse`) | Bias-corrected, but not spatially disaggregated. Use it to separate the effect of bias correction from the effect of downscaling. | Native GCM grid, about 1° to 2° | The same five, plus `dtr` (diurnal temperature range) |
-| Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same five, plus `hurs` (near-surface relative humidity), except for `UKESM1-1-LL` `ssp245` |
+| Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same five, plus `hurs` (near-surface relative humidity), which is missing only from `UKESM1-1-LL` `ssp245` |
 
 ## Data location
 
@@ -137,9 +137,9 @@ depends on how many chunks it touches rather than how many values it returns. Fo
 time series at a single point reads about one chunk per year, while a wide region reads many chunks
 for every year.
 
-Chunks are bundled into larger stored objects called {term}`shards <shard>`, which keep the number
-of objects in storage manageable. The table below summarizes the grid, time axis, and chunk layout
-of both output products.
+Chunks are bundled into larger files called {term}`shards <shard>`. Shards don't change which chunks
+a request reads, so you can mostly ignore them when estimating what a request costs. The table below
+summarizes the grid, time axis, and chunk layout of both output products.
 
 | Property | Downscaled | Bias-corrected coarse |
 | --- | --- | --- |
@@ -180,51 +180,64 @@ terms that come up in the access utilities, such as lazy loading and data read, 
 
 :::{glossary}
 array
-  A multidimensional grid of values of a single type, such as `tas` on `(time, lat, lon)`. Zarr
-  splits each array into {term}`chunks <chunk>`, and xarray reads it as a variable.
+  A block of values laid out along named dimensions, like a table extended to more than two
+  dimensions. In this dataset, `tas` is an array on `(time, lat, lon)`, and each quality flag is an
+  array too. Arrays hold the actual numbers, and xarray shows each one as a variable when you open a
+  {term}`group`. Zarr splits every array into {term}`chunks <chunk>` for storage.
 
 branch
-  A named reference to one version of a {term}`repository` that moves forward as new versions are
-  written. Every repository has a `main` branch, and each release of this dataset is a branch
-  named after the release, such as `v1.0.0`.
+  A named version of a {term}`repository`. We publish each release of this dataset as a branch named
+  after the release, such as `v1.0.0`, so you can keep reading the same release even after a newer
+  one comes out. When you open a repository, always choose a branch by name. The `main` branch of an
+  output store exists but holds no data.
 
 chunk
-  The piece of an {term}`array` that is stored and read as a unit. A read always fetches whole
-  chunks, so the number of chunks a request touches sets its cost.
+  A fixed-size block of an {term}`array`, compressed and stored on its own. Splitting arrays into
+  chunks means you can read just the part of the data you need, instead of the whole dataset.
+  Because a chunk is always read in full, the number of chunks a request touches sets its cost. In
+  the downscaled product, one chunk covers 1 year over a 9° × 18° tile, about 3.8 MB before
+  compression.
 
 group
-  A container in a {term}`tree` that holds {term}`arrays <array>` and other groups, much like a
-  folder holds files. In the output stores, each innermost group, such as `bcsd/ssp245/tas/003`,
-  holds one variable and its coordinates, plus any quality flags. xarray opens it as a `Dataset`.
+  A named container for {term}`arrays <array>` and other groups, much like a folder that holds files
+  and subfolders. Groups let a single {term}`store` hold many datasets, so you can open just the one
+  you need. In the output stores, the path `bcsd/ssp245/tas/003` points to one group, and opening it
+  with xarray gives you a dataset with that variable, its coordinates, and any quality flags.
 
 Icechunk
-  An open-source storage engine for {term}`Zarr` data that adds version control. Every change is
-  saved as an immutable snapshot, and {term}`branches <branch>` name the versions you can open.
-  See the [Icechunk documentation](https://icechunk.io/) for details.
+  An open-source storage engine for {term}`Zarr` data that adds version control, similar to how Git
+  tracks changes to code. Every change is saved as a snapshot, and {term}`branches <branch>` give
+  names to the versions you can open. We use Icechunk so that you can open any release by name. See
+  the [Icechunk documentation](https://icechunk.io/) to learn more.
 
 repository
-  Icechunk's name for a versioned {term}`store`: a Zarr store that holds groups and arrays along
-  with their history. You open a repository and then read from one of its
-  {term}`branches <branch>`.
+  Icechunk's word for a {term}`store` that also keeps a history of its versions. In these docs,
+  "store" and "repository" refer to the same thing: each GCM's output is one repository, and so is
+  each GCM's input. To read data, you open the repository and then choose one of its
+  {term}`branches <branch>`, as the example under [Data location](#data-location) shows.
 
 shard
-  A single stored object that bundles several {term}`chunks <chunk>` of an array. A downscaled
-  shard in this dataset bundles 75 chunks, covering 3 years × 45° × 90°. Sharding keeps the number
-  of stored objects manageable, while reads still work chunk by chunk.
+  A bundle of {term}`chunks <chunk>` saved together as a single file in cloud storage, so the store
+  holds fewer, larger files. You can mostly ignore shards when you read data. A request still reads
+  only the chunks it needs, so shards don't change what it costs. A downscaled shard holds 75
+  chunks, covering 3 years over a 45° × 90° tile.
 
 store
-  The place that holds the metadata and data of a {term}`tree` of groups and arrays. In these
-  docs, a store is one Icechunk {term}`repository`, and there's one store per GCM for the output
-  and one per GCM for the input. In code, a session on a branch gives you the Zarr store to pass
-  to xarray, as `session.store`.
+  The container that holds a whole {term}`tree` of groups and arrays, along with their metadata. A
+  store takes the place that a single file has in formats like netCDF, but its contents are spread
+  across many smaller files in cloud storage. We publish one store per GCM for the output and one
+  per GCM for the input. In code, `session.store` is the store you pass to xarray or zarr-python.
 
 tree
-  The nested structure of {term}`groups <group>` and {term}`arrays <array>` in a {term}`store`,
-  which Zarr calls a hierarchy. A group's path, such as `bcsd/ssp245/tas/003`, spells out its
-  place in the tree, and xarray can open a whole tree as a `DataTree`.
+  The way {term}`groups <group>` nest inside a {term}`store`, like folders within folders. Zarr
+  calls this a hierarchy. Each part of a group's path is one level of the tree: in
+  `bcsd/ssp245/tas/003`, the levels are the method, scenario, variable, and ensemble member. xarray
+  can open a whole tree as a `DataTree`, but when you only need one dataset, opening its group
+  directly is quicker.
 
 Zarr
-  An open format for large multidimensional {term}`arrays <array>` that are split into
-  {term}`chunks <chunk>` and organized into a {term}`tree` of {term}`groups <group>`. xarray,
-  zarr-python, and many other tools can read it.
+  An open, cloud-friendly format for large multidimensional {term}`arrays <array>`. Instead of
+  saving everything in one big file, Zarr stores data as many {term}`chunks <chunk>` organized into
+  a {term}`tree` of {term}`groups <group>`, so tools can read just the pieces they need over the
+  internet. The stores in this dataset use Zarr version 3, which xarray and zarr-python can read.
 :::
