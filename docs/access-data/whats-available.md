@@ -12,27 +12,23 @@ We are publishing downscaled, daily climate model output for stratospheric aeros
 | Temporal resolution | Daily |
 | Spatial extent | Global |
 
-In addition to the historical period (`historical`) and the baseline climate scenario (`ssp245`), we downscale two stratospheric aerosol injection scenarios. In the scenario `g6_1p5k`, greenhouse gas emissions continue at `ssp245` levels while sulfate aerosols are injected into the stratosphere to hold warming to 1.5 °C. The termination shock scenario (`g6_1p5k_end`) extends `g6_1p5k` ensemble member `002` to 2100, simulated an abrupt end of aerosol injection at the end of 2084.
+In addition to the historical period (`historical`) and the baseline climate scenario (`ssp245`), we downscale two stratospheric aerosol injection scenarios. In the scenario `g6_1p5k`, greenhouse gas emissions continue at `ssp245` levels while sulfate aerosols are injected into the stratosphere to hold warming to 1.5 °C. The termination shock scenario (`g6_1p5k_end`) extends `g6_1p5k` ensemble member `002` to 2100, simulating an abrupt end of aerosol injection at the end of 2084.
 
 | Scenario | Group name | Years | GCMs |
 | --- | --- | --- | --- |
 | Historical | `historical` | 1978 to 2014 | Both |
-| SSP2-4.5 | `ssp245` | 2015 to 2099 | Both |
+| SSP2-4.5 | `ssp245` | 2015 to 2099 (some `CESM2-WACCM6` ensemble members end in 2068 or 2069) | Both |
 | G6-1.5K | `g6_1p5k` | 2035 to 2084 | Both |
 | G6-1.5K termination | `g6_1p5k_end` | 2085 to 2100 | `CESM2-WACCM6` only |
 
-`g6_1p5k_end` continues `g6_1p5k` member `002` after SAI stops at the end of 2084. Some
-`CESM2-WACCM6` members in `ssp245` end before 2099, as the member tables under
-[Data shape](#data-shape) show.
+At a high level, the release includes 2 output data products, along with the processed GCM input
+data they were built from. The table below summarizes all 3.
 
 | Product | Description | Grid | Variables |
 | --- | --- | --- | --- |
 | Downscaled | Bias-corrected and spatially disaggregated. This is the main product. | 0.25° | `tas`, `tasmax`, `tasmin`, `pr`, `rsds` |
-| Bias-corrected coarse (`debiased_coarse`) | Bias-corrected, but not spatially disaggregated. Use it to separate the effect of bias correction from the effect of downscaling. | Native GCM grid, about 1° to 2° | The same five, plus `dtr` |
-
-The processed GCM input data that the pipeline started from is also available. It holds daily model
-output before bias correction, and it adds `hurs` (near-surface relative humidity) everywhere
-except `UKESM1-1-LL` `ssp245`.
+| Bias-corrected coarse (`debiased_coarse`) | Bias-corrected, but not spatially disaggregated. Use it to separate the effect of bias correction from the effect of downscaling. | Native GCM grid, about 1° to 2° | The same five, plus `dtr` (diurnal temperature range) |
+| Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same five, plus `hurs` (near-surface relative humidity), except for `UKESM1-1-LL` `ssp245` |
 
 ## Data location
 
@@ -51,11 +47,19 @@ public in AWS `us-west-2`, so you don't need AWS credentials to read it. Each {t
 
 ### Data access
 
-There are two options for accessing the data from the Source Cooperative repository.
+We offer two ways to access the data from the Source Cooperative repository. Which one fits best
+depends on how much data you need and whether you want a local copy.
 
-If you want to access small quantities of data without writing code yourself, we built a set of [access utilities](./access-utilities.md) that you can use to subset, transform, and export the downscaled data from the cloud to your local environment.
-
-Alternatively, you can use tools like [zarr-python](https://zarr.readthedocs.io/en/latest/), [icechunk](https://icechunk.io/en/stable/getting-started/quickstart/) or [xarray](https://xarray.dev) to stream data from the cloud. The following example opens one downscaled group/variable
+- **Download a local copy.** If you want to work with a small amount of data on your own machine,
+  or you prefer netCDF files, we built a set of [access utilities](./access-utilities.md). You can
+  use them to subset, transform, and export the downscaled data from the cloud to your local
+  environment without writing code yourself.
+- **Stream data from the cloud.** If you're comfortable working with data in the cloud without
+  keeping a local copy, you can use tools like
+  [zarr-python](https://zarr.readthedocs.io/en/latest/),
+  [Icechunk](https://icechunk.io/en/stable/getting-started/quickstart/), or
+  [xarray](https://xarray.dev). The following example opens one downscaled group from the current
+  release.
 
 ```python
 import icechunk
@@ -77,16 +81,23 @@ ds = xr.open_zarr(session.store, group="bcsd/g6_1p5k/tas/001", consolidated=Fals
 
 ### Group layout
 
-Output stores hold one {term}`Zarr` {term}`group` per method, scenario, variable, and ensemble
-member. Both methods publish the same set of groups.
+Zarr organizes data in a nested structure that you can think of as a file system. The key building
+block is the {term}`group`, a bundle of arrays and metadata at a particular path that you can open
+as a single labeled dataset.
+
+Each output {term}`store` holds both data products for one GCM, and each release of that store is
+a {term}`branch`. Within a branch, a group's path is built from the method, scenario, variable, and
+ensemble member, with an extra `debiased_coarse` level for the bias-corrected coarse product.
+Opening one group gives you a dataset with one climate variable on `(time, lat, lon)`, plus any
+quality flags. Both methods publish the same set of groups.
 
 ```text
 {method}/{scenario}/{variable}/{member}                    # downscaled
 {method}/debiased_coarse/{scenario}/{variable}/{member}    # bias-corrected coarse
 ```
 
-Input stores are organized differently. They hold one group per scenario, with every variable on
-Input data stores are organized differently. Groups are defined by per scenario. Opening a single group therefore gives you an array for each variable with the dimensions `(ensemble_member, time, lat, lon)`.
+Input data stores are organized differently. Each group holds one scenario, so opening a single
+group gives you an array for each variable with the dimensions `(ensemble_member, time, lat, lon)`.
 
 ### Ensemble members
 
@@ -119,6 +130,17 @@ need.
 
 ### Grid, time, and chunks
 
+The groups described above tell you which part of the data you're reading. Within a group, each
+variable is an {term}`array` that is physically split into {term}`chunks <chunk>`: fixed-size blocks
+that are compressed and read as a single unit. A read fetches whole chunks, so the cost of a request
+depends on how many chunks it touches rather than how many values it returns. For this dataset, a
+time series at a single point reads about one chunk per year, while a wide region reads many chunks
+for every year.
+
+Chunks are bundled into larger stored objects called {term}`shards <shard>`, which keep the number
+of objects in storage manageable. The table below summarizes the grid, time axis, and chunk layout
+of both output products.
+
 | Property | Downscaled | Bias-corrected coarse |
 | --- | --- | --- |
 | Dimensions | `time`, `lat`, `lon` | `time`, `lat`, `lon` |
@@ -128,10 +150,6 @@ need.
 | Data type | `float32` | `float32` |
 | {term}`Chunk <chunk>` size (`time`, `lat`, `lon`) | 365 × 36 × 72 (1 year × 9° × 18°) | 365 × 30 × 60 |
 | {term}`Shard <shard>` size (`time`, `lat`, `lon`) | 1095 × 180 × 360 (3 years × 45° × 90°) | 1095 × 90 × 180 |
-
-A read fetches whole chunks, so the cost of a request depends on how many chunks it touches rather
-than how many values it returns. A time series at a single point reads about one chunk per year,
-while a wide region reads many chunks for every year.
 
 ### Quality flags
 
@@ -156,7 +174,9 @@ The flags summarize checks run after downscaling. For details, see the
 ## Glossary
 
 The access data pages use these storage terms in the same sense as the Icechunk, Zarr, and
-xarray documentation. Where this dataset uses a term more narrowly, the definition says how.
+xarray documentation. Where this dataset uses a term more narrowly, the definition says how. For
+terms that come up in the access utilities, such as lazy loading and data read, see the utilities'
+[glossary](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/GLOSSARY.md).
 
 :::{glossary}
 array

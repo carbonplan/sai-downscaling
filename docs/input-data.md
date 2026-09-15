@@ -174,5 +174,5 @@ dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_for
 dt
 ```
 
-See the [subsetting and exporting notebook](https://github.com/carbonplan/srm-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb)
+See the [subsetting and exporting notebook](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb)
 for examples of loading spatial subsets and exporting to NetCDF.

@@ -13,7 +13,7 @@ If you want to **access and analyze the downscaled data**:
 
 1. Review what data is [available](./access-data/whats-available.md), explore the [access utilities](./access-data/access-utilities.md) we built to help you work with it, and read the [terms of access](./access-data/access-terms.md).
 2. Visit [Input data catalog](./input-data.md) for an overview of the raw GCM, ERA5, and NASA-NEX datasets fed into the pipeline.
-3. Check out the [Subsetting and exporting data](https://github.com/carbonplan/srm-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb) notebook in the `srm-downscaling-data-utils` repository to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
+3. Check out the [Subsetting and exporting data](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb) notebook in the `sai-downscaling-data-utils` repository to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
 :::
 :::{tab-item} Running the Pipeline
 If you want to **run the downscaling pipeline**:

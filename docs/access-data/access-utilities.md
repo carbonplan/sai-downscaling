@@ -1,14 +1,27 @@
 # Access utilities
 
-We've made a set of utilities to help you access the data stored on Source Cooperative, even if you don't have expertise in python, {term}`Zarr` files, or working in the cloud. The utilities are all housed in the
-[srm-downscaling-data-utils](https://github.com/carbonplan/srm-downscaling-data-utils) repository.
+We've made a set of utilities to help you access the data stored on Source Cooperative, even if you
+don't have expertise in Python, {term}`Zarr` files, or working in the cloud. The utilities are all
+housed in the
+[sai-downscaling-data-utils](https://github.com/carbonplan/sai-downscaling-data-utils) repository.
 Follow the instructions in that repository's
-[README](https://github.com/carbonplan/srm-downscaling-data-utils/blob/main/README.md) to learn how
+[README](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/README.md) to learn how
 to install and use the utilities.
+
+If you're new to the data, we recommend starting with the quickstart notebook, which walks through
+one short example from start to finish. The table below can help you find the right utility for
+what you want to do.
 
 | What do you want to do? | Use |
 | --- | --- |
-| Inspect the data interactively in a Jupyter notebook | [`notebooks/subsetting-and-exporting.ipynb`](https://github.com/carbonplan/srm-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb) |
-| Download a subset of the data with Python | [`scripts/download.py`](https://github.com/carbonplan/srm-downscaling-data-utils/blob/main/scripts/download.py) |
-| Download a subset of the data with Bash | [`scripts/download.sh`](https://github.com/carbonplan/srm-downscaling-data-utils/blob/main/scripts/download.sh) |
-| Explore the input data in a Jupyter notebook | [`notebooks/input-data.ipynb`](https://github.com/carbonplan/srm-downscaling-data-utils/blob/main/notebooks/input-data.ipynb) |
+| Try a short example that loads data for one region and season and saves it to a file | [`notebooks/quickstart.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/quickstart.ipynb) |
+| Inspect the data interactively in a Jupyter notebook, with more detail on each step, including quality flags and the bias-corrected data | [`notebooks/subsetting-and-exporting.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb) |
+| Run a global analysis without running out of memory | [`notebooks/compute-resources.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/compute-resources.ipynb) |
+| Explore the GCM input data that the downscaling started from | [`notebooks/input-data.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/input-data.ipynb) |
+| Download a subset of the data with Python | [`scripts/download.py`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/scripts/download.py) |
+| Download a subset of the data with Bash | [`scripts/download.sh`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/scripts/download.sh) |
+
+If you come across a term you don't know, check the [glossary](whats-available.md#glossary). The
+access utilities repository also has its own
+[glossary](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/GLOSSARY.md),
+which covers terms from the notebooks and the command-line tool.
