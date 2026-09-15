@@ -100,10 +100,14 @@ Project documentation and code: https://carbonplan.github.io/srm-downscaling/
 
 
 
-## License
+
+## Terms of use
+
+By viewing this data, you agree to CarbonPlan’s [Terms of Use](https://carbonplan.org/terms) and [Privacy Policy](https://carbonplan.org/privacy).
+License and attribution information are stored along side the data in colocated LICENSE.txt files.
 
 ### Output data
-Output data is licensed CC-BY-4.0. Details in [output/LICENSE.txt](output/LICENSE.txt).
+Output data is licensed CC-BY-4.0. Details are in [output/LICENSE.txt](output/LICENSE.txt).
 
 ### Input data
 Input data is covered by multiple licenses. Details can be found in [input/LICENSE.txt](input/LICENSE.txt).
