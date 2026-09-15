@@ -1,8 +1,6 @@
 # What's available
 
-SRM Downscaling publishes daily output from two global climate models (GCMs) for stratospheric
-aerosol injection (SAI) scenarios. The output is bias-corrected against ERA5 and downscaled to a
-global 0.25° grid with two methods. The current release is `v1.0.0`.
+We are publishing downscaled, daily climate model output for stratospheric aerosol injection (SAI) scenarios. The outputs cover 4 scenarios, 2 global climate models (GCMs), all available ensemble members, and 5 variables. GCM output is bias-corrected against ERA5 and downscaled to a global 0.25° grid with two methods.
 
 | Property | Value |
 | --- | --- |
@@ -51,11 +49,13 @@ public in AWS `us-west-2`, so you don't need AWS credentials to read it. Each st
 | `CESM2-WACCM6` input | `input/processed/CESM2-WACCM6.icechunk` | `main` |
 | `UKESM1-1-LL` input | `input/processed/UKESM1-1-LL.icechunk` | `main` |
 
-Always open a branch by name. Output store branches are named after releases, and the `main`
-branch of an output store holds no data.
+### Data access
 
-The following example opens one downscaled group from the current release. To subset or download
-data without writing this code yourself, use the [access utilities](access-utilities.md).
+There are two options for accessing the data from the Source Cooperative repository.
+
+If you want to access small quantities of data without writing code yourself, we built a set of [access utilities](./access-utilities.md) that you can use to subset, transform, and export the downscaled data from the cloud to your local environment.
+
+Alternatively, you can use tools like [zarr-python](https://zarr.readthedocs.io/en/latest/), [icechunk](https://icechunk.io/en/stable/getting-started/quickstart/) or [xarray](https://xarray.dev) to stream data from the cloud. The following example opens one downscaled group/variable
 
 ```python
 import icechunk
@@ -84,7 +84,6 @@ methods publish the same set of groups.
 {method}/{scenario}/{variable}/{member}                    # downscaled
 {method}/debiased_coarse/{scenario}/{variable}/{member}    # bias-corrected coarse
 ```
-
 
 Input stores are organized differently. They hold one group per scenario, with every variable on
 Input data stores are organized differently. Groups are defined by per scenario. Opening a single group therefore gives you an array for each variable with the dimensions `(ensemble_member, time, lat, lon)`.
