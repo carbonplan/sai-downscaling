@@ -7,7 +7,7 @@
 </a>
 </p>
 
-# SRM
+# SAI Downscale
 
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 

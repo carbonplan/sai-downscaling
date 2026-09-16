@@ -1,4 +1,4 @@
-# SRM Downscaling
+# SAI Downscale
 
 ## Quick links
 
@@ -33,7 +33,7 @@ If you want to **run the downscaling pipeline**:
 
 ## License
 
-SRM Downscaling code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/srm-downscaling/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
+SAI Downscale code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/srm-downscaling/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
 
 ```{toctree}
 :hidden:

@@ -1,10 +1,10 @@
-"""Tests for srm.lineage.resolve_member_lineage and BCSDConfig lineage fields."""
+"""Tests for saidownscale.lineage.resolve_member_lineage and DownscalingConfig lineage fields."""
 
 from __future__ import annotations
 
 import pytest
 
-from srm.lineage import ScenarioMember, resolve_member_lineage
+from saidownscale.lineage import ScenarioMember, resolve_member_lineage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,7 +43,7 @@ class TestLineageEntryShape:
             entry.historical = "nope"
 
     def test_construction_is_keyword_only(self):
-        from srm.lineage import LineageEntry
+        from saidownscale.lineage import LineageEntry
 
         with pytest.raises(TypeError):
             LineageEntry("r1i1p1f1", "001")
@@ -331,7 +331,7 @@ class TestProvenanceReconciliation:
     def _diff():
         from pathlib import Path
 
-        from srm.lineage import diff_against_provenance
+        from saidownscale.lineage import diff_against_provenance
 
         csv_path = Path(__file__).resolve().parent.parent / "docs" / "srm-provenance.csv"
         return diff_against_provenance(csv_path)

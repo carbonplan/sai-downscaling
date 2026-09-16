@@ -8,9 +8,9 @@
 # for members 006-010 (CMIP6 bug).
 #
 # Equivalent CLI command:
-#   uv run bcsd run --config-path configs/production/
+#   uv run saidownscale run --config-path configs/production/
 
-# === BCSDConfig: Run Identity ===
+# === DownscalingConfig: Run Identity ===
 gcm: "CESM2-WACCM6"
 variables: ["rsds"]
 ensemble_members: ["003"]

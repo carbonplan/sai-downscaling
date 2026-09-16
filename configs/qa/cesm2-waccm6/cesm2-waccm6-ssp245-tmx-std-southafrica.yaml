@@ -1,5 +1,5 @@
 # BCSD configuration: CESM2-WACCM6 / all variables / SSP245 / truncated members 006-010 / South Africa (QA)
-# Members 006-010's data ends in 2069 (per srm.validation._MEMBER_TIME_BOUNDS: 007-010 on
+# Members 006-010's data ends in 2069 (per saidownscale.validation._MEMBER_TIME_BOUNDS: 007-010 on
 # 2069-12-31, 006 a day earlier), so predict_period_end is clamped; see the note above it
 # for why it lands on 2068 rather than 2069. Two configs are folded in here:
 # cesm2-waccm6-ssp245-std-trunc-2070-southafrica.yaml, whose 2070 end was the last 2069 daily

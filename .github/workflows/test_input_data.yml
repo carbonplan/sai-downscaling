@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "src/srm/input_data/**"
+      - "src/saidownscale/input_data/**"
   pull_request:
     types: [labeled, synchronize]
   workflow_dispatch:

@@ -7,8 +7,8 @@ import xarray as xr
 import xarray_regrid  # noqa: F401  # side-effect import: registers the .regrid accessor
 from xarray_regrid.utils import format_for_regrid
 
-from srm import downscaling_utils
-from srm.downscaling_utils import (
+from saidownscale import downscaling_utils
+from saidownscale.downscaling_utils import (
     calculate_baseline_climatology,
     coarse_domain_mask,
     derive_tasmin,
@@ -23,7 +23,7 @@ from srm.downscaling_utils import (
     subset_space,
     swap_temperature_extremes,
 )
-from srm.qa_checks import NaNCheckError
+from saidownscale.qa_checks import NaNCheckError
 
 
 @pytest.fixture
@@ -825,8 +825,8 @@ def test_get_historical_experiment_uses_unified_store(gcm: str, member: str):
     mock_dt = MagicMock()
     mock_dt.__getitem__ = MagicMock(return_value=mock_node)
 
-    with patch("srm.downscaling_utils._gcm_datatree", return_value=mock_dt) as mock_fn:
-        with patch("srm.downscaling_utils.get_variable", return_value=mock_da):
+    with patch("saidownscale.downscaling_utils._gcm_datatree", return_value=mock_dt) as mock_fn:
+        with patch("saidownscale.downscaling_utils.get_variable", return_value=mock_da):
             get_historical_experiment(gcm, member, "tas")
             mock_fn.assert_called_once_with(gcm)
             mock_dt.__getitem__.assert_called_once_with("historical")

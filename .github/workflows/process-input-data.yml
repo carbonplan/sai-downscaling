@@ -47,17 +47,17 @@ jobs:
               run: |
                   case "$GCM" in
                     "CESM2-WACCM")
-                      SCRIPT="src/srm/input_data/cesm2_waccm.py"
+                      SCRIPT="src/saidownscale/input_data/cesm2_waccm.py"
                       SUBCOMMAND=""
                       FLAGS="--all-variables"
                       ;;
                     "UKESM")
-                      SCRIPT="src/srm/input_data/ukesm.py"
+                      SCRIPT="src/saidownscale/input_data/ukesm.py"
                       SUBCOMMAND="process"
                       FLAGS="--all-variables"
                       ;;
                     "NASA-NEX")
-                      SCRIPT="src/srm/input_data/nasa_nex.py"
+                      SCRIPT="src/saidownscale/input_data/nasa_nex.py"
                       SUBCOMMAND=""
                       FLAGS=""
                       ;;
@@ -76,4 +76,4 @@ jobs:
               env:
                   GCM: ${{ inputs.gcm }}
                   SCENARIO: ${{ inputs.scenario }}
-              run: uv run src/srm/input_data/show_summary.py "$GCM" "$SCENARIO"
+              run: uv run src/saidownscale/input_data/show_summary.py "$GCM" "$SCENARIO"
