@@ -6,8 +6,8 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment management.
 
 ```bash
 # Clone the repo
-git clone https://github.com/carbonplan/srm-downscaling.git
-cd srm-downscaling
+git clone https://github.com/carbonplan/sai-downscaling.git
+cd sai-downscaling
 
 # Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh

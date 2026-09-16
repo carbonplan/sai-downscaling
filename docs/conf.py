@@ -100,7 +100,7 @@ html_theme_options = {
         "<b>⚠️ Project in development</b> — This documentation describes a project that is "
         "<em>actively under development</em>. We welcome feedback to help guide future updates."
     ),
-    "repository_url": "https://github.com/carbonplan/srm-downscaling",
+    "repository_url": "https://github.com/carbonplan/sai-downscaling",
     "repository_branch": "main",
     "path_to_docs": "docs",
     "use_repository_button": True,
