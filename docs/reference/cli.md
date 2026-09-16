@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # CLI Reference
 
 This page is the exhaustive reference for all `saidownscale` commands, their options, and usage examples.

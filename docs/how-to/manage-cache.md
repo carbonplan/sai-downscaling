@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # How to Manage the Cache
 
 The pipeline uses two icechunk stores per `(GCM, obs-dataset, spatial-subset)` combination — one

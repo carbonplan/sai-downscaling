@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # How to Run the BCSD Pipeline
 
 ## Installation

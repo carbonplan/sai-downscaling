@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # API Reference
 
 The API reference is the authoritative description of all public classes, functions,

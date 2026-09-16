@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Snapshot Regression Testing
 
 This page explains why the downscaling pipeline has a snapshot regression check and why it is built the way it is. For the per-pull-request procedure, see [How to Compare a Run Against the Snapshot](../how-to/run-snapshot-tests.md). The check answers issue #410: catch scientific drift before it merges, without paying for a full global comparison on every change.

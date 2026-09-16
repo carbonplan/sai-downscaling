@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Deploy the Pipeline
 
 The downscaling pipeline is deployed via GitHub Actions using pre-defined config files in `configs/`. `.github/workflows/deploy.yml` holds six jobs:

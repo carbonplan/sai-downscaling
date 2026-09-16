@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Regenerate Input Data
 
 Re-process raw source files into the icechunk stores the downscaling pipeline reads from. Run this when:
