@@ -168,11 +168,10 @@ isolation: bumping the package version (or setting `BCSD_BRANCH`) starts a fresh
 inherited ancestry, so the existence checks never find stale artifacts from a previous run.
 
 The paths above are the scratch defaults. Production runs override `output_dir` to CarbonPlan's
-public [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling), so the
-current published outputs live at
-`s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk`
-on branch `v0.13.0`. See [How to Access Downscaled Output Data](../access-data.md) for reading
-published stores.
+public [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling). For the
+current store paths and release branch, see
+[Data location](../access-data/whats-available.md#data-location), and see
+[Access utilities](../access-data/access-utilities.md) for reading published stores.
 
 ## Distributed Execution
 
