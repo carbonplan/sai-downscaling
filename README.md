@@ -39,7 +39,7 @@ print(dt)
 ```
 
 ## Documentation
-Project documentation: https://carbonplan.github.io/srm-downscaling/
+Project documentation: https://carbonplan.github.io/sai-downscaling/
 
 - [Data access](docs/access-data/access-utilities.md) — how to list and open input datasets
 - [CLI usage](docs/reference/cli.md) — running the downscaling pipeline from the command line
@@ -51,8 +51,8 @@ Project documentation: https://carbonplan.github.io/srm-downscaling/
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone https://github.com/carbonplan/srm-downscaling.git
-cd srm-downscaling
+git clone https://github.com/carbonplan/sai-downscaling.git
+cd sai-downscaling
 uv sync --all-groups
 ```
 
@@ -62,4 +62,4 @@ MIT — see the LICENSE file for details.
 
 ## About Us
 
-CarbonPlan is a nonprofit organization that uses data and science for climate action. We aim to improve the transparency and scientific integrity of climate solutions through open data and tools. Find out more at [carbonplan.org](https://carbonplan.org/) or get in touch by [opening an issue](https://github.com/carbonplan/srm-downscaling/issues/new) or [sending us an email](mailto:hello@carbonplan.org)
+CarbonPlan is a nonprofit organization that uses data and science for climate action. We aim to improve the transparency and scientific integrity of climate solutions through open data and tools. Find out more at [carbonplan.org](https://carbonplan.org/) or get in touch by [opening an issue](https://github.com/carbonplan/sai-downscaling/issues/new) or [sending us an email](mailto:hello@carbonplan.org)
