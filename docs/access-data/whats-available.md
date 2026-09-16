@@ -16,9 +16,9 @@ In addition to the historical period (`historical`) and the baseline climate sce
 
 | Scenario | Group name | Years | GCMs |
 | --- | --- | --- | --- |
-| Historical | `historical` | 1978 to 2014 | Both |
-| SSP2-4.5 | `ssp245` | 2015 to 2099 (some `CESM2-WACCM6` ensemble members end in 2068 or 2069) | Both |
-| G6-1.5K | `g6_1p5k` | 2035 to 2084 | Both |
+| Historical | `historical` | 1978 to 2014 | `CESM2-WACCM6` and `UKESM1-1-LL` |
+| SSP2-4.5 | `ssp245` | 2015 to 2099 (some `CESM2-WACCM6` ensemble members end in 2068 or 2069) | `CESM2-WACCM6` and `UKESM1-1-LL` |
+| G6-1.5K | `g6_1p5k` | 2035 to 2084 | `CESM2-WACCM6` and `UKESM1-1-LL` |
 | G6-1.5K termination | `g6_1p5k_end` | 2085 to 2100 | `CESM2-WACCM6` only |
 
 At a high level, the release includes 2 output data products, along with the processed GCM input
@@ -27,7 +27,7 @@ data they were built from. The table below summarizes all 3.
 | Product | Description | Grid | Variables |
 | --- | --- | --- | --- |
 | Downscaled | Bias-corrected and spatially disaggregated. This is the main product. | 0.25° | `tas`, `tasmax`, `tasmin`, `pr`, `rsds` |
-| Bias-corrected coarse (`debiased_coarse`) | Bias-corrected, but not spatially disaggregated. Use it to separate the effect of bias correction from the effect of downscaling. | Native GCM grid, about 1° to 2° | The same five, plus `dtr` (diurnal temperature range) |
+| Coarse bias-corrected | Bias-corrected, but not spatially disaggregated. Use it to evaluate the effect of bias correction without the spatial disaggregation step. | Native GCM grid, about 1° to 2° | The same five, plus `dtr` (diurnal temperature range) |
 | Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same five |
 
 ## Data location
@@ -44,6 +44,10 @@ public in AWS `us-west-2`, so you don't need AWS credentials to read it. Each {t
 | `UKESM1-1-LL` output | `output/production/UKESM1-1-LL-ERA5-global.icechunk` | `v1.0.0` |
 | `CESM2-WACCM6` input | `input/processed/CESM2-WACCM6.icechunk` | `main` |
 | `UKESM1-1-LL` input | `input/processed/UKESM1-1-LL.icechunk` | `main` |
+
+A {term}`branch` is a version of a store. We publish one branch per release, and so far that is
+only `v1.0.0`, which is the branch the example below opens. The input stores keep their data on
+`main`.
 
 ### Data access
 
@@ -87,13 +91,13 @@ as a single labeled dataset.
 
 Each output {term}`store` holds both data products for one GCM, and each release of that store is
 a {term}`branch`. Within a branch, a group's path is built from the method, scenario, variable, and
-ensemble member, with an extra `debiased_coarse` level for the bias-corrected coarse product.
+ensemble member, with an extra `debiased_coarse` level for the coarse bias-corrected product.
 Opening one group gives you a dataset with one climate variable on `(time, lat, lon)`, plus any
 quality flags. Both methods publish the same set of groups.
 
 ```text
 {method}/{scenario}/{variable}/{member}                    # downscaled
-{method}/debiased_coarse/{scenario}/{variable}/{member}    # bias-corrected coarse
+{method}/debiased_coarse/{scenario}/{variable}/{member}    # coarse bias-corrected
 ```
 
 Input data stores are organized differently. Each group holds one scenario, so opening a single
@@ -128,6 +132,10 @@ need.
 | `ssp245` | All five | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2015 to 2099 |
 | `g6_1p5k` | All five | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2035 to 2084 |
 
+The `UKESM1-1-LL` historical run is a single model suite rather than one realization of an
+ensemble, so it is named by its suite ID, `u-by791`, instead of a label like `r2i1p1f2`. Every
+`UKESM1-1-LL` scenario member branches from that one run.
+
 ### Grid, time, and chunks
 
 The groups described above tell you which part of the data you're reading. Within a group, each
@@ -141,7 +149,7 @@ Chunks are bundled into larger files called {term}`shards <shard>`. Shards don't
 a request reads, so you can mostly ignore them when estimating what a request costs. The table below
 summarizes the grid, time axis, and chunk layout of both output products.
 
-| Property | Downscaled | Bias-corrected coarse |
+| Property | Downscaled | Coarse bias-corrected |
 | --- | --- | --- |
 | Dimensions | `time`, `lat`, `lon` | `time`, `lat`, `lon` |
 | Grid | 0.25°, 721 × 1440 cells | `CESM2-WACCM6`: 192 × 288 cells (about 0.94° × 1.25°); `UKESM1-1-LL`: 144 × 192 cells (1.25° × 1.875°) |
@@ -187,9 +195,9 @@ array
 
 branch
   A named version of a {term}`repository`. We publish each release of this dataset as a branch named
-  after the release, such as `v1.0.0`, so you can keep reading the same release even after a newer
-  one comes out. When you open a repository, always choose a branch by name. The `main` branch of an
-  output store exists but holds no data.
+  after the release, as of now only `v1.0.0`, so you can keep reading the same release even after a
+  newer one comes out. When you open a repository, always choose a branch by name. The `main`
+  branch of an output store exists but holds no data.
 
 chunk
   A fixed-size block of an {term}`array`, compressed and stored on its own. Splitting arrays into

@@ -1,16 +1,17 @@
 # Access utilities
 
-We've made a set of utilities to help you access the data stored on Source Cooperative, even if you
-don't have expertise in Python, {term}`Zarr` files, or working in the cloud. The utilities are all
+We've made a set of utilities to help you access the data stored on Source Cooperative. We have
+tried to accommodate users with a range of levels of experience with Python, including those who
+have never worked in the cloud or used packages like {term}`Zarr` before. The utilities are all
 housed in the
 [sai-downscaling-data-utils](https://github.com/carbonplan/sai-downscaling-data-utils) repository.
 Follow the instructions in that repository's
 [README](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/README.md) to learn how
 to install and use the utilities.
 
-If you're new to the data, we recommend starting with the quickstart notebook, which walks through
-one short example from start to finish. The table below can help you find the right utility for
-what you want to do.
+The table below can help you find the right utility for what you want to do. If you're new to the
+data, we recommend starting with the quickstart notebook, which walks through one short example
+from start to finish.
 
 | What do you want to do? | Use |
 | --- | --- |
