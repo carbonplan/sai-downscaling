@@ -11,7 +11,7 @@
 
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 
-This repository implements a scalable, cloud-native pipeline for downscaling Stratospheric Aerosol Injection (SAI) climate model outputs. It uses the [BCSD](docs/explanation/scientific-approach.md) (Bias-Correction and Spatial-Disaggregation)
+This repository implements a scalable, cloud-native pipeline for downscaling Stratospheric Aerosol Injection (SAI) climate model outputs. It uses the [BCSD](docs/methods/scientific-approach.md) (Bias-Correction and Spatial-Disaggregation)
 method to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K scenarios, plus the CESM G6-1.5K termination-shock run, using daily ERA5 observation data.
 
 > **Note:** This repository reflects the code and infrastructure used for this specific project. It is not maintained as a general-purpose, plug-and-play downscaling tool. Treat it as a reference — a place to borrow patterns, adapt components, or learn from rather than something to run as-is.
@@ -43,8 +43,8 @@ Project documentation: https://carbonplan.github.io/sai-downscaling/
 
 - [Data access](docs/access-data/access-utilities.md) — how to list and open input datasets
 - [CLI usage](docs/reference/cli.md) — running the downscaling pipeline from the command line
-- [Scientific approach](docs/explanation/scientific-approach.md) — BCSD downscaling approach
-- [Pipeline architecture](docs/explanation/pipeline-architecture.md) — how the pipeline is structured
+- [Scientific approach](docs/methods/scientific-approach.md) — BCSD downscaling approach
+- [Pipeline architecture](docs/methods/pipeline-architecture.md) — how the pipeline is structured
 
 ## Installation
 

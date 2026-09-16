@@ -1,4 +1,4 @@
-# Pipeline Architecture
+# Pipeline architecture
 
 This page explains how the downscaling pipeline is structured, why it is designed the way it is, and how its components fit together.
 

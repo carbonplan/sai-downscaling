@@ -176,8 +176,10 @@ Groups carry quality flags alongside their variable, in both products. Each flag
 `g6_1p5k`, and `002` in `g6_1p5k_end`. On `UKESM1-1-LL`, they're `u-by791` and `r2i1p1f2`.
 
 The flags summarize checks run after downscaling. For details, see the
-[output integrity checks](../explanation/qa-qc/output-integrity-checks.ipynb) and
-[trend distortion check](../explanation/qa-qc/trend-distortion-check.ipynb) pages.
+[output integrity checks](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/output-integrity-checks.ipynb)
+and
+[trend distortion check](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/trend-distortion-check.ipynb)
+notebooks.
 
 ## Glossary
 

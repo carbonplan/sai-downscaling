@@ -3,7 +3,7 @@
 The API reference is the authoritative description of all public classes, functions,
 and modules in the `saidownscale` package. Entries describe the interface; they do not instruct.
 See [How-to guides](../../how-to/run-pipeline.md) for task-oriented usage and
-[Explanation](../../explanation/pipeline-architecture.md) for design rationale.
+[Pipeline architecture](../../methods/pipeline-architecture.md) for design rationale.
 
 ```{eval-rst}
 .. autosummary::

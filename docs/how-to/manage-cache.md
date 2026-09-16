@@ -223,6 +223,6 @@ summary above works unchanged against branches written before and after this cha
 
 ## See Also
 
-- [Pipeline architecture](../explanation/pipeline-architecture.md) — how the cache system is
+- [Pipeline architecture](../methods/pipeline-architecture.md) — how the cache system is
   designed and why
 - [CLI reference](../reference/cli.md) — full option listings for status, cache-list, cache-clear

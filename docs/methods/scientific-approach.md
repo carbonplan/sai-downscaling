@@ -48,7 +48,14 @@ The implementation above applies to mean temperature (`tas`) and maximum tempera
 
 ## Quality checks
 
-TK
+The notebooks below show the quality checks we ran on the inputs and outputs. They live in the
+`notebooks/QA_QC/` folder of the GitHub repository.
+
+- [Input data global mean time series](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/input-data-global-timeseries.ipynb)
+- [Plausible value check](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/plausible-value-check.ipynb)
+- [Output integrity checks](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/output-integrity-checks.ipynb)
+- [Trend distortion check](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/trend-distortion-check.ipynb)
+- [Regional run small multiples](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/regional-run-small-multiples.ipynb)
 
 ## References
 

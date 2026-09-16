@@ -166,4 +166,4 @@ uv run saidownscale run-matrix \
 - [CLI reference](../reference/cli.md) — full option listings for every command
 - [Configuration reference](../reference/configuration.md) — all config fields and environment variable overrides
 - [Manage the cache](manage-cache.md) — resumability, force recompute, cache inspection and clearing
-- [Pipeline architecture](../explanation/pipeline-architecture.md) — how the three stages and caching work
+- [Pipeline architecture](../methods/pipeline-architecture.md) — how the three stages and caching work
