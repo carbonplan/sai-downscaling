@@ -24,11 +24,12 @@ RUN uv sync --frozen --no-dev --no-install-project
 # this the build falls back to "999" and every output store is stamped
 # srm_downscaling:version = 999 (see pipeline.py). CI passes the real version.
 #
-# Scoped to _FOR_SRM: the unscoped variable applies to every setuptools_scm build in the
-# environment, which pins cartopy's metadata to this value and fails the lock check.
+# Scoped to _FOR_SAIDOWNSCALE, the distribution name: the unscoped variable applies to
+# every setuptools_scm build in the environment, which pins cartopy's metadata to this
+# value and fails the lock check.
 # Declared below the dependency layer so a version bump does not recompile cartopy.
 ARG SRM_VERSION=0.0.0
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SRM=${SRM_VERSION}
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SAIDOWNSCALE=${SRM_VERSION}
 
 COPY src/ ./src/
 RUN uv sync --frozen --no-dev
