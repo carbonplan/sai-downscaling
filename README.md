@@ -7,7 +7,7 @@
 </a>
 </p>
 
-# SAI Downscale
+# SAI Downscaling
 
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 

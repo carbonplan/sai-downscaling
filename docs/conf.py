@@ -2,7 +2,7 @@ import datetime
 
 import saidownscale
 
-project = "SAI Downscale"
+project = "SAI Downscaling"
 this_year = datetime.datetime.now().year
 author = "CarbonPlan and contributors"
 copyright = f"{this_year}, {author}"
@@ -92,7 +92,7 @@ source_suffix = [".rst", ".md"]
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = "sphinx_book_theme"
-html_title = "SAI Downscale"
+html_title = "SAI Downscaling"
 html_favicon = "assets/favicon-180x180-light.png"
 
 html_theme_options = {
