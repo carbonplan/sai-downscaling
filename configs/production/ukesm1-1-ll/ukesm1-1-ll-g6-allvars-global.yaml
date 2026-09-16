@@ -3,13 +3,9 @@
 # === Model and Scenario ===
 gcm: "UKESM1-1-LL"
 variables: ["tas", "tasmax", "tasmin", "rsds", "pr", "dtr"]
-ensemble_members: ["r2i1p1f2"]
+ensemble_members: ["r12i1p1f2", "r2i1p1f2", "r3i1p1f2"]
 scenarios: ["G6-1.5K"]
 
-# === Downscaling Methods ===
-# Required: there is no default, so every config states which method produced its output.
-# Production publishes BCSD only for now; QDMSD is exercised in the qa configs, which list
-# both. Adding it here doubles every wave, so it is a deliberate separate decision.
 downscaling_methods: ["BCSD", "QDMSD"]
 
 # === Time Periods ===

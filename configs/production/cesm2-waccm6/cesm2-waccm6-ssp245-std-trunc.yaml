@@ -1,11 +1,12 @@
-# BCSD configuration: CESM2-WACCM6 / SSP245 / standard variables / truncated member 008 (production)
+# BCSD configuration: CESM2-WACCM6 / SSP245 / standard variables / truncated members 007-010 (production)
 #
-# Standard variables (pr/rsds/hurs) for truncated SSP245 member 008, whose data ends
-# 2069-12-31; predict_period_end is clamped to 2069 so the member is not downscaled past
-# its valid data extent. Member
-# 008's tas is produced by cesm2-waccm6-ssp245-tas-global-trunc-2069.yaml (also @2069) —
-# it is intentionally omitted here to avoid a duplicate output. Full-length member 003
-# lives in cesm2-waccm6-ssp245-std.yaml (2099). Member 008's tasmax/tasmin/dtr are in
+# Standard variables (pr/rsds) for the truncated SSP245 members 007-010, whose data ends
+# 2069-12-31; predict_period_end is clamped to 2069 so the members are not downscaled past
+# their valid data extent. Member 006 is not here: its extent ends 2069-12-30. It runs in
+# cesm2-waccm6-ssp245-member006-2068.yaml instead. Their
+# tas is produced by cesm2-waccm6-ssp245-tas-global-trunc-2069.yaml (also @2069) —
+# it is intentionally omitted here to avoid a duplicate output. Full-length members 001-005
+# live in cesm2-waccm6-ssp245-std.yaml (2099). Their tasmax/tasmin/dtr are in
 # cesm2-waccm6-ssp245-tmx.yaml (also clamped to 2069).
 #
 # Equivalent CLI command:
@@ -14,13 +15,9 @@
 # === DownscalingConfig: Run Identity ===
 gcm: "CESM2-WACCM6"
 variables: ["pr", "rsds"]
-ensemble_members: ["008"]
+ensemble_members: ["007", "008", "009", "010"]
 scenarios: ["SSP245"]
 
-# === Downscaling Methods ===
-# Required: there is no default, so every config states which method produced its output.
-# Production publishes BCSD only for now; QDMSD is exercised in the qa configs, which list
-# both. Adding it here doubles every wave, so it is a deliberate separate decision.
 downscaling_methods: ["BCSD", "QDMSD"]
 
 train_period_start: 1978

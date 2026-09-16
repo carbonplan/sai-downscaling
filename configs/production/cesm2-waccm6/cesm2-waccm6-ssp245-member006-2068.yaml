@@ -1,0 +1,27 @@
+# BCSD configuration: CESM2-WACCM6 / SSP245 / all variables / truncated member 006 / global (production)
+#
+# Member 006 alone: its data ends 2069-12-30 instead of 2069-12-31, which would introduce a day of NaN's. 
+# Slicing to 2068 instead.
+# Members 007-010 in cesm2-waccm6-ssp245-*-trunc*.yaml.
+
+# === BCSDConfig: Run Identity ===
+gcm: "CESM2-WACCM6"
+variables: ["tas", "pr", "rsds", "tasmax", "tasmin", "dtr"]
+ensemble_members: ["006"]
+scenarios: ["SSP245"]
+
+downscaling_methods: ["BCSD", "QDMSD"]
+
+train_period_start: 1978
+train_period_end: 2014
+predict_period_start: 2015
+predict_period_end: 2068
+
+# === PipelineOptions: Operational Settings ===
+scratch_dir: "s3://carbonplan-srm/scratch/cache"
+output_dir: "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/"
+
+environment: "production"
+# version intentionally unset — derived from the installed package version at runtime
+verbose: true
+save_intermediate: true
