@@ -1,9 +1,9 @@
-# SRM Downscaling
+# SAI Downscale
 
 ## Quick links
 
-- [**GitHub repository**](https://github.com/carbonplan/srm-downscaling)
-- [**Dataset releases**](https://github.com/carbonplan/srm-downscaling/releases)
+- [**GitHub repository**](https://github.com/carbonplan/sai-downscaling)
+- [**Dataset releases**](https://github.com/carbonplan/sai-downscaling/releases)
 
 ## Getting Started
 
@@ -11,9 +11,9 @@
 :::{tab-item} Using SRM Downscaled Data
 If you want to **access and analyze the downscaled data**:
 
-1. Visit [Access data](./access-data.md) for how to open downscaled output stores, navigate scenarios, and discover available groups.
+1. Review what data is [available](./access-data/whats-available.md), explore the [access utilities](./access-data/access-utilities.md) we built to help you work with it, and read the [terms of access](./access-data/access-terms.md).
 2. Visit [Input data catalog](./input-data.md) for an overview of the raw GCM, ERA5, and NASA-NEX datasets fed into the pipeline.
-3. Check out the [Subsetting and exporting data](./data-access-notebooks/subsetting-and-exporting.ipynb) guide to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
+3. Check out the [Subsetting and exporting data](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb) notebook in the `sai-downscaling-data-utils` repository to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
 :::
 :::{tab-item} Running the Pipeline
 If you want to **run the downscaling pipeline**:
@@ -28,21 +28,28 @@ If you want to **run the downscaling pipeline**:
 
 ## Support
 
-- **Issues & Bug Reports**: [GitHub Issues](https://github.com/carbonplan/srm-downscaling/issues)
+- **Issues & Bug Reports**: [GitHub Issues](https://github.com/carbonplan/sai-downscaling/issues)
 - **General Inquiries**: [hello@carbonplan.org](mailto:hello@carbonplan.org)
 
 ## License
 
-SRM Downscaling code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/srm-downscaling/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
+SAI Downscale code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/sai-downscaling/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
 
 ```{toctree}
 :hidden:
 :maxdepth: 2
-access-data
 input-data
 terms-of-data-access
-data-access-notebooks/subsetting-and-exporting
 contributing
+```
+
+```{toctree}
+:hidden:
+:maxdepth: 2
+:caption: Access the data
+access-data/whats-available
+access-data/access-utilities
+access-data/access-terms
 ```
 
 ```{toctree}

@@ -1,0 +1,2287 @@
+"""
+Downscaling pipeline with three-stage architecture and automatic caching.
+
+Implements the full bias-correction spatial disaggregation workflow via
+:class:`DownscalingPipeline`. Stages run in order: ``prepare_observations`` (once per
+GCM/variable), ``fit_historical`` (once per GCM/variable/ensemble), and
+``transform_scenario`` (once per GCM/variable/ensemble/scenario).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.metadata
+import logging
+import os
+import time
+import warnings
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+import dask.system
+import icechunk
+import numpy as np
+import scipy.stats
+import xarray as xr
+from ibicus.debias import QuantileDeltaMapping, QuantileMapping
+from ibicus.utils import PrecipitationHurdleModelGamma
+from icechunk.xarray import to_icechunk
+
+from saidownscale.cache import COARSE_ONLY_VARIABLES, ArtifactCache, StoreLocation
+from saidownscale.config import _ensure_root_group, _icechunk_storage_for_path
+from saidownscale.datasets import catalog as _catalog
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
+from saidownscale.downscaling_utils import (
+    calculate_baseline_climatology,
+    derive_tasmin,
+    detrend,
+    downscale_from_coarse,
+    get_experiment,
+    get_historical_experiment,
+    get_obs,
+    interpolate_fine_to_coarse_grid,
+    rechunk,
+    retrend,
+    subset_space,
+    swap_temperature_extremes,
+)
+from saidownscale.encoding import (
+    SHARD_LAT,
+    SHARD_LAT_COARSE,
+    SHARD_LON,
+    SHARD_LON_COARSE,
+    SHARD_TIME,
+    SHARD_TIME_COARSE,
+    make_coarse_encoding,
+    make_encoding,
+)
+from saidownscale.qa_checks import assert_no_nans
+from saidownscale.utils import get_variable
+
+if TYPE_CHECKING:
+    from saidownscale.lineage import ScenarioMember
+
+logger = logging.getLogger(__name__)
+
+_RSDS_QDM_DARK_DAY_FLOOR_WM2 = 10.0
+
+
+class _WeibullMinZeroBounded(type(scipy.stats.weibull_min)):
+    """Subclass of weibull_min_gen that constrains loc=0 during fitting.
+
+    Prevents degenerate negative loc values from the 3-parameter Weibull MLE,
+    which can produce physically impossible negative debiased values (e.g. DTR -300 K).
+    This class must be defined at module level so multiprocessing can pickle it.
+    All variables using this class are zero-bounded (rsds, DTR, hurs, pr)
+    """
+
+    def fit(self, data, *args, **kwargs):
+        kwargs.setdefault("floc", 0)
+        return super().fit(data, *args, **kwargs)
+
+
+_weibull_min_zero_bounded = _WeibullMinZeroBounded(a=0.0, name="weibull_min_floc0")
+
+
+def _location_seed(*arrays: np.ndarray) -> int:
+    """Derive a deterministic RNG seed from the data at a single grid cell.
+
+    Parameters
+    ----------
+    *arrays : np.ndarray
+        The per-location timeseries handed to ``apply_location``.
+
+    Returns
+    -------
+    int
+        A seed in the range accepted by :func:`numpy.random.seed`, stable across
+        processes, machines and worker counts for the same input values.
+    """
+    digest = hashlib.blake2b(digest_size=4)
+    for array in arrays:
+        digest.update(np.ascontiguousarray(array, dtype=np.float64).tobytes())
+    return int.from_bytes(digest.digest(), "little")
+
+
+class _SeededLocationMixin:
+    """Make a debiaser's stochastic draws reproducible by seeding per location.
+
+    Several ibicus code paths draw from numpy's process-global legacy RandomState:
+    quantile delta mapping censors values at or below ``censoring_threshold`` by
+    replacing them with ``np.random.rand() * censoring_threshold``
+    (``_quantile_delta_mapping.py``), and the precipitation hurdle and left-censored
+    gamma models randomize their ``cdf`` below the threshold (``utils/_math_utils.py``).
+
+    ``Debiaser.apply`` fans locations out over a ``multiprocessing.Pool``, so that
+    global state is per worker and the position each cell lands at in its worker's
+    stream depends on how the pool happened to schedule tasks, and on ``nr_processes``
+    (which follows instance size). Seeding in the parent before ``apply`` therefore
+    cannot make a run reproducible: under the fork start method every worker inherits
+    the same seeded state but consumes it in a scheduling-dependent order, and under
+    spawn the workers are seeded from entropy and ignore the parent entirely
+    (issue #627).
+
+    Seeding here instead, from the cell's own data, makes every draw a function of the
+    inputs alone. Runs are then bit-identical across repeats, worker counts and start
+    methods, while keeping ibicus's per-window redraw semantics unchanged. The seed is
+    per location rather than one constant for the whole grid so that neighboring cells
+    do not receive identical jitter, which would put spatially coherent structure into
+    what is meant to be tie-breaking noise.
+
+    Mixed in ahead of the debiaser class so this ``apply_location`` wins and ``super()``
+    reaches ibicus's. Subclasses are defined at module level so multiprocessing can
+    pickle them, for the same reason as :class:`_WeibullMinZeroBounded` above.
+    """
+
+    def apply_location(self, obs, cm_hist, cm_future, **kwargs):
+        np.random.seed(_location_seed(obs, cm_hist, cm_future))
+        return super().apply_location(obs, cm_hist, cm_future, **kwargs)
+
+
+class _SeededQuantileDeltaMapping(_SeededLocationMixin, QuantileDeltaMapping):
+    """Reproducible quantile delta mapping. See :class:`_SeededLocationMixin`.
+
+    The draws come from censoring, so this bites on ``pr`` (via
+    :meth:`QuantileDeltaMapping.for_precipitation`) plus ``rsds`` and ``dtr``, which set
+    ``censor_values_to_zero`` explicitly, and on ``tasmin``, which is derived as
+    ``tasmax - dtr``. ``tas``, ``tasmax`` and ``hurs`` do not censor and were already
+    deterministic.
+    """
+
+
+class _SeededQuantileMapping(_SeededLocationMixin, QuantileMapping):
+    """Reproducible quantile mapping. See :class:`_SeededLocationMixin`.
+
+    No configured BCSD path draws today: the tables reach ``QuantileMapping`` only with
+    ``mapping_type="nonparametric"``, or parametrically with distributions that do not
+    randomize (Weibull, Gumbel, norm, beta). The exposure is latent rather than absent,
+    though, because ``_make_debiaser`` falls back to ``PrecipitationHurdleModelGamma``
+    for ``pr``, whose ``cdf`` randomizes; setting ``debias_approach="parametric"`` for
+    ``pr`` would reach it. Seeding here keeps that from silently reintroducing
+    issue #627 rather than fixing anything currently broken.
+    """
+
+
+def _make_debiaser(variable: str, distribution=None, **kwargs):
+    if distribution is None:
+        if variable in ["tas", "tasmax"]:
+            distribution = scipy.stats.norm
+        elif variable in ["hurs", "rsds", "dtr"]:
+            distribution = scipy.stats.beta
+        elif variable == "pr":
+            distribution = PrecipitationHurdleModelGamma
+    return _SeededQuantileMapping(distribution=distribution, **kwargs)
+
+
+def calculate_out_of_range_mask(
+    model_hist: xr.DataArray,
+    scenario_detrended: xr.DataArray,
+    center_window: int = 31,
+) -> xr.DataArray:
+    """
+    Calculate mask of where scenario is out of range of modeled historical
+    on a day-of-year basis. The historical range for any day-of-year is the max and min
+    of modeled historical values that fall within a centered window around that day-of-year.
+    This should be the same window size used in the debiaser if using running_window_mode.
+
+    Parameters
+    ----------
+    model_hist : xr.DataArray
+        Historical GCM data with a time dimension. This is used to compute the
+        day-of-year min/max range.
+    scenario_detrended : xr.DataArray
+        Detrended scenario data to test against the historical range.
+    center_window : int, optional
+        Size of the centered rolling window (in days) used to compute the
+        historical range per day-of-year. Should match the debiaser's
+        running_window_length. Default is 31.
+    pad : int, optional
+        Number of days to pad at each end of the day-of-year dimension to
+        handle edge effects in the rolling window. Default is 15.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean DataArray with the same shape as scenario_detrended. True where
+        the scenario value falls outside the historical range for that day-of-year,
+        False otherwise.
+
+    """
+    grouped_by_dayofyear = model_hist.groupby("time.dayofyear")
+    doy_max = grouped_by_dayofyear.max()
+    doy_min = grouped_by_dayofyear.min()
+
+    # Pad the dayofyear dimension to handle the rolling window at the edges, using values from the opposite end of the year
+    pad = center_window // 2
+    # slice(-pad, None) takes the last `pad` values, and slice(None, pad) takes the first `pad` values
+    # This wraps around the dayofyear dimension for the rolling window
+    doy_max_padded = xr.concat(
+        [
+            doy_max.isel(dayofyear=slice(-pad, None)),
+            doy_max,
+            doy_max.isel(dayofyear=slice(None, pad)),
+        ],
+        dim="dayofyear",
+    )
+
+    rolling_doy_max = doy_max_padded.rolling(dayofyear=center_window, center=True).max()
+    rolling_doy_max = rolling_doy_max.isel(dayofyear=slice(pad, pad + len(doy_max.dayofyear)))
+
+    doy_min_padded = xr.concat(
+        [
+            doy_min.isel(dayofyear=slice(-pad, None)),
+            doy_min,
+            doy_min.isel(dayofyear=slice(None, pad)),
+        ],
+        dim="dayofyear",
+    )
+
+    rolling_doy_min = doy_min_padded.rolling(dayofyear=center_window, center=True).min()
+    rolling_doy_min = rolling_doy_min.isel(dayofyear=slice(pad, pad + len(doy_min.dayofyear)))
+
+    doy = scenario_detrended["time.dayofyear"]
+
+    out_of_range_low = scenario_detrended < rolling_doy_min.sel(dayofyear=doy)
+    out_of_range_high = scenario_detrended > rolling_doy_max.sel(dayofyear=doy)
+
+    out_of_range = out_of_range_low | out_of_range_high
+
+    return out_of_range, out_of_range_low, out_of_range_high
+
+
+def _assert_stitched_continuity(result: xr.DataArray) -> None:
+    """Raise ValueError if the stitched timeseries has duplicate timestamps or year-level gaps.
+
+    Day-level gaps within a year are tolerated (some GCMs, e.g. UKESM1-1-LL, are
+    missing a single day at the historical boundary). The checks are:
+
+    1. No duplicate timestamps – the same calendar day must not appear twice.
+    2. No year-level gaps – every integer year between the first and last year
+       must be represented by at least one timestep.
+    """
+    times = result["time"].values
+    unique_times, counts = np.unique(times, return_counts=True)
+    duplicates = unique_times[counts > 1]
+    if len(duplicates):
+        raise ValueError(
+            f"Stitched timeseries contains {len(duplicates)} duplicate timestamp(s); "
+            f"first duplicate: {duplicates[0]}"
+        )
+
+    years = np.unique(result["time.year"].values)
+    gaps = [(int(y1), int(y2)) for y1, y2 in zip(years, years[1:]) if y2 - y1 > 1]
+    if gaps:
+        raise ValueError(f"Stitched timeseries has year-level gap(s): {gaps}")
+
+
+def _assert_qdm_pad_complete(
+    scenario_pad: xr.DataArray,
+    stitched: xr.DataArray,
+    *,
+    pad_start_year: int,
+    pad_end_year: int,
+    predict_period_start: int,
+) -> None:
+    """Raise ValueError if the quantile delta mapping lead-in pad is short.
+
+    Quantile delta mapping estimates each future year's correction from a moving window
+    over years of ``cm_future`` centered on that year, so the years immediately before
+    ``predict_period_start`` have to be prepended to fill the window. ``.sel`` on a time
+    slice returns whatever it finds, so a stitched series that does not reach back to
+    ``pad_start_year`` yields a short or empty pad; the window is then under-filled for
+    the first future years and the shortfall never surfaces, because dropping the pad
+    afterwards still lines up with whatever was prepended.
+
+    Coverage is checked per year, matching :func:`_assert_stitched_continuity`, which
+    tolerates day-level gaps inside a year but no year-level ones.
+
+    Parameters
+    ----------
+    scenario_pad : xr.DataArray
+        The lead-in context actually selected out of ``stitched``.
+    stitched : xr.DataArray
+        The continuous historical/scenario series the pad was selected from.
+    pad_start_year, pad_end_year : int
+        First and last year (both inclusive) the pad has to cover.
+    predict_period_start : int
+        First year of the prediction period, quoted in the error message.
+
+    Raises
+    ------
+    ValueError
+        If any year in ``[pad_start_year, pad_end_year]`` is absent from the pad.
+    """
+    present = {int(y) for y in np.unique(scenario_pad["time.year"].values)}
+    missing = [y for y in range(pad_start_year, pad_end_year + 1) if y not in present]
+    if not missing:
+        return
+
+    available = (
+        f"{min(present)} to {max(present)} ({len(present)} year(s))" if present else "no years"
+    )
+    earliest = stitched["time"].values[0] if stitched.sizes.get("time", 0) else "nothing"
+    raise ValueError(
+        f"Quantile delta mapping needs lead-in context covering {pad_start_year} to "
+        f"{pad_end_year} before predict_period_start={predict_period_start}, but the "
+        f"stitched historical/scenario series supplies {available}; missing {missing}. "
+        f"The earliest time present in the stitched series is {earliest}. Extend the "
+        f"upstream series back to {pad_start_year} or start the prediction period later."
+    )
+
+
+def stitch_historical_scenario(
+    model_hist: xr.DataArray,
+    model_scenario: xr.DataArray,
+    train_period_end: int,
+    predict_period_start: int,
+    ssp_timeseries: xr.DataArray | None = None,
+) -> xr.DataArray:
+    """Stitch historical and scenario data into a continuous timeseries for detrending.
+
+    For SAI scenarios (``ssp_timeseries`` provided), historical data is first
+    concatenated with SSP245 to bridge the gap between the historical period end
+    (``train_period_end``) and the first available year of the SAI simulation.
+    The combined series is then concatenated with the SAI scenario. The SAI
+    splice point is inferred from the first timestep in ``model_scenario``
+    rather than from ``predict_period_start``, because the scenario data may
+    start later than the requested prediction window (e.g. G6-1.5K begins in
+    2035 even when ``predict_period_start`` is 2015).
+
+    For non-SAI scenarios, historical and scenario data are concatenated
+    directly at the ``predict_period_start`` boundary.
+
+    All supported GCMs share the same historical/SSP breakpoint:
+    - historical ends  2014-12-31  (``train_period_end`` = 2014)
+    - SSP245 begins    2015-01-01  (``predict_period_start`` = 2015)
+
+    Parameters
+    ----------
+    model_hist : xr.DataArray
+        Historical GCM data.
+    model_scenario : xr.DataArray
+        Future scenario GCM data (SAI or non-SAI).
+    train_period_end : int
+        Last year of the historical training period (inclusive).
+    predict_period_start : int
+        First year of the prediction period. Used as the stitch boundary for
+        non-SAI scenarios. For SAI scenarios the splice point is inferred from
+        the first year present in ``model_scenario``.
+    ssp_timeseries : xr.DataArray, optional
+        SSP245 data used to bridge the historical-to-SAI gap. When provided,
+        the SAI stitching path is taken; otherwise the non-SAI path is used.
+
+    Returns
+    -------
+    xr.DataArray
+        Continuous timeseries spanning from the start of historical data
+        through the end of the scenario period.
+    """
+    if ssp_timeseries is not None:
+        if model_scenario.time.size == 0:
+            raise ValueError(
+                "model_scenario contains no timesteps for the requested predict period. "
+                "Verify that predict_period_start/predict_period_end overlap the scenario's "
+                "available time range."
+            )
+        # Use the first year present in the (already-sliced) scenario array as
+        # the splice point.  predict_period_start may be earlier than the SAI
+        # data start (e.g. predict_period_start=2015 but G6-1.5K begins 2035),
+        # so we cannot rely on it here.
+        sai_start_year = int(model_scenario["time.year"].min())
+        ssp_min_year = int(ssp_timeseries["time.year"].min())
+        if ssp_min_year >= sai_start_year:
+            raise ValueError(
+                f"SSP245 bridge data starts at {ssp_min_year} but the SAI scenario starts "
+                f"at {sai_start_year}. The bridge must cover the gap "
+                f"{train_period_end + 1}–{sai_start_year - 1}. "
+                f"Use a bridge dataset that spans this period."
+            )
+        # SAI: historical ≤ train_period_end, then SSP from train_period_end+1
+        # up to (but not including) the SAI start, then SAI data.
+        # Drop ensemble_member scalar coords before concat — historical and bridge may carry
+        # different member values (e.g. r1i1p4f2 vs r01), which causes MergeError in older xarray.
+        # Re-attach from model_scenario afterward: the stitched array represents the scenario's
+        # timeseries, so model_scenario.ensemble_member is the authoritative identity.
+        scenario_member_coord = model_scenario.coords.get("ensemble_member")
+        historical_and_ssp = xr.concat(
+            [
+                model_hist.sel(time=model_hist["time.year"] <= train_period_end).drop_vars(
+                    "ensemble_member", errors="ignore"
+                ),
+                ssp_timeseries.sel(
+                    time=ssp_timeseries["time.year"] >= train_period_end + 1
+                ).drop_vars("ensemble_member", errors="ignore"),
+            ],
+            dim="time",
+        )
+        result = xr.concat(
+            [
+                historical_and_ssp.sel(time=historical_and_ssp["time.year"] < sai_start_year),
+                model_scenario.sel(time=model_scenario["time.year"] >= sai_start_year).drop_vars(
+                    "ensemble_member", errors="ignore"
+                ),
+            ],
+            dim="time",
+        )
+        if scenario_member_coord is not None:
+            result = result.assign_coords(ensemble_member=scenario_member_coord)
+    else:
+        # Non-SAI: historical up to predict_period_start, then scenario.
+        result = xr.concat(
+            [
+                model_hist.sel(time=model_hist["time.year"] < predict_period_start),
+                model_scenario.sel(time=model_scenario["time.year"] >= predict_period_start),
+            ],
+            dim="time",
+        )
+
+    _assert_stitched_continuity(result)
+    return result
+
+
+#: Environment variable carrying the vCPU a remote task was actually allocated. The
+#: orchestrator sets it on both executors from the same instance sizing table.
+NR_PROCESSES_ENV = "SRM_NR_PROCESSES"
+
+
+def debiaser_processes() -> int:
+    """How many processes ``ibicus.Debiaser.apply`` should fan out over.
+
+    ``dask.system.CPU_COUNT`` is the wrong number under AWS Batch. ECS on EC2 expresses a
+    vCPU request as a cgroup *share* (``cpu.weight``) and leaves ``cpu.max`` unset, so
+    dask finds no quota and falls back to the host's core count: a container allocated 16
+    vCPU on a packed ``r8g.24xlarge`` measures 96. Coiled gives each task a dedicated VM,
+    so there the same call returns the 16 that was asked for.
+
+    That divergence is not only a resource-planning bug. ``nr_processes`` sets how ibicus
+    partitions the grid, and the partitioning is visible in the answers, so the two
+    executors produce different output for identical inputs. Reading the allocation the
+    orchestrator requested makes the two agree by construction.
+
+    Returns
+    -------
+    int
+        The requested vCPU when the orchestrator supplied one, otherwise
+        ``dask.system.CPU_COUNT`` for local runs and anything else unmanaged.
+    """
+    raw = os.environ.get(NR_PROCESSES_ENV)
+    if not raw:
+        return dask.system.CPU_COUNT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; falling back to CPU_COUNT", NR_PROCESSES_ENV, raw)
+        return dask.system.CPU_COUNT
+    if value < 1:
+        logger.warning("%s=%d is not positive; falling back to CPU_COUNT", NR_PROCESSES_ENV, value)
+        return dask.system.CPU_COUNT
+    return value
+
+
+class DownscalingPipeline:
+    """
+    Three-stage downscaling pipeline with automatic caching.
+
+    Stages:
+    1. Prepare (i.e. coarsen) training dataset to be at same model resolution as GCM
+    2. Fit model between coarsened training dataset and historical GCM simulation
+    3. Apply model on GCM simulation (whether historical or future)
+
+    This class orchestrates the BCSD workflow, automatically caching intermediate
+    artifacts to enable efficient reuse across multiple runs. Each stage checks
+    for cached outputs before computing.
+
+    Cache/force behavior summary
+    ----------------------------
+    - ``force=False`` (default): a stage returns immediately when its output
+      artifact already exists.
+    - ``force=True``: a stage recomputes and overwrites its own output artifact.
+    - ``fit_historical`` and ``transform_scenario`` validate dependency
+      artifacts before any cache-hit early return.
+    - Cache checks are existence checks only; cached content is not validated
+      for integrity or schema compatibility at read time.
+
+    Example
+    -------
+    >>> config = DownscalingConfig(
+    ...     gcm="CESM2-WACCM6",
+    ...     variable="tas",
+    ...     ensemble_member=0,
+    ...     scenario="ssp245",
+    ...     predict_period_start=2015,
+    ...     predict_period_end=2100,
+    ... )
+    >>> pipeline = DownscalingPipeline(config)
+    >>> # Run all stages
+    >>> pipeline.prepare_observations()
+    >>> pipeline.fit_historical()
+    >>> result = pipeline.transform_scenario()
+    """
+
+    def __init__(self, config: DownscalingConfig, options: PipelineOptions):
+        """
+        Initialize pipeline with configuration and operational options.
+
+        Ensemble member lineage is resolved automatically from the lineage
+        table. Unknown GCM / scenario / member combinations are silently
+        skipped (lineage members fall back to ensemble_member).
+
+        Parameters
+        ----------
+        config : DownscalingConfig
+            Run-identity configuration for the downscaling run
+        options : PipelineOptions
+            Operational settings (storage paths, runtime flags)
+        """
+        self.config = config
+        self.options = options
+        self.cache = ArtifactCache.from_config(config, options)
+        self._state = {}
+
+        self._hist_member = config.ensemble_member
+        self._ssp245_member = config.ensemble_member
+        self._ssp245_esgf_member: str | None = None
+        self._sai_parent: ScenarioMember | None = None
+        if config.scenario is not None:
+            from saidownscale.lineage import resolve_member_lineage
+
+            try:
+                lineage = resolve_member_lineage(
+                    config.gcm, config.scenario, config.ensemble_member, config.variable
+                )
+            except KeyError:
+                pass
+            else:
+                self._hist_member = lineage.historical
+                self._ssp245_member = lineage.ssp245_bridge
+                self._ssp245_esgf_member = lineage.ssp245_esgf_bridge
+                self._sai_parent = lineage.sai_parent
+
+        if self._hist_member != config.ensemble_member:
+            parts = [
+                f"ensemble_member={config.ensemble_member!r}",
+                f"historical={self._hist_member!r}",
+            ]
+            if self._ssp245_member != config.ensemble_member:
+                parts.append(f"ssp245_bridge={self._ssp245_member!r}")
+            if self._sai_parent is not None:
+                parts.append(f"sai_parent={str(self._sai_parent)!r}")
+            logger.info("Lineage resolved — %s", "  ".join(parts))
+
+    def _nan_check_context(self, stage: str) -> dict[str, str | None]:
+        """Run-identity fields attached to a :class:`NaNCheckError` message.
+
+        Batch runs fan out over hundreds of Coiled tasks writing to the same store.
+        Without these fields the traceback names the offending array but not which
+        task produced it.
+        """
+        return {
+            "gcm": self.config.gcm,
+            "variable": self.config.variable,
+            "ensemble_member": self.config.ensemble_member,
+            "scenario": self.config.scenario,
+            "stage": stage,
+        }
+
+    def _gcm_description(self) -> str | None:
+        """Model description from the catalog entry for ``config.gcm``, if there is one.
+
+        Lenient on purpose: unit tests build pipelines for names with no catalog entry, and a
+        real run with an unknown ``gcm`` already fails loudly at data load.
+        """
+        entry = _catalog.datasets.get(self.config.gcm)
+        return None if entry is None else entry.description
+
+    def _build_output_attrs(self) -> dict:
+        """Build dataset-level attributes for pipeline output artifacts."""
+        version = importlib.metadata.version("saidownscale")
+        attrs = {
+            # CF-standard — flat
+            "Conventions": "CF-1.8",
+            "institution": "CarbonPlan",
+            "history": (
+                f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}: "
+                f"BCSD downscaling by srm v{version}"
+            ),
+            # Pipeline provenance — namespaced
+            "srm_downscaling:version": version,
+            "srm_downscaling:gcm": self.config.gcm,
+            "srm_downscaling:scenario": self.config.scenario or "historical",
+            "srm_downscaling:variable": self.config.variable,
+            "srm_downscaling:ensemble_member": self.config.ensemble_member,
+            "srm_downscaling:historical_ensemble_member": self._hist_member,
+            "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
+            "srm_downscaling:observation_dataset": self.config.obs_dataset,
+            "srm_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
+            "srm_downscaling:downscaling_method": self.config.downscaling_method,
+            "srm_downscaling:disaggregation_method": (
+                self.config.variable_config.disaggregation_method
+            ),
+            "srm_downscaling:train_period": (
+                f"{self.config.train_period_start}-{self.config.train_period_end}"
+            ),
+            "srm_downscaling:config_hash": self.config.config_hash,
+            "srm_downscaling:config_json": self.config.model_dump_json(),
+            "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        }
+        description = self._gcm_description()
+        if description is not None:
+            attrs["srm_downscaling:gcm_description"] = description
+        # Only present on scenarios that continue an earlier SAI run, so readers can tell
+        # which run supplied the pre-scenario years of the bridge.
+        if self._sai_parent is not None:
+            attrs["srm_downscaling:sai_parent_scenario"] = self._sai_parent.scenario
+            attrs["srm_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
+        return attrs
+
+    def _build_obs_attrs(self) -> dict:
+        """Build dataset-level attributes for the regridded observation artifact.
+
+        Regridded observations are keyed on ``(gcm, obs_dataset, subset, variable)``
+        and are shared across every ensemble member, scenario, and downscaling method
+        for that combination. They are also independent of ``VariableConfig`` and of
+        both time periods.
+
+        The full :meth:`_build_output_attrs` set is therefore wrong here: it records a
+        method, a scenario, a member, a train period, and a config hash, each fixed to
+        whatever run happened to write the artifact first. Only the fields the artifact
+        is actually keyed on are recorded, which makes the presence of
+        ``srm_downscaling:downscaling_method`` a reliable signal that a group depends
+        on the method.
+
+        Returns
+        -------
+        dict
+            Dataset-level attributes for the ``obs/{variable}`` group.
+        """
+        version = importlib.metadata.version("saidownscale")
+        attrs = {
+            # CF-standard — flat
+            "Conventions": "CF-1.8",
+            "institution": "CarbonPlan",
+            "history": (
+                f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}: "
+                f"observations regridded to the model grid by srm v{version}"
+            ),
+            # Pipeline provenance — namespaced. Only what this artifact is keyed on.
+            "srm_downscaling:version": version,
+            "srm_downscaling:gcm": self.config.gcm,
+            "srm_downscaling:variable": self.config.variable,
+            "srm_downscaling:observation_dataset": self.config.obs_dataset,
+            "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        }
+        description = self._gcm_description()
+        if description is not None:
+            attrs["srm_downscaling:gcm_description"] = description
+        return attrs
+
+    def _write_to_icechunk(
+        self,
+        da: xr.DataArray,
+        loc: StoreLocation,
+        encoding: dict | None = None,
+        dataset_attrs: dict | None = None,
+        force: bool = False,
+    ) -> str:
+        """Write a DataArray to an icechunk group and commit atomically.
+
+        Retries up to 3 times on RebaseFailedError. Concurrent VMs writing to
+        sibling groups race to create their shared parent zarr group for the
+        first time, producing a structural conflict. On retry the parent exists
+        and the commit succeeds cleanly.
+        """
+        branch = self.cache._branch_for()
+        storage = _icechunk_storage_for_path(loc.store_path)
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                repo = icechunk.Repository.open_or_create(storage)
+                root_snapshot_id = _ensure_root_group(repo)
+                if branch not in repo.list_branches():
+                    repo.create_branch(branch, root_snapshot_id)
+                session = repo.writable_session(branch)
+                ds = da.to_dataset()
+                if dataset_attrs is not None:
+                    ds.attrs = dataset_attrs
+                # Drop non-index auxiliary coords that leak from intermediate ops:
+                # dayofyear - broadcast residual from .sel(dayofyear=...) in bias correction
+                # ensemble_member - string scalar from raw GCM source (already in attrs),
+                #   causes NotImplementedError when opening with chunks="auto" (object dtype)
+                _drop = [c for c in ("dayofyear", "ensemble_member") if c in ds.coords]
+                if _drop:
+                    ds = ds.drop_vars(_drop)
+                # fix incompatible dask chunk sizes in encoding
+                for coord in list(ds.coords):
+                    ds[coord].encoding.pop("chunks", None)
+                    ds[coord].encoding.pop("shards", None)
+                to_icechunk(ds, session, mode="w", encoding=encoding or {}, group=loc.group)
+                commit_id = session.commit(loc.group, rebase_with=icechunk.ConflictDetector())
+                break
+            except icechunk.RebaseFailedError:
+                if attempt == max_attempts - 1:
+                    raise
+                logger.warning(
+                    "Rebase conflict on %s (attempt %d/%d), retrying",
+                    loc.group,
+                    attempt + 1,
+                    max_attempts,
+                )
+                time.sleep(0.5 * (attempt + 1))
+
+        if force:
+            history = list(repo.ancestry(branch=branch))
+            if len(history) > 2:
+                keep_from = history[1].written_at
+                n_expired = len(repo.expire_snapshots(older_than=keep_from))
+                gc_result = repo.garbage_collect(keep_from)
+                logger.info(
+                    "GC after force overwrite of %s: expired %d snapshots, collected %s",
+                    loc.group,
+                    n_expired,
+                    gc_result,
+                )
+
+        return commit_id
+
+    @staticmethod
+    def _build_ocean_mask(da: xr.DataArray) -> xr.DataArray:
+        """Compute a land/ocean mask aligned to da's spatial grid.
+
+        Returns a boolean DataArray where True = land (keep) and False = ocean (mask).
+        Uses GSHHS high-resolution coastline boundaries from the catalog. Ocean pixels
+        in the output should be set to NaN via ``da.where(mask)``.
+        """
+        import xproj  # noqa
+        from rasterix.rasterize import geometry_mask
+
+        from saidownscale.datasets import catalog
+
+        coast = catalog.get("ocean-mask").to_geodataframe()
+        # Sort lat descending — required by rusterize; .where() re-aligns by coordinate
+        template = (
+            da.isel(time=0).sortby("lat", ascending=False).proj.assign_crs(spatial_ref="epsg:4326")
+        )
+        return ~geometry_mask(
+            template, coast[["geom"]], all_touched=True, engine="rusterize", xdim="lon", ydim="lat"
+        ).drop_vars("spatial_ref", errors="ignore")
+
+    def _open_from_icechunk(self, loc: StoreLocation, chunks="auto") -> xr.Dataset:
+        """Open a zarr group from an icechunk store.
+
+        Parameters
+        ----------
+        loc : StoreLocation
+            Store path and group to open.
+        chunks : str or dict, optional
+            Dask chunking for the opened dataset. Defaults to ``"auto"``. Pass an
+            explicit shard-aligned dict (e.g. ``{"time": SHARD_TIME, ...}``) when the
+            caller needs per-shard streaming reads rather than auto-sized chunks — the
+            store-to-store reconcile relies on this to avoid materialising the full
+            global fine array (reconcile OOM).
+        """
+        branch = self.cache._branch_for()
+        storage = _icechunk_storage_for_path(loc.store_path)
+        repo = icechunk.Repository.open(storage)
+        session = repo.readonly_session(branch=branch)
+        return xr.open_dataset(
+            session.store, engine="zarr", consolidated=False, chunks=chunks, group=loc.group
+        )
+
+    def reconcile_temperature_extremes(
+        self,
+        tasmin_loc: StoreLocation,
+        tasmax_loc: StoreLocation,
+        *,
+        tasmin_fine: xr.DataArray | None = None,
+        force: bool = False,
+    ) -> None:
+        """Dedicated reconcile step: enforce ``tasmax >= tasmin`` on the fine outputs.
+
+        Independent spatial disaggregation of tasmax and tasmin can leave a few fine
+        cells with ``tasmax < tasmin`` (issue #331). Following the NEX-GDDP-CMIP6 v2
+        final sweep, this step reads the sibling fine tasmax, swaps the offending
+        cells against tasmin, and writes *both* corrected fields back to their own
+        stores. It runs after both fine outputs are produced (the #363 wave-gating
+        guarantees tasmax is final before tasmin), and can also be re-run standalone
+        against the persisted outputs.
+
+        The reconciliation is idempotent and structurally monotone (see
+        :func:`swap_temperature_extremes`); ``qaqc.validate_temp_consistency`` is the
+        output-QA gate that catches any residual inversion (e.g. from a tasmax-only
+        rerun that has not yet been re-reconciled).
+
+        Parameters
+        ----------
+        tasmin_loc : StoreLocation
+            Location of this stage's fine tasmin output (written here, corrected).
+        tasmax_loc : StoreLocation
+            Location of the sibling fine tasmax output (rewritten here, corrected).
+        tasmin_fine : xr.DataArray, optional
+            The freshly downscaled tasmin. If omitted, tasmin is read back from
+            ``tasmin_loc`` (standalone reconcile of already-persisted outputs).
+        force : bool, optional
+            Threaded to the *tasmin* write only (see below).
+        """
+        if not self.cache.exists(tasmax_loc):
+            raise ValueError(
+                f"tasmin reconciliation needs the fine tasmax output "
+                f"{tasmax_loc.store_path}/{tasmax_loc.group}, which is missing. "
+                f"tasmax must complete before tasmin."
+            )
+        # Read both fields shard-aligned so the swap+write slices per-shard from clean
+        # sharded zarr (no interp graph) instead of pulling the whole global fine array.
+        # With the pipeline persisting the raw tasmin before this step, tasmin_fine is
+        # None here in production and both inputs are plain sharded reads (reconcile OOM).
+        shard = {"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
+        if tasmin_fine is None:
+            if not self.cache.exists(tasmin_loc):
+                raise ValueError(
+                    f"standalone reconcile needs the fine tasmin output "
+                    f"{tasmin_loc.store_path}/{tasmin_loc.group}, which is missing."
+                )
+            tasmin_fine = self._open_from_icechunk(tasmin_loc, chunks=shard)[self.config.variable]
+
+        tasmax_ds = self._open_from_icechunk(tasmax_loc, chunks=shard)
+        # swap_temperature_extremes enforces exact grid alignment and is structurally
+        # monotone, so tasmax >= tasmin holds by construction; the second full-array
+        # pass is left to output-QA rather than gated here (issue #331).
+        tasmax_corrected, tasmin_corrected = swap_temperature_extremes(
+            tasmax_ds["tasmax"], tasmin_fine
+        )
+        tasmax_corrected = tasmax_corrected.chunk(shard)
+        tasmin_corrected = tasmin_corrected.chunk(shard)
+
+        # Data-quality diagnostic (issue #331): how many fine cells were inverted
+        # (tasmax < tasmin) before the swap, plus the worst inversion. Unlike the residual
+        # count in qaqc.validate_tasmax_ge_tasmin (which runs on the final output via
+        # `saidownscale validate-output` and, being post-reconcile, is ~0), the *swap* count is only
+        # available here, pre-swap. It costs one extra streaming read pass over both fields,
+        # so restrict it to QA runs (always spatial subsets — cheap); production skips it and
+        # relies on the qaqc consistency gate. NaN cells (e.g. ocean) compare False, excluded.
+        if self.options.environment == "qa":
+            pre_tasmax = tasmax_ds["tasmax"]
+            inverted = pre_tasmax < tasmin_fine
+            with dask.config.set(scheduler="synchronous"):
+                swap_stats = xr.Dataset(
+                    {
+                        "n_swapped": inverted.sum(),
+                        "n_valid": (pre_tasmax.notnull() & tasmin_fine.notnull()).sum(),
+                        "max_inversion": xr.where(inverted, tasmin_fine - pre_tasmax, 0.0).max(),
+                    }
+                ).compute()
+            n_swapped = int(swap_stats["n_swapped"])
+            n_valid = int(swap_stats["n_valid"])
+            pct = 100.0 * n_swapped / n_valid if n_valid else 0.0
+            logger.info(
+                "Reconcile tasmax<tasmin: swapped %d / %d valid cells (%.4f%%); max inversion %.3f",
+                n_swapped,
+                n_valid,
+                pct,
+                float(swap_stats["max_inversion"]),
+            )
+
+        # Bound peak memory: the swap+writes are memory-bound. A synchronous scheduler
+        # keeps only a few shards resident at once (measured flat vs. array size) rather
+        # than the threaded scheduler's whole-array co-residency that OOMs at global
+        # scale (reconcile OOM; see project_fit_historical_single_threaded).
+        with dask.config.set(scheduler="synchronous"):
+            # tasmax first, force=False: tasmin_corrected still lazily reads this
+            # pre-rewrite tasmax snapshot, so a force GC now would collect those chunks
+            # before the tasmin write below materialises them (data-loss hazard).
+            self._write_to_icechunk(
+                tasmax_corrected,
+                tasmax_loc,
+                encoding=make_encoding("tasmax"),
+                dataset_attrs=dict(tasmax_ds.attrs),
+                force=False,
+            )
+            # tasmin last, force-threaded: it is materialised before its own commit, so
+            # the trailing GC safely sweeps the now-superseded tasmax snapshot too.
+            tasmin_corrected.name = self.config.variable
+            self._write_to_icechunk(
+                tasmin_corrected,
+                tasmin_loc,
+                encoding=make_encoding(self.config.variable),
+                dataset_attrs=self._build_output_attrs(),
+                force=force,
+            )
+
+    def prepare_observations(self, force: bool = False) -> str:
+        """
+        Stage 1: Regrid observations to GCM grid.
+
+        This stage loads observations and regrids them to the coarse GCM
+        grid using local area averaging. The result is cached and reused across
+        all ensemble members and scenarios for this GCM/variable combination.
+
+        Parameters
+        ----------
+        force : bool, optional
+            If ``False``, return the cached stage output when present.
+            If ``True``, recompute this stage and overwrite cached output.
+
+        Returns
+        -------
+        str
+            Path to the stage output artifact.
+
+        Notes
+        -----
+        This stage does not depend on prior stage artifacts. Cache-hit behavior
+        is based on artifact existence at ``self.cache.obs_loc``.
+        """
+        loc = self.cache.obs_loc
+
+        # Check whether regridded dataset already exists, if so (and you don't
+        # have the force flag enabled which allows overwrite) use the existing dataset.
+        # Note: this does not check anything about the data at the output_path -
+        # if it is corrupted in any way or doesn't match the attributes of the
+        # config it won't fail.
+        if self.cache.exists(loc) and not force:
+            logger.info("✓ Using cached observations: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
+
+        logger.info(
+            "Computing observation regridding for %s/%s", self.config.gcm, self.config.variable
+        )
+
+        t0 = time.perf_counter()
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
+        obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+        model_grid = get_experiment(
+            gcm=self.config.gcm, scenario="historical", var=self.config.variable
+        )
+        model_grid = model_grid.drop_vars("spatial_ref", errors="ignore")
+        if self.config.subset_bounds:
+            lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
+            lat_bounds = (lat_min, lat_max)
+            lon_bounds = (lon_min, lon_max)
+            obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+            model_grid = subset_space(model_grid, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+        logger.info("Loaded observations (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="invalid value encountered in divide")
+            warnings.filterwarnings("ignore", message="divide by zero encountered in divide")
+            obs_coarse = interpolate_fine_to_coarse_grid(
+                da_fine_to_coarsen=obs_fine, da_coarse_grid=model_grid
+            )
+        logger.info("Regridded observations to coarse grid (%.2fs)", time.perf_counter() - t0)
+
+        if self.options.rechunk_workflow:
+            obs_coarse = rechunk(obs_coarse, pattern="full_space")
+
+        t0 = time.perf_counter()
+        obs_coarse.name = self.config.variable
+        self._write_to_icechunk(obs_coarse, loc, dataset_attrs=self._build_obs_attrs(), force=force)
+        logger.info(
+            "✓ Cached observations: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
+
+        return loc.store_path
+
+    def _load_gcm_obs(self) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+        """Load obs_coarse (from cache), obs_fine, and model_hist, subsetted to training period."""
+        deps = self.cache.check_dependencies(
+            "fit_historical", self.config, hist_member=self._hist_member
+        )
+        obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[
+            self.config.variable
+        ]  # [1] is StoreLocation
+
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
+        obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+
+        model_hist = get_historical_experiment(
+            gcm=self.config.gcm, member=self._hist_member, var=self.config.variable
+        )
+        model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
+
+        if self.config.subset_bounds:
+            lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
+            lat_bounds = (lat_min, lat_max)
+            lon_bounds = (lon_min, lon_max)
+            obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+            model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+
+        train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
+        obs_coarse = obs_coarse.sel(time=train_slice)
+        obs_fine = obs_fine.sel(time=train_slice)
+        model_hist = model_hist.sel(time=train_slice)
+
+        return obs_coarse, obs_fine, model_hist
+
+    def _apply_bias_correction(
+        self,
+        obs_coarse: xr.DataArray,
+        model_hist: xr.DataArray,
+    ) -> xr.DataArray:
+        """Apply quantile mapping to historical GCM data.
+
+        Uses nonparametric mapping for the nonparametric_hybrid case because modeled
+        historical is always within its own range, making the parametric tail unnecessary.
+        """
+        debias_approach = self.config.variable_config.debias_approach
+        mapping_type = (
+            "nonparametric"
+            if debias_approach in ["nonparametric_hybrid", "nonparametric_hybrid_2sided", "qdm"]
+            else debias_approach
+        )
+        # Quantile delta mapping widens the seasonal window it maps quantiles over to
+        # 91 days, stepped every 31 days, instead of the narrower window the other
+        # approaches use here. This keeps the historical fit consistent with the
+        # windowing quantile delta mapping applies to the scenario itself.
+        # Note: this means that _apply_bias_correction_scenario and _apply_bias_correction
+        # will not give the same answer for the QDM pathway. That is intentional: the
+        # 31-year running mean operating on the historical timeseries would mean that the
+        # CDFs were only ever full at the center of the historical period, and toward the
+        # beginning/end of the historical period the CDFs would only have ~15 years of data,
+        # breaking our clean ability to use non-parametric quantile mapping. Further, the
+        # "delta" part doesn't make sense for the historical and, given the rolling behavior,
+        # would instead introduce artifacts.
+        running_window_length = self.config.variable_config.running_window_length
+        running_window_step_length = self.config.variable_config.running_window_step_length
+        debiaser = _make_debiaser(
+            variable=self.config.variable,
+            mapping_type=mapping_type,
+            detrending="no_detrending",
+            running_window_mode=self.config.variable_config.do_windowing,
+            running_window_length=running_window_length,
+            running_window_step_length=running_window_step_length,
+            running_window_mode_over_years_of_cm_future=False,
+        )
+
+        obs_coarse = obs_coarse.as_numpy()
+        model_hist = model_hist.as_numpy()
+        nan_context = self._nan_check_context("fit_historical")
+        assert_no_nans(obs_coarse, name="obs", context=nan_context)
+        assert_no_nans(model_hist, name="cm_hist", context=nan_context)
+
+        obs_np = obs_coarse.values
+        cm_hist_np = model_hist.values
+
+        logger.debug("[_apply_bias_correction] %s", debiaser)
+        debiased_np = debiaser.apply(
+            obs=obs_np,
+            cm_hist=cm_hist_np,
+            cm_future=cm_hist_np,  # debias historical with itself
+            time_obs=obs_coarse["time"].values,
+            time_cm_hist=model_hist["time"].values,
+            time_cm_future=model_hist["time"].values,
+            parallel=True,
+            nr_processes=debiaser_processes(),
+            progressbar=False,
+            # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
+            # distribution fit that fails to converge. Inputs are asserted NaN-free
+            # above, so anything NaN in the result was produced here, and the output
+            # assertion below catches it (issue #517).
+            failsafe=True,
+        )
+        if self.config.variable in ["rsds"] and debias_approach == "qdm":
+            # for the rsds implementaiton of qdm, we control for days when rsds is
+            # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2 in the
+            # raw climate model. see the apply_bias_correction_scenario for the
+            # exact implementation. for consistency with that we add the same
+            # control to the historical as well.
+            debiased_np = np.where(
+                cm_hist_np < _RSDS_QDM_DARK_DAY_FLOOR_WM2, cm_hist_np, debiased_np
+            )
+        assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)
+
+        return xr.DataArray(
+            data=debiased_np,
+            coords={"lat": model_hist["lat"], "lon": model_hist["lon"], "time": model_hist["time"]},
+            dims=["time", "lat", "lon"],
+        )
+
+    def _apply_spatial_downscaling(
+        self,
+        debiased: xr.DataArray,
+        obs_coarse: xr.DataArray,
+        obs_fine: xr.DataArray,
+    ) -> xr.DataArray:
+        """Spatially disaggregate coarse debiased data to fine resolution."""
+
+        # We don't want negative values for any of the variables we are downscaling (tas, tasmin, tasmax, rsds, hurs, pr)
+
+        downscaled = downscale_from_coarse(
+            da=debiased,
+            obs_coarse=obs_coarse.as_numpy(),
+            obs_fine=obs_fine.as_numpy(),
+            method=self.config.variable_config.disaggregation_method,
+            clim_method=self.config.variable_config.disaggregation_clim_method,
+            allow_negative_values=False,
+            tiny_threshold=self.config.variable_config.disaggregation_tiny_threshold,
+            use_tiny_threshold=True,
+        )
+        return downscaled.chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
+
+    def fit_historical_tasmin(self, force: bool = False) -> str:
+        """
+        Stage 2: Downscale historical period for tasmin. This differs from normal fit_historical
+        because it loads debiased coarse tasmax and dtr to compute debiased coarse tasmin,
+        which is then spatially disaggregated to fine resolution.
+        """
+        loc = self.cache.historical_loc(self._hist_member)
+        coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
+        tasmax_fine_loc = self.cache.historical_loc(self._hist_member, variable="tasmax")
+
+        if not force and self.cache.exists(loc) and self.cache.exists(coarse_loc):
+            logger.info("✓ Using existing historical: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
+
+        # Validate inputs only when we are actually going to compute, so a cache hit
+        # is never blocked by a reaped upstream (issue #363). tasmin reads the
+        # debiased-coarse tasmax/dtr and the fine tasmax; fail fast if any is missing.
+        self.cache.validate_dependencies(
+            "fit_historical", self.config, hist_member=self._hist_member
+        )
+
+        logger.info(
+            "Computing historical downscaling for %s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+        )
+
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist = self._load_gcm_obs()
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        debiased_dtr_loc = self.cache.debiased_coarse_historical_loc(
+            self._hist_member, variable="dtr"
+        )
+        debiased_tasmax_loc = self.cache.debiased_coarse_historical_loc(
+            self._hist_member, variable="tasmax"
+        )
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
+        # Materialise the derived coarse tasmin eagerly (it is only ~3-6 GB). This mirrors what
+        # every other variable already does — _apply_bias_correction returns a numpy-backed
+        # array — so the spatial disaggregation below runs the bilinear interp eagerly and its
+        # .chunk(SHARD) is cheap slicing of concrete data. Left lazy, the interp is deferred
+        # into an all-to-all rechunk at the write that holds the whole ~56-129 GB fine array
+        # resident and stalls at global scale. See notebooks/issues/tasmin-disaggregation-inefficiency.
+        model_hist_debiased = derive_tasmin(debiased_tasmax, debiased_dtr).compute()
+        logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        model_hist_debiased.name = self.config.variable
+        # Chunk the now-concrete coarse field to the coarse shard grid so every dask chunk maps
+        # to exactly one shard for the write.
+        self._write_to_icechunk(
+            model_hist_debiased.chunk(
+                {"time": SHARD_TIME_COARSE, "lat": SHARD_LAT_COARSE, "lon": SHARD_LON_COARSE}
+            ),
+            coarse_loc,
+            encoding=make_coarse_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+        )
+        logger.info(
+            "✓ Saved debiased coarse historical: %s/%s (%.2fs)",
+            coarse_loc.store_path,
+            coarse_loc.group,
+            time.perf_counter() - t0,
+        )
+
+        t0 = time.perf_counter()
+        model_hist_downscaled = self._apply_spatial_downscaling(
+            model_hist_debiased, obs_coarse, obs_fine
+        )
+        model_hist_downscaled.name = self.config.variable
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        # Persist the raw (un-reconciled) tasmin FIRST, then reconcile store-to-store
+        # (tasmin_fine=None). This keeps the sibling fine tasmax and this fresh interp
+        # graph from being full-array-resident at the same time — the reconcile then
+        # re-reads both fields shard-aligned from clean sharded zarr (reconcile OOM).
+        t0 = time.perf_counter()
+        self._write_to_icechunk(
+            model_hist_downscaled,
+            loc,
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+            force=False,
+        )
+        logger.info(
+            "✓ Saved raw tasmin: %s/%s (%.2fs)", loc.store_path, loc.group, time.perf_counter() - t0
+        )
+
+        # Dedicated reconcile step: swap any tasmax < tasmin left by independent
+        # disaggregation and write both corrected fields (issue #331).
+        t0 = time.perf_counter()
+        self.reconcile_temperature_extremes(loc, tasmax_fine_loc, tasmin_fine=None, force=force)
+        logger.info(
+            "✓ Reconciled + saved historical: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
+
+        return loc.store_path
+
+    def fit_historical(self, force: bool = False) -> str:
+        """
+        Stage 2: Downscale historical period.
+
+        This stage performs the complete historical downscaling workflow:
+        - Load coarse obs (from cache) and historical GCM data
+        - Quantile map (debias) historical GCM to match obs distribution
+        - Spatially disaggregate to fine resolution
+
+        The result is cached and reused for all scenarios with this GCM/variable/ensemble.
+
+
+        Parameters
+        ----------
+        force : bool, optional
+            If ``False``, return the cached stage output when present.
+            If ``True``, recompute this stage and overwrite cached output.
+
+        Returns
+        -------
+        str
+            Path to the stage output artifact.
+
+        Raises
+        ------
+        ValueError
+            If obs_regridded dependency is missing
+
+        Notes
+        -----
+        The output (fully downscaled historical data) is written to the output store as
+        a deliverable for the historical period — the analog of the fine scenario output.
+        It is also used as a completion gate: ``transform_scenario`` checks that this
+        artifact exists before it will run, but does *not* load it as an input (scenario
+        runs re-load the raw GCM historical data for their own bias-correction training).
+        Setting ``force=True`` reruns all three computation steps and overwrites the
+        existing artifact; ``force=False`` skips all three and returns the existing path
+        immediately.
+
+        Variables in :data:`~saidownscale.cache.COARSE_ONLY_VARIABLES` stop after the
+        ``debiased_coarse`` write: they are never spatially disaggregated and never
+        published at fine resolution (issue #461), so that coarse group is both their
+        deliverable and the completion gate ``transform_scenario`` checks for them.
+
+        Dependency validation is always performed before checking this stage's
+        cache-hit short-circuit.
+        """
+        # tasmin is derived (tasmax - dtr) and reconciled against tasmax; route it to
+        # the dedicated method from here so every entry point — including the
+        # distributed batch_runner, which calls this method directly — gets the
+        # correct path (issues #363/#331).
+        if self.config.variable == "tasmin":
+            return self.fit_historical_tasmin(force=force)
+
+        self.cache.validate_dependencies("fit_historical", self.config)
+
+        loc = self.cache.historical_loc(self._hist_member)
+        coarse_loc = self.cache.debiased_coarse_historical_loc(self._hist_member)
+        # Coarse-only variables never write the fine artifact, so their coarse group is
+        # both the deliverable and the completion marker (issue #461).
+        coarse_only = self.config.variable in COARSE_ONLY_VARIABLES
+        final_loc = coarse_loc if coarse_only else loc
+        required = (coarse_loc,) if coarse_only else (loc, coarse_loc)
+
+        if not force and all(self.cache.exists(dep) for dep in required):
+            logger.info("✓ Using existing historical: %s/%s", final_loc.store_path, final_loc.group)
+            return final_loc.store_path
+
+        logger.info(
+            "Computing historical downscaling for %s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+        )
+
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist = self._load_gcm_obs()
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        model_hist_debiased = self._apply_bias_correction(obs_coarse, model_hist)
+        logger.info("Bias corrected historical (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        model_hist_debiased.name = self.config.variable
+        self._write_to_icechunk(
+            model_hist_debiased,
+            coarse_loc,
+            encoding=make_coarse_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+        )
+        logger.info(
+            "✓ Saved debiased coarse historical: %s/%s (%.2fs)",
+            coarse_loc.store_path,
+            coarse_loc.group,
+            time.perf_counter() - t0,
+        )
+
+        if coarse_only:
+            logger.info(
+                "Skipping fine-resolution historical for %s: bias corrected so tasmin can "
+                "be derived, not published (issue #461)",
+                self.config.variable,
+            )
+            return coarse_loc.store_path
+
+        t0 = time.perf_counter()
+        model_hist_downscaled = self._apply_spatial_downscaling(
+            model_hist_debiased, obs_coarse, obs_fine
+        )
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        model_hist_downscaled.name = self.config.variable
+        self._write_to_icechunk(
+            da=model_hist_downscaled,
+            loc=loc,
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+            force=force,
+        )
+        logger.info(
+            "✓ Saved historical: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
+
+        return loc.store_path
+
+    def _load_ssp245_bridge(self) -> xr.DataArray:
+        """Load the bridge timeseries spanning historical end to SAI scenario start.
+
+        The bridge is SSP245 for scenarios that branch straight off it. Scenarios that
+        continue an earlier SAI run (G6-1.5K-END, which resumes G6-1.5K 002 in 2085) need
+        the parent run's years appended on top, so SSP245 covers 2015 up to the parent's
+        start and the parent covers the rest. Both variable groups need that second
+        segment, for different reasons.
+
+        For the standard variables the SSP245 bridge (member 002) does run past 2085, so
+        an SSP245-only bridge would stitch cleanly and be silently wrong: 2035–2084 would
+        come from the no-SAI run rather than the SAI years the termination continues.
+        For tasmax/tasmin/dtr the bridge member is the truncated 007, which stops in 2069,
+        so an SSP245-only bridge fails outright when _assert_stitched_continuity hits the
+        2070–2084 hole.
+        """
+        bridge = self._load_ssp245_segment()
+        if self._sai_parent is None:
+            return bridge
+
+        parent_scenario, parent_member = self._sai_parent.scenario, self._sai_parent.member
+        parent = get_experiment(self.config.gcm, parent_scenario, self.config.variable)
+        parent = parent.sel(ensemble_member=parent_member)
+        parent = parent.drop_vars("spatial_ref", errors="ignore")
+
+        parent_start_year = int(parent.time.dt.year.min())
+        parent_years = (parent_start_year, int(parent.time.dt.year.max()))
+        ssp_head = bridge.sel(time=(bridge["time.year"] < parent_start_year))
+        if ssp_head.time.size == 0:
+            raise ValueError(
+                f"SSP245 bridge member {self._ssp245_member!r} has no data before "
+                f"{parent_start_year}, so the {self.config.train_period_end + 1}–"
+                f"{parent_start_year - 1} gap ahead of SAI parent "
+                f"{parent_scenario} {parent_member} cannot be filled."
+            )
+
+        logger.info(
+            "_load_ssp245_bridge: stitching SSP245 %s %d–%d + %s %s %d–%d",
+            self._ssp245_member,
+            int(ssp_head.time.dt.year.min()),
+            int(ssp_head.time.dt.year.max()),
+            parent_scenario,
+            parent_member,
+            *parent_years,
+        )
+
+        # Same scalar-coord dance as the ESGF stitch: the two segments carry different
+        # ensemble_member values (e.g. SSP245 '007' vs G6 '002'), which blocks concat.
+        combined = xr.concat(
+            [
+                ssp_head.drop_vars("ensemble_member", errors="ignore"),
+                parent.drop_vars("ensemble_member", errors="ignore"),
+            ],
+            dim="time",
+        )
+        combined = combined.assign_coords(ensemble_member=parent.coords["ensemble_member"])
+        combined.attrs.update(bridge.attrs)
+        combined.attrs.update(
+            {
+                "bridge_sai_parent_scenario": parent_scenario,
+                "bridge_sai_parent_member": parent_member,
+                "bridge_sai_parent_years": f"{parent_years[0]}-{parent_years[1]}",
+                "bridge_gcm": self.config.gcm,
+                "bridge_variable": self.config.variable,
+            }
+        )
+        return combined
+
+    def _load_ssp245_segment(self) -> xr.DataArray:
+        """Load the SSP245 portion of the bridge.
+
+        For most GCMs, returns the primary SSP245 dataset directly. A GCM whose primary
+        SSP245 run starts after the historical period ends leaves a gap at the front of
+        the scenario. When _ssp245_esgf_member is set, ESGF SSP245 data fills that gap
+        before the primary data begins. The primary is already in proleptic_gregorian;
+        the ESGF dataset is converted via to_proleptic_gregorian before concat.
+        """
+        primary = get_experiment(self.config.gcm, "SSP245", self.config.variable)
+        primary = primary.sel(ensemble_member=self._ssp245_member)
+
+        if self._ssp245_esgf_member is None:
+            return primary
+
+        primary_start_year = int(primary.time.dt.year.min())
+        if primary_start_year <= self.config.train_period_end + 1:
+            return primary
+
+        # Gap detected: prepend ESGF data for the missing years before the GeoMIP start.
+        # ESGF may use a different calendar — convert to proleptic_gregorian (primary's calendar).
+        from saidownscale.utils import to_proleptic_gregorian
+
+        esgf_ds = to_proleptic_gregorian(
+            _catalog.get(self.config.gcm).to_xarray(group="esgf_ssp245")
+        )
+        esgf_bridge = get_variable(esgf_ds, self.config.variable).sel(
+            ensemble_member=self._ssp245_esgf_member
+        )
+        esgf_gap = esgf_bridge.isel(time=(esgf_bridge.time.dt.year < primary_start_year).values)
+
+        if esgf_gap.time.size == 0:
+            logger.warning(
+                "_load_ssp245_segment: ESGF dataset for %s has no data before year %d; "
+                "returning primary GeoMIP dataset only — 2015–%d gap will remain",
+                self._ssp245_esgf_member,
+                primary_start_year,
+                primary_start_year - 1,
+            )
+            return primary
+
+        esgf_gap_years = (int(esgf_gap.time.dt.year.min()), int(esgf_gap.time.dt.year.max()))
+        primary_years = (primary_start_year, int(primary.time.dt.year.max()))
+        logger.info(
+            "_load_ssp245_segment: stitching ESGF %s %d–%d + GeoMIP %s %d–%d",
+            self._ssp245_esgf_member,
+            *esgf_gap_years,
+            self._ssp245_member,
+            *primary_years,
+        )
+
+        # Drop the scalar ensemble_member coord before concat — the two slices carry
+        # different values (r1i1p4f2 vs r01) and xr.concat refuses to merge mismatched
+        # scalar coords. Re-attach the primary member value so the bridge is transparent
+        # to any downstream code that reads ensemble_member.
+        esgf_clean = esgf_gap.drop_vars("ensemble_member", errors="ignore")
+        primary_clean = primary.drop_vars("ensemble_member", errors="ignore")
+        bridge = xr.concat([esgf_clean, primary_clean], dim="time")
+        bridge = bridge.assign_coords(ensemble_member=primary.coords["ensemble_member"])
+        bridge.attrs.update(
+            {
+                "bridge_type": "esgf_geomip_stitch",
+                "bridge_esgf_member": self._ssp245_esgf_member,
+                "bridge_esgf_years": f"{esgf_gap_years[0]}-{esgf_gap_years[1]}",
+                "bridge_geomip_member": self._ssp245_member,
+                "bridge_geomip_years": f"{primary_years[0]}-{primary_years[1]}",
+                "bridge_gcm": self.config.gcm,
+                "bridge_variable": self.config.variable,
+            }
+        )
+        return bridge
+
+    def _load_scenario_data(
+        self,
+    ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray | None]:
+        """Load obs_coarse, obs_fine, model_hist, model_scenario, and optionally ssp_timeseries.
+
+        Returns (obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries).
+        obs_coarse/obs_fine/model_hist are subsetted to the training period;
+        model_scenario to the predict period. ssp_timeseries is None for non-SAI scenarios.
+        """
+        deps = self.cache.check_dependencies(
+            "transform_scenario", self.config, hist_member=self._hist_member
+        )
+        obs_coarse = self._open_from_icechunk(deps["obs_regridded"][1])[
+            self.config.variable
+        ]  # [1] is StoreLocation
+
+        obs_fine = get_obs(var=self.config.variable, dataset_name=self.config.obs_dataset)
+        obs_fine = obs_fine.drop_vars("spatial_ref", errors="ignore")
+
+        model_hist = get_historical_experiment(
+            gcm=self.config.gcm, member=self._hist_member, var=self.config.variable
+        )
+        model_hist = model_hist.drop_vars("spatial_ref", errors="ignore")
+
+        model_scenario = get_experiment(
+            gcm=self.config.gcm, scenario=self.config.scenario, var=self.config.variable
+        )
+        model_scenario = model_scenario.sel(ensemble_member=self.config.ensemble_member)
+        model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
+
+        # Non-SAI scenarios whose primary dataset starts after predict_period_start need
+        # ESGF data prepended to close the gap.
+        if not self.config.is_sai_scenario and self._ssp245_esgf_member is not None:
+            scenario_start_year = int(model_scenario.time.dt.year.min())
+            if scenario_start_year > self.config.predict_period_start:
+                from saidownscale.utils import to_proleptic_gregorian
+
+                esgf_ds = to_proleptic_gregorian(
+                    _catalog.get(self.config.gcm).to_xarray(group="esgf_ssp245")
+                )
+                esgf_data = get_variable(esgf_ds, self.config.variable).sel(
+                    ensemble_member=self._ssp245_esgf_member
+                )
+                esgf_pre = esgf_data.isel(
+                    time=(
+                        (esgf_data.time.dt.year >= self.config.predict_period_start)
+                        & (esgf_data.time.dt.year < scenario_start_year)
+                    ).values
+                )
+                logger.info(
+                    "Non-SAI scenario starts at %d; prepending ESGF SSP245 %s for %d–%d",
+                    scenario_start_year,
+                    self._ssp245_esgf_member,
+                    int(esgf_pre.time.dt.year.min()),
+                    int(esgf_pre.time.dt.year.max()),
+                )
+                esgf_pre = esgf_pre.drop_vars("ensemble_member", errors="ignore")
+                scenario_clean = model_scenario.drop_vars("ensemble_member", errors="ignore")
+                model_scenario = xr.concat([esgf_pre, scenario_clean], dim="time")
+                model_scenario = model_scenario.assign_coords(
+                    ensemble_member=self.config.ensemble_member
+                )
+                model_scenario = model_scenario.drop_vars("spatial_ref", errors="ignore")
+
+        # SAI scenarios need an SSP245 bridge to fill the gap between historical and SAI start
+        ssp_timeseries: xr.DataArray | None = None
+        if self.config.is_sai_scenario:
+            ssp_timeseries = self._load_ssp245_bridge()
+            ssp_timeseries = ssp_timeseries.drop_vars("spatial_ref", errors="ignore")
+
+        if self.config.subset_bounds:
+            lat_min, lat_max, lon_min, lon_max = self.config.subset_bounds
+            lat_bounds = (lat_min, lat_max)
+            lon_bounds = (lon_min, lon_max)
+            obs_fine = subset_space(obs_fine, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+            model_hist = subset_space(model_hist, lat_bounds=lat_bounds, lon_bounds=lon_bounds)
+            model_scenario = subset_space(
+                model_scenario, lat_bounds=lat_bounds, lon_bounds=lon_bounds
+            )
+            if ssp_timeseries is not None:
+                ssp_timeseries = subset_space(
+                    ssp_timeseries, lat_bounds=lat_bounds, lon_bounds=lon_bounds
+                )
+
+        train_slice = slice(f"{self.config.train_period_start}", f"{self.config.train_period_end}")
+        obs_coarse = obs_coarse.sel(time=train_slice)
+        obs_fine = obs_fine.sel(time=train_slice)
+        # Slice to the training period, matching _load_gcm_obs. Slicing through
+        # predict_period_start - 1 instead only coincides with train_period_end when the
+        # prediction period starts the year after training ends, and otherwise widens the
+        # quantile-mapping reference pool beyond the configured window (issue #518).
+        model_hist = model_hist.sel(time=train_slice)
+        model_scenario = model_scenario.sel(
+            time=slice(f"{self.config.predict_period_start}", f"{self.config.predict_period_end}")
+        )
+
+        return obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries
+
+    def _detrend_scenario(
+        self,
+        model_hist: xr.DataArray,
+        model_scenario: xr.DataArray,
+        ssp_timeseries: xr.DataArray | None,
+    ) -> tuple[xr.DataArray, xr.DataArray | None]:
+        """Optionally detrend the scenario timeseries.
+
+        Returns (scenario_detrended, scenario_trend). When detrending is disabled,
+        returns (scenario, None) and scenario_trend will be None.
+
+        For SAI scenarios, stitches in bridge data to cover the gap between the end of
+        historical (2014/2015) and the SAI simulation start, which is ~2035 for G6-1.5K
+        and 2085 for the G6-1.5K-END termination run. The bridge is SSP245 alone for the
+        former and SSP245 followed by G6-1.5K for the latter; see ``_load_ssp245_bridge``.
+        This bridge is applied even when detrending is disabled, so that non-detrended
+        variables (dtr, pr, rsds, hurs) still span the full predict window rather than
+        starting at the SAI simulation year — otherwise ``tasmin = tasmax - dtr`` breaks
+        against the bridged (full-length) tasmax on the missing days (issue #363).
+        """
+        if not self.config.variable_config.detrend_data:
+            if self.config.is_sai_scenario:
+                # No detrending, but a SAI scenario still needs the SSP245 bridge so
+                # the debiased-coarse output spans predict_period_start..end (#363).
+                predict_slice = slice(
+                    f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
+                )
+                bridged = stitch_historical_scenario(
+                    model_hist=model_hist,
+                    model_scenario=model_scenario,
+                    train_period_end=self.config.train_period_end,
+                    predict_period_start=self.config.predict_period_start,
+                    ssp_timeseries=ssp_timeseries,
+                )
+                return bridged.sel(time=predict_slice), None
+            return model_scenario, None
+
+        if self.options.rechunk_workflow:
+            t0 = time.perf_counter()
+            model_hist = rechunk(model_hist, pattern="full_time").persist()
+            model_scenario = rechunk(model_scenario, pattern="full_time").persist()
+            if ssp_timeseries is not None:
+                ssp_timeseries = rechunk(ssp_timeseries, pattern="full_time").persist()
+            logger.info("Rechunked for detrending (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        historical_scenario = stitch_historical_scenario(
+            model_hist=model_hist,
+            model_scenario=model_scenario,
+            train_period_end=self.config.train_period_end,
+            predict_period_start=self.config.predict_period_start,
+            ssp_timeseries=ssp_timeseries if self.config.is_sai_scenario else None,
+        )
+
+        da_baseline_clim = calculate_baseline_climatology(
+            da_baseline=model_hist,
+            baseline_period_start=self.config.train_period_start,
+            baseline_period_end=self.config.train_period_end,
+        )
+
+        scenario_detrended, scenario_trend = detrend(
+            da=historical_scenario,
+            da_baseline_clim=da_baseline_clim,
+            detrend_method=self.config.variable_config.detrend_method,
+        )
+
+        predict_slice = slice(
+            f"{self.config.predict_period_start}", f"{self.config.predict_period_end}"
+        )
+        scenario_detrended = scenario_detrended.sel(time=predict_slice)
+        scenario_trend = scenario_trend.sel(time=predict_slice)
+        logger.info("Detrended scenario (%.2fs)", time.perf_counter() - t0)
+
+        if self.options.save_intermediate:
+            t0 = time.perf_counter()
+            detrended_loc = self.cache.detrended_scenario_loc()
+            scenario_detrended.name = self.config.variable
+            self._write_to_icechunk(
+                rechunk(scenario_detrended, pattern="full_space"),
+                detrended_loc,
+            )
+            logger.info(
+                "✓ Saved detrended scenario: %s/%s (%.2fs)",
+                detrended_loc.store_path,
+                detrended_loc.group,
+                time.perf_counter() - t0,
+            )
+
+            t0 = time.perf_counter()
+            trend_loc = self.cache.trend_scenario_loc()
+            scenario_trend.name = self.config.variable
+            scenario_trend.attrs = model_scenario.attrs
+            self._write_to_icechunk(
+                rechunk(scenario_trend, pattern="full_space"),
+                trend_loc,
+            )
+            logger.info(
+                "✓ Saved scenario trend: %s/%s (%.2fs)",
+                trend_loc.store_path,
+                trend_loc.group,
+                time.perf_counter() - t0,
+            )
+
+        return scenario_detrended, scenario_trend
+
+    def _apply_bias_correction_scenario(
+        self,
+        obs_coarse: xr.DataArray,
+        model_hist: xr.DataArray,
+        scenario_detrended: xr.DataArray,
+        model_scenario_for_qdm: xr.DataArray | None = None,
+        ssp_timeseries_for_qdm: xr.DataArray | None = None,
+    ) -> xr.DataArray:
+        """Apply quantile mapping to the (optionally detrended) scenario.
+
+        For nonparametric_hybrid: runs both parametric and nonparametric debiasers and
+        blends them — parametric where the scenario falls outside the historical range,
+        nonparametric everywhere else.
+
+        ``model_scenario_for_qdm`` and ``ssp_timeseries_for_qdm`` are the pre-detrend scenario data and
+        (for SAI scenarios) SSP245/parent bridge. They are required for the ``qdm``
+        branch, which uses them to rebuild the correctly-sourced lead-in context for its
+        padding — see the comment there — and unused otherwise.
+        """
+        debias_approach = self.config.variable_config.debias_approach
+        obs_coarse = obs_coarse.as_numpy()
+        model_hist = model_hist.as_numpy()
+        scenario_detrended = scenario_detrended.load()
+        nan_context = self._nan_check_context("transform_scenario")
+        assert_no_nans(obs_coarse, name="obs", context=nan_context)
+        assert_no_nans(model_hist, name="cm_hist", context=nan_context)
+        assert_no_nans(scenario_detrended, name="cm_future", context=nan_context)
+
+        obs_np = obs_coarse.values
+        cm_hist_np = model_hist.values
+        cm_future_np = scenario_detrended.values
+
+        common_kwargs = dict(
+            variable=self.config.variable,
+            detrending="no_detrending",
+            running_window_mode=self.config.variable_config.do_windowing,
+            running_window_length=self.config.variable_config.running_window_length,
+            running_window_step_length=1,
+            running_window_mode_over_years_of_cm_future=False,
+        )
+        apply_kwargs = dict(
+            obs=obs_np,
+            cm_hist=cm_hist_np,
+            cm_future=cm_future_np,
+            time_obs=obs_coarse["time"].values,
+            time_cm_hist=model_hist["time"].values,
+            time_cm_future=scenario_detrended["time"].values,
+            parallel=True,
+            nr_processes=debiaser_processes(),
+            progressbar=False,
+            # Fills NaN instead of raising when a cell cannot be debiased, e.g. a
+            # distribution fit that fails to converge. Inputs are asserted NaN-free
+            # above, so anything NaN in the result was produced here, and the output
+            # assertion below catches it (issue #517).
+            failsafe=True,
+        )
+
+        # No np.random.seed() here. It cannot make a run reproducible, because
+        # debiaser.apply() draws its random values inside multiprocessing workers that
+        # do not share this process's RNG state. Reproducibility comes from
+        # _SeededQuantileDeltaMapping, which seeds per location inside the worker.
+        if debias_approach in ["parametric", "nonparametric"]:
+            debiaser = _make_debiaser(mapping_type=debias_approach, **common_kwargs)
+            logger.debug("[_apply_bias_correction_scenario] %s", debiaser)
+            debiased_np = debiaser.apply(**apply_kwargs)
+
+        elif debias_approach == "nonparametric_hybrid":
+            parametric_debiaser = _make_debiaser(mapping_type="parametric", **common_kwargs)
+            logger.debug("[_apply_bias_correction_scenario] %s", parametric_debiaser)
+            parametric_np = parametric_debiaser.apply(**apply_kwargs)
+
+            nonparametric_debiaser = _make_debiaser(mapping_type="nonparametric", **common_kwargs)
+            logger.debug("[_apply_bias_correction_scenario] %s", nonparametric_debiaser)
+            nonparametric_np = nonparametric_debiaser.apply(**apply_kwargs)
+
+            out_of_range, _, _ = calculate_out_of_range_mask(
+                model_hist=model_hist,
+                scenario_detrended=scenario_detrended,
+                center_window=self.config.variable_config.running_window_length,
+            )
+            debiased_np = np.where(out_of_range.values, parametric_np, nonparametric_np)
+
+        elif debias_approach == "nonparametric_hybrid_2sided":
+            # Use one parametric debiaser for low out-of-range values, another for high, and nonparametric everywhere else
+
+            if self.config.variable in ["pr", "rsds", "hurs", "dtr"]:
+                # Use different parametric distributions for low vs. high tails
+                # the distributions here mimic those in the nex-gddp implementation
+                low_dist = _weibull_min_zero_bounded
+                high_dist = scipy.stats.gumbel_r
+
+                parametric_low_debiaser = _make_debiaser(
+                    distribution=low_dist, mapping_type="parametric", **common_kwargs
+                )
+                logger.debug("[_apply_bias_correction_scenario] %s", parametric_low_debiaser)
+                parametric_low_np = parametric_low_debiaser.apply(**apply_kwargs)
+
+                parametric_high_debiaser = _make_debiaser(
+                    distribution=high_dist, mapping_type="parametric", **common_kwargs
+                )
+                logger.debug("[_apply_bias_correction_scenario] %s", parametric_high_debiaser)
+                parametric_high_np = parametric_high_debiaser.apply(**apply_kwargs)
+            else:
+                # Unless explicitly specified, use the same parametric debiaser for both tails even if calling "nonparametric_hybrid_2sided"
+                parametric_low_debiaser = _make_debiaser(mapping_type="parametric", **common_kwargs)
+                logger.debug("[_apply_bias_correction_scenario] %s", parametric_low_debiaser)
+                parametric_low_np = parametric_low_debiaser.apply(**apply_kwargs)
+
+                parametric_high_np = parametric_low_np
+
+            nonparametric_debiaser = _make_debiaser(mapping_type="nonparametric", **common_kwargs)
+            logger.debug("[_apply_bias_correction_scenario] %s", nonparametric_debiaser)
+            nonparametric_np = nonparametric_debiaser.apply(**apply_kwargs)
+
+            _, out_of_range_low, out_of_range_high = calculate_out_of_range_mask(
+                model_hist=model_hist,
+                scenario_detrended=scenario_detrended,
+                center_window=self.config.variable_config.running_window_length,
+            )
+
+            debiased_np = np.where(out_of_range_low.values, parametric_low_np, nonparametric_np)
+            debiased_np = np.where(out_of_range_high.values, parametric_high_np, debiased_np)
+
+        elif debias_approach == "qdm":
+            # Both lead-in sources are optional in the signature because no other debias
+            # approach reads them, so the qdm branch checks them itself. Left unchecked, a
+            # missing model_scenario_for_qdm fails inside the stitch on a None it cannot
+            # explain, and a missing SAI bridge sends the stitch down its non-SAI path,
+            # which surfaces later as a pad-completeness error blaming the length of the
+            # input series rather than the absent bridge.
+            if model_scenario_for_qdm is None:
+                raise ValueError(
+                    "debias_approach='qdm' requires model_scenario_for_qdm, the "
+                    "pre-detrend scenario data used to build the lead-in pad for the "
+                    "moving window over years of cm_future."
+                )
+            if self.config.is_sai_scenario and ssp_timeseries_for_qdm is None:
+                raise ValueError(
+                    f"debias_approach='qdm' on SAI scenario {self.config.scenario!r} "
+                    "requires ssp_timeseries_for_qdm, the SSP245/parent bridge covering "
+                    "the years between train_period_end and the first scenario year. "
+                    "Without it the lead-in pad is built from the non-SAI stitch path."
+                )
+
+            # Quantile delta mapping maps quantile changes between the historical and
+            # future model runs directly onto observations, which is what keeps the
+            # projected trend without a separate detrend/retrend step.
+            #
+            # The seasonal (day-of-year) window comes from variable_config, exactly as it
+            # does for the historical fit in _apply_bias_correction, so the scenario
+            # mapping and the fit stay on the same window and editing QDMSD_CONFIG moves
+            # both. Only those three settings are passed: common_kwargs is deliberately
+            # not reused here because it pins running_window_step_length to 1 and turns
+            # running_window_mode_over_years_of_cm_future off, and quantile delta mapping
+            # depends on that years-window (pad_years below is derived from its length).
+            # Every years-window setting therefore stays at the ibicus default.
+            qdm_window_kwargs = dict(
+                running_window_mode=self.config.variable_config.do_windowing,
+                running_window_length=self.config.variable_config.running_window_length,
+                running_window_step_length=self.config.variable_config.running_window_step_length,
+            )
+            if self.config.variable == "pr":
+                debiaser = _SeededQuantileDeltaMapping.for_precipitation(**qdm_window_kwargs)
+            elif self.config.variable == "rsds":
+                # ibicus has no built-in QDM defaults for rsds: "standard" defaults
+                # only cover tas/pr, and "experimental" defaults cover
+                # hurs/psl/rlds/sfcwind/tasmin/tasmax -- rsds is missing from both,
+                # so .from_variable("rsds") raises ValueError. Built directly
+                # instead: nonparametric mapping with "relative" trend preservation,
+                # the most appropriate ibicus option that respects rsds's zero lower
+                # bound (it also mirrors the multiplicative disaggregation used for rsds).
+                # censor_values_to_zero guards against a 0/0 divide in polar-night
+                # windows, where obs/cm_hist/cm_future can all be genuinlely zero.
+                debiaser = _SeededQuantileDeltaMapping(
+                    variable="rsds",
+                    reasonable_physical_range=[0, 1000],
+                    distribution=None,
+                    mapping_type="nonparametric",
+                    trend_preservation="relative",
+                    censor_values_to_zero=False,
+                    **qdm_window_kwargs,
+                )
+            elif self.config.variable == "dtr":
+                debiaser = _SeededQuantileDeltaMapping(
+                    variable="dtr",
+                    reasonable_physical_range=[0, 100],
+                    distribution=None,
+                    mapping_type="nonparametric",
+                    trend_preservation="relative",
+                    censor_values_to_zero=True,
+                    censoring_threshold=0.01,
+                    **qdm_window_kwargs,
+                )
+            else:
+                debiaser = _SeededQuantileDeltaMapping.from_variable(
+                    self.config.variable, **qdm_window_kwargs
+                )
+
+            # Each future year's correction is estimated from a moving window over years
+            # of cm_future centered on that year (31 years by default, left at the ibicus
+            # default above), so the method needs 15 years of context immediately before
+            # the prediction period to fill
+            # that window. What precedes the prediction period depends on the
+            # scenario: plain historical for an SSP245 run, SSP245 for an SAI
+            # run whose predict_period_start lands inside the SSP245 bridge (e.g.
+            # G6-1.5K, predict_period_start=2035), or the parent SAI run for a
+            # termination run continuing it (e.g. G6-1.5K-END, predict_period_start
+            # =2085, padded with G6-1.5K). The padded years
+            # are then dropped from the result below, once they've served their
+            # purpose, leaving only the requested period.
+            pad_years = debiaser.running_window_over_years_of_cm_future_length // 2
+            stitched_for_pad = stitch_historical_scenario(
+                model_hist=model_hist,
+                model_scenario=model_scenario_for_qdm,
+                train_period_end=self.config.train_period_end,
+                predict_period_start=self.config.predict_period_start,
+                ssp_timeseries=ssp_timeseries_for_qdm if self.config.is_sai_scenario else None,
+            )
+            # Find the years you want to pad
+            pad_start_year = self.config.predict_period_start - pad_years
+            pad_end_year = self.config.predict_period_start - 1
+            scenario_pad = stitched_for_pad.sel(
+                time=slice(f"{pad_start_year}", f"{pad_end_year}")
+            ).as_numpy()
+            # A short pad is silent otherwise: .sel on a slice happily returns fewer years
+            # than asked for, the moving window is then under-filled for the first future
+            # years, and the trailing de-padding below still lines up, so the shortfall
+            # never reaches the output. Fail loudly instead, at the same year granularity
+            # _assert_stitched_continuity uses.
+            _assert_qdm_pad_complete(
+                scenario_pad,
+                stitched_for_pad,
+                pad_start_year=pad_start_year,
+                pad_end_year=pad_end_year,
+                predict_period_start=self.config.predict_period_start,
+            )
+            padded_future = xr.concat([scenario_pad, scenario_detrended], dim="time")
+
+            qdm_apply_kwargs = {
+                **apply_kwargs,
+                "cm_future": padded_future.values,
+                "time_cm_future": padded_future["time"].values,
+            }
+            logger.debug("[_apply_bias_correction_scenario] %s", debiaser)
+            debiased_padded_np = debiaser.apply(**qdm_apply_kwargs)
+            # remove the padding and take only the part of debiased_padded_np that is from the scenario you're running
+            debiased_np = debiased_padded_np[scenario_pad.sizes["time"] :]
+            if self.config.variable in ["dtr"]:
+                # zero out any near-zero/near-zero divide blow-up left over from censor_values_to_zero
+                debiased_np[cm_future_np < debiaser.censoring_threshold] = 0.0
+            elif self.config.variable in ["rsds"]:
+                # below the rsds value specified by _RSDS_QDM_DARK_DAY_FLOOR_WM2,
+                # rsds's scenario QDM debiaser (trend_preservation="relative")
+                # divides by a modeled-historical quantile that can be arbitrarily close to zero,
+                # producing an outlandish multiplicative blow-up. Instead, we cast any instances
+                # of the scenario below the _RSDS_QDM_DARK_DAY_FLOOR_WM2 threshold in the raw gcm scenario
+                # to fall back to the raw (undebiased) climate-model value, which is more
+                # physically constrained than a runaway ratio. Note: still need the asser no nans below
+                # because in polar regions nans could still slip through!!
+                debiased_np = np.where(
+                    cm_future_np < _RSDS_QDM_DARK_DAY_FLOOR_WM2, cm_future_np, debiased_np
+                )
+
+        else:
+            raise ValueError(
+                "debias_approach must be 'parametric', 'nonparametric', 'nonparametric_hybrid', "
+                "'nonparametric_hybrid_2sided', or 'qdm'."
+            )
+
+        assert_no_nans(debiased_np, name="debiased_coarse", context=nan_context)
+
+        if self.options.clip_values:
+            var = self.config.variable
+            if var in self.options.clip_bounds:
+                bounds = self.options.clip_bounds[var]
+                debiased_np = np.clip(debiased_np, a_min=bounds.min, a_max=bounds.max)
+
+        return xr.DataArray(
+            data=debiased_np,
+            coords={
+                "lat": scenario_detrended["lat"],
+                "lon": scenario_detrended["lon"],
+                "time": scenario_detrended["time"],
+            },
+            dims=["time", "lat", "lon"],
+        )
+
+    def transform_scenario_tasmin(self, force: bool = False) -> str:
+        """
+        This is a special version of transform_scenario for tasmin.
+        The spatial disaggregation approach is the same as for the normal transform_scenario,
+        but the bias correction step is different: it loads debiased coarse tasmax and dtr,
+        and then computes debiased coarse tasmin by subtracting debiased coarse dtr from debiased coarse tasmax.
+
+        """
+        if self.config.scenario is None:
+            raise ValueError("scenario must be specified in config for transform_scenario")
+
+        loc = self.cache.scenario_loc
+        coarse_loc = self.cache.debiased_coarse_scenario_loc()
+        tasmax_fine_loc = self.cache.scenario_output_loc(variable="tasmax")
+
+        if not force and self.cache.exists(loc) and self.cache.exists(coarse_loc):
+            logger.info("✓ Using cached scenario: %s/%s", loc.store_path, loc.group)
+            return loc.store_path
+
+        # Validate inputs only when we are actually going to compute, so a cache hit
+        # is never blocked by a reaped upstream (issue #363).
+        self.cache.validate_dependencies(
+            "transform_scenario", self.config, hist_member=self._hist_member
+        )
+
+        logger.info(
+            "Computing scenario downscaling for %s/%s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+            self.config.scenario,
+        )
+
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
+            self._load_scenario_data()
+        )
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        debiased_dtr_loc = self.cache.debiased_coarse_scenario_loc(variable="dtr")
+        debiased_tasmax_loc = self.cache.debiased_coarse_scenario_loc(variable="tasmax")
+        debiased_dtr = self._open_from_icechunk(debiased_dtr_loc)["dtr"]
+        debiased_tasmax = self._open_from_icechunk(debiased_tasmax_loc)["tasmax"]
+        # Materialise the derived coarse tasmin eagerly (it is only ~3-6 GB). This mirrors what
+        # every other variable already does — _apply_bias_correction returns a numpy-backed
+        # array — so the spatial disaggregation below runs the bilinear interp eagerly and its
+        # .chunk(SHARD) is cheap slicing of concrete data. Left lazy, the interp is deferred
+        # into an all-to-all rechunk at the write that holds the whole ~56-129 GB fine array
+        # resident and stalls at global scale. See notebooks/issues/tasmin-disaggregation-inefficiency.
+        scenario_debiased = derive_tasmin(debiased_tasmax, debiased_dtr).compute()
+        logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        scenario_debiased.name = self.config.variable
+        # Chunk the now-concrete coarse field to the coarse shard grid so every dask chunk maps
+        # to exactly one shard for the write.
+        self._write_to_icechunk(
+            scenario_debiased.chunk(
+                {"time": SHARD_TIME_COARSE, "lat": SHARD_LAT_COARSE, "lon": SHARD_LON_COARSE}
+            ),
+            coarse_loc,
+            encoding=make_coarse_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+        )
+        logger.info(
+            "✓ Saved debiased coarse scenario: %s/%s (%.2fs)",
+            coarse_loc.store_path,
+            coarse_loc.group,
+            time.perf_counter() - t0,
+        )
+
+        t0 = time.perf_counter()
+        scenario_downscaled = self._apply_spatial_downscaling(
+            scenario_debiased, obs_coarse, obs_fine
+        )
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        if self.options.apply_ocean_mask:
+            scenario_downscaled = scenario_downscaled.where(
+                self._build_ocean_mask(scenario_downscaled)
+            ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
+        scenario_downscaled.name = self.config.variable
+
+        # Persist the raw (un-reconciled) tasmin FIRST — after any ocean masking so both
+        # fine fields share aligned NaN cells — then reconcile store-to-store
+        # (tasmin_fine=None). Sequencing the writes keeps the sibling fine tasmax and
+        # this fresh interp graph off the heap simultaneously; the reconcile re-reads
+        # both fields shard-aligned from clean sharded zarr (reconcile OOM).
+        self._write_to_icechunk(
+            scenario_downscaled,
+            loc,
+            encoding=make_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+            force=False,
+        )
+        logger.info(
+            "✓ Saved raw tasmin: %s/%s (%.2fs)", loc.store_path, loc.group, time.perf_counter() - t0
+        )
+
+        # Dedicated reconcile step: swap any tasmax < tasmin left by independent
+        # disaggregation and write both corrected fields (issue #331).
+        t0 = time.perf_counter()
+        self.reconcile_temperature_extremes(loc, tasmax_fine_loc, tasmin_fine=None, force=force)
+        logger.info(
+            "✓ Reconciled + saved scenario output: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
+
+        return loc.store_path
+
+    def transform_scenario(self, force: bool = False) -> str:
+        """
+        Stage 3: Downscale future scenario.
+
+        This stage performs scenario downscaling by:
+        - Loading cached obs and historical artifacts
+        - Loading scenario GCM data (SSP or SAI)
+        - Optionally detrending scenario data
+        - Quantile mapping to remove biases
+        - Re-trending (if detrending was applied)
+        - Spatially disaggregating to fine resolution
+
+        Parameters
+        ----------
+        force : bool, optional
+            If ``False``, return the cached stage output when present.
+            If ``True``, recompute this stage and overwrite cached output.
+
+        Returns
+        -------
+        str
+            Path to the stage output artifact.
+
+        Raises
+        ------
+        ValueError
+            If obs_regridded or historical dependencies are missing,
+            or if scenario is not specified in config
+
+        Notes
+        -----
+        Dependency validation is always performed before checking this stage's
+        cache-hit short-circuit.
+
+        Variables in :data:`~saidownscale.cache.COARSE_ONLY_VARIABLES` stop after the
+        ``debiased_coarse`` write and are never spatially disaggregated (issue #461).
+        """
+        # tasmin is derived (tasmax - dtr) and reconciled against tasmax; route it to
+        # the dedicated method from here so every entry point — including the
+        # distributed batch_runner, which calls this method directly — gets the
+        # correct path (issues #363/#331).
+        if self.config.variable == "tasmin":
+            return self.transform_scenario_tasmin(force=force)
+
+        if self.config.scenario is None:
+            raise ValueError("scenario must be specified in config for transform_scenario")
+
+        self.cache.validate_dependencies(
+            "transform_scenario", self.config, hist_member=self._hist_member
+        )
+
+        loc = self.cache.scenario_loc
+        coarse_loc = self.cache.debiased_coarse_scenario_loc()
+        # Coarse-only variables never write the fine artifact (issue #461); see fit_historical.
+        coarse_only = self.config.variable in COARSE_ONLY_VARIABLES
+        final_loc = coarse_loc if coarse_only else loc
+        required = (coarse_loc,) if coarse_only else (loc, coarse_loc)
+
+        if not force and all(self.cache.exists(dep) for dep in required):
+            logger.info("✓ Using cached scenario: %s/%s", final_loc.store_path, final_loc.group)
+            return final_loc.store_path
+
+        logger.info(
+            "Computing scenario downscaling for %s/%s/%s/%s",
+            self.config.gcm,
+            self.config.variable,
+            self.config.ensemble_member,
+            self.config.scenario,
+        )
+
+        t0 = time.perf_counter()
+        obs_coarse, obs_fine, model_hist, model_scenario, ssp_timeseries = (
+            self._load_scenario_data()
+        )
+        logger.info("Loaded data (%.2fs)", time.perf_counter() - t0)
+
+        scenario_detrended, scenario_trend = self._detrend_scenario(
+            model_hist, model_scenario, ssp_timeseries
+        )
+
+        t0 = time.perf_counter()
+        scenario_debiased = self._apply_bias_correction_scenario(
+            obs_coarse, model_hist, scenario_detrended, model_scenario, ssp_timeseries
+        )
+        logger.info("Bias corrected scenario (%.2fs)", time.perf_counter() - t0)
+
+        if self.options.save_intermediate:
+            t0 = time.perf_counter()
+            debiased_loc = self.cache.debiased_scenario_loc()
+            scenario_debiased.name = self.config.variable
+            self._write_to_icechunk(scenario_debiased, debiased_loc)
+            logger.info(
+                "✓ Saved debiased scenario: %s/%s (%.2fs)",
+                debiased_loc.store_path,
+                debiased_loc.group,
+                time.perf_counter() - t0,
+            )
+
+        if scenario_trend is not None:
+            t0 = time.perf_counter()
+            scenario_debiased = retrend(
+                bias_corrected_detrended=scenario_debiased,
+                trend_on_daily_timestep=scenario_trend,
+                detrend_method=self.config.variable_config.detrend_method,
+            )
+            logger.info("Re-trended scenario (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        scenario_debiased.name = self.config.variable
+        self._write_to_icechunk(
+            scenario_debiased,
+            coarse_loc,
+            encoding=make_coarse_encoding(self.config.variable),
+            dataset_attrs=self._build_output_attrs(),
+        )
+        logger.info(
+            "✓ Saved debiased coarse scenario: %s/%s (%.2fs)",
+            coarse_loc.store_path,
+            coarse_loc.group,
+            time.perf_counter() - t0,
+        )
+
+        if coarse_only:
+            logger.info(
+                "Skipping fine-resolution scenario for %s: bias corrected so tasmin can "
+                "be derived, not published (issue #461)",
+                self.config.variable,
+            )
+            return coarse_loc.store_path
+
+        t0 = time.perf_counter()
+        scenario_downscaled = self._apply_spatial_downscaling(
+            scenario_debiased, obs_coarse, obs_fine
+        )
+        logger.info("Spatially disaggregated (%.2fs)", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        if self.options.apply_ocean_mask:
+            scenario_downscaled = scenario_downscaled.where(
+                self._build_ocean_mask(scenario_downscaled)
+            ).chunk({"time": SHARD_TIME, "lat": SHARD_LAT, "lon": SHARD_LON})
+        scenario_downscaled.name = self.config.variable
+        self._write_to_icechunk(
+            scenario_downscaled,
+            loc,
+            dataset_attrs=self._build_output_attrs(),
+            encoding=make_encoding(self.config.variable),
+            force=force,
+        )
+        logger.info(
+            "✓ Saved scenario output: %s/%s (%.2fs)",
+            loc.store_path,
+            loc.group,
+            time.perf_counter() - t0,
+        )
+
+        return loc.store_path
+
+    def run_full_pipeline(self, force: bool = False) -> str:
+        """
+        Run all three stages in sequence.
+
+        Convenience method that executes prepare_observations, fit_historical,
+        and transform_scenario in order.
+
+        Parameters
+        ----------
+        force : bool, optional
+            Passed through to each stage:
+            - ``False``: each stage may short-circuit on its own cache hit.
+            - ``True``: all stages recompute and overwrite their outputs.
+
+        Returns
+        -------
+        str
+            Path to final scenario stage output artifact.
+        """
+        self.prepare_observations(force=force)
+
+        # fit_historical / transform_scenario self-dispatch tasmin to their derived
+        # variants, so no variable-specific branching is needed here.
+        self.fit_historical(force=force)
+        # `transform_scenario` depends on fit_historical only as a completion gate
+        # (artifact existence); it does not read the historical output as data input.
+        return self.transform_scenario(force=force)

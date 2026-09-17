@@ -77,7 +77,7 @@ respectively.
 ## Listing available datasets
 
 ```{code-cell} python
-from srm import catalog
+from saidownscale import catalog
 
 catalog.list()
 ```
@@ -101,7 +101,7 @@ Calling `.to_xarray()` with no arguments returns the full `xr.DataTree`; passing
 returns a flat `xr.Dataset` for that node only.
 
 ```{code-cell} python
-from srm import catalog
+from saidownscale import catalog
 
 cesm2_waccm = catalog.get("CESM2-WACCM6").to_xarray()
 cesm2_waccm
@@ -174,5 +174,5 @@ dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_for
 dt
 ```
 
-See the [subsetting and exporting notebook](data-access-notebooks/subsetting-and-exporting.ipynb)
+See the [subsetting and exporting notebook](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb)
 for examples of loading spatial subsets and exporting to NetCDF.

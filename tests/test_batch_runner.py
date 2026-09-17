@@ -4,12 +4,12 @@ Unit tests for the batch_runner CLI entry point.
 Tests focus on:
 - CONFIG_JSON environment variable is read and parsed correctly
 - Missing or malformed CONFIG_JSON raises immediately
-- Stage argument routes to the correct BCSDPipeline method
+- Stage argument routes to the correct DownscalingPipeline method
 - Unknown stage names raise ValueError
 - The result path is printed and returned
 - The stage argument is passed correctly to the pipeline
 
-BCSDPipeline is always mocked so no real compute or S3 access is required.
+DownscalingPipeline is always mocked so no real compute or S3 access is required.
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from srm.batch_manifest import write_manifest
-from srm.batch_runner import _load_config_dict, run_stage
-from srm.bcsd_config import BCSDConfig
+from saidownscale.batch_manifest import write_manifest
+from saidownscale.batch_runner import _load_config_dict, run_stage
+from saidownscale.downscaling_config import DownscalingConfig
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -41,7 +41,7 @@ _MINIMAL_CONFIG = {
 
 @pytest.fixture
 def valid_config_json() -> str:
-    """JSON string for a minimal valid BCSDConfig."""
+    """JSON string for a minimal valid DownscalingConfig."""
     return json.dumps(_MINIMAL_CONFIG)
 
 
@@ -96,11 +96,11 @@ class TestConfigJsonReading:
             # Prevent real pipeline operations
             raise StopIteration("stop")
 
-        with patch("srm.batch_runner.BCSDPipeline.__init__", fake_init):
+        with patch("saidownscale.batch_runner.DownscalingPipeline.__init__", fake_init):
             with pytest.raises(StopIteration):
                 run_stage("prepare_observations")
 
-        assert isinstance(captured["config"], BCSDConfig)
+        assert isinstance(captured["config"], DownscalingConfig)
         assert captured["config"].gcm == "CESM2-WACCM6"
         assert captured["config"].variable == "tas"
         assert captured["config"].ensemble_member == "r1i1p1f1"
@@ -112,17 +112,17 @@ class TestConfigJsonReading:
 
 
 class TestStageRouting:
-    """Each stage name must call the corresponding BCSDPipeline method."""
+    """Each stage name must call the corresponding DownscalingPipeline method."""
 
     def _run_with_mock_pipeline(self, stage: str, valid_config_json: str) -> MagicMock:
-        """Helper that runs run_stage with a fully mocked BCSDPipeline."""
+        """Helper that runs run_stage with a fully mocked DownscalingPipeline."""
         os.environ["CONFIG_JSON"] = valid_config_json
         mock_pipeline = MagicMock()
         mock_pipeline.prepare_observations.return_value = f"{stage}_output_path"
         mock_pipeline.fit_historical.return_value = f"{stage}_output_path"
         mock_pipeline.transform_scenario.return_value = f"{stage}_output_path"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.DownscalingPipeline", return_value=mock_pipeline):
             run_stage(stage)
 
         return mock_pipeline
@@ -159,13 +159,13 @@ class TestStageRouting:
     def test_unknown_stage_raises(self, valid_config_json):
         os.environ["CONFIG_JSON"] = valid_config_json
         mock_pipeline = MagicMock()
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.DownscalingPipeline", return_value=mock_pipeline):
             with pytest.raises(ValueError, match="Unknown stage"):
                 run_stage("nonexistent_stage")
 
 
 # ---------------------------------------------------------------------------
-# BCSDPipeline construction
+# DownscalingPipeline construction
 # ---------------------------------------------------------------------------
 
 
@@ -175,14 +175,14 @@ class TestPipelineConstruction:
         mock_pipeline = MagicMock()
         mock_pipeline.prepare_observations.return_value = "obs_path"
 
-        with patch("srm.batch_runner.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.batch_runner.DownscalingPipeline") as MockPipeline:
             MockPipeline.return_value = mock_pipeline
             run_stage("prepare_observations")
             constructor_call = MockPipeline.call_args
 
-        # Should be called with a BCSDConfig instance as the only positional arg
+        # Should be called with a DownscalingConfig instance as the only positional arg
         config_arg = constructor_call.args[0]
-        assert isinstance(config_arg, BCSDConfig)
+        assert isinstance(config_arg, DownscalingConfig)
         assert config_arg.gcm == "CESM2-WACCM6"
 
     def test_pipeline_created_exactly_once(self, valid_config_json):
@@ -190,7 +190,9 @@ class TestPipelineConstruction:
         mock_pipeline = MagicMock()
         mock_pipeline.prepare_observations.return_value = "obs_path"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline) as MockPipeline:
+        with patch(
+            "saidownscale.batch_runner.DownscalingPipeline", return_value=mock_pipeline
+        ) as MockPipeline:
             run_stage("prepare_observations")
 
         MockPipeline.assert_called_once()
@@ -212,7 +214,7 @@ class TestReturnValue:
         mock_pipeline = MagicMock()
         mock_pipeline.prepare_observations.return_value = "s3://bucket/obs.icechunk"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.DownscalingPipeline", return_value=mock_pipeline):
             run_stage("prepare_observations")
 
         captured = capsys.readouterr()
@@ -223,7 +225,7 @@ class TestReturnValue:
         mock_pipeline = MagicMock()
         mock_pipeline.fit_historical.return_value = "s3://bucket/hist.icechunk"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.DownscalingPipeline", return_value=mock_pipeline):
             result = run_stage("fit_historical")
 
         assert result == "s3://bucket/hist.icechunk"
@@ -233,7 +235,7 @@ class TestReturnValue:
         mock_pipeline = MagicMock()
         mock_pipeline.transform_scenario.return_value = "s3://bucket/ssp245.icechunk"
 
-        with patch("srm.batch_runner.BCSDPipeline", return_value=mock_pipeline):
+        with patch("saidownscale.batch_runner.DownscalingPipeline", return_value=mock_pipeline):
             result = run_stage("transform_scenario")
 
         assert result == "s3://bucket/ssp245.icechunk"

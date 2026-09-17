@@ -7,7 +7,7 @@
 </a>
 </p>
 
-# SAI-Downscale
+# SAI Downscale
 
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 
@@ -49,9 +49,9 @@ print(dt)
 Each GCM is a separate store, and group layouts differ between them — see [Data access](https://carbonplan.github.io/srm-downscaling/access-data.html) for details.
 
 ## Documentation
-Project documentation: https://carbonplan.github.io/srm-downscaling/
+Project documentation: https://carbonplan.github.io/sai-downscaling/
 
-- [Data access](https://carbonplan.github.io/srm-downscaling/access-data.html) — how to list and open input datasets
+- [Data access](https://carbonplan.github.io/srm-downscaling/access-data/access-utilities.md)) — how to list and open input datasets
 - [CLI usage](https://carbonplan.github.io/srm-downscaling/reference/cli.html) — running the downscaling pipeline from the command line
 - [Scientific approach](https://carbonplan.github.io/srm-downscaling/explanation/scientific-approach.html) — BCSD downscaling approach
 - [Pipeline architecture](https://carbonplan.github.io/srm-downscaling/explanation/pipeline-architecture.html) — how the pipeline is structured
@@ -64,8 +64,8 @@ Project documentation: https://carbonplan.github.io/srm-downscaling/
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone https://github.com/carbonplan/srm-downscaling.git
-cd srm-downscaling
+git clone https://github.com/carbonplan/sai-downscaling.git
+cd sai-downscaling
 uv sync --all-groups
 ```
 

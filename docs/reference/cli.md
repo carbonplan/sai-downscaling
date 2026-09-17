@@ -1,17 +1,17 @@
 # CLI Reference
 
-This page is the exhaustive reference for all `bcsd` commands, their options, and usage examples.
+This page is the exhaustive reference for all `saidownscale` commands, their options, and usage examples.
 
-## `bcsd run` — Execute Pipeline from Config File (Recommended)
+## `saidownscale run` — Execute Pipeline from Config File (Recommended)
 
-Run the BCSD downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format): list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods` are expanded into one run per cartesian-product combination.
+Run the downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format): list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods` are expanded into one run per cartesian-product combination.
 
 :::{tip} Recommended for most workflows
-Config files are version-controlled and reproducible, and they are what the QA and production deploys consume. For quick ad-hoc runs from the command line without config files, use `bcsd run-matrix` instead.
+Config files are version-controlled and reproducible, and they are what the QA and production deploys consume. For quick ad-hoc runs from the command line without config files, use `saidownscale run-matrix` instead.
 :::
 
 ```bash
-uv run bcsd run --config-path PATH [OPTIONS]
+uv run saidownscale run --config-path PATH [OPTIONS]
 ```
 
 **Options:**
@@ -29,25 +29,25 @@ uv run bcsd run --config-path PATH [OPTIONS]
 
 ```bash
 # Run full pipeline for a single config
-uv run bcsd run --config-path configs/example.yaml
+uv run saidownscale run --config-path configs/example.yaml
 
 # Run only observation regridding stage locally
-uv run bcsd run --config-path configs/example.yaml --stage prepare_observations --executor local
+uv run saidownscale run --config-path configs/example.yaml --stage prepare_observations --executor local
 
 # Estimate what a run will cost without submitting anything
-uv run bcsd run --config-path configs/production/cesm2-waccm6/ --executor aws-batch --dry-run
+uv run saidownscale run --config-path configs/production/cesm2-waccm6/ --executor aws-batch --dry-run
 
 # Force recompute of historical stage (ignores cache)
-uv run bcsd run --config-path configs/example.yaml --stage fit_historical --force
+uv run saidownscale run --config-path configs/example.yaml --stage fit_historical --force
 
 # Override branch (write outputs to the v2 icechunk branch without editing config files)
-uv run bcsd run --config-path configs/example.yaml --branch v2
+uv run saidownscale run --config-path configs/example.yaml --branch v2
 
 # Override environment for production run
-BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_ENVIRONMENT=production uv run saidownscale run --config-path configs/example.yaml
 
 # Process all configs in a directory
-uv run bcsd run --config-path configs/cesm2-ensemble/
+uv run saidownscale run --config-path configs/cesm2-ensemble/
 ```
 
 **Stage details:**
@@ -59,12 +59,12 @@ uv run bcsd run --config-path configs/cesm2-ensemble/
 
 ---
 
-## `bcsd run-matrix` — Run Pipeline Over a Matrix
+## `saidownscale run-matrix` — Run Pipeline Over a Matrix
 
-> Specify each dimension as a repeatable option and the CLI runs every combination — no config files needed. This is convenient for quick, ad-hoc runs; for repeatable or reviewable runs, prefer `bcsd run` with a config file. The orchestrator automatically deduplicates shared work across stages.
+> Specify each dimension as a repeatable option and the CLI runs every combination — no config files needed. This is convenient for quick, ad-hoc runs; for repeatable or reviewable runs, prefer `saidownscale run` with a config file. The orchestrator automatically deduplicates shared work across stages.
 
 ```bash
-uv run bcsd run-matrix [OPTIONS]
+uv run saidownscale run-matrix [OPTIONS]
 ```
 
 **Options:**
@@ -110,7 +110,7 @@ uv run bcsd run-matrix [OPTIONS]
 
 ```bash
 # 2 GCMs x 2 variables x 3 members x 2 scenarios
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 --gcm UKESM1-1-LL \
   --variable tas --variable pr \
@@ -121,13 +121,13 @@ uv run bcsd run-matrix \
   --output-dir "s3://carbonplan-srm/scratch/output/"
 
 # Compare both downscaling methods on identical inputs
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --gcm CESM2-WACCM6 --variable pr --member 003 --scenario SSP245 \
   --downscaling-method BCSD --downscaling-method QDMSD \
   --predict-period-start 2015 --predict-period-end 2099
 
 # Give one variable a different bias-correction approach
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 \
   --variable tasmax --variable dtr \
@@ -136,7 +136,7 @@ uv run bcsd run-matrix \
   --variable-override dtr:debias_approach=nonparametric
 
 # Preview what would run without executing
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 --gcm UKESM1-1-LL \
   --variable tas \
@@ -146,14 +146,14 @@ uv run bcsd run-matrix \
   --dry-run
 
 # Historical-only (omit --scenario)
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 \
   --variable tas --variable pr \
   --member r1i1p1f1 --member r2i1p1f1 --member r3i1p1f1
 
 # Regional subset
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 \
   --variable tas \
@@ -163,14 +163,14 @@ uv run bcsd run-matrix \
   --subset-bounds '-35,-22,16,33'
 
 # Run only a specific stage
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
   --stage scenario
 
 # Force recompute of all runs
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
@@ -209,12 +209,12 @@ stage 3 (transform_scenario):
 
 ---
 
-## `bcsd validate` — Validate Input Datasets
+## `saidownscale validate` — Validate Input Datasets
 
 Validate input datasets against the validation matrix before running the pipeline. Exits with code 1 if any blocking check fails.
 
 ```bash
-uv run bcsd validate [OPTIONS]
+uv run saidownscale validate [OPTIONS]
 ```
 
 **Options:**
@@ -231,26 +231,26 @@ uv run bcsd validate [OPTIONS]
 
 ```bash
 # Validate only the datasets referenced by a config directory (recommended)
-uv run bcsd validate --config-path configs/qa/
-uv run bcsd validate --config-path configs/production/
+uv run saidownscale validate --config-path configs/qa/
+uv run saidownscale validate --config-path configs/production/
 
 # Validate a specific GCM/scenario combination
-uv run bcsd validate --gcm CESM2-WACCM6 --scenario SSP245
+uv run saidownscale validate --gcm CESM2-WACCM6 --scenario SSP245
 
 # Validate all known datasets locally (no Coiled cluster)
-uv run bcsd validate --no-coiled
+uv run saidownscale validate --no-coiled
 ```
 
-When `--config-path` is given, `bcsd validate` extracts the unique GCMs and scenarios from those configs and validates only those combinations. This matches exactly what `bcsd run` will consume.
+When `--config-path` is given, `saidownscale validate` extracts the unique GCMs and scenarios from those configs and validates only those combinations. This matches exactly what `saidownscale run` will consume.
 
 ---
 
-## `bcsd validate-output` — Validate Output Stores
+## `saidownscale validate-output` — Validate Output Stores
 
 Validate downscaled **output** datatree store(s), one leaf (scenario / variable / member) at a time, and render a table per store. Exits with code 1 if any blocking check fails in any store. A store with no populated leaves is itself a blocking failure, whether or not `--scenario` or `--variable` narrowed the read, since an empty result means the run wrote nothing or the wrong branch was read. When `$GITHUB_STEP_SUMMARY` is set, a markdown report is appended there in addition to the console tables.
 
 ```bash
-uv run bcsd validate-output [STORE_URIS...] [OPTIONS]
+uv run saidownscale validate-output [STORE_URIS...] [OPTIONS]
 ```
 
 Exactly one of positional `STORE_URIS` **or** `--config-path` is required.
@@ -275,23 +275,23 @@ Exactly one of positional `STORE_URIS` **or** `--config-path` is required.
 
 ```bash
 # Validate explicit output store(s)
-uv run bcsd validate-output s3://carbonplan-srm/scratch/output/qa/main/... --no-coiled
+uv run saidownscale validate-output s3://carbonplan-srm/scratch/output/qa/main/... --no-coiled
 
-# Derive the store URIs from the same configs `bcsd run` consumes
-uv run bcsd validate-output --config-path configs/qa/
+# Derive the store URIs from the same configs `saidownscale run` consumes
+uv run saidownscale validate-output --config-path configs/qa/
 
 # Validate only a specific scenario/variable subtree
-uv run bcsd validate-output --config-path configs/qa/ --scenario SSP245 --variable tas
+uv run saidownscale validate-output --config-path configs/qa/ --scenario SSP245 --variable tas
 ```
 
 ---
 
-## `bcsd resolve-branch` — Print the Branch a Config Resolves To
+## `saidownscale resolve-branch` — Print the Branch a Config Resolves To
 
 Print the icechunk branch a config set writes to, and nothing else, so a caller can pass it on as `--branch`.
 
 ```bash
-uv run bcsd resolve-branch --config-path configs/qa/cesm2-waccm6/
+uv run saidownscale resolve-branch --config-path configs/qa/cesm2-waccm6/
 ```
 
 `PipelineOptions.branch` defaults to the installed package version, so the value depends on which interpreter asks. That is harmless while one process both writes and reads. It stops being harmless once they are split: the deploy workflow runs the pipeline from the runner and `validate-output` inside a container whose package version was baked at image build time. Resolving the branch once on the runner and passing it explicitly leaves a single derivation instead of two that merely tend to agree.
@@ -300,12 +300,12 @@ uv run bcsd resolve-branch --config-path configs/qa/cesm2-waccm6/
 
 - `--config-path`, `-c` TEXT: path to a YAML config or a directory of configs (required)
 
-## `bcsd status` — Check Cache Status
+## `saidownscale status` — Check Cache Status
 
 Check which artifacts are cached and view pipeline progress.
 
 ```bash
-uv run bcsd status --config-path PATH [--verbose]
+uv run saidownscale status --config-path PATH [--verbose]
 ```
 
 **Options:**
@@ -317,7 +317,7 @@ uv run bcsd status --config-path PATH [--verbose]
 **Example:**
 
 ```bash
-uv run bcsd status --config-path configs/example.yaml --verbose
+uv run saidownscale status --config-path configs/example.yaml --verbose
 
 # Output:
 # Cache Configuration:
@@ -346,12 +346,12 @@ uv run bcsd status --config-path configs/example.yaml --verbose
 
 ---
 
-## `bcsd cache-list` — List Cached Artifacts
+## `saidownscale cache-list` — List Cached Artifacts
 
 List all cached artifacts with optional filtering.
 
 ```bash
-uv run bcsd cache-list --config-path PATH [OPTIONS]
+uv run saidownscale cache-list --config-path PATH [OPTIONS]
 ```
 
 **Options:**
@@ -365,23 +365,23 @@ uv run bcsd cache-list --config-path PATH [OPTIONS]
 
 ```bash
 # List all cached artifacts from config's scratch_dir
-uv run bcsd cache-list --config-path configs/example.yaml
+uv run saidownscale cache-list --config-path configs/example.yaml
 
 # List only observation artifacts
-uv run bcsd cache-list --config-path configs/example.yaml --stage obs
+uv run saidownscale cache-list --config-path configs/example.yaml --stage obs
 
 # List specific GCM/variable combination
-uv run bcsd cache-list --config-path configs/example.yaml --gcm CESM2-WACCM6 --variable tas
+uv run saidownscale cache-list --config-path configs/example.yaml --gcm CESM2-WACCM6 --variable tas
 ```
 
 ---
 
-## `bcsd cache-clear` — Clear Cache
+## `saidownscale cache-clear` — Clear Cache
 
 Delete cached artifacts with optional filtering.
 
 ```bash
-uv run bcsd cache-clear --config-path PATH [OPTIONS]
+uv run saidownscale cache-clear --config-path PATH [OPTIONS]
 ```
 
 **Options:**
@@ -396,13 +396,13 @@ uv run bcsd cache-clear --config-path PATH [OPTIONS]
 
 ```bash
 # Clear all cache (with confirmation)
-uv run bcsd cache-clear --config-path configs/example.yaml
+uv run saidownscale cache-clear --config-path configs/example.yaml
 
 # Clear specific stage without confirmation
-uv run bcsd cache-clear --config-path configs/example.yaml --stage scenarios --yes
+uv run saidownscale cache-clear --config-path configs/example.yaml --stage scenarios --yes
 
 # Clear specific GCM
-uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM6 --yes
+uv run saidownscale cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM6 --yes
 ```
 
 :::{admonition} Environment-scoped clearing

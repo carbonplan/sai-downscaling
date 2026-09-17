@@ -4,8 +4,8 @@ import obstore as obs
 import pytest
 from obstore.store import from_url
 
-from srm.input_data import cesm2_waccm, ukesm
-from srm.input_data.etl_utils import RAW_ROOT, get_aws_creds, raw_netcdf_prefix
+from saidownscale.input_data import cesm2_waccm, ukesm
+from saidownscale.input_data.etl_utils import RAW_ROOT, get_aws_creds, raw_netcdf_prefix
 
 
 class TestRawNetcdfPrefix:

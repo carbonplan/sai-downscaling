@@ -2,7 +2,7 @@
 
 ## License Agreement
 
-SRM Downscaling data are made available under the licenses listed on the [Access data](access-data.md) page. By accessing the data, you agree to adhere to the license terms.
+SRM Downscaling data are made available under the licenses listed on the [Access terms](access-data/access-terms.md) page. By accessing the data, you agree to adhere to the license terms.
 
 ## Our Terms of Use Apply To SRM Downscaling
 

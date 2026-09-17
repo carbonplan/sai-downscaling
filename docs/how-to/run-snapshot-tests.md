@@ -1,6 +1,6 @@
 # How to Compare a Run Against the Snapshot
 
-This guide shows you how to check a candidate BCSD run against the snapshot baseline before merging modeling changes. It is the concrete, per-pull-request procedure; for the background on why the snapshot exists and how the comparison works, see [Snapshot Regression Testing](../explanation/snapshot-testing.md). The whole check runs through the [snapshot comparison notebook](./snapshot-comparison.ipynb), which calls `srm.snapshot.compare_runs` under the hood, so you never write bespoke comparison code yourself.
+This guide shows you how to check a candidate downscaling run against the snapshot baseline before merging modeling changes. It is the concrete, per-pull-request procedure; for the background on why the snapshot exists and how the comparison works, see [Snapshot Regression Testing](../explanation/snapshot-testing.md). The whole check runs through the [snapshot comparison notebook](./snapshot-comparison.ipynb), which calls `saidownscale.snapshot.compare_runs` under the hood, so you never write bespoke comparison code yourself.
 
 Every command below runs through `uv`, and the produce step needs access to S3 and Coiled. The comparison notebook needs read access to the two output stores it opens.
 
@@ -9,13 +9,13 @@ Every command below runs through `uv`, and the produce step needs access to S3 a
 The comparison reads existing output stores; it does not produce them. Run the South Africa snapshot configs first, which write the `qa` output for the G6-1.5K and SSP245 legs over the small South Africa subset, so the check is cheap to produce and cheap to diff. These configs run over a domain with a ~3° **halo** around the region of interest, because BCSD's regridding and spatial disaggregation have edge effects at a truncated domain boundary; the comparison trims that halo away (Step 2). The baseline shares the halo, so trimming is a carry-over from the global-baseline era and only narrows coverage; see issue #592 review notes.
 
 ```bash
-uv run bcsd run --config-path configs/snapshot/cesm2-waccm6/ \
-  --executor "$(uv run python -c 'from srm.snapshot.baselines import CESM2_WACCM_SOUTH_AFRICA as b; print(b.executor)')"
+uv run saidownscale run --config-path configs/snapshot/cesm2-waccm6/ \
+  --executor "$(uv run python -c 'from saidownscale.snapshot.baselines import CESM2_WACCM_SOUTH_AFRICA as b; print(b.executor)')"
 ```
 
 **Match the baseline's executor.** `PipelineOptions.executor` defaults to `coiled`, and the snapshot configs do not override it, so running without the flag produces a Coiled candidate whatever the baseline is. That matters: the executor is visible in the answers. A Coiled run and an AWS Batch run of identical code differ on `dtr`, `pr` and derived `tasmin` by up to 0.00003 K, the smallest gap the stored format can represent at that temperature. Under the default exact-equality verdict those 22 leaves fail on their own, with no code change involved, and a gate that fails for a reason unrelated to your work is one people learn to skim past. `baselines.py` records the executor for each baseline so you can read it rather than guess; the command above reads it directly.
 
-The run finishes quickly because the subset is small. Add `--executor local` only if you have local source-data access and enough memory, and expect the same class of difference against either remote baseline. The run writes to the icechunk branch `bcsd run` uses — the installed package version by default, or `BCSD_BRANCH` if you set it — which Step 2 needs as `candidate_branch`.
+The run finishes quickly because the subset is small. Add `--executor local` only if you have local source-data access and enough memory, and expect the same class of difference against either remote baseline. The run writes to the icechunk branch `saidownscale run` uses — the installed package version by default, or `SAIDOWNSCALE_BRANCH` if you set it — which Step 2 needs as `candidate_branch`.
 
 ## Step 2 — Run the comparison notebook
 
@@ -43,16 +43,16 @@ Both baselines are rebuilt at release time. Publishing a GitHub release triggers
 | `snapshot` | the regional baseline over `configs/snapshot/cesm2-waccm6/`, then freezes it as icechunk tag `snapshot-<release tag>` | `CESM2_WACCM_SOUTH_AFRICA` |
 | `production` | the global run | `CESM2_WACCM_GLOBAL` |
 
-The one manual step is repointing `src/srm/snapshot/baselines.py` at the new release. The `snapshot` job prints both fields in its workflow summary, the store URI as well as the branch. Paste the whole block: a release can move the URI too, and a pointer with a new branch on an old store resolves to a branch that does not exist. Do this in the release pull request, otherwise every subsequent comparison diffs against the previous release and inherits its already-approved changes as failures.
+The one manual step is repointing `src/saidownscale/snapshot/baselines.py` at the new release. The `snapshot` job prints both fields in its workflow summary, the store URI as well as the branch. Paste the whole block: a release can move the URI too, and a pointer with a new branch on an old store resolves to a branch that does not exist. Do this in the release pull request, otherwise every subsequent comparison diffs against the previous release and inherits its already-approved changes as failures.
 
 To rebuild a baseline outside a release, run the same two commands the job runs:
 
 ```bash
-uv run bcsd run --config-path configs/snapshot/cesm2-waccm6/
-uv run bcsd release --config-path configs/snapshot/cesm2-waccm6/ --tag snapshot-<name>
+uv run saidownscale run --config-path configs/snapshot/cesm2-waccm6/
+uv run saidownscale release --config-path configs/snapshot/cesm2-waccm6/ --tag snapshot-<name>
 ```
 
-`bcsd release` creates an icechunk tag. A branch stays writable, so without the tag a later `bcsd run` carrying a matching `BCSD_BRANCH` can overwrite the baseline in place, and the next comparison would then diff a candidate against itself and report a clean pass.
+`saidownscale release` creates an icechunk tag. A branch stays writable, so without the tag a later `saidownscale run` carrying a matching `SAIDOWNSCALE_BRANCH` can overwrite the baseline in place, and the next comparison would then diff a candidate against itself and report a clean pass.
 
 ## Step 5 — Satisfy CI
 

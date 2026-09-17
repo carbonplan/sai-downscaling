@@ -127,11 +127,11 @@ jobs:
                     exit 1
                   fi
 
-                  # The stage form, as BCSDOrchestrator._submit_batch_job sends it.
-                  docker run --rm "$IMAGE" python -m srm.batch_runner --help >/dev/null
+                  # The stage form, as DownscalingOrchestrator._submit_batch_job sends it.
+                  docker run --rm "$IMAGE" python -m saidownscale.batch_runner --help >/dev/null
 
                   # The validate form, as the deploy workflow's batch-run action sends it.
-                  docker run --rm "$IMAGE" bcsd validate-output --help >/dev/null
+                  docker run --rm "$IMAGE" saidownscale validate-output --help >/dev/null
 
                   # Both validate steps pass --config-path, so the configs have to be aboard.
                   docker run --rm --entrypoint sh "$IMAGE" -c 'test -d configs/qa && test -d configs/production && test -d configs/snapshot'

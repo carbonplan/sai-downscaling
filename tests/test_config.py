@@ -1,6 +1,6 @@
-"""Tests for srm.config module."""
+"""Tests for saidownscale.config module."""
 
-from srm.config import SCENARIO_TO_GROUP
+from saidownscale.config import SCENARIO_TO_GROUP
 
 
 def test_scenario_to_group_values():
