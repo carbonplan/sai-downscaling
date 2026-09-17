@@ -11,17 +11,17 @@
 
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 
-This repository implements a scalable, cloud-native pipeline for downscaling SAI climate model outputs. It uses the [BCSD](docs/explanation/scientific-approach.md) (Bias-Correction and Spatial-Disaggregation) and QDMSD (Quantile Delta Mapping - Spatial Disaggregation) methods to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K scenarios, plus the CESM G6-1.5K termination-shock run, using daily ERA5 observation data.
+This repository implements a scalable, cloud-native pipeline for downscaling SAI climate model outputs. It uses the BCSD (Bias-Correction and Spatial-Disaggregation) and QDMSD (Quantile Delta Mapping - Spatial Disaggregation) methods to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K scenarios, plus the CESM G6-1.5K termination-shock run, using daily ERA5 observation data.
 
 > [!NOTE]
 > This repository reflects the code and infrastructure used for this specific project. It is not maintained as a general-purpose, plug-and-play downscaling tool. Treat it as a reference — a place to borrow patterns, adapt components, or learn from rather than something to run as-is.
 
 ## Data access
-Pipeline data inputs and outputs are stored on [Source-Coop](https://source.coop/carbonplan/srm-downscaling) in a public AWS `us-west-2` bucket. The data is in the [Icechunk](https://icechunk.io/en/stable/) format, which can be read by tools like [zarr-python](https://icechunk.io/en/stable/getting-started/howto/#reading-writing-and-modifying-data-with-zarr), [Xarray](https://icechunk.io/en/stable/getting-started/howto/#reading-and-writing-data-with-xarray), and others. See [Data access](https://carbonplan.github.io/srm-downscaling/access-data.html) for opening single groups, subsetting, and more.
+Pipeline data inputs and outputs are stored on [Source-Coop](https://source.coop/carbonplan/srm-downscaling) in a public AWS `us-west-2` bucket. The data is in the [Icechunk](https://icechunk.io/en/stable/) format, which can be read by tools like [zarr-python](https://icechunk.io/en/stable/getting-started/howto/#reading-writing-and-modifying-data-with-zarr), [Xarray](https://icechunk.io/en/stable/getting-started/howto/#reading-and-writing-data-with-xarray), and others. See [Data access](https://carbonplan.github.io/sai-downscaling/access-data/whats-available.html) for opening single groups, subsetting, and more.
 
 ### Example
 
-Open a single group directly — this is faster than traversing the entire Datatree.
+Open a single group directly — this is faster than traversing the entire `DataTree`.
 
 ```python
 import icechunk
@@ -46,15 +46,15 @@ dt = xr.open_datatree(session.store, engine="zarr")
 print(dt)
 ```
 
-Each GCM is a separate store, and group layouts differ between them — see [Data access](https://carbonplan.github.io/srm-downscaling/access-data.html) for details.
+Each GCM is a separate store, and group layouts differ between them — see [Data access](https://carbonplan.github.io/sai-downscaling/access-data/whats-available.html) for details.
 
 ## Documentation
 Project documentation: https://carbonplan.github.io/sai-downscaling/
 
-- [Data access](https://carbonplan.github.io/srm-downscaling/access-data/access-utilities.md)) — how to list and open input datasets
-- [CLI usage](https://carbonplan.github.io/srm-downscaling/reference/cli.html) — running the downscaling pipeline from the command line
-- [Scientific approach](https://carbonplan.github.io/srm-downscaling/explanation/scientific-approach.html) — BCSD downscaling approach
-- [Pipeline architecture](https://carbonplan.github.io/srm-downscaling/explanation/pipeline-architecture.html) — how the pipeline is structured
+- [Data access](https://carbonplan.github.io/sai-downscaling/access-data/access-utilities.md) — how to list and open input datasets
+- [CLI usage](https://carbonplan.github.io/sai-downscaling/reference/cli.html) — running the downscaling pipeline from the command line
+- [Scientific approach](https://carbonplan.github.io/sai-downscaling/methods/scientific-approach.html) — BCSD and QDMSD downscaling approaches
+- [Pipeline architecture](https://carbonplan.github.io/sai-downscaling/methods/pipeline-architecture.html) — how the pipeline is structured
 
 ## Installation
 
@@ -75,4 +75,4 @@ MIT — see the LICENSE file for details.
 
 ## About Us
 
-CarbonPlan is a nonprofit organization that uses data and science for climate action. We aim to improve the transparency and scientific integrity of climate solutions through open data and tools. Find out more at [carbonplan.org](https://carbonplan.org/) or get in touch by [opening an issue](https://github.com/carbonplan/srm-downscaling/issues/new) or [sending us an email](mailto:hello@carbonplan.org).
+CarbonPlan is a nonprofit organization that uses data and science for climate action. We aim to improve the transparency and scientific integrity of climate solutions through open data and tools. Find out more at [carbonplan.org](https://carbonplan.org/) or get in touch by [opening an issue](https://github.com/carbonplan/sai-downscaling/issues/new) or [sending us an email](mailto:hello@carbonplan.org).
