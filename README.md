@@ -52,9 +52,7 @@ Each GCM is a separate store, and group layouts differ between them — see [Dat
 Project documentation: https://carbonplan.github.io/sai-downscaling/
 
 - [Data access](https://carbonplan.github.io/sai-downscaling/access-data/access-utilities.md) — how to list and open input datasets
-- [CLI usage](https://carbonplan.github.io/sai-downscaling/reference/cli.html) — running the downscaling pipeline from the command line
 - [Scientific approach](https://carbonplan.github.io/sai-downscaling/methods/scientific-approach.html) — BCSD and QDMSD downscaling approaches
-- [Pipeline architecture](https://carbonplan.github.io/sai-downscaling/methods/pipeline-architecture.html) — how the pipeline is structured
 
 ## Installation
 
