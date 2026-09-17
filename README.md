@@ -13,7 +13,8 @@
 
 This repository implements a scalable, cloud-native pipeline for downscaling SAI climate model outputs. It uses the [BCSD](docs/explanation/scientific-approach.md) (Bias-Correction and Spatial-Disaggregation) and QDMSD (Quantile Delta Mapping - Spatial Disaggregation) methods to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K scenarios, plus the CESM G6-1.5K termination-shock run, using daily ERA5 observation data.
 
-> **Note:** This repository reflects the code and infrastructure used for this specific project. It is not maintained as a general-purpose, plug-and-play downscaling tool. Treat it as a reference — a place to borrow patterns, adapt components, or learn from rather than something to run as-is.
+> [!NOTE]
+> This repository reflects the code and infrastructure used for this specific project. It is not maintained as a general-purpose, plug-and-play downscaling tool. Treat it as a reference — a place to borrow patterns, adapt components, or learn from rather than something to run as-is.
 
 ## Data access
 Pipeline data inputs and outputs are stored on [Source-Coop](https://source.coop/carbonplan/srm-downscaling) in a public AWS `us-west-2` bucket. The data is in the [Icechunk](https://icechunk.io/en/stable/) format, which can be read by tools like [zarr-python](https://icechunk.io/en/stable/getting-started/howto/#reading-writing-and-modifying-data-with-zarr), [Xarray](https://icechunk.io/en/stable/getting-started/howto/#reading-and-writing-data-with-xarray), and others. See [Data access](https://carbonplan.github.io/srm-downscaling/access-data.html) for opening single groups, subsetting, and more.
