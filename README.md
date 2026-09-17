@@ -57,7 +57,8 @@ Project documentation: https://carbonplan.github.io/srm-downscaling/
 
 ## Installation
 
-Note: Installation is not needed for accessing data.
+> [!NOTE]
+> Installation is not needed for accessing data.
 
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 ```bash
