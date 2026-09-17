@@ -11,7 +11,7 @@
 
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 
-This repository implements a scalable, cloud-native pipeline for downscaling SAI climate model outputs. It uses the BCSD (Bias-Correction and Spatial-Disaggregation) and QDMSD (Quantile Delta Mapping - Spatial Disaggregation) methods to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K scenarios, plus the CESM G6-1.5K termination-shock run, using daily ERA5 observation data.
+This repository implements a scalable, cloud-native pipeline for downscaling SAI climate model outputs. It uses the Bias-Correction and Spatial-Disaggregation (BCSD) and Quantile Delta Mapping - Spatial Disaggregation(QDMSD) methods to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K scenarios, plus the CESM G6-1.5K termination-shock run, using daily ERA5 observation data.
 
 > [!NOTE]
 > This repository reflects the code and infrastructure used for this specific project. It is not maintained as a general-purpose, plug-and-play downscaling tool. Treat it as a reference — a place to borrow patterns, adapt components, or learn from rather than something to run as-is.
