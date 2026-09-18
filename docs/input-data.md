@@ -86,8 +86,8 @@ catalog.list()
 
 | Name | Type | S3 path |
 | --- | --- | --- |
-| `CESM2-WACCM6` | `Datatree` | `s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk` |
-| `UKESM1-1-LL` | `Datatree` | `s3://carbonplan-srm/input/processed/ukesm.icechunk` |
+| `CESM2-WACCM6` | `Datatree` | `s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/input/processed/CESM2-WACCM6.icechunk` |
+| `UKESM1-1-LL` | `Datatree` | `s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/input/processed/UKESM1-1-LL.icechunk` |
 | `ERA5` | `Dataset` | `s3://carbonplan-srm/input/processed/era5.icechunk` |
 | `NASA-NEX-SSP245` | `VirtualDataset` | `s3://carbonplan-srm/input/processed/nasa-nex/ssp245/virtual.icechunk` |
 | `NASA-NEX-historical` | `VirtualDataset` | `s3://carbonplan-srm/input/processed/nasa-nex/historical/virtual.icechunk` |
