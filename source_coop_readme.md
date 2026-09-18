@@ -13,13 +13,18 @@ This repository contains downscaled climate model output for Stratospheric Aeros
 
 - **GCMs:** `CESM2-WACCM6`, `UKESM1-1-LL`
 - **Scenarios:** `historical`, `SSP2-4.5`, `G6-1.5K` and `G6-1.5K-end` (termination-shock run for CESM2-WACCM6)
-- **Downscaling methods:** [BCSD](docs/explanation/scientific-approach.md) (Bias-Correction and Spatial-Disaggregation) and QDMSD (Quantile Delta-Mapped Spatial Disaggregation)
+- **Downscaling methods:** BCSD (Bias-Correction and Spatial-Disaggregation) and QDMSD (Quantile Delta-Mapped Spatial Disaggregation)
 - **Observations:** daily ERA5
+ 
+See our [documentation](https://sai-downscaling.readthedocs.io/methods/scientific-approach.html) for greater detail about our scientific approach.
 
 ## Data access
-The data is stored in the [Icechunk](https://icechunk.io/en/stable/) format, which can be read by tools like `zarr-python`, `Xarray` and others. See [Data access](https://carbonplan.github.io/srm-downscaling/access-data.html) for opening single groups, subsetting, and more.
 
-Open a single group directly, which is faster then traversing the entire datatree. 
+> [!TIP]
+> For data access utilities and example notebooks for working with the data check out the [sai-downscaling-data-utils repository](https://github.com/carbonplan/sai-downscaling-data-utils).
+
+The data is stored in the [Icechunk](https://icechunk.io/en/stable/) format, which can be read by tools like `zarr-python`, `Xarray` and others.
+You can open a single group directly, which is faster than traversing the entire DataTree.
 
 ```python
 import icechunk
@@ -44,7 +49,7 @@ dt = xr.open_datatree(session.store, engine="zarr")
 print(dt)
 ```
 
-See the store structure below for the full group layout without opening anything. Each GCM is a separate store, and group layouts differ between them — see [Data access](https://carbonplan.github.io/srm-downscaling/access-data.html) for details.
+See the store structure below for the full group layout without opening anything. Each GCM is a separate store, and group layouts differ between them — see [Data access](https://sai-downscaling.readthedocs.io/access-data/whats-available.html) for details.
 
 <details open>
 <summary><h3 style="display:inline;">CESM2-WACCM6</h3></summary>
@@ -92,14 +97,11 @@ See the store structure below for the full group layout without opening anything
 
 ## Documentation
 
-Project documentation and code: https://carbonplan.github.io/srm-downscaling/
+Project documentation: https://sai-downscaling.readthedocs.io
 
-- [Data access](https://carbonplan.github.io/srm-downscaling/access-data.html) — how to list and open input datasets
-- [Scientific approach](https://carbonplan.github.io/srm-downscaling/explanation/scientific-approach.html) — BCSD and QDMSD downscaling approaches
+- [Data access](https://sai-downscaling.readthedocs.io/access-data/whats-available.html) — how to list and open input datasets
+- [Scientific approach](https://sai-downscaling.readthedocs.io/methods/scientific-approach.html) — BCSD and QDMSD downscaling approaches
 - [Explainer article](https://carbonplan.org/research/sai-downscaling-explainer)
-
-
-
 
 ## Terms of use
 
@@ -107,7 +109,7 @@ By viewing this data, you agree to CarbonPlan’s [Terms of Use](https://carbonp
 License and attribution information are stored along side the data in colocated LICENSE.txt files.
 
 ### Output data
-Output data is licensed CC-BY-4.0. Details are in [output/LICENSE.txt](output/LICENSE.txt).
+Output data is licensed CC-BY-4.0. Details are in [output/LICENSE.txt](https://data.source.coop/carbonplan/srm-downscaling/output/LICENSE.txt).
 
 ### Input data
-Input data is covered by multiple licenses. Details can be found in [input/LICENSE.txt](input/LICENSE.txt).
+Input data is covered by multiple licenses. Details can be found in [input/LICENSE.txt](https://data.source.coop/carbonplan/srm-downscaling/input/LICENSE.txt).
