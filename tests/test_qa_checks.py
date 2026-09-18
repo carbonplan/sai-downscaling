@@ -9,9 +9,9 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.pipeline import BCSDPipeline
-from srm.qa_checks import NaNCheckError, assert_no_nans
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
+from saidownscale.pipeline import DownscalingPipeline
+from saidownscale.qa_checks import NaNCheckError, assert_no_nans
 
 
 def _daily_da(values: np.ndarray, start: str = "2015-01-01") -> xr.DataArray:
@@ -114,16 +114,16 @@ def pipeline_options(tmp_path) -> PipelineOptions:
 
 
 @pytest.fixture
-def historical_pipeline(pipeline_options) -> BCSDPipeline:
-    config = BCSDConfig(
+def historical_pipeline(pipeline_options) -> DownscalingPipeline:
+    config = DownscalingConfig(
         downscaling_method="BCSD", gcm="CESM2-WACCM6", variable="tas", ensemble_member="r1i1p1f1"
     )
-    return BCSDPipeline(config, pipeline_options)
+    return DownscalingPipeline(config, pipeline_options)
 
 
 @pytest.fixture
-def scenario_pipeline(pipeline_options) -> BCSDPipeline:
-    config = BCSDConfig(
+def scenario_pipeline(pipeline_options) -> DownscalingPipeline:
+    config = DownscalingConfig(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
         variable="tas",
@@ -132,7 +132,7 @@ def scenario_pipeline(pipeline_options) -> BCSDPipeline:
         predict_period_start=2035,
         predict_period_end=2040,
     )
-    return BCSDPipeline(config, pipeline_options)
+    return DownscalingPipeline(config, pipeline_options)
 
 
 class TestBiasCorrectionInputChecks:
@@ -339,7 +339,7 @@ class TestDebiaserOutputCheck:
         debiaser = MagicMock()
         debiaser.apply.return_value = failsafe_output
 
-        with patch("srm.pipeline._make_debiaser", return_value=debiaser):
+        with patch("saidownscale.pipeline._make_debiaser", return_value=debiaser):
             with pytest.raises(NaNCheckError, match="debiased_coarse"):
                 historical_pipeline._apply_bias_correction(
                     _daily_da(np.ones((10, 3, 4))), _daily_da(np.ones((10, 3, 4)))
@@ -349,7 +349,7 @@ class TestDebiaserOutputCheck:
         debiaser = MagicMock()
         debiaser.apply.return_value = np.ones((10, 3, 4))
 
-        with patch("srm.pipeline._make_debiaser", return_value=debiaser):
+        with patch("saidownscale.pipeline._make_debiaser", return_value=debiaser):
             result = historical_pipeline._apply_bias_correction(
                 _daily_da(np.ones((10, 3, 4))), _daily_da(np.ones((10, 3, 4)))
             )

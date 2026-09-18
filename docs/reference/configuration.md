@@ -6,14 +6,14 @@ Configuration files use YAML format with Pydantic validation. All fields are val
 
 Configuration is split across two Pydantic classes loaded from the same flat YAML:
 
-- **`BCSDConfig`** — run identity: the parameters that uniquely identify a BCSD run and affect computation results (model, variable, time periods, bias-correction method). Changes here bust the cache.
+- **`DownscalingConfig`** — run identity: the parameters that uniquely identify a downscaling run and affect computation results (model, variable, time periods, bias-correction method). Changes here bust the cache.
 - **`PipelineOptions`** — operational settings: storage paths, environment, branch, and runtime flags. Changes here do not affect computation results.
 
 Both classes use `extra="ignore"`, so a single flat YAML file is accepted by both — no nested sections required.
 
 ## Matrix config format
 
-Any of the five dimension fields can be a list. `load_configs` expands them into one `BCSDConfig` per cartesian-product combination:
+Any of the five dimension fields can be a list. `load_configs` expands them into one `DownscalingConfig` per cartesian-product combination:
 
 ```yaml
 gcm: "CESM2-WACCM6"                              # singular, still works
@@ -42,9 +42,9 @@ For the first case, remove `variable_config` and rely on per-variable defaults (
 
 ## Prediction period and per-member data extents
 
-`predict_period_start` and `predict_period_end` must fall within the valid data extent of every ensemble member the config expands to. Those extents are not uniform: some members are truncated years before the nominal scenario end and the unified store NaN-pads them to that end, so a predict period that overshoots would silently downscale padding. `bcsd run` and `bcsd run-matrix` guard against this with `check_config_time_domain` before submitting any work, raising a blocking error that lists every config whose predict period falls outside its member's bounds.
+`predict_period_start` and `predict_period_end` must fall within the valid data extent of every ensemble member the config expands to. Those extents are not uniform: some members are truncated years before the nominal scenario end and the unified store NaN-pads them to that end, so a predict period that overshoots would silently downscale padding. `saidownscale run` and `saidownscale run-matrix` guard against this with `check_config_time_domain` before submitting any work, raising a blocking error that lists every config whose predict period falls outside its member's bounds.
 
-The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/srm/validation.py`; the CESM2-WACCM6 SSP245 spread is representative:
+The extent for a `(gcm, scenario, ensemble_member)` triple is resolved from a per-member override table first, then the scenario's nominal bounds, and is left unchecked when neither is registered. The authoritative table is `_MEMBER_TIME_BOUNDS` in `src/saidownscale/validation.py`; the CESM2-WACCM6 SSP245 spread is representative:
 
 | Members | Valid end year |
 |---|---|
@@ -57,9 +57,9 @@ UKESM1-1-LL SSP245 ends 2099 while its G6-1.5K ends 2084. Because a single confi
 
 `config_time_domain` therefore enforces the start bound for every scenario, SAI included, and set `predict_period_start` to the scenario's own data start: 2035 for `G6-1.5K` and 2085 for `G6-1.5K-END`. For the workflow of splitting a run across extent groups, see [Ensembles with mixed data extents](../how-to/run-pipeline.md#ensembles-with-mixed-data-extents).
 
-## BCSDConfig Fields (run identity)
+## DownscalingConfig Fields (run identity)
 
-These fields identify a BCSD run and affect computation results. Changing any of these busts the cache (`config_hash` covers all of them).
+These fields identify a downscaling run and affect computation results. Changing any of these busts the cache (`config_hash` covers all of them).
 
 ```yaml
 # Model identifiers (singular or list)
@@ -118,7 +118,7 @@ There is no run-wide tier in YAML, deliberately. A top-level `debias_approach` w
 `variable_overrides` is keyed by variable name, so it is order-independent. A key naming a variable outside the run is an error, not a silent no-op. It is only valid in matrix configs; a single-variable config should use `variable_config` directly.
 
 ```bash
-bcsd run-matrix --gcm CESM2-WACCM6 \
+saidownscale run-matrix --gcm CESM2-WACCM6 \
   --variable tasmax --variable dtr \
   --member 007 --scenario ssp245 \
   --predict-period-start 2015 --predict-period-end 2069 \
@@ -138,7 +138,7 @@ The pipeline detects this rather than preventing it. On a cache hit, it compares
 To run two configurations side by side, give each its own branch:
 
 ```bash
-BCSD_BRANCH=v0.13.0-dtr-nonparam bcsd run-matrix ... --variable-override dtr:debias_approach=nonparametric
+SAIDOWNSCALE_BRANCH=v0.13.0-dtr-nonparam saidownscale run-matrix ... --variable-override dtr:debias_approach=nonparametric
 ```
 
 | Case | Behavior |
@@ -186,7 +186,7 @@ All `PipelineOptions` fields are optional — defaults are suitable for most run
 
 ### Choosing an executor
 
-`executor` selects where a stage's tasks run. The choice affects cost and nothing else: all three produce identical output, because each task runs the same `srm.batch_runner` entry point.
+`executor` selects where a stage's tasks run. The choice affects cost and nothing else: all three produce identical output, because each task runs the same `saidownscale.batch_runner` entry point.
 
 | Value | Where tasks run | Cost per vCPU-hour |
 | --- | --- | --- |
@@ -200,13 +200,13 @@ The removed `use_coiled` boolean is rejected rather than ignored. Because `Pipel
 
 ## Branch Defaulting
 
-The `branch` field defaults to the **public version of the installed `srm` package** (e.g. `v1.0.post12`),
+The `branch` field defaults to the **public version of the installed `saidownscale` package** (e.g. `v1.0.post12`),
 derived via:
 
 ```python
 from packaging.version import Version
 from importlib.metadata import version as pkg_version
-"v" + Version(pkg_version("srm")).public  # e.g. "v1.0.post12", strips local/dirty markers
+"v" + Version(pkg_version("saidownscale")).public  # e.g. "v1.0.post12", strips local/dirty markers
 ```
 
 The branch is an icechunk branch created inside each unified per-GCM store. This means:
@@ -223,22 +223,22 @@ branch: "v1.0.post5"   # pin to an earlier commit's cache branch
 
 ## Environment Variable Override
 
-You can override the `environment` field using the `BCSD_ENVIRONMENT` environment variable, and
-`branch` using `BCSD_BRANCH`:
+You can override the `environment` field using the `SAIDOWNSCALE_ENVIRONMENT` environment variable, and
+`branch` using `SAIDOWNSCALE_BRANCH`:
 
 ```bash
 # Override environment for this run
-BCSD_ENVIRONMENT=production bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_ENVIRONMENT=production saidownscale run --config-path configs/example.yaml
 
 # Override branch for this run
-BCSD_BRANCH=v1.0.post5 bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_BRANCH=v1.0.post5 saidownscale run --config-path configs/example.yaml
 ```
 
 You can also override `branch` directly on the CLI without editing the config file:
 
 ```bash
 # Pin to a specific branch's cache
-uv run bcsd run --config-path configs/example.yaml --branch v1.0.post5
+uv run saidownscale run --config-path configs/example.yaml --branch v1.0.post5
 ```
 
 This is useful for:
@@ -250,7 +250,7 @@ This is useful for:
 
 ## Variable-Specific Auto-Configuration
 
-The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/srm/bcsd_config.py`). Which table it reads is set by the required top-level `downscaling_method` key, described in [Downscaling method](#downscaling-method) below.
+The pipeline automatically sets variable-specific parameters from the per-variable defaults in `VariableConfig.for_variable` (`src/saidownscale/downscaling_config.py`). Which table it reads is set by the required top-level `downscaling_method` key, described in [Downscaling method](#downscaling-method) below.
 
 ### BCSD defaults
 
@@ -270,7 +270,7 @@ All variables use a `running_window_length` of `31` days and a `running_window_s
 
 All variables use a `running_window_length` of `91` days and a `running_window_step_length` of `31` days, with `debias_approach: qdm`. Quantile delta mapping carries the climate trend through its own quantile mapping, so `detrend_data` is `false` for every variable. The `detrend_method`, `disaggregation_method`, and `disaggregation_clim_method` columns match the BCSD table above.
 
-You can override these per run through the nested `variable_config` block in the config file, or with the `bcsd run-matrix` override flags (`--disaggregation-method`, `--detrend-data/--no-detrend-data`, etc.).
+You can override these per run through the nested `variable_config` block in the config file, or with the `saidownscale run-matrix` override flags (`--disaggregation-method`, `--detrend-data/--no-detrend-data`, etc.).
 
 ## Downscaling method
 
@@ -303,7 +303,7 @@ two runs because obs deduplication is deliberately method-blind. On the command 
 equivalent is a repeated flag:
 
 ```bash
-uv run bcsd run-matrix --gcm CESM2-WACCM6 --variable pr --member 003 --scenario SSP245 \
+uv run saidownscale run-matrix --gcm CESM2-WACCM6 --variable pr --member 003 --scenario SSP245 \
   --downscaling-method BCSD --downscaling-method QDMSD \
   --predict-period-start 2015 --predict-period-end 2099
 ```

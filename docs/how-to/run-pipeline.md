@@ -6,7 +6,7 @@
 uv sync --all-groups
 ```
 
-The CLI is installed as `bcsd` command via the package entry point.
+The CLI is installed as the `saidownscale` command via the package entry point.
 
 ## Demo Notebook
 
@@ -19,17 +19,17 @@ For a complete walkthrough with visualizations, see [demo-new-pipeline.ipynb](./
 
 ## Quick Start
 
-The recommended way to run the pipeline is `bcsd run` with a config file. Config files are version-controlled and reproducible, and they are what the QA and production deploys consume, so they are the right choice for any run you want to repeat or review:
+The recommended way to run the pipeline is `saidownscale run` with a config file. Config files are version-controlled and reproducible, and they are what the QA and production deploys consume, so they are the right choice for any run you want to repeat or review:
 
 ```bash
 # Run from a config file
-uv run bcsd run --config-path configs/example.yaml
+uv run saidownscale run --config-path configs/example.yaml
 
 # Override branch without editing the file
-uv run bcsd run --config-path configs/example.yaml --branch v2
+uv run saidownscale run --config-path configs/example.yaml --branch v2
 
 # Override environment via environment variable
-BCSD_ENVIRONMENT=production uv run bcsd run --config-path configs/example.yaml
+SAIDOWNSCALE_ENVIRONMENT=production uv run saidownscale run --config-path configs/example.yaml
 ```
 
 A single config file can also expand into many runs. List values for `gcm`, `variables`, `ensemble_members`, `scenarios`, and `downscaling_methods` produce one run per cartesian-product combination — see the [matrix config format](../reference/configuration.md#matrix-config-format) reference for the syntax.
@@ -37,14 +37,14 @@ A single config file can also expand into many runs. List values for `gcm`, `var
 Check pipeline status at any time:
 
 ```bash
-uv run bcsd status --config-path configs/example.yaml --verbose
+uv run saidownscale status --config-path configs/example.yaml --verbose
 ```
 
-For quick ad-hoc runs from the command line without writing a config file, `bcsd run-matrix` takes each dimension as a repeatable option and generates every combination for you:
+For quick ad-hoc runs from the command line without writing a config file, `saidownscale run-matrix` takes each dimension as a repeatable option and generates every combination for you:
 
 ```bash
 # 2 GCMs × 2 variables × 3 members × 2 scenarios
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 --gcm UKESM1-1-LL \
   --variable tas --variable pr \
@@ -58,7 +58,7 @@ uv run bcsd run-matrix \
 Use `--dry-run` to preview the generated matrix before executing:
 
 ```bash
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \
@@ -67,7 +67,7 @@ uv run bcsd run-matrix \
 
 ## Batch Processing
 
-For all multi-run workflows, the recommended approach is a directory of config files run through `bcsd run`. Version-controlled configs are what the QA and production deploys use, and the orchestrator applies the same deduplication logic regardless of how the runs are specified:
+For all multi-run workflows, the recommended approach is a directory of config files run through `saidownscale run`. Version-controlled configs are what the QA and production deploys use, and the orchestrator applies the same deduplication logic regardless of how the runs are specified:
 
 <details>
 <summary>Example: generating and running a directory of config files</summary>
@@ -90,18 +90,18 @@ environment: "qa"
 EOF
 done
 
-uv run bcsd run --config-path configs/batch/
+uv run saidownscale run --config-path configs/batch/
 ```
 
 </details>
 
 A single matrix config file expresses the same set of runs more compactly, with list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods`. See the [matrix config format](../reference/configuration.md#matrix-config-format) reference for the syntax and its restrictions.
 
-For a quick ad-hoc batch without config files, `bcsd run-matrix` takes the cartesian product of the dimensions you pass on the command line and handles everything itself:
+For a quick ad-hoc batch without config files, `saidownscale run-matrix` takes the cartesian product of the dimensions you pass on the command line and handles everything itself:
 
 ```bash
 # 3 members × 2 scenarios for CESM2-WACCM6 tas, with deduplication
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 \
   --variable tas \
@@ -122,7 +122,7 @@ The orchestrator automatically deduplicates shared work across the matrix:
 ### Multi-Scenario Example
 
 ```bash
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 \
   --variable tas \
@@ -136,12 +136,12 @@ uv run bcsd run-matrix \
 
 ## Ensembles with mixed data extents
 
-Ensemble members rarely all cover the same period, and `bcsd run` rejects any config whose `predict_period_end` runs past a member's real data extent (see the [per-member data extents](../reference/configuration.md#prediction-period-and-per-member-data-extents) reference for the full table). Because a config carries a single `predict_period`, members with different extents have to be split into separate files, each with a `predict_period_end` matched to its group.
+Ensemble members rarely all cover the same period, and `saidownscale run` rejects any config whose `predict_period_end` runs past a member's real data extent (see the [per-member data extents](../reference/configuration.md#prediction-period-and-per-member-data-extents) reference for the full table). Because a config carries a single `predict_period`, members with different extents have to be split into separate files, each with a `predict_period_end` matched to its group.
 
 The production CESM2-WACCM6 SSP245 configs are organized exactly this way. Members 006–010 run to `predict_period_end: 2069` (`cesm2-waccm6-ssp245-tas-global-trunc-2069.yaml`), and the full-length members 001–005 run to 2099. Drop the per-extent files in one directory and run them together — deduplication still applies across the whole set:
 
 ```bash
-uv run bcsd run --config-path configs/production/cesm2-waccm6/
+uv run saidownscale run --config-path configs/production/cesm2-waccm6/
 ```
 
 ## Local Execution
@@ -150,10 +150,10 @@ For testing or small regions, run the stages in-process instead of dispatching t
 
 ```bash
 # Single config (sequential execution of stages)
-uv run bcsd run --config-path configs/example.yaml --executor local
+uv run saidownscale run --config-path configs/example.yaml --executor local
 
 # Matrix run locally (useful for testing)
-uv run bcsd run-matrix \
+uv run saidownscale run-matrix \
   --downscaling-method BCSD \
   --gcm CESM2-WACCM6 --variable tas --member r1i1p1f1 \
   --scenario ssp245 --predict-period-start 2015 --predict-period-end 2100 \

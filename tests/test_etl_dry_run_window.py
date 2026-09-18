@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from srm.input_data import cesm2_waccm, ukesm
+from saidownscale.input_data import cesm2_waccm, ukesm
 
 
 def _sample_dataset(start: str, n_steps: int) -> xr.Dataset:

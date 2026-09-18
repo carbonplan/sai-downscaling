@@ -1,6 +1,16 @@
 ci:
   autoupdate_schedule: monthly
-exclude: ^(notebooks/generate_example_data.ipynb|uv.lock)$
+# Frozen notebook areas. archive/ and check_BCSD_implementation/ predate the
+# saidownscale rename and are not kept current; issues/ is an untracked scratch
+# area, and the ruff hook walks the tree rather than the file list, so without
+# this it rewrites files that were never staged.
+exclude: |
+  (?x)^(
+    notebooks/archive/.*|
+    notebooks/check_BCSD_implementation/.*|
+    notebooks/issues/.*|
+    uv\.lock
+  )$
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit

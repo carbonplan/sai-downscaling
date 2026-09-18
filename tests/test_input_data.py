@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from srm.catalog import Dataset
+    from saidownscale.catalog import Dataset
 
-from srm.config import SCENARIO_TO_GROUP
-from srm.datasets import Datatree, VirtualDataset, catalog
-from srm.qaqc import VAR_SPATIAL_RANGES, DatasetChecker as DatasetValidator
-from srm.validation import (
+from saidownscale.config import SCENARIO_TO_GROUP
+from saidownscale.datasets import Datatree, VirtualDataset, catalog
+from saidownscale.qaqc import VAR_SPATIAL_RANGES, DatasetChecker as DatasetValidator
+from saidownscale.validation import (
     GCM_OPTIONS,
     SCENARIO_OPTIONS,
     CheckStatus,

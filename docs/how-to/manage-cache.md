@@ -95,11 +95,11 @@ Run `dtr` and `tasmax` before `tasmin` — no `save_intermediate` flag required:
 
 ```bash
 # 1. Run dtr and tasmax (coarse outputs written automatically)
-uv run bcsd run --config-path configs/dtr.yaml
-uv run bcsd run --config-path configs/tasmax.yaml
+uv run saidownscale run --config-path configs/dtr.yaml
+uv run saidownscale run --config-path configs/tasmax.yaml
 
 # 2. Now run tasmin (reads debiased_coarse groups written above)
-uv run bcsd run --config-path configs/tasmin.yaml
+uv run saidownscale run --config-path configs/tasmin.yaml
 ```
 
 :::
@@ -111,14 +111,14 @@ stages by checking whether the corresponding zarr group already exists in the br
 
 ```bash
 # Start run
-uv run bcsd run --config-path configs/example.yaml
+uv run saidownscale run --config-path configs/example.yaml
 ^C  # Interrupt after stage 1 completes
 
 # Check what's cached
-uv run bcsd status --config-path configs/example.yaml
+uv run saidownscale status --config-path configs/example.yaml
 
 # Resume (automatically skips completed stages)
-uv run bcsd run --config-path configs/example.yaml
+uv run saidownscale run --config-path configs/example.yaml
 # Only runs stages 2 and 3
 ```
 
@@ -128,50 +128,50 @@ To force recomputation (ignoring the cache):
 
 ```bash
 # Force all stages
-uv run bcsd run --config-path configs/example.yaml --force
+uv run saidownscale run --config-path configs/example.yaml --force
 
 # Force only the scenario stage (reuses existing obs and historical artifacts)
-uv run bcsd run --config-path configs/example.yaml --stage transform_scenario --force
+uv run saidownscale run --config-path configs/example.yaml --stage transform_scenario --force
 ```
 
 ## Check Cache Status
 
-Use `bcsd status` to see which artifacts are complete for your configs:
+Use `saidownscale status` to see which artifacts are complete for your configs:
 
 ```bash
-uv run bcsd status --config-path configs/example.yaml --verbose
+uv run saidownscale status --config-path configs/example.yaml --verbose
 ```
 
-See [CLI reference — bcsd status](../reference/cli.md#bcsd-status--check-cache-status) for the
+See [CLI reference — saidownscale status](../reference/cli.md#saidownscale-status--check-cache-status) for the
 full output format.
 
 ## List Cached Artifacts
 
 ```bash
 # List all groups on the current branch for all stores
-uv run bcsd cache-list --config-path configs/example.yaml
+uv run saidownscale cache-list --config-path configs/example.yaml
 
 # Filter by stage
-uv run bcsd cache-list --config-path configs/example.yaml --stage obs
+uv run saidownscale cache-list --config-path configs/example.yaml --stage obs
 
 # Filter by GCM and variable
-uv run bcsd cache-list --config-path configs/example.yaml --gcm CESM2-WACCM6 --variable tas
+uv run saidownscale cache-list --config-path configs/example.yaml --gcm CESM2-WACCM6 --variable tas
 ```
 
-See [CLI reference — bcsd cache-list](../reference/cli.md#bcsd-cache-list--list-cached-artifacts)
+See [CLI reference — saidownscale cache-list](../reference/cli.md#saidownscale-cache-list--list-cached-artifacts)
 for all options.
 
 ## Clear Cache
 
 ```bash
 # Clear all cache for the environment/branch in the config (prompts for confirmation)
-uv run bcsd cache-clear --config-path configs/example.yaml
+uv run saidownscale cache-clear --config-path configs/example.yaml
 
 # Clear a specific stage without prompting
-uv run bcsd cache-clear --config-path configs/example.yaml --stage scenarios --yes
+uv run saidownscale cache-clear --config-path configs/example.yaml --stage scenarios --yes
 
 # Clear only a specific GCM
-uv run bcsd cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM6 --yes
+uv run saidownscale cache-clear --config-path configs/example.yaml --gcm CESM2-WACCM6 --yes
 ```
 
 :::{admonition} Environment-scoped clearing
@@ -181,7 +181,7 @@ Cache clearing respects the `environment` setting in your config. A config with
 `environment: "production"` will only clear production cache, not qa.
 :::
 
-See [CLI reference — bcsd cache-clear](../reference/cli.md#bcsd-cache-clear--clear-cache) for all
+See [CLI reference — saidownscale cache-clear](../reference/cli.md#saidownscale-cache-clear--clear-cache) for all
 options.
 
 ## Programmatic Cache Inspection
@@ -190,11 +190,11 @@ You can inspect cached artifacts programmatically using `ArtifactCache`:
 
 ```python
 import yaml
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import ArtifactCache
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
+from saidownscale.cache import ArtifactCache
 
 raw = yaml.safe_load(open("configs/example.yaml"))
-config = BCSDConfig(**raw)
+config = DownscalingConfig(**raw)
 options = PipelineOptions(**raw)
 cache = ArtifactCache.from_config(config, options)
 

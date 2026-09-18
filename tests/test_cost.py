@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from srm.cost import (
+from saidownscale.cost import (
     COILED_FEE_PER_VCPU_HOUR,
     EC2_RATE_PER_VCPU_HOUR,
     MEMORY_MIB_PER_VCPU,

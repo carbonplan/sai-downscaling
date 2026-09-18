@@ -1,6 +1,6 @@
 import pytest
 
-from srm.datasets import catalog
+from saidownscale.datasets import catalog
 
 
 def test_catalog(ds_info):
@@ -22,13 +22,19 @@ class TestGcmCatalogNames:
         entry = catalog.get("CESM2-WACCM6")
         assert entry.name == "CESM2-WACCM6"
         assert entry.description == "CESM2.1.5-WACCM6(TSMLT)"
-        assert str(entry.path) == "s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk"
+        assert (
+            str(entry.path)
+            == "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/input/processed/CESM2-WACCM6.icechunk"
+        )
 
     def test_ukesm_key_and_description(self):
         entry = catalog.get("UKESM1-1-LL")
         assert entry.name == "UKESM1-1-LL"
         assert entry.description == "UKESM1.1-LL"
-        assert str(entry.path) == "s3://carbonplan-srm/input/processed/ukesm.icechunk"
+        assert (
+            str(entry.path)
+            == "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/input/processed/UKESM1-1-LL.icechunk"
+        )
 
     @pytest.mark.parametrize("legacy", ["CESM2-WACCM", "UKESM"])
     def test_legacy_keys_are_gone(self, legacy):

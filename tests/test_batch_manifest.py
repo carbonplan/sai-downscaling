@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from srm.batch_manifest import (
+from saidownscale.batch_manifest import (
     MANIFEST_VERSION,
     build_manifest,
     read_manifest_entry,
