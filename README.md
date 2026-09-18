@@ -11,13 +11,16 @@
 
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 
-This repository implements a scalable, cloud-native pipeline for downscaling SAI climate model outputs. It uses the Bias-Correction and Spatial-Disaggregation (BCSD) and Quantile Delta Mapping - Spatial Disaggregation(QDMSD) methods to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K scenarios, plus the CESM G6-1.5K termination-shock run, using daily ERA5 observation data.
+This repository implements a scalable, cloud-native pipeline for downscaling SAI climate model outputs. It uses the Bias-Correction and Spatial-Disaggregation (BCSD) and Quantile Delta Mapping - Spatial Disaggregation (QDMSD) methods to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K scenarios, plus a novel `CESM2-WACCM6` `G6-1.5K` termination-shock run, trained upon daily ERA5 reanalysis data.
+
+> [!TIP]
+> For data access utilities and example notebooks for working with the data check out the [sai-downscaling-data-utils repository](https://github.com/carbonplan/sai-downscaling-data-utils).
 
 > [!NOTE]
 > This repository reflects the code and infrastructure used for this specific project. It is not maintained as a general-purpose, plug-and-play downscaling tool. Treat it as a reference — a place to borrow patterns, adapt components, or learn from rather than something to run as-is.
 
 ## Data access
-Pipeline data inputs and outputs are stored on [Source-Coop](https://source.coop/carbonplan/srm-downscaling) in a public AWS `us-west-2` bucket. The data is in the [Icechunk](https://icechunk.io/en/stable/) format, which can be read by tools like [zarr-python](https://icechunk.io/en/stable/getting-started/howto/#reading-writing-and-modifying-data-with-zarr), [Xarray](https://icechunk.io/en/stable/getting-started/howto/#reading-and-writing-data-with-xarray), and others. See [Data access](https://carbonplan.github.io/sai-downscaling/access-data/whats-available.html) for opening single groups, subsetting, and more.
+Pipeline data inputs and outputs are stored on [Source Cooperative](https://source.coop/carbonplan/srm-downscaling) in a public AWS `us-west-2` bucket. The data is in the [Icechunk](https://icechunk.io/en/stable/) format, which can be read by tools like [zarr-python](https://icechunk.io/en/stable/getting-started/howto/#reading-writing-and-modifying-data-with-zarr), [Xarray](https://icechunk.io/en/stable/getting-started/howto/#reading-and-writing-data-with-xarray), and others. See [Data access](https://sai-downscaling.readthedocs.io/access-data/whats-available.html) for opening single groups, subsetting, and more.
 
 ### Example
 
@@ -46,18 +49,18 @@ dt = xr.open_datatree(session.store, engine="zarr")
 print(dt)
 ```
 
-Each GCM is a separate store, and group layouts differ between them — see [Data access](https://carbonplan.github.io/sai-downscaling/access-data/whats-available.html) for details.
+Each GCM is a separate store, and group layouts differ between them — see [Data access](https://sai-downscaling.readthedocs.io/access-data/whats-available.html) for details.
 
 ## Documentation
-Project documentation: https://carbonplan.github.io/sai-downscaling/
+Project documentation: https://sai-downscaling.readthedocs.io
 
-- [Data access](https://carbonplan.github.io/sai-downscaling/access-data/access-utilities.md) — how to list and open input datasets
-- [Scientific approach](https://carbonplan.github.io/sai-downscaling/methods/scientific-approach.html) — BCSD and QDMSD downscaling approaches
+- [Data access](https://sai-downscaling.readthedocs.io/access-data/access-utilities.md) — how to list and open input datasets
+- [Scientific approach](https://sai-downscaling.readthedocs.io/methods/scientific-approach.html) — BCSD and QDMSD downscaling approaches
 
 ## Installation
 
 > [!NOTE]
-> Installation is not needed for accessing data.
+> Installation is not needed for accessing data. You can visit the [sai-downscaling-data-utils repository](https://github.com/carbonplan/sai-downscaling-data-utils) for data access utilities and example notebooks.
 
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 ```bash
@@ -69,7 +72,7 @@ uv sync --all-groups
 
 ## License
 
-MIT — see the LICENSE file for details.
+SAI-downscaling code is licensed under the MIT License - see the [LICENSE](https://github.com/carbonplan/sai-downscaling/blob/main/LICENSE) file for details. See the [license file on Source Cooperative](https://source.coop/carbonplan/srm-downscaling/output/LICENSE.txt) for details about the licenses for all of the datasets.
 
 ## About Us
 
