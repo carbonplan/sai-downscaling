@@ -2,16 +2,33 @@
 orphan: true
 ---
 
-# CLI Reference
+# CLI reference
 
-This page is the exhaustive reference for all `saidownscale` commands, their options, and usage examples.
+This page lists every `saidownscale` command with its options and worked examples. If you want a
+task-oriented walkthrough rather than a lookup, start with
+[Run the pipeline](../how-to/run-pipeline.md); the table below says which command each job needs.
 
-## `saidownscale run` — Execute Pipeline from Config File (Recommended)
+| If you want to | Use | Because |
+| --- | --- | --- |
+| Run one config file, or a directory of them | [`saidownscale run`](#saidownscale-run-run-the-pipeline-from-a-config-file) | Config files are version controlled, and they are what our deploys consume |
+| Try an ad-hoc combination with no file to write | [`saidownscale run-matrix`](#saidownscale-run-matrix-run-the-pipeline-over-a-matrix) | Takes each axis as a repeatable option and expands every combination |
+| Check input datasets before spending compute | [`saidownscale validate`](#saidownscale-validate-validate-input-datasets) | Exits 1 on a blocking failure, before any stage is submitted |
+| Check what a finished run wrote | [`saidownscale validate-output`](#saidownscale-validate-output-validate-output-stores) | Reads the output stores leaf by leaf, so an empty or wrong branch fails loudly |
+| See which artifacts are already cached | [`saidownscale status`](#saidownscale-status-check-cache-status) | Reports per stage what a run would skip |
+| List or delete cached artifacts | [`saidownscale cache-list`](#saidownscale-cache-list-list-cached-artifacts), [`saidownscale cache-clear`](#saidownscale-cache-clear-clear-cache) | Same filters on both, so you can list before you delete |
+| Print the icechunk branch a config resolves to | [`saidownscale resolve-branch`](#saidownscale-resolve-branch-print-the-branch-a-config-resolves-to) | Derives the branch once, for a caller to pass on as `--branch` |
 
-Run the downscaling pipeline for a **single config** or a **directory of config files**. Config files support the [matrix format](../reference/configuration.md#matrix-config-format): list values for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods` are expanded into one run per cartesian-product combination.
+## `saidownscale run`: run the pipeline from a config file
+
+Run the downscaling pipeline for a **single config** or a **directory of config files**. Config
+files support the [matrix format](../reference/configuration.md#matrix-config-format): list values
+for `gcm`/`variables`/`ensemble_members`/`scenarios`/`downscaling_methods` are expanded into one run
+per cartesian-product combination.
 
 :::{tip} Recommended for most workflows
-Config files are version-controlled and reproducible, and they are what the QA and production deploys consume. For quick ad-hoc runs from the command line without config files, use `saidownscale run-matrix` instead.
+Config files are version controlled and reproducible, and they are what our QA and production
+deploys consume. For a quick ad-hoc run from the command line with no config file, use
+`saidownscale run-matrix` instead.
 :::
 
 ```bash
@@ -20,13 +37,18 @@ uv run saidownscale run --config-path PATH [OPTIONS]
 
 **Options:**
 
-- `--config-path TEXT` (required, repeatable): path to YAML config file or directory of configs (can be specified multiple times)
-- `--stage TEXT`: run specific stage. Accepts either short (`obs`/`historical`/`scenario`) or long (`prepare_observations`/`fit_historical`/`transform_scenario`) names, or `all` (default: `all`)
+- `--config-path TEXT` (required, repeatable): path to YAML config file or directory of configs (can
+  be specified multiple times)
+- `--stage TEXT`: run specific stage. Accepts either short (`obs` / `historical` / `scenario`) or
+  long (`prepare_observations` / `fit_historical` / `transform_scenario`) names, or `all`
+  (default: `all`)
 - `--force`: force recompute even if cached
-- `--executor TEXT`: where tasks run, one of `aws-batch`, `coiled`, or `local`. Defaults to the config's `executor` field, which itself defaults to `coiled`.
+- `--executor TEXT`: where tasks run, one of `aws-batch`, `coiled`, or `local`. Defaults to the
+  config's `executor` field, which itself defaults to `coiled`.
 - `--yes / -y`: skip the cost confirmation prompt
 - `--dry-run`: print the cost estimate and exit without submitting anything
-- `--branch TEXT`: override the output icechunk branch (e.g. `v2`). Defaults to the branch resolved from the config (the installed package version).
+- `--branch TEXT`: override the output icechunk branch (e.g. `v2`). Defaults to the branch
+  resolved from the config (the installed package version).
 - `--save-intermediate`: save and display intermediate artifacts
 
 **Examples:**
@@ -59,13 +81,16 @@ uv run saidownscale run --config-path configs/cesm2-ensemble/
 - `prepare_observations`: regrid ERA5 to GCM grid (shared across ensembles)
 - `fit_historical`: debias and downscale historical period (shared across scenarios)
 - `transform_scenario`: debias and downscale future scenario (final output)
-- `all`: run all three stages in sequence (default)
+- `all`: run all 3 stages in sequence (default)
 
 ---
 
-## `saidownscale run-matrix` — Run Pipeline Over a Matrix
+## `saidownscale run-matrix`: run the pipeline over a matrix
 
-> Specify each dimension as a repeatable option and the CLI runs every combination — no config files needed. This is convenient for quick, ad-hoc runs; for repeatable or reviewable runs, prefer `saidownscale run` with a config file. The orchestrator automatically deduplicates shared work across stages.
+Specify each dimension as a repeatable option, and the CLI runs every combination with no config
+file to write. That suits a quick, ad-hoc run; for a run you want to repeat or review, prefer
+`saidownscale run` with a config file. The orchestrator deduplicates shared work across stages
+either way.
 
 ```bash
 uv run saidownscale run-matrix [OPTIONS]
@@ -76,27 +101,42 @@ uv run saidownscale run-matrix [OPTIONS]
 - `--gcm TEXT` (required, repeatable): GCM name
 - `--variable TEXT` (required, repeatable): variable to downscale
 - `--member TEXT` (required, repeatable): ensemble member label (e.g. `r1i1p1f1`, `01`)
-- `--scenario TEXT` (repeatable): scenario name (e.g. `SSP245`, `G6-1.5K`). Omit for historical-only runs.
-- `--downscaling-method TEXT` (required, repeatable): `BCSD` (detrend, quantile-map, retrend) or `QDMSD` (quantile delta mapping). Selects the per-variable defaults table. Repeat it to run both methods over identical inputs; they share one observation regrid and write under separate group prefixes.
-- `--predict-period-start INTEGER`: start year of prediction period (required when `--scenario` is given)
-- `--predict-period-end INTEGER`: end year of prediction period (required when `--scenario` is given)
+- `--scenario TEXT` (repeatable): scenario name (e.g. `SSP245`, `G6-1.5K`). Omit for
+  historical-only runs.
+- `--downscaling-method TEXT` (required, repeatable): `BCSD` (detrend, quantile-map, retrend) or
+  `QDMSD` (quantile delta mapping). Selects the per-variable defaults table. Repeat it to run both
+  methods over identical inputs; they share one observation regrid and write under separate group
+  prefixes.
+- `--predict-period-start INTEGER`: start year of prediction period (required when `--scenario` is
+  given)
+- `--predict-period-end INTEGER`: end year of prediction period (required when `--scenario` is
+  given)
 - `--train-period-start INTEGER`: start year of training period (default: `1978`)
 - `--train-period-end INTEGER`: end year of training period (default: `2014`)
-- `--scratch-dir TEXT`: base directory for cached artifacts (default: `s3://carbonplan-srm/scratch/cache/`)
+- `--scratch-dir TEXT`: base directory for cached artifacts (default:
+  `s3://carbonplan-srm/scratch/cache/`)
 - `--output-dir TEXT`: directory for final outputs (default: `s3://carbonplan-srm/scratch/output/`)
 - `--environment TEXT`: environment (default: `qa`)
 - `--branch TEXT`: icechunk output branch (default: `main`)
 - `--subset-bounds TEXT`: spatial bounds as `'lat_min,lat_max,lon_min,lon_max'`
-- `--debias-approach TEXT`: bias-correction approach, one of `parametric`, `nonparametric`, `nonparametric_hybrid`, `nonparametric_hybrid_2sided`, `qdm`. Applies to every variable in the matrix; omit to use each variable's own default. Cannot be combined with more than one `--downscaling-method`, because `qdm` requires `QDMSD` and `QDMSD` requires `qdm`.
+- `--debias-approach TEXT`: bias-correction approach, one of `parametric`, `nonparametric`,
+  `nonparametric_hybrid`, `nonparametric_hybrid_2sided`, `qdm`. Applies to every variable in the
+  matrix; omit to use each variable's own default. Cannot be combined with more than one
+  `--downscaling-method`, because `qdm` requires `QDMSD` and `QDMSD` requires `qdm`.
 - `--stage TEXT`: run specific stage (`obs`/`historical`/`scenario`/`all`, default: `all`)
 - `--force`: force recompute even if cached
-- `--executor TEXT`: where tasks run, one of `aws-batch`, `coiled`, or `local` (default: the config's `executor`)
+- `--executor TEXT`: where tasks run, one of `aws-batch`, `coiled`, or `local` (default: the
+  config's `executor`)
 - `--yes / -y`: skip the cost confirmation prompt
-- `--dry-run`: print the generated configs in a table without executing. This does not read the cache, so it works without AWS credentials.
+- `--dry-run`: print the generated configs in a table without executing. This does not read the
+  cache, so it works without AWS credentials.
 - `--save-intermediate`: save intermediate artifacts (detrended, debiased, etc.) to cache
 - `--verbose / -v`: enable verbose logging
 
-**Run-wide config overrides** (applied to every variable in the matrix; normally auto-set from the variable — see [Variable-Specific Auto-Configuration](../reference/configuration.md#variable-specific-auto-configuration)):
+**Run-wide config overrides**, applied to every variable in the matrix. We normally auto-set these
+from the variable, as
+[Variable-specific auto-configuration](../reference/configuration.md#variable-specific-auto-configuration)
+describes.
 
 - `--detrend-data / --no-detrend-data`: override `detrend_data`
 - `--do-windowing / --no-do-windowing`: override `do_windowing`
@@ -108,7 +148,12 @@ uv run saidownscale run-matrix [OPTIONS]
 
 **Per-variable overrides:**
 
-- `--variable-override TEXT` (repeatable): a single variable's setting as `'variable:field=value'`, e.g. `'dtr:debias_approach=nonparametric'`. Takes precedence over the run-wide flags above. Repeat it to set several fields or several variables. Naming a variable outside the run is an error, as is naming a field that is not a `VariableConfig` field. See [Per-variable overrides](../reference/configuration.md#per-variable-overrides) for the full precedence order.
+- `--variable-override TEXT` (repeatable): a single variable's setting as `'variable:field=value'`,
+  e.g. `'dtr:debias_approach=nonparametric'`. Takes precedence over the run-wide flags above.
+  Repeat it to set several fields or several variables. Naming a variable outside the run is an
+  error, as is naming a field that is not a `VariableConfig` field. See
+  [Per-variable overrides](../reference/configuration.md#per-variable-overrides) for the full
+  precedence order.
 
 **Examples:**
 
@@ -181,7 +226,9 @@ uv run saidownscale run-matrix \
   --force
 ```
 
-The matrix is the cartesian product `GCMs × variables × members × scenarios × downscaling methods`. The orchestrator automatically deduplicates shared work, and the two methods deduplicate differently:
+The matrix is the cartesian product `GCMs × variables × members × scenarios × downscaling methods`.
+The orchestrator deduplicates shared work, and the 2 methods deduplicate differently, as the table
+below sets out.
 
 | Stage | Deduplicated per | Effect of a second method |
 | --- | --- | --- |
@@ -189,9 +236,10 @@ The matrix is the cartesian product `GCMs × variables × members × scenarios �
 | `fit_historical` | (GCM, obs dataset, variable, method, historical member) | Doubles. Each method writes its own `{method}/historical/...` group. |
 | `transform_scenario` | Not deduplicated | Doubles, one task per config. |
 
-A two-method run is therefore cheaper than two separate runs, which each pay for their own observation check.
+A 2-method run is therefore cheaper than 2 separate runs, because separate runs each pay for their
+own observation regrid. The worked example below shows the same deduplication for a single method.
 
-**How Deduplication Works:**
+**How deduplication works:**
 
 ```
 Example: CESM2-WACCM6, tas, ensembles [r1i1p1f1, r2i1p1f1, r3i1p1f1], ssp245
@@ -213,9 +261,10 @@ stage 3 (transform_scenario):
 
 ---
 
-## `saidownscale validate` — Validate Input Datasets
+## `saidownscale validate`: validate input datasets
 
-Validate input datasets against the validation matrix before running the pipeline. Exits with code 1 if any blocking check fails.
+Validate input datasets against the validation matrix before running the pipeline. The command exits
+with code 1 if any blocking check fails, so a deploy stops before spending compute on bad input.
 
 ```bash
 uv run saidownscale validate [OPTIONS]
@@ -223,11 +272,16 @@ uv run saidownscale validate [OPTIONS]
 
 **Options:**
 
-- `--config-path TEXT / -c TEXT` (repeatable): path to YAML config or directory. Derives the GCMs and scenarios to validate from the loaded configs. Supports the matrix format (list fields).
-- `--gcm TEXT` (repeatable): GCM(s) to validate explicitly. Defaults to all known GCMs when neither `--config-path` nor `--gcm` is given.
-- `--scenario TEXT` (repeatable): scenario(s) to validate explicitly. Defaults to all known scenarios when neither `--config-path` nor `--scenario` is given.
-- `--coiled/--no-coiled`: run the lazy dask reductions on a short-lived Coiled Dask cluster instead of in-process (default: `--coiled`)
-- `--n-workers INTEGER`: Coiled worker count, or adaptive minimum when `--adaptive-max` is set (default: `4`)
+- `--config-path TEXT / -c TEXT` (repeatable): path to YAML config or directory. Derives the GCMs
+  and scenarios to validate from the loaded configs. Supports the matrix format (list fields).
+- `--gcm TEXT` (repeatable): GCM(s) to validate explicitly. Defaults to all known GCMs when neither
+  `--config-path` nor `--gcm` is given.
+- `--scenario TEXT` (repeatable): scenario(s) to validate explicitly. Defaults to all known
+  scenarios when neither `--config-path` nor `--scenario` is given.
+- `--coiled/--no-coiled`: run the lazy dask reductions on a short-lived Coiled Dask cluster instead
+  of in-process (default: `--coiled`)
+- `--n-workers INTEGER`: Coiled worker count, or adaptive minimum when `--adaptive-max` is set
+  (default: `4`)
 - `--worker-vm-type TEXT`: Coiled worker VM type (default: `r8g.2xlarge`)
 - `--adaptive-max INTEGER`: enable adaptive scaling up to this many workers
 
@@ -245,32 +299,46 @@ uv run saidownscale validate --gcm CESM2-WACCM6 --scenario SSP245
 uv run saidownscale validate --no-coiled
 ```
 
-When `--config-path` is given, `saidownscale validate` extracts the unique GCMs and scenarios from those configs and validates only those combinations. This matches exactly what `saidownscale run` will consume.
+When you pass `--config-path`, `saidownscale validate` extracts the unique GCMs and scenarios from
+those configs and validates only those combinations. That is exactly the set `saidownscale run`
+consumes, so the check covers the run and nothing wider.
 
 ---
 
-## `saidownscale validate-output` — Validate Output Stores
+## `saidownscale validate-output`: validate output stores
 
-Validate downscaled **output** datatree store(s), one leaf (scenario / variable / member) at a time, and render a table per store. Exits with code 1 if any blocking check fails in any store. A store with no populated leaves is itself a blocking failure, whether or not `--scenario` or `--variable` narrowed the read, since an empty result means the run wrote nothing or the wrong branch was read. When `$GITHUB_STEP_SUMMARY` is set, a markdown report is appended there in addition to the console tables.
+Validate downscaled **output** datatree stores one leaf (scenario, variable, ensemble member) at a
+time, and render a table per store. The command exits with code 1 if any blocking check fails in any
+store. A store with no populated leaves is itself a blocking failure, whether or not `--scenario` or
+`--variable` narrowed the read, because an empty result means the run wrote nothing or we read the
+wrong branch. When `$GITHUB_STEP_SUMMARY` is set, we append a markdown report there in addition to
+the console tables.
 
 ```bash
 uv run saidownscale validate-output [STORE_URIS...] [OPTIONS]
 ```
 
-Exactly one of positional `STORE_URIS` **or** `--config-path` is required.
+Exactly one of positional `STORE_URIS` **or** `--config-path` is required. Deriving the URIs from
+configs resolves them the same way `saidownscale run` does, so the 2 cannot disagree about which
+store to read.
 
 **Arguments:**
 
-- `STORE_URIS` (repeatable): one or more output datatree icechunk store URIs.
+- `STORE_URIS` (repeatable): 1 or more output datatree icechunk store URIs.
 
 **Options:**
 
-- `--config-path TEXT / -c TEXT` (repeatable): derive the output store URIs from config(s) instead of passing them directly.
-- `--branch TEXT`: icechunk branch to read. When derived via `--config-path`, defaults to the branch those configs resolve to (the same branch `run` writes).
+- `--config-path TEXT / -c TEXT` (repeatable): derive the output store URIs from config(s) instead
+  of passing them directly.
+- `--branch TEXT`: icechunk branch to read. When derived via `--config-path`, defaults to the
+  branch those configs resolve to (the same branch `run` writes).
 - `--tag TEXT`: icechunk tag to read.
-- `--scenario TEXT` (repeatable): restrict validation to matching scenario subtrees. Defaults to all.
-- `--variable TEXT` (repeatable): restrict validation to matching variable subtrees. Defaults to all.
-- `--coiled/--no-coiled`: run the lazy dask reductions on a short-lived Coiled Dask cluster (default: `--coiled`)
+- `--scenario TEXT` (repeatable): restrict validation to matching scenario subtrees. Defaults to
+  all.
+- `--variable TEXT` (repeatable): restrict validation to matching variable subtrees. Defaults to
+  all.
+- `--coiled/--no-coiled`: run the lazy dask reductions on a short-lived Coiled Dask cluster
+  (default: `--coiled`)
 - `--n-workers INTEGER`: Coiled worker count (default: `4`)
 - `--worker-vm-type TEXT`: Coiled worker VM type (default: `r8g.2xlarge`)
 - `--adaptive-max INTEGER`: enable adaptive scaling up to this many workers
@@ -290,23 +358,30 @@ uv run saidownscale validate-output --config-path configs/qa/ --scenario SSP245 
 
 ---
 
-## `saidownscale resolve-branch` — Print the Branch a Config Resolves To
+## `saidownscale resolve-branch`: print the branch a config resolves to
 
-Print the icechunk branch a config set writes to, and nothing else, so a caller can pass it on as `--branch`.
+Print the icechunk branch a config set writes to, and nothing else. The bare value is what makes it
+useful in a shell substitution, where a caller passes it straight on as `--branch`.
 
 ```bash
 uv run saidownscale resolve-branch --config-path configs/qa/cesm2-waccm6/
 ```
 
-`PipelineOptions.branch` defaults to the installed package version, so the value depends on which interpreter asks. That is harmless while one process both writes and reads. It stops being harmless once they are split: the deploy workflow runs the pipeline from the runner and `validate-output` inside a container whose package version was baked at image build time. Resolving the branch once on the runner and passing it explicitly leaves a single derivation instead of two that merely tend to agree.
+`PipelineOptions.branch` defaults to the installed package version, so the value depends on which
+interpreter asks. That is harmless while one process both writes and reads, and it stops being
+harmless once they are split: our deploy workflow runs the pipeline from the runner and
+`validate-output` inside a container whose package version was baked at image build time. Resolving
+the branch once on the runner and passing it explicitly leaves a single derivation instead of 2 that
+merely tend to agree.
 
 **Options**
 
 - `--config-path`, `-c` TEXT: path to a YAML config or a directory of configs (required)
 
-## `saidownscale status` — Check Cache Status
+## `saidownscale status`: check cache status
 
-Check which artifacts are cached and view pipeline progress.
+Check which artifacts are already cached and how far a set of configs has progressed. Run it before
+a large submission to see what the orchestrator will skip.
 
 ```bash
 uv run saidownscale status --config-path PATH [--verbose]
@@ -350,9 +425,10 @@ uv run saidownscale status --config-path configs/example.yaml --verbose
 
 ---
 
-## `saidownscale cache-list` — List Cached Artifacts
+## `saidownscale cache-list`: list cached artifacts
 
-List all cached artifacts with optional filtering.
+List every cached artifact on the branch a config resolves to. The filters below narrow the listing
+to one stage, GCM, or variable.
 
 ```bash
 uv run saidownscale cache-list --config-path PATH [OPTIONS]
@@ -360,7 +436,8 @@ uv run saidownscale cache-list --config-path PATH [OPTIONS]
 
 **Options:**
 
-- `--config-path TEXT / -c TEXT`: path to config file or directory (default: `configs/example.yaml`; uses `scratch_dir` from the config)
+- `--config-path TEXT / -c TEXT`: path to config file or directory. Defaults to
+  `configs/example.yaml`, and uses the `scratch_dir` from that config.
 - `--stage TEXT`: filter by stage (`obs`/`historical`/`scenarios`)
 - `--gcm TEXT`: filter by GCM model
 - `--variable TEXT`: filter by variable
@@ -380,9 +457,10 @@ uv run saidownscale cache-list --config-path configs/example.yaml --gcm CESM2-WA
 
 ---
 
-## `saidownscale cache-clear` — Clear Cache
+## `saidownscale cache-clear`: clear cache
 
-Delete cached artifacts with optional filtering.
+Delete cached artifacts on the branch a config resolves to. The same filters as `cache-list` narrow
+what gets deleted, and the command prompts for confirmation unless you pass `--yes`.
 
 ```bash
 uv run saidownscale cache-clear --config-path PATH [OPTIONS]
@@ -412,5 +490,6 @@ uv run saidownscale cache-clear --config-path configs/example.yaml --gcm CESM2-W
 :::{admonition} Environment-scoped clearing
 :class: warning
 
-Cache clearing respects the `environment` setting in your config. If you have `environment: "production"`, it will only clear production cache, not qa.
+Cache clearing respects the `environment` setting in your config. A config with
+`environment: "production"` clears only the production cache, never qa.
 :::

@@ -2,12 +2,12 @@
 orphan: true
 ---
 
-# API Reference
+# API reference
 
-The API reference is the authoritative description of all public classes, functions,
-and modules in the `saidownscale` package. Entries describe the interface; they do not instruct.
-See [How-to guides](../../how-to/run-pipeline.md) for task-oriented usage and
-[Pipeline architecture](../../methods/pipeline-architecture.md) for design rationale.
+This reference describes every public class, function, and module in the `saidownscale` package.
+Entries describe the interface and nothing else, so if you want to know how to do something, read
+[Run the pipeline](../../how-to/run-pipeline.md) instead, and
+[Pipeline architecture](../../methods/pipeline-architecture.md) for why we built it this way.
 
 ```{eval-rst}
 .. autosummary::

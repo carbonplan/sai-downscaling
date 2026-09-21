@@ -1,10 +1,13 @@
 # Pipeline architecture
 
-This page explains how the downscaling pipeline is structured, why it is designed the way it is, and how its components fit together.
+This page explains how we structured the downscaling pipeline, why we designed it that way, and
+how its components fit together. If you want to run it rather than understand it, see
+[Run the pipeline](../how-to/run-pipeline.md) instead.
 
-## The Three-Stage Pipeline
+## The 3-stage pipeline
 
-The downscaling pipeline consists of three stages that automatically cache and reuse artifacts:
+The downscaling pipeline runs in 3 stages, each of which caches its artifacts and reuses them on a
+later run. Every stage is keyed on the global climate model (GCM) it processes, among other things:
 
 ```mermaid
 graph TB
@@ -100,24 +103,56 @@ graph TB
 
 **Key points:**
 
-- **stage 1 (prepare_observations)**: runs once per (GCM, obs_dataset, variable, spatial_subset) combination. The key deliberately omits `downscaling_method`, because regridding observations to the coarse grid does not consult `variable_config`, so `BCSD` and `QDMSD` share one artifact.
-- **stage 2 (fit_historical)**: runs once per (GCM, obs_dataset, variable, downscaling_method, ensemble_member, spatial_subset) combination; writes fine-res historical **and** debiased coarse historical to the output store (coarse only for `dtr`, see [`dtr` is bias-corrected but not published](#dtr-is-bias-corrected-but-not-published)). The method belongs in the key because each one writes its own `{method}/historical/…` group.
-- **stage 3 (transform_scenario)**: runs for each scenario configuration; writes fine-res scenario and debiased coarse scenario to the output store (coarse only for `dtr`)
-- **green boxes**: cached intermediate artifacts (obs regridded) in the scratch icechunk store, on the active branch
-- **gold boxes**: deliverables in the output icechunk store, on the active branch (fine-res historical + fine-res scenario + debiased coarse data)
-- **dotted arrows**: cache dependencies (automatic validation)
+- **stage 1 (prepare_observations)**: runs once per (GCM, obs_dataset, variable, spatial_subset)
+  combination. The key deliberately omits `downscaling_method`, because regridding observations to
+  the coarse grid does not consult `variable_config`, so `BCSD` and `QDMSD` share one artifact.
+- **stage 2 (fit_historical)**: runs once per (GCM, obs_dataset, variable, downscaling_method,
+  ensemble_member, spatial_subset) combination, and writes fine-res historical **and** debiased
+  coarse historical to the output store (coarse only for `dtr`, see
+  [`dtr` is bias-corrected but not published](#dtr-is-bias-corrected-but-not-published)). The method
+  belongs in the key because each one writes its own `{method}/historical/…` group.
+- **stage 3 (transform_scenario)**: runs for each scenario configuration, and writes fine-res
+  scenario and debiased coarse scenario to the output store (coarse only for `dtr`).
+- **green boxes**: cached intermediate artifacts (observations regridded) in the scratch icechunk
+  store, on the active branch.
+- **gold boxes**: deliverables in the output icechunk store, on the active branch: fine-res
+  historical, fine-res scenario, and debiased coarse data.
+- **dotted arrows**: cache dependencies, validated automatically.
 
 ## Derived variables: `tasmin`
 
-Daily minimum temperature is **not** bias-corrected directly. Bias-correcting `tasmax` and `tasmin` independently can leave the pair physically inconsistent, so the pipeline instead bias-corrects `tasmax` and the diurnal temperature range `dtr` (`= tasmax − tasmin`) and reconstructs `tasmin = tasmax − dtr` from their debiased-coarse outputs. This mirrors the NASA-NEX approach and is implemented in the dedicated stage variants `fit_historical_tasmin` and `transform_scenario_tasmin`, which read the `debiased_coarse` `tasmax` and `dtr` groups written by those stages (see [Managing the Cache](../how-to/manage-cache.md)). The reconstruction helper (`derive_tasmin`) requires its two inputs to share an identical time axis and raises if they do not, so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result (issue #363).
+We do **not** bias-correct daily minimum temperature directly. Bias-correcting `tasmax` and
+`tasmin` independently can leave the pair physically inconsistent, so the pipeline instead
+bias-corrects `tasmax` and the diurnal temperature range `dtr` (`= tasmax − tasmin`) and
+reconstructs `tasmin = tasmax − dtr` from their debiased-coarse outputs. This mirrors the NASA-NEX
+approach, and we implement it in the dedicated stage variants `fit_historical_tasmin` and
+`transform_scenario_tasmin`, which read the `debiased_coarse` `tasmax` and `dtr` groups those stages
+write (see [Manage the cache](../how-to/manage-cache.md)). The reconstruction helper
+(`derive_tasmin`) requires its 2 inputs to share an identical time axis and raises if they do not,
+so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result
+(issue #363).
 
-`tasmax` and `tasmin` are still spatially disaggregated **independently**, and that final interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step (`reconcile_temperature_extremes`) closes this gap: once both fine fields exist it swaps the offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields (issue #331). The swap is NaN-safe and structurally monotone, and the `saidownscale validate-output` gate blocks any run whose stored output still contains an inversion.
+We still spatially disaggregate `tasmax` and `tasmin` **independently**, and that final
+interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step
+(`reconcile_temperature_extremes`) closes this gap: once both fine fields exist it swaps the
+offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields
+(issue #331). The swap is NaN-safe and structurally monotone, and the `saidownscale validate-output`
+gate blocks any run whose stored output still contains an inversion.
 
-Both behaviors are keyed on the **variable**, not on which entry point runs the stage. `fit_historical` and `transform_scenario` route a `tasmin` config to their `_tasmin` variants at the top of the method, so the distributed `batch_runner`, the local `run_full_pipeline`, and the CLI all produce derived-and-reconciled `tasmin` identically. Because the derivation reads the `tasmax` and `dtr` outputs, `tasmin` must run after them; `DownscalingOrchestrator` enforces this by scheduling `tasmin` in a later intra-stage dependency wave.
+Both behaviors are keyed on the **variable**, not on which entry point runs the stage.
+`fit_historical` and `transform_scenario` route a `tasmin` config to their `_tasmin` variants at the
+top of the method, so the distributed `batch_runner`, the local `run_full_pipeline`, and the CLI all
+produce derived-and-reconciled `tasmin` identically. Because the derivation reads the `tasmax` and
+`dtr` outputs, `tasmin` must run after them, and `DownscalingOrchestrator` enforces that by
+scheduling `tasmin` in a later intra-stage dependency wave.
 
 ## `dtr` is bias-corrected but not published
 
-`dtr` exists only to make the `tasmin` reconstruction possible. The reconcile step above adjusts the fine `tasmax`/`tasmin` pair without revisiting `dtr`, so a disaggregated `dtr` would no longer equal `tasmax − tasmin` and would mislead anyone reading it as the diurnal range. Both stages therefore return immediately after writing its `debiased_coarse` group (issue #461):
+`dtr` exists only to make the `tasmin` reconstruction possible. The reconcile step above adjusts
+the fine `tasmax` and `tasmin` pair without revisiting `dtr`, so a disaggregated `dtr` would no
+longer equal `tasmax − tasmin` and would mislead anyone reading it as the diurnal range. Both stages
+therefore return immediately after writing its `debiased_coarse` group (issue #461), which gives the
+behavior in the table below.
 
 | Aspect | Behavior for `dtr` |
 | --- | --- |
@@ -127,16 +162,20 @@ Both behaviors are keyed on the **variable**, not on which entry point runs the 
 | Stage-completion marker | The `debiased_coarse` group, via `ArtifactCache.stage_loc` |
 | Config files | Unchanged: `dtr` stays in every `variables:` list, because `tasmin` needs it |
 
-The rule is declared once, as `COARSE_ONLY_VARIABLES` in `srm/cache.py`. `ArtifactCache.stage_loc` is the single place that maps a stage to the artifact marking it complete, so the pipeline's write path, the orchestrator's cache-skip and retry logic, and the downstream dependency gate all agree on where `dtr` ends.
+We declare the rule once, as `COARSE_ONLY_VARIABLES` in `src/saidownscale/cache.py`.
+`ArtifactCache.stage_loc` is the single place that maps a stage to the artifact marking it complete,
+so the pipeline's write path, the orchestrator's cache-skip and retry logic, and the downstream
+dependency gate all agree on where `dtr` ends.
 
-## Cache Store Structure
+## Cache store structure
 
-Each `(GCM, obs-dataset, spatial-subset)` combination gets exactly two icechunk repositories — one
-for scratch intermediates, one for final outputs. All artifact groups live inside those repos as
-zarr group paths on a named branch (defaulting to the installed package version):
+Each `(GCM, obs-dataset, spatial-subset)` combination gets exactly 2 icechunk repositories, one for
+scratch intermediates and one for final outputs. Every artifact group lives inside those
+repositories as a zarr group path on a named branch, which defaults to the installed package
+version:
 
 ```text
-# Scratch store — obs regridded + optional intermediates
+# Scratch store: obs regridded plus optional intermediates
 s3://carbonplan-srm/scratch/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3        ← installed package version (SAIDOWNSCALE_BRANCH to override)
     obs/{variable}                                                   # shared by both methods
@@ -144,7 +183,7 @@ s3://carbonplan-srm/scratch/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.
     {method}/trend_scenario/{scenario_group}/{variable}/{ensemble_member}      # only if save_intermediate=True
     {method}/debiased_scenario/{scenario_group}/{variable}/{ensemble_member}   # only if save_intermediate=True
 
-# Output store — fine-res historical + scenario results + debiased coarse data
+# Output store: fine-res historical, scenario results, and debiased coarse data
 s3://carbonplan-srm/scratch/output/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
   branch: v1.2.3
     {method}/historical/{variable}/{hist_member}
@@ -156,16 +195,19 @@ s3://carbonplan-srm/scratch/output/{environment}/{gcm}-{obs_dataset}-{subset_id}
 Where:
 
 - `{environment}`: `qa` or `production`
-- `{method}`: `bcsd` or `qdmsd`, the lowercase `downscaling_method`. Stage 1 output is method-independent so `obs/` sits outside it, which lets both methods share a single regrid. Stages 2 and 3 differ between methods, so their artifacts are namespaced.
+- `{method}`: `bcsd` or `qdmsd`, the lowercase `downscaling_method`. Stage 1 output is
+  method-independent, so `obs/` sits outside it and both methods share a single regrid. Stages 2 and
+  3 differ between methods, so we namespace their artifacts.
 - `{obs_dataset}`: `ERA5` or `GDEX-GMF`
-- `{subset_id}`: `global` or `lat{min}to{max}_lon{min}to{max}` (e.g., `lat-35.0to-22.0_lon16.0to33.0`)
+- `{subset_id}`: `global` or `lat{min}to{max}_lon{min}to{max}` (e.g.,
+  `lat-35.0to-22.0_lon16.0to33.0`)
 - `{scenario_group}`: `ssp245`, `g6_1p5k`, or `esgf_ssp245`
 - `{ensemble_member}`: member label as stored in the GCM (e.g., `r1i1p1f1`, `001`)
 
-This design concentrates all artifacts for a GCM into two stores instead of scattering them across
-dozens of separate icechunk repositories. Branching — rather than path segments — provides version
-isolation: bumping the package version (or setting `SAIDOWNSCALE_BRANCH`) starts a fresh branch with no
-inherited ancestry, so the existence checks never find stale artifacts from a previous run.
+This design concentrates all artifacts for a GCM into 2 stores instead of scattering them across
+dozens of separate icechunk repositories. Branching, rather than path segments, provides version
+isolation: bumping the package version, or setting `SAIDOWNSCALE_BRANCH`, starts a fresh branch with
+no inherited ancestry, so the existence checks never find stale artifacts from a previous run.
 
 The paths above are the scratch defaults. Production runs override `output_dir` to CarbonPlan's
 public [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling). For the
@@ -173,11 +215,15 @@ current store paths and release branch, see
 [Data location](../access-data/whats-available.md#data-location), and see
 [Access utilities](../access-data/access-utilities.md) for reading published stores.
 
-## Distributed Execution
+## Distributed execution
 
-Every stage task is one `(gcm, scenario, member, variable)` leaf that reads a config, runs a stage, writes to S3, and exits. The tasks never talk to each other, so the pipeline needs task placement rather than a distributed scheduler.
+Every stage task is one `(gcm, scenario, ensemble member, variable)` leaf that reads a config, runs
+a stage, writes to S3, and exits. The tasks never talk to each other, so the pipeline needs task
+placement rather than a distributed scheduler.
 
-`DownscalingOrchestrator.submit_stage` dispatches through an executor seam, and all three executors share the signature `(stage, configs) -> list[str]`. Everything upstream of that seam is executor-agnostic.
+`DownscalingOrchestrator.submit_stage` dispatches through an executor seam, and all 3 executors
+share the signature `(stage, configs) -> list[str]`. Everything upstream of that seam is
+executor-agnostic, so the table below is the whole of the difference.
 
 | Executor | Mechanism | Cost per vCPU-hour |
 | --- | --- | --- |
@@ -185,21 +231,34 @@ Every stage task is one `(gcm, scenario, member, variable)` leaf that reads a co
 | `coiled` | [Coiled](https://coiled.io) batch API | $0.1089 (EC2 plus a $0.05 platform fee) |
 | `local` | Sequential, in the current process | none |
 
-Deploys use `aws-batch`. The output is identical either way, because both remote executors run the same `saidownscale.batch_runner` entry point against the same config payload.
+Our deploys use `aws-batch`. The output is identical either way, because both remote executors run
+the same `saidownscale.batch_runner` entry point against the same config payload.
 
-### Config delivery differs between the two
+### Config delivery differs between the 2 remote executors
 
-Coiled Batch sets a distinct `CONFIG_JSON` per task through `map_over_task_var_dicts`. AWS Batch array jobs cannot vary the environment per child, since every child shares one job definition and one set of container overrides, and only `AWS_BATCH_JOB_ARRAY_INDEX` differs.
+Coiled Batch sets a distinct `CONFIG_JSON` per task through `map_over_task_var_dicts`. AWS Batch
+array jobs cannot vary the environment per child, since every child shares one job definition and
+one set of container overrides, and only `AWS_BATCH_JOB_ARRAY_INDEX` differs.
 
-The AWS Batch path therefore writes one manifest to S3 per submission and has each child read its own entry by index. Manifest entries are byte-identical to the `CONFIG_JSON` payload, so `batch_runner` needs a new way to obtain the dict, not a new way to parse it. A wave of exactly one task skips the manifest and carries `CONFIG_JSON` directly, because `arrayProperties.size` must be at least 2.
+The AWS Batch path therefore writes one manifest to S3 per submission and has each child read its
+own entry by index. Manifest entries are byte-identical to the `CONFIG_JSON` payload, so
+`batch_runner` needs a new way to obtain the dict, not a new way to parse it. A wave of exactly one
+task skips the manifest and carries `CONFIG_JSON` directly, because `arrayProperties.size` must be
+at least 2.
 
 ### Success is decided by the cache, never the exit code
 
-A task can exit zero without producing output, so both remote executors sweep `ArtifactCache` after the job finishes and raise if any config is missing its artifact. Cache presence is proof only for artifacts the run itself created, which is every one of them unless `--force` is set. Under `--force` the artifacts found may predate the job, so those additionally require the job to have reported success.
+A task can exit zero without producing output, so both remote executors sweep `ArtifactCache` after
+the job finishes and raise if any config is missing its artifact. Cache presence is proof only for
+artifacts the run itself created, which is every one of them unless `--force` is set. Under
+`--force` the artifacts found may predate the job, so those additionally require the job to have
+reported success.
 
 ### Coiled architecture
 
-The sequence below is the Coiled path specifically. The AWS Batch path differs only in how a task receives its config, described above, and in submitting an array job in place of a set of per-task VMs.
+The sequence below is the Coiled path specifically. The AWS Batch path differs only in how a task
+receives its config, described above, and in submitting an array job in place of a set of per-task
+virtual machines (VMs).
 
 ```mermaid
 sequenceDiagram
@@ -232,38 +291,58 @@ sequenceDiagram
     Orch-->>CLI: Return output paths
 ```
 
-### Key Benefits
+### Key benefits
 
 1. **isolation**: each task runs on its own VM with dedicated resources
-2. **parallelization**: multiple ensemble members process simultaneously
-3. **auto-scaling**: VMs spin up on-demand and shut down when done
-4. **fault tolerance**: failed tasks can be retried independently
-5. **reproducibility**: configuration serialized and passed to each task
+2. **parallelization**: many ensemble members process at once
+3. **auto-scaling**: VMs spin up on demand and shut down when done
+4. **fault tolerance**: a failed task retries independently of the others
+5. **reproducibility**: we serialize the configuration and pass it to each task
 
-### VM Configuration
+### VM configuration
 
-VM types are selected per pipeline stage to match resource requirements. A spatially subset run uses a smaller ladder, because every stage applies `subset_space` before any heavy compute, so the box size rather than the source grid sets the working set:
+We select the VM type per pipeline stage to match resource requirements. A spatially subset run uses
+a smaller ladder, because every stage applies `subset_space` before any heavy compute, so the box
+size rather than the source grid sets the working set:
 
 | Stage | Global | Regional | Notes |
 | --- | --- | --- | --- |
 | `prepare_observations` | `r8g.4xlarge` | `r8g.2xlarge` | Light data processing |
-| `fit_historical` | `r8g.12xlarge` | `r8g.2xlarge` | Memory-intensive QM fitting |
+| `fit_historical` | `r8g.12xlarge` | `r8g.2xlarge` | Memory-intensive quantile mapping fits |
 | `transform_scenario` | `r8g.24xlarge` | `r8g.4xlarge` | 768GB RAM, 96 vCPUs, AWS Graviton |
 
-AWS Batch takes resource requirements rather than instance types and picks the instance itself. `_resources_for` derives those requirements from this same table, asking for the vCPU count of the chosen instance and 7680 MiB per vCPU, which fills the instance while leaving the ECS agent and the OS their share. Deriving rather than tabulating keeps the Batch request and the cost estimate from drifting apart.
+AWS Batch takes resource requirements rather than instance types and picks the instance itself.
+`_resources_for` derives those requirements from this same table, asking for the vCPU count of the
+chosen instance and 7680 MiB per vCPU, which fills the instance while leaving the ECS agent and the
+OS their share. Deriving rather than tabulating keeps the Batch request and the cost estimate from
+drifting apart.
 
-- **region**: `us-west-2` (same as S3 data)
-- **keepalive**: VMs stay alive briefly after task completion for follow-up work
-- **AWS credentials**: Not forwarded to VMs; VMs use instance profile or environment-level credentials
+- **region**: `us-west-2`, the same region as the S3 data
+- **keepalive**: VMs stay alive briefly after a task completes, for follow-up work
+- **AWS credentials**: not forwarded to VMs, which use an instance profile or environment-level
+  credentials instead
 
-## Code Organization
+## Code organization
 
-The CLI is built on several key components:
+We build the CLI on the components below. Each one owns a single concern, and the links go to the
+module that implements it.
 
-1. **DownscalingConfig** + **PipelineOptions** ([src/saidownscale/downscaling_config.py](../../src/saidownscale/downscaling_config.py))
-   - **DownscalingConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `is_sai_scenario`. Variable-specific parameters (`detrend_data`, `disaggregation_method`, `debias_approach`, etc.) live only on the nested `variable_config`, never as accessors on `DownscalingConfig`. The required top-level `downscaling_method` (`BCSD` or `QDMSD`) is a `DownscalingConfig` field: it selects which per-variable defaults table `variable_config` is read from.
-   - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `branch`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`, `clip_values`, `clip_bounds`. The `branch` field (default: installed package version) names the icechunk branch all artifacts are written to and read from.
-   - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "SAIDOWNSCALE_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
+1. **DownscalingConfig** and **PipelineOptions**, in
+   [src/saidownscale/downscaling_config.py](../../src/saidownscale/downscaling_config.py)
+   - **DownscalingConfig** holds run identity: `gcm`, `variable`, `ensemble_member`, `scenario`,
+     time periods, `subset_bounds`, and `variable_config`. It carries field validators for
+     stratospheric aerosol injection (SAI) scenarios, time periods, and spatial bounds, and the
+     computed fields `run_id`, `config_hash`, and `is_sai_scenario`. Variable-specific parameters
+     such as `detrend_data`, `disaggregation_method`, and `debias_approach` live only on the nested
+     `variable_config`, never as accessors on `DownscalingConfig`. The required top-level
+     `downscaling_method` (`BCSD` or `QDMSD`) is a `DownscalingConfig` field: it selects which
+     per-variable defaults table `variable_config` is read from.
+   - **PipelineOptions** holds operational settings: `scratch_dir`, `output_dir`, `environment`,
+     `branch`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`,
+     `clip_values`, and `clip_bounds`. The `branch` field, which defaults to the installed package
+     version, names the icechunk branch all artifacts are written to and read from.
+   - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "SAIDOWNSCALE_"` and
+     `extra = "ignore"`, so a single flat YAML populates both classes.
 
 2. **ArtifactCache** ([src/saidownscale/cache.py](../../src/saidownscale/cache.py))
    - S3-based cache with fsspec backend
@@ -273,12 +352,13 @@ The CLI is built on several key components:
    - efficient prefix-based listing (not recursive globbing)
 
 3. **DownscalingPipeline** ([src/saidownscale/pipeline.py](../../src/saidownscale/pipeline.py))
-   - three-stage API
+   - a 3-stage API
    - each stage: check cache → compute if needed → write to cache
    - automatic metadata preservation (units, attributes)
    - rechunking strategy for optimal Dask performance
 
-4. **DownscalingOrchestrator** ([src/saidownscale/orchestration.py](../../src/saidownscale/orchestration.py))
+4. **DownscalingOrchestrator**, in
+   [src/saidownscale/orchestration.py](../../src/saidownscale/orchestration.py)
    - batch execution with Coiled integration
    - automatic task deduplication across stages
    - status tracking and reporting
@@ -286,8 +366,10 @@ The CLI is built on several key components:
 
 5. **batch_runner** ([src/saidownscale/batch_runner.py](../../src/saidownscale/batch_runner.py))
    - entry point for Coiled batch jobs
-   - reads `CONFIG_JSON` environment variable (structure: `{"options": {...PipelineOptions fields...}, ...DownscalingConfig fields...}`)
-   - pops the `"options"` key to construct `PipelineOptions`; remaining keys construct `DownscalingConfig`
+   - reads `CONFIG_JSON` environment variable (structure:
+     `{"options": {...PipelineOptions fields...}, ...DownscalingConfig fields...}`)
+   - pops the `"options"` key to construct `PipelineOptions`; remaining keys construct
+     `DownscalingConfig`
    - creates `DownscalingPipeline(config, options)` and runs the requested stage
    - minimal dependencies for fast VM startup
 
@@ -297,9 +379,13 @@ The CLI is built on several key components:
    - configuration loading and validation
    - orchestrator coordination
 
-## Batch Execution Flow (Coiled)
+## Batch execution flow (Coiled)
 
-Detailed flow when running `uv run saidownscale run --config-path configs/ --executor coiled`. Under `--executor aws-batch` the middle of this flow changes shape: the orchestrator writes one S3 manifest instead of per-task variables, submits a single array job instead of N VMs, and each child reads its entry by `AWS_BATCH_JOB_ARRAY_INDEX`. The cache verification at the end is identical.
+The diagram below is the detailed flow when you run
+`uv run saidownscale run --config-path configs/ --executor coiled`. Under `--executor aws-batch` the
+middle of this flow changes shape: the orchestrator writes one S3 manifest instead of per-task
+variables, submits a single array job instead of N VMs, and each child reads its entry by
+`AWS_BATCH_JOB_ARRAY_INDEX`. The cache verification at the end is identical.
 
 ```mermaid
 flowchart TD
@@ -345,16 +431,16 @@ flowchart TD
     Z --> AA[CLI: Display summary]
 ```
 
-## Artifact Location and Existence Checks
+## Artifact location and existence checks
 
-`ArtifactCache` translates a `DownscalingConfig` into a `StoreLocation` — a pairing of an icechunk
-repository path and a zarr group path within it. The store path is derived from
-`(environment, gcm, obs_dataset, subset_id)`; the group path encodes the stage and the specific
-run parameters (variable, ensemble member, scenario group). Because both components are
-deterministic given the config, the same config always maps to the same `StoreLocation` on every
-run and across machines.
+`ArtifactCache` translates a `DownscalingConfig` into a `StoreLocation`, which pairs an icechunk
+repository path with a zarr group path within it. The store path derives from
+`(environment, gcm, obs_dataset, subset_id)`, and the group path encodes the stage and the specific
+run parameters: variable, ensemble member, and scenario group. Because both components are
+deterministic given the config, the same config always maps to the same `StoreLocation` on every run
+and across machines.
 
-Existence is checked by walking the icechunk commit ancestry on the current branch and looking for
-a commit whose message equals the group path. This is atomic: a partially-written group (whose
-commit was never finalized) is invisible to the check, so interrupted runs can safely resume by
-writing the group again without risking a false cache hit.
+We check existence by walking the icechunk commit ancestry on the current branch and looking for a
+commit whose message equals the group path. That check is atomic: a partially written group, whose
+commit was never finalized, is invisible to it, so an interrupted run can safely resume by writing
+the group again without risking a false cache hit.

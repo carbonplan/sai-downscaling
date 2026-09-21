@@ -9,9 +9,10 @@ Follow the instructions in that repository's
 [README](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/README.md) to learn how
 to install and use the utilities.
 
-The table below can help you find the right utility for what you want to do. If you're new to the
-data, we recommend starting with the quickstart notebook, which walks through one short example
-from start to finish.
+The table below can help you find the right utility for what you want to do, whether you want the
+downscaled output or the global climate model (GCM) input it came from. If you're new to the data,
+we recommend starting with the quickstart notebook, which walks through one short example from
+start to finish.
 
 | What do you want to do? | Use |
 | --- | --- |

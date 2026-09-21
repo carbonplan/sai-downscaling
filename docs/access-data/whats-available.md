@@ -1,6 +1,9 @@
 # What's available
 
-We are publishing downscaled, daily climate model output for stratospheric aerosol injection (SAI) scenarios. The outputs cover 4 scenarios, 2 global climate models (GCMs), all available ensemble members, and 5 variables. GCM output is bias-corrected against ERA5 and downscaled to a global 0.25° grid with two methods.
+We are publishing downscaled, daily climate model output for stratospheric aerosol injection (SAI)
+scenarios. The outputs cover 4 scenarios, 2 global climate models (GCMs), all available ensemble
+members, and 5 variables. We bias-correct GCM output against ERA5 and downscale it to a global
+0.25° grid with 2 methods.
 
 | Property | Value |
 | --- | --- |
@@ -12,7 +15,11 @@ We are publishing downscaled, daily climate model output for stratospheric aeros
 | Temporal resolution | Daily |
 | Spatial extent | Global |
 
-In addition to the historical period (`historical`) and the baseline climate scenario (`ssp245`), we downscale two stratospheric aerosol injection scenarios. In the scenario `g6_1p5k`, greenhouse gas emissions continue at `ssp245` levels while sulfate aerosols are injected into the stratosphere to hold warming to 1.5 °C. The termination shock scenario (`g6_1p5k_end`) extends `g6_1p5k` ensemble member `002` to 2100, simulating an abrupt end of aerosol injection at the end of 2084.
+In addition to the historical period (`historical`) and the baseline climate scenario (`ssp245`),
+we downscale 2 stratospheric aerosol injection scenarios. In the scenario `g6_1p5k`, greenhouse gas
+emissions continue at `ssp245` levels while sulfate aerosols are injected into the stratosphere to
+hold warming to 1.5 °C. The termination shock scenario (`g6_1p5k_end`) extends `g6_1p5k` ensemble
+member `002` to 2100, simulating an abrupt end of aerosol injection at the end of 2084.
 
 | Scenario | Group name | Years | GCMs |
 | --- | --- | --- | --- |
@@ -27,8 +34,8 @@ data they were built from. The table below summarizes all 3.
 | Product | Description | Grid | Variables |
 | --- | --- | --- | --- |
 | Downscaled | Bias-corrected and spatially disaggregated. This is the main product. | 0.25° | `tas`, `tasmax`, `tasmin`, `pr`, `rsds` |
-| Coarse bias-corrected | Bias-corrected, but not spatially disaggregated. Use it to evaluate the effect of bias correction without the spatial disaggregation step. | Native GCM grid, about 1° to 2° | The same five, plus `dtr` (diurnal temperature range) |
-| Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same five |
+| Coarse bias-corrected | Bias-corrected, but not spatially disaggregated. Use it to evaluate the effect of bias correction without the spatial disaggregation step. | Native GCM grid, about 1° to 2° | The same 5, plus `dtr` (diurnal temperature range) |
+| Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same 5 |
 
 ## Data location
 
@@ -51,7 +58,7 @@ only `v1.0.0`, which is the branch the example below opens. The input stores kee
 
 ### Data access
 
-We offer two ways to access the data from the Source Cooperative repository. Which one fits best
+We offer 2 ways to access the data from the Source Cooperative repository. Which one fits best
 depends on how much data you need and whether you want a local copy.
 
 - **Download a local copy.** If you want to work with a small amount of data on your own machine,
@@ -105,8 +112,9 @@ group gives you an array for each variable with the dimensions `(ensemble_member
 
 ### Ensemble members
 
-Available ensemble members depend on the GCM, scenario, and variable. Both output data products and both methods publish
-the same members, and under `debiased_coarse`, `dtr` has the same members as `tasmax` and `tasmin`.
+Available ensemble members depend on the GCM, scenario, and variable. Both output data products and
+both methods publish the same members, and under `debiased_coarse`, `dtr` has the same members as
+`tasmax` and `tasmin`.
 
 **`CESM2-WACCM6`**
 
@@ -115,22 +123,22 @@ the same members, and under `debiased_coarse`, `dtr` has the same members as `ta
 | `historical` | `pr`, `rsds`, `tas` | `r1i1p1f1`, `r2i1p1f1`, `r3i1p1f1` | 1978 to 2014 |
 | `historical` | `tasmax`, `tasmin` | `001` | 1978 to 2014 |
 | `ssp245` | `pr`, `rsds`, `tas` | `001` to `005` | 2015 to 2099 |
-| `ssp245` | All five | `006` | 2015 to 2068 |
-| `ssp245` | All five | `007` to `010` | 2015 to 2069 |
-| `g6_1p5k` | All five | `001`, `002`, `003` | 2035 to 2084 |
-| `g6_1p5k_end` | All five | `002` | 2085 to 2100 |
+| `ssp245` | All 5 | `006` | 2015 to 2068 |
+| `ssp245` | All 5 | `007` to `010` | 2015 to 2069 |
+| `g6_1p5k` | All 5 | `001`, `002`, `003` | 2035 to 2084 |
+| `g6_1p5k_end` | All 5 | `002` | 2085 to 2100 |
 
-For the model `CESM2-WACCM6`, no historical ensemble member carries all five variables, and in `ssp245` only members
-`006` to `010` do. To avoid mixing realizations, we advise you pick a member that carries every variable you
-need.
+For the model `CESM2-WACCM6`, no historical ensemble member carries all 5 variables, and in
+`ssp245` only members `006` to `010` do. To avoid mixing realizations, we advise you to pick an
+ensemble member that carries every variable you need.
 
 **`UKESM1-1-LL`**
 
 | Scenario | Variables | Members | Years |
 | --- | --- | --- | --- |
-| `historical` | All five | `u-by791` | 1978 to 2014 |
-| `ssp245` | All five | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2015 to 2099 |
-| `g6_1p5k` | All five | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2035 to 2084 |
+| `historical` | All 5 | `u-by791` | 1978 to 2014 |
+| `ssp245` | All 5 | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2015 to 2099 |
+| `g6_1p5k` | All 5 | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2035 to 2084 |
 
 The `UKESM1-1-LL` historical run is a single model suite rather than one realization of an
 ensemble, so it is named by its suite ID, `u-by791`, instead of a label like `r2i1p1f2`. Every
@@ -171,11 +179,11 @@ Groups carry quality flags alongside their variable, in both products. Each flag
 | `trend_distortion_flag` | `lat`, `lon` | Every group except `dtr` | Pixels where debiasing or downscaling distorts how scenarios compare with each other or with historical, relative to raw GCM output. It's evaluated on the ensemble mean. |
 | `qa_flag_time_invariant` | `lat`, `lon` | Some members only, listed below | Pixels where debiasing or downscaling distorts the same scenario comparisons for a single member, beyond a 5% threshold. |
 
-`qa_flag_time_invariant` is present on these members only. On `CESM2-WACCM6`, they're
+`qa_flag_time_invariant` is present on these ensemble members only. On `CESM2-WACCM6`, they're
 `r2i1p1f1`, `r3i1p1f1`, and `001` in `historical`, `003` and `008` in `ssp245`, `002` and `003` in
 `g6_1p5k`, and `002` in `g6_1p5k_end`. On `UKESM1-1-LL`, they're `u-by791` and `r2i1p1f2`.
 
-The flags summarize checks run after downscaling. For details, see the
+The flags summarize checks we run after downscaling. For the details of each check, see the
 [output integrity checks](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/output-integrity-checks.ipynb)
 and
 [trend distortion check](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/trend-distortion-check.ipynb)
