@@ -11,12 +11,14 @@
 
 This repository contains downscaled climate model output for Stratospheric Aerosol Injection (SAI) scenarios covering 2 GCMs, 2 downscaling methods, 4 scenarios and multiple ensemble members and variables, totaling ~21TB.
 
+NetCDF files and harmonized Icechunk datacubes for `CESM2-WACCM6` and `UKESM1-1-LL` are stored in this repository under `/input`.
+
 - **GCMs:** `CESM2-WACCM6`, `UKESM1-1-LL`
 - **Scenarios:** `historical`, `SSP2-4.5`, `G6-1.5K` and `G6-1.5K-end` (termination-shock run for CESM2-WACCM6)
 - **Downscaling methods:** BCSD (Bias-Correction and Spatial-Disaggregation) and QDMSD (Quantile Delta-Mapped Spatial Disaggregation)
 - **Observations:** daily ERA5
  
-See our [documentation](https://sai-downscaling.readthedocs.io/methods/scientific-approach.html) for greater detail about our scientific approach.
+See our [documentation](https://sai-downscaling.readthedocs.io/methods/scientific-approach.html) for more details on our scientific approach.
 
 ## Data access
 
@@ -49,7 +51,7 @@ dt = xr.open_datatree(session.store, engine="zarr")
 print(dt)
 ```
 
-See the store structure below for the full group layout without opening anything. Each GCM is a separate store, and group layouts differ between them — see [Data access](https://sai-downscaling.readthedocs.io/access-data/whats-available.html) for details.
+See the store structure below for the full group layout without opening anything. Each GCM is a separate store, and group layouts differ between them.  See the [Data access](https://sai-downscaling.readthedocs.io/access-data/whats-available.html) documentation page for details.
 
 <details open>
 <summary><h3 style="display:inline;">CESM2-WACCM6</h3></summary>
