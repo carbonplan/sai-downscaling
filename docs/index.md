@@ -1,6 +1,20 @@
 # SAI Downscaling
 
-[TK]
+We downscaled global stratospheric aerosol injection (SAI) climate model output to a 0.25° grid, so
+that researchers can study the potential regional impacts of SAI on domains such as public health,
+agriculture, and ecosystems, particularly in the Global South. The published dataset covers 2 global
+climate models (GCMs), 4 scenarios, and 5 variables at daily resolution, each bias-corrected against
+daily ERA5 reanalysis.
+
+We downscaled with 2 methods rather than one, because the choice of method is itself a source of
+uncertainty that users should be able to see in the data. Bias correction and spatial disaggregation
+(BCSD) is the established starting point, and quantile delta mapping with spatial disaggregation
+(QDMSD) carries the climate trend through its own quantile mapping instead of a separate detrending
+step. We publish both for every scenario, variable, and ensemble member.
+
+If you want the data, start with [What's available](./access-data/whats-available.md). If you want
+to know how we produced it, start with [Scientific approach](./methods/scientific-approach.md), and
+[Developer resources](./developer-resources.md) covers running the pipeline yourself.
 
 ## Links
 
