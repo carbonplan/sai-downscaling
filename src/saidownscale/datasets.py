@@ -246,12 +246,12 @@ class Catalog:
             "CESM2-WACCM6": Datatree(
                 name="CESM2-WACCM6",
                 description="CESM2.1.5-WACCM6(TSMLT)",
-                path="s3://carbonplan-srm/input/processed/cesm2-waccm.icechunk",
+                path="s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/input/processed/CESM2-WACCM6.icechunk",
             ),
             "UKESM1-1-LL": Datatree(
                 name="UKESM1-1-LL",
                 description="UKESM1.1-LL",
-                path="s3://carbonplan-srm/input/processed/ukesm.icechunk",
+                path="s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/input/processed/UKESM1-1-LL.icechunk",
             ),
             "ERA5": Dataset(
                 name="ERA5",
