@@ -31,7 +31,13 @@ from saidownscale.encoding import (
     SHARD_LON,
     SHARD_TIME,
 )
-from saidownscale.qaqc import VAR_SPATIAL_RANGES, calculate_distortion_flags, sign_flip_mask
+from saidownscale.qaqc import (
+    VAR_SPATIAL_RANGES,
+    area_weights,
+    calculate_distortion_flags,
+    calculate_distortion_flags_v2,
+    sign_flip_mask,
+)
 
 logger = logging.getLogger(__name__)
 zarr.config.set({"async.concurrency": 128})
@@ -51,8 +57,15 @@ INPUT_CHUNKS = {"time": CHUNK_TIME, "lat": SHARD_LAT, "lon": SHARD_LON}
 DIR_QA_FLAG_CONSTANT_INPUTS = "s3://carbonplan-srm/output/qa_flag_inputs/"
 
 # Variable-specific tolerances for differences in scenario comparisons (i.e. trends) between the raw GCM and  debiased, downscaled output (re-coarsened to native GCM grid). Grid cells where the scenario comparison differs by more than the absolute tolerance (in that variable's units defined in this dictionary) AND the percent tolerance are flagged.
+# `pct_tol` is used by calculate_distortion_flags (v1): the percent condition there is a plain
+# percent-of-baseline change, in the same percentage-point units for every variable.
+# `pct_tol_relative_to_signal` is used by calculate_distortion_flags_v2 instead: its percent
+# condition is normalized by the size of the reference signal itself (delta_raw_pct), so it means
+# "flag where the distortion exceeds this fraction of the signal" rather than a fixed
+# percentage-point cutoff. calculate_trend_distortion_flags's `distortion_flag_calculation_type`
+# argument selects which of the two (and therefore which of these two keys) is used.
 # the sign flip flag occurs when the GCM scenario comparison is above the sign_flip threshold and the downscaled scenario comparison is below the negative of that threshold (or vice versa)
-# E.g. if the raw GCM G6-1.5K-SAI scenario is 0.3 degrees cooler than the SSP245 scenario, but the downscaled G6-1.5K-SAI scenario is 0.4 degrees warmer than the SSP245 scenario in a grid cell, that would trigger a sign flip flag for that grid cell because the GCM and downscaled scenario comparisons have opposite signs of change and the absolute magnitude of those changes are both greater than the sign_flip threshold of 0.25 degrees.
+# E.g. if the raw GCM G6-1.5K-SAI scenario is 0.3 degrees cooler than the SSP245 scenario, but the downscaled G6-1.5K-SAI scenario is 0.4 degrees warmer than the SSP245 scenario in a grid cell, that would trigger a sign flip flag for that grid cell because the GCM and downscaled scenario comparisons have opposite signs of change and the absolute magnitude of those changes are both greater than the sign_flip threshold of 0.1 degrees.
 # We use a sign_flip threshold to avoid flagging grid cells where scenario comparisons are different signs but essentially zero. As an example, we wouldn't want to flag a grid cell where the raw GCM G6-1.5K-SAI -> SSP245 precipitation change is -0.00001 mm/day and the downscaled G6-1.5K-SAI -> SSP245 change is +0.00001 mm/day, even though they are different signs, because the absolute magnitude of those changes is extremely close to zero.
 
 TREND_VARIABLE_SETTINGS = {
@@ -62,23 +75,47 @@ TREND_VARIABLE_SETTINGS = {
         "abs_tol": 0.25,
         "pct_tol": 0.0,
         "sign_flip": 0.1,
+        "pct_tol_relative_to_signal": 30,
     },
-    "tasmax": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.1},
-    "tasmin": {"units": "K", "scale": 1.0, "abs_tol": 0.25, "pct_tol": 0.0, "sign_flip": 0.1},
+    "tasmax": {
+        "units": "K",
+        "scale": 1.0,
+        "abs_tol": 0.25,
+        "pct_tol": 0.0,
+        "sign_flip": 0.1,
+        "pct_tol_relative_to_signal": 30,
+    },
+    "tasmin": {
+        "units": "K",
+        "scale": 1.0,
+        "abs_tol": 0.25,
+        "pct_tol": 0.0,
+        "sign_flip": 0.1,
+        "pct_tol_relative_to_signal": 30,
+    },
     "pr": {
         "units": "mm/yr",
         "scale": 31536000.0,  # factor to convert from kg/m2/sec to mm/year
         "abs_tol": 10.0,
-        "pct_tol": 2.0,
+        "pct_tol": 3.0,
         "sign_flip": 5.0,
+        "pct_tol_relative_to_signal": 30,
     },
-    "rsds": {"units": "W m-2", "scale": 1.0, "abs_tol": 1.0, "pct_tol": 0.25, "sign_flip": 0.5},
+    "rsds": {
+        "units": "W m-2",
+        "scale": 1.0,
+        "abs_tol": 1.0,
+        "pct_tol": 0.50,
+        "sign_flip": 0.5,
+        "pct_tol_relative_to_signal": 30,
+    },
     "hurs": {
         "units": "%",
         "scale": 1.0,
         "abs_tol": 5.0,
         "pct_tol": 1.0,
         "sign_flip": 0.5,
+        "pct_tol_relative_to_signal": 30,
     },
 }
 
@@ -125,32 +162,41 @@ FLAG_LIST_TIME_VARYING = [
     "rsds_max_exceeded",
     "outside_global_plausible_range",
     "temperature_inconsistency",
+    "below_tiny_threshold",
+    "below_10_Wm2",
+    # Cross-grid: a downscaled pixel's own checks can miss a problem that spatial
+    # disaggregation smoothed away from a bad debiased_coarse day. This is the coarse grid's own
+    # combined time-varying flag, bilinear-regridded to the fine grid (see run_step2), so a
+    # downscaled tag also inherits its source coarse cell's flagged days.
+    "coarse_effect",
 ]
 
 FLAG_LIST_TIME_INVARIANT = [
-    "flipped_sign_ssp245_g6_1p5k",
-    "flipped_sign_historical_ssp245",
-    "flipped_sign_historical_g6_1p5k",
-    "trend_distortion_historical_ssp245",
-    "trend_distortion_ssp245_g6_1p5k",
-    "trend_distortion_historical_g6_1p5k",
-    "flipped_sign_g6_1p5k_g6_1p5k_end",
-    "trend_distortion_g6_1p5k_g6_1p5k_end",
+    "flipped_sign_ssp245_g6_1p5k_v1",
+    "flipped_sign_historical_ssp245_v1",
+    "flipped_sign_historical_g6_1p5k_v1",
+    "trend_distortion_historical_ssp245_v1",
+    "trend_distortion_ssp245_g6_1p5k_v1",
+    "trend_distortion_historical_g6_1p5k_v1",
+    "flipped_sign_g6_1p5k_g6_1p5k_end_v1",
+    "trend_distortion_g6_1p5k_g6_1p5k_end_v1",
 ]
 
 ATTRS_TIME_INVARIANT = {
     "long_name": "Change distortion flag",
     "description": (
         "This flag identifies pixels where debiasing and/or downscaling meaningfully changes "
-        "common scenario intercomparisons. For each variable and ensemble member, it evaluates "
-        "future scenarios (G6-1.5k, G6-1.5k-end, and SSP2-4.5) and assesses whether the change "
-        "signals either (1) among them or (2) between them and the historical scenario are "
-        "distorted meaningfully in either magnitude or sign of change (using a 5% threshold "
-        "window). A distortion in any scenario-intercomparison flags the entire ensemble. This "
-        "flag is time-invariant. See repo for details about each distortion test."
+        "common scenario intercomparisons, relative to raw GCM output. For each variable and "
+        "ensemble member, it evaluates future scenarios (G6-1.5k, G6-1.5k-end, and SSP2-4.5) and "
+        "assesses whether the change signals either (1) among them or (2) between them and the "
+        "historical scenario are distorted meaningfully in either magnitude or sign of change. We "
+        "conduct this evaluation in theensemble mean to focus on scenario differences rather than "
+        "the effects of internal variability. A distortion in any scenario-intercomparison flags "
+        "the entire ensemble for both scenarios in the comparison. This flag is time-invariant. "
+        "See repo for details about each distortion test."
     ),
     "possible_values": "This is a binary flag: 0=no known issue; 1=known issue",
-    "short_name": "qa_flag_time_invariant",
+    "short_name": "trend_distortion_flag",
 }
 
 ATTRS_TIME_VARYING = {
@@ -177,7 +223,7 @@ def calculate_thresholds(
     Compute per-pixel outlier bounds from observational climatology stats.
 
     outlier_thresh_high = obs_max + 5 * obs_max_std; outlier_thresh_low = obs_min - 5 * obs_min_std.
-    Used by prep_annual_threshold_inputs to build the thresholds consumed by flag_outliers.
+    Used by prep_threshold_inputs to build the thresholds consumed by flag_outliers.
     """
     outlier_thresh_high = obs_max + (5 * obs_max_std)
     outlier_thresh_low = obs_min - (5 * obs_min_std)
@@ -252,7 +298,15 @@ def flag_rsds_above_max(da: xr.DataArray, zonal_doy_max_rsds: xr.DataArray) -> x
     xr.DataArray
         Boolean flag, True where `da` exceeds the aligned max.
     """
-    aligned_max = zonal_doy_max_rsds.sel(dayofyear=da.time.dt.dayofyear)
+    # .sel(dayofyear=<a DataArray indexed by time>) carries the indexer's own "dayofyear"
+    # coordinate into the result, riding along on the "time" dimension. Left in place, this
+    # coordinate gets written alongside the flag; since intermediate flags for one tag all
+    # share one zarr group, it then reappears as a (differently-chunked, spurious) coordinate
+    # on every other flag sharing "time" once the group is reopened as one Dataset -- which
+    # breaks unrelated operations, e.g. xarray-regrid's chunk-consistency check in
+    # interpolate_coarse_to_fine_grid. Drop it here, at the source, rather than leaving every
+    # downstream reader to clean it up.
+    aligned_max = zonal_doy_max_rsds.sel(dayofyear=da.time.dt.dayofyear).drop_vars("dayofyear")
     exceeds_max = da > aligned_max
 
     return exceeds_max
@@ -293,6 +347,34 @@ def flag_global_exceedances(
     return outside_range
 
 
+def flag_specific_extremes(
+    da: xr.DataArray,
+    low_extreme_thresh: float,
+) -> xr.DataArray:
+    """
+    Flag values below a specific extreme threshold. Used to flag rsds values < 10 W/m2 for QDMSD
+    because raw GCM input < 10 W/m2 is not debiased. When applied for that purpose on debiased coarse output, this is a conservative
+    flag: it captures all instances when that raw GCM is not debiased (because those values are <10 W/m2),
+    and it will also flag some days when the debiased coarse is < 10 W/m2 but the raw GCM is > 10 W/m2.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Values to check.
+    low_extreme_thresh: float
+        Low-end extreme to use
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean flag, True where `da` is outside the defined extreme threshold
+    """
+
+    flagged_vals = da < low_extreme_thresh
+
+    return flagged_vals
+
+
 def flag_tasmax_tas_inconsistency(tas: xr.DataArray, tasmax: xr.DataArray) -> xr.DataArray:
     """
     Flag days where tasmax < tas, which is physically inconsistent.
@@ -308,6 +390,39 @@ def flag_tasmax_tas_inconsistency(tas: xr.DataArray, tasmax: xr.DataArray) -> xr
     """
     inconsistent_days = tasmax < tas
     return inconsistent_days
+
+
+def flag_select_doy(da: xr.DataArray, doy_to_flag: xr.DataArray) -> xr.DataArray:
+    """Broadcast a per-day-of-year flag onto every timestep of `da`.
+
+    `doy_to_flag` (e.g. one variable of doy_below_tiny_threshold.zarr) holds one boolean per
+    `dayofyear` (and lat/lon); this looks up the matching value for each of `da`'s own timesteps
+    via `da.time.dt.dayofyear`, so the result has `da`'s exact time/lat/lon shape rather than a
+    reduced `dayofyear` one. It's a vectorized/pointwise `.sel()`, not a reduction, so a day-of-year
+    that happens to be False everywhere doesn't get dropped -- it's just False at those timesteps.
+
+    If `doy_to_flag` has no `dayofyear=366` entry (its source climatology never saw a leap day),
+    a leap year in `da` would otherwise raise a KeyError on Dec 31; that day is folded onto 365
+    instead, since climatologically Dec 30/31 are effectively the same day.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Data with a `time` dimension to broadcast the flag onto.
+    doy_to_flag : xr.DataArray
+        Boolean, indexed by `dayofyear` (see calculate_doy_means), with dims matching `da` on
+        every axis except `time`/`dayofyear`.
+
+    Returns
+    -------
+    xr.DataArray
+        Boolean, with `da`'s exact dims/coords.
+    """
+    doy = da.time.dt.dayofyear
+    if 366 not in doy_to_flag["dayofyear"].values:
+        doy = doy.where(doy <= 365, 365)
+    flags_with_da_dims = doy_to_flag.sel(dayofyear=doy)
+    return flags_with_da_dims
 
 
 def flag_tasmin_tas_inconsistency(tas: xr.DataArray, tasmin: xr.DataArray) -> xr.DataArray:
@@ -640,6 +755,7 @@ def run_flag_loop(
     prefix: str,
     is_downscaled: bool,
     var_filter: list[str] | None = None,
+    method_filter: list[str] | None = None,
     write_mode: str = "a",
     plot: bool = True,
     save_plots: bool = False,
@@ -676,6 +792,8 @@ def run_flag_loop(
     for tag in tags:
         [gcm, var, scenario, ens, method] = parse_tag(tag)
         if var_filter is not None and var not in var_filter:
+            continue
+        if method_filter is not None and method not in method_filter:
             continue
         logger.info(tag)
 
@@ -973,6 +1091,7 @@ def calculate_trend_distortion_flags(
     bucket: str,
     prefix: str,
     is_downscaled: bool,
+    distortion_flag_calculation_type: str = "v1",
     scenario_comparisons: dict = SCENARIO_COMPARISONS,
     plot: bool = True,
     save_plots: bool = False,
@@ -983,8 +1102,9 @@ def calculate_trend_distortion_flags(
     For every (scenario_comparisons entry) x gcm x variable x method
     combination, computes the raw-GCM vs. debiased/downscaled scenario
     change at coarse resolution (calculate_ensemble_mean_deltas), flags grid
-    cells where that change is distorted beyond tolerance
-    (TREND_VARIABLE_SETTINGS, via calculate_distortion_flags) or flips sign
+    cells where that change is distorted beyond tolerance (TREND_VARIABLE_SETTINGS, via
+    calculate_distortion_flags or calculate_distortion_flags_v2 -- see
+    `distortion_flag_calculation_type`) or flips sign
     (sign_flip_mask), regrids both flags back to the fine grid, and writes
     them -- named ``"trend_distortion_{scenario1}_{scenario2}"`` and
     ``"flipped_sign_{scenario1}_{scenario2}"`` -- to every ensemble-member
@@ -1008,6 +1128,13 @@ def calculate_trend_distortion_flags(
         Passed through to write_individual_flags.
     is_downscaled : bool
         Passed through to calculate_ensemble_mean_deltas.
+    distortion_flag_calculation_type : {"v1", "v2"}
+        Which trend-distortion flag function to use. ``"v1"`` (default) is
+        calculate_distortion_flags: distortion beyond both an absolute tolerance and a plain
+        percent-of-baseline tolerance (TREND_VARIABLE_SETTINGS's `abs_tol`/`pct_tol`). ``"v2"`` is
+        calculate_distortion_flags_v2: distortion beyond both an absolute tolerance and a
+        percent-*of-the-reference-signal* tolerance (`abs_tol`/`pct_tol_relative_to_signal`) --
+        see the comment above TREND_VARIABLE_SETTINGS for how the two percent tolerances differ.
     scenario_comparisons : dict
         See SCENARIO_COMPARISONS.
     plot : bool
@@ -1085,13 +1212,26 @@ def calculate_trend_distortion_flags(
                     pct_tol = TREND_VARIABLE_SETTINGS[var]["pct_tol"]
                     sign_flip_tol = TREND_VARIABLE_SETTINGS[var]["sign_flip"]
                     scale = TREND_VARIABLE_SETTINGS[var]["scale"]
+                    pct_tol_relative_to_signal = TREND_VARIABLE_SETTINGS[var][
+                        "pct_tol_relative_to_signal"
+                    ]
 
-                    trend_distortion_flag = calculate_distortion_flags(
-                        distortion_absolute=distortion_absolute * scale,
-                        distortion_pct=distortion_pct,
-                        tolerance_absolute=abs_tol,
-                        tolerance_pct=pct_tol,
-                    )
+                    if distortion_flag_calculation_type == "v1":
+                        trend_distortion_flag = calculate_distortion_flags(
+                            distortion_absolute=distortion_absolute * scale,
+                            distortion_pct=distortion_pct,
+                            tolerance_absolute=abs_tol,
+                            tolerance_pct=pct_tol,
+                        )
+                    elif distortion_flag_calculation_type == "v2":
+                        trend_distortion_flag = calculate_distortion_flags_v2(
+                            delta_ds_coarse=delta_ds_coarse * scale,
+                            delta_raw=delta_raw * scale,
+                            delta_ds_coarse_pct=delta_ds_coarse_pct,
+                            delta_raw_pct=delta_raw_pct,
+                            tolerance_absolute=abs_tol,
+                            tolerance_pct=pct_tol_relative_to_signal,
+                        )
 
                     flipped_sign_flag = sign_flip_mask(
                         delta_ds_coarse * scale, delta_raw * scale, threshold=sign_flip_tol
@@ -1119,11 +1259,11 @@ def calculate_trend_distortion_flags(
                             name_prefix = f"{gcm}_{var}_{method}"
                             s3_key_trend_distortion = (
                                 f"{prefix}/_plots/{name_prefix}_trend_distortion_"
-                                f"{scenario1}_{scenario2}.png"
+                                f"{scenario1}_{scenario2}_{distortion_flag_calculation_type}.png"
                             )
                             s3_key_sign_flip = (
                                 f"{prefix}/_plots/{name_prefix}_flipped_sign_"
-                                f"{scenario1}_{scenario2}.png"
+                                f"{scenario1}_{scenario2}_{distortion_flag_calculation_type}.png"
                             )
                         else:
                             s3_key_trend_distortion = None
@@ -1156,7 +1296,12 @@ def calculate_trend_distortion_flags(
                         gcm, var, scenario, ens, method = parse_tag(tag)
                         write_individual_flags(
                             flag_data=trend_distortion_flag_fine,
-                            flag_name="trend_distortion_" + scenario1 + "_" + scenario2,
+                            flag_name="trend_distortion_"
+                            + scenario1
+                            + "_"
+                            + scenario2
+                            + "_"
+                            + distortion_flag_calculation_type,
                             tag=tag,
                             write_mode="a",
                             bucket=bucket,
@@ -1165,7 +1310,12 @@ def calculate_trend_distortion_flags(
 
                         write_individual_flags(
                             flag_data=flipped_sign_flag_fine,
-                            flag_name="flipped_sign_" + scenario1 + "_" + scenario2,
+                            flag_name="flipped_sign_"
+                            + scenario1
+                            + "_"
+                            + scenario2
+                            + "_"
+                            + distortion_flag_calculation_type,
                             tag=tag,
                             write_mode="a",
                             bucket=bucket,
@@ -1594,7 +1744,9 @@ def load_rsds_lims(grid_type: str, key: str = "zonal_doy_max_rsds") -> xr.DataAr
     return xr.open_zarr(fpath, group=key)["data"].load()
 
 
-def prep_annual_threshold_inputs(grid_type: str) -> tuple[xr.Dataset, xr.Dataset]:
+def prep_threshold_inputs(
+    grid_type: str, timescale: str = "annual"
+) -> tuple[xr.Dataset, xr.Dataset]:
     """
     Read the step-1 observational threshold outputs and reduce them to annual bounds.
 
@@ -1615,6 +1767,12 @@ def prep_annual_threshold_inputs(grid_type: str) -> tuple[xr.Dataset, xr.Dataset
     ValueError
         If `grid_type` is not one of GRID_TYPES.
     """
+    accepted_timescales = {"dayofyear", "annual"}
+    if timescale not in accepted_timescales:
+        raise ValueError(
+            f"unsupported timescale value: {timescale}. Valid values include: {accepted_timescales}"
+        )
+
     # Loading thresholds output from step 1 notebook. There are different stores for different grids
     if grid_type not in GRID_TYPES:
         raise ValueError(
@@ -1641,14 +1799,17 @@ def prep_annual_threshold_inputs(grid_type: str) -> tuple[xr.Dataset, xr.Dataset
     [outlier_thresh_low, outlier_thresh_high] = calculate_thresholds(
         obs_max, obs_min, obs_max_std, obs_min_std
     )
-
-    outlier_thresh_low_annual = outlier_thresh_low.min(dim="dayofyear")
-    outlier_thresh_high_annual = outlier_thresh_high.max(dim="dayofyear")
+    if timescale == "annual":
+        outlier_thresh_low_final = outlier_thresh_low.min(dim="dayofyear")
+        outlier_thresh_high_final = outlier_thresh_high.max(dim="dayofyear")
+    elif timescale == "dayofyear":
+        outlier_thresh_low_final = outlier_thresh_low
+        outlier_thresh_high_final = outlier_thresh_high
 
     # Materialize the thresholds instead of leaving them lazy
-    outlier_thresh_low_annual = outlier_thresh_low_annual.load()
-    outlier_thresh_high_annual = outlier_thresh_high_annual.load()
-    return outlier_thresh_low_annual, outlier_thresh_high_annual
+    outlier_thresh_low_final = outlier_thresh_low_final.load()
+    outlier_thresh_high_final = outlier_thresh_high_final.load()
+    return outlier_thresh_low_final, outlier_thresh_high_final
 
 
 def calculate_all_flags(
@@ -1678,7 +1839,7 @@ def calculate_all_flags(
     once per grid via `grid_type` (see GRID_TYPES) -- e.g. once for the fine
     downscaled output and again for a coarse ``debiased_coarse`` GCM grid --
     since the observational thresholds/rsds limits loaded here
-    (prep_annual_threshold_inputs, load_rsds_lims) differ by grid.
+    (prep_threshold_inputs, load_rsds_lims) differ by grid.
 
     Parameters
     ----------
@@ -1700,7 +1861,7 @@ def calculate_all_flags(
         If True (and plot_flag_maps is also True), also upload each plotted
         figure to S3 under ``{bucket}/{prefix}/_plots/``.
     verbose : bool
-        If True, print progress and timing for each of the five flag loops.
+        If True, print progress and timing for each of the six flag loops.
     """
 
     if verbose:
@@ -1714,7 +1875,7 @@ def calculate_all_flags(
     ########### Run time-varying flag loops that are the same for all grids ############################################
     # Flag 1. Global exceedances
     if verbose:
-        logger.info("Running flag loop 1/5: global exceedance flag...")
+        logger.info("Running flag loop 1/6: global exceedance flag...")
         t0 = time.time()
     run_flag_loop(
         tags=tags,
@@ -1729,11 +1890,11 @@ def calculate_all_flags(
         save_plots=save_plots,
     )
     if verbose:
-        logger.info("  flag loop 1/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop 1/6 completed in %.1fs", time.time() - t0)
 
     # Flag 2. Temperature inconsistencies (tas vs. tasmin/tasmax)
     if verbose:
-        logger.info("Running flag loop 2/5: temperature inconsistency flag...")
+        logger.info("Running flag loop 2/6: temperature inconsistency flag...")
         t0 = time.time()
     run_flag_loop_temperature_inconsistencies(
         tags,
@@ -1746,15 +1907,15 @@ def calculate_all_flags(
         save_plots=save_plots,
     )
     if verbose:
-        logger.info("  flag loop 2/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop 2/6 completed in %.1fs", time.time() - t0)
 
     ########### Run time-varying flag loops that use different pre-computed inputs for different grids ###################
-    # Flag 3. Outliers based on observations
+    # Flag 3. Annual outliers based on observations
     if verbose:
-        logger.info("Running flag loop 3/5: annual outlier flag...")
+        logger.info("Running flag loop 3/6: annual outlier flag...")
         t0 = time.time()
-    [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_annual_threshold_inputs(
-        grid_type=grid_type
+    [outlier_thresh_low_annual, outlier_thresh_high_annual] = prep_threshold_inputs(
+        grid_type=grid_type, timescale="annual"
     )
     run_flag_loop(
         tags=tags,
@@ -1774,11 +1935,11 @@ def calculate_all_flags(
         save_plots=save_plots,
     )
     if verbose:
-        logger.info("  flag loop 3/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop 3/6 completed in %.1fs", time.time() - t0)
 
     # Flag 4. rsds-specific latitude/day-of-year check
     if verbose:
-        logger.info("Running flag loop 4/5: rsds max exceedance flag...")
+        logger.info("Running flag loop 4/6: rsds max exceedance flag...")
         t0 = time.time()
     zonal_doy_max_rsds = load_rsds_lims(grid_type=grid_type)
     run_flag_loop(
@@ -1797,11 +1958,99 @@ def calculate_all_flags(
         save_plots=save_plots,
     )
     if verbose:
-        logger.info("  flag loop 4/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop 4/6 completed in %.1fs", time.time() - t0)
+
+    # Flag 5. tiny threshold flag for multiplicative vars
+    if is_downscaled:
+        if verbose:
+            logger.info("Running flag loop 5/6: tiny threshold flag...")
+            t0 = time.time()
+        doy_below_tiny_thresh = xr.open_zarr(
+            DIR_QA_FLAG_CONSTANT_INPUTS + "doy_below_tiny_threshold.zarr"
+        )
+        run_flag_loop(
+            tags=tags,
+            trees=trees,
+            flag_name="below_tiny_threshold",
+            compute_flag=lambda da, var: flag_select_doy(
+                da=da, doy_to_flag=doy_below_tiny_thresh[f"{var}_below_tiny_thresh"]
+            ),
+            var_filter=["rsds", "pr"],
+            bucket=bucket,
+            prefix=prefix,
+            write_mode="a",
+            is_downscaled=is_downscaled,
+            plot=plot_flag_maps,
+            save_plots=save_plots,
+        )
+        if verbose:
+            logger.info("  flag loop 5/6 completed in %.1fs", time.time() - t0)
+    else:
+        if verbose:
+            logger.info(
+                "Skipping flag loop 5/6 because this flag does not apply to debiased coarse data"
+            )
+
+    # Flag 6. coarse debiased flag for days where rsds < 10 W/m2, only for QDMSD because
+    # those values are not debiased to avoid rsds blowing up
+    if not is_downscaled:
+        if verbose:
+            logger.info("Running flag loop 6/6: rsds < 10 W/m2...")
+            t0 = time.time()
+        run_flag_loop(
+            tags=tags,
+            trees=trees,
+            flag_name="below_10_Wm2",
+            compute_flag=lambda da, var: flag_specific_extremes(da=da, low_extreme_thresh=10),
+            var_filter=["rsds"],
+            method_filter=["qdmsd"],
+            bucket=bucket,
+            prefix=prefix,
+            write_mode="a",
+            is_downscaled=is_downscaled,
+            plot=plot_flag_maps,
+            save_plots=save_plots,
+        )
+        if verbose:
+            logger.info("  flag loop 6/6 completed in %.1fs", time.time() - t0)
+    else:
+        if verbose:
+            logger.info(
+                "Skipping flag loop 6/6 because this flag does not apply to downscaled data"
+            )
+
+    # Flag . Day of year outliers based on observations
+    # Note: commenting this out for current run because this flag calculation does not work with
+    # current cluster setting of spot_policy="spot_with_fallback"
+    # if verbose:
+    #    logger.info("Running flag loop 6/6: day of year outlier flag...")
+    #    t0 = time.time()
+    # [outlier_thresh_low_doy, outlier_thresh_high_doy] = prep_threshold_inputs(
+    #    grid_type=grid_type, timescale="dayofyear"
+    # )
+    # run_flag_loop(
+    #    tags=tags,
+    #    trees=trees,
+    #    flag_name="annual_outlier_flag",
+    #    compute_flag=lambda da, var: flag_outliers(
+    #        da=da,
+    #        outlier_thresh_low=outlier_thresh_low_doy[var],
+    #        outlier_thresh_high=outlier_thresh_high_doy[var],
+    #        timescale="dayofyear",
+    #    ),
+    #    bucket=bucket,
+    #    prefix=prefix,
+    #    write_mode="a",
+    #    is_downscaled=is_downscaled,
+    #    plot=plot_flag_maps,
+    #    save_plots=save_plots,
+    # )
+    # if verbose:
+    #    logger.info("  flag loop 3/6 completed in %.1fs", time.time() - t0)
 
     ########### Run time-invariant flag loops ##################################################
     if verbose:
-        logger.info("Running flag loop 5/5: trend distortion flag...")
+        logger.info("Running flag loop: trend distortion flag...")
         t0 = time.time()
     calculate_trend_distortion_flags(
         trees=trees,
@@ -1819,9 +2068,30 @@ def calculate_all_flags(
         is_downscaled=is_downscaled,
         plot=plot_flag_maps,
         save_plots=save_plots,
+        distortion_flag_calculation_type="v1",
+    )
+
+    # Run v2 trend distortion flags as well to have both to choose from in subsequent calculation
+    calculate_trend_distortion_flags(
+        trees=trees,
+        gcms=gcms,
+        variables=variables,
+        methods=methods,
+        tags_np=tags_np,
+        gcms_np=gcms_np,
+        scenarios_np=scenarios_np,
+        variables_np=variables_np,
+        methods_np=methods_np,
+        bucket=bucket,
+        prefix=prefix,
+        scenario_comparisons=scenario_comparisons,
+        is_downscaled=is_downscaled,
+        plot=plot_flag_maps,
+        save_plots=save_plots,
+        distortion_flag_calculation_type="v2",
     )
     if verbose:
-        logger.info("  flag loop 5/5 completed in %.1fs", time.time() - t0)
+        logger.info("  flag loop completed in %.1fs", time.time() - t0)
         logger.info("calculate_all_flags total time: %.1fs", time.time() - t_start)
 
 
@@ -1848,6 +2118,18 @@ def run_step2(
     combine_intermediate_flags / write_final_qa_flags to produce the final
     QA flags on the production store.
 
+    When downscaled tags are processed (mode in "downscaled_only"/"both"), this also derives
+    one more intermediate flag per downscaled tag -- "coarse_effect" -- from that same tag's
+    debiased_coarse intermediates, once already in S3 (from an earlier call, or from the
+    "debiased_coarse_only"/"both" block later in this same call): it combines them
+    (combine_intermediate_flags against ``f"{prefix}/debiased_coarse"``), bilinear-regrids the
+    boolean result onto the fine grid (interpolate_coarse_to_fine_grid, thresholded ``> 0``, the
+    same mechanism calculate_trend_distortion_flags uses), and writes it back as a normal
+    intermediate flag on the downscaled tag. FLAG_LIST_TIME_VARYING already lists
+    "coarse_effect", so step 3's combine_intermediate_flags folds it in automatically. A tag
+    whose debiased_coarse intermediates don't exist yet is skipped for this one flag, with a
+    logged warning -- see FLAG_LIST_TIME_VARYING's comment on "coarse_effect" for what it means.
+
     Parameters
     ----------
     variables, gcms, methods : list[str]
@@ -1867,8 +2149,8 @@ def run_step2(
         figure to S3 under ``{bucket}/{prefix}/_plots/`` (and the
         ``debiased_coarse`` variant for the coarse-grid branch).
     verbose : bool
-        If True, print progress and timing for leaf discovery and each grid's
-        calculate_all_flags call.
+        If True, print progress and timing for leaf discovery, each grid's
+        calculate_all_flags call, and the coarse_effect derivation.
     mode: str (allowed values: "downscaled_only", "debiased_coarse_only", "both")
     """
     valid_modes = ("downscaled_only", "debiased_coarse_only", "both")
@@ -1898,40 +2180,6 @@ def run_step2(
     )
     if verbose:
         logger.info("  leaf discovery completed in %.1fs", time.time() - t0)
-
-    if mode in ["downscaled_only", "both"]:
-        keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
-        tags_np_downscaled = tags_np[keep_idx]
-        gcms_np_downscaled = gcms_np[keep_idx]
-        scenarios_np_downscaled = scenarios_np[keep_idx]
-        variables_np_downscaled = variables_np[keep_idx]
-        tags_np_downscaled = tags_np[keep_idx]
-        methods_np_downscaled = methods_np[keep_idx]
-
-        # Calculate the flags for the downscaled output
-        if verbose:
-            logger.info("Calculating flags on downscaled data...")
-            t0 = time.time()
-        calculate_all_flags(
-            variables=variables,
-            gcms=gcms,
-            methods=methods,
-            bucket=bucket,
-            prefix=prefix,
-            trees=trees,
-            tags=tags_np_downscaled,
-            gcms_np=gcms_np_downscaled,
-            scenarios_np=scenarios_np_downscaled,
-            variables_np=variables_np_downscaled,
-            tags_np=tags_np_downscaled,
-            methods_np=methods_np_downscaled,
-            grid_type="downscaled",
-            verbose=verbose,
-            plot_flag_maps=plot_flag_maps,
-            save_plots=save_plots,
-        )
-        if verbose:
-            logger.info("  flags on downscaled data completed in %.1fs", time.time() - t0)
 
     if mode in ["debiased_coarse_only", "both"]:
         # Calculate the flags for the coarse debiased output
@@ -1977,6 +2225,97 @@ def run_step2(
                 "  flags on coarse debiased data (all gcms) completed in %.1fs",
                 time.time() - t0,
             )
+
+    if mode in ["downscaled_only", "both"]:
+        keep_idx = [i for i, s in enumerate(debiased_coarse_flags_np) if s != "debiased_coarse"]
+        tags_np_downscaled = tags_np[keep_idx]
+        gcms_np_downscaled = gcms_np[keep_idx]
+        scenarios_np_downscaled = scenarios_np[keep_idx]
+        variables_np_downscaled = variables_np[keep_idx]
+        tags_np_downscaled = tags_np[keep_idx]
+        methods_np_downscaled = methods_np[keep_idx]
+
+        # Calculate the flags for the downscaled output
+        if verbose:
+            logger.info("Calculating flags on downscaled data...")
+            t0 = time.time()
+        calculate_all_flags(
+            variables=variables,
+            gcms=gcms,
+            methods=methods,
+            bucket=bucket,
+            prefix=prefix,
+            trees=trees,
+            tags=tags_np_downscaled,
+            gcms_np=gcms_np_downscaled,
+            scenarios_np=scenarios_np_downscaled,
+            variables_np=variables_np_downscaled,
+            tags_np=tags_np_downscaled,
+            methods_np=methods_np_downscaled,
+            grid_type="downscaled",
+            verbose=verbose,
+            plot_flag_maps=plot_flag_maps,
+            save_plots=save_plots,
+        )
+        if verbose:
+            logger.info("  flags on downscaled data completed in %.1fs", time.time() - t0)
+
+        # Derive one more intermediate flag per downscaled tag -- "coarse_effect" -- from that
+        # same tag's debiased_coarse intermediates, so a downscaled pixel's combined flag (in
+        # step 3) also reflects a problem upstream in the coarse debiasing step that spatial
+        # disaggregation may have smoothed away from any downscaled-only check. Combines
+        # debiased_coarse's own intermediates for the tag (combine_intermediate_flags against
+        # f"{prefix}/debiased_coarse"), bilinear-regrids that boolean time-varying result onto
+        # the fine grid (interpolate_coarse_to_fine_grid, thresholded > 0 -- the same mechanism
+        # calculate_trend_distortion_flags uses), and writes it back as a normal intermediate
+        # flag on the *downscaled* tag (write_individual_flags), where FLAG_LIST_TIME_VARYING
+        # already lists "coarse_effect" so step 3's combine_intermediate_flags picks it up.
+        #
+        # This only needs debiased_coarse's intermediates to already exist in S3 -- from an
+        # earlier run_step2 call, or from the "debiased_coarse_only"/"both" block below in a
+        # previous run -- not from this same call's mode, so it runs whenever downscaled tags
+        # are processed at all, not only under mode="both". A tag with no debiased_coarse
+        # intermediates yet (never run at that resolution, or not yet) is skipped with a logged
+        # warning; step 3 then simply combines without "coarse_effect" for that tag, the same
+        # way it already handles any other absent intermediate flag.
+        if verbose:
+            logger.info("Deriving coarse_effect for downscaled tags...")
+            t0 = time.time()
+        for tag in tags_np_downscaled:
+            try:
+                coarse_flag_time_varying, _ = combine_intermediate_flags(
+                    tag=tag,
+                    flag_list_time_varying=FLAG_LIST_TIME_VARYING,
+                    flag_list_time_invariant=FLAG_LIST_TIME_INVARIANT,
+                    bucket=bucket,
+                    prefix=f"{prefix}/debiased_coarse",
+                )
+                fine_template = get_data(tag=tag, trees=trees, is_downscaled=True)
+                coarse_effect_frac = interpolate_coarse_to_fine_grid(
+                    da_coarse_to_regrid=coarse_flag_time_varying.astype("float32"),
+                    da_fine_grid=fine_template,
+                )
+                coarse_effect_flag = coarse_effect_frac > 0
+                write_individual_flags(
+                    flag_data=coarse_effect_flag,
+                    flag_name="coarse_effect",
+                    tag=tag,
+                    bucket=bucket,
+                    prefix=prefix,
+                    write_mode="a",
+                )
+            except Exception as exc:  # noqa: BLE001 -- no debiased_coarse intermediates for this
+                # tag (never run at that resolution, or not yet) shouldn't block the rest of
+                # step 2; "coarse_effect" is just absent for this tag in step 3's combine.
+                logger.warning(
+                    "Skipping coarse_effect for %s: no debiased_coarse intermediate flags at "
+                    "%s/debiased_coarse: %s",
+                    tag,
+                    prefix,
+                    exc,
+                )
+        if verbose:
+            logger.info("  coarse_effect derivation completed in %.1fs", time.time() - t0)
 
     if verbose:
         logger.info("run_step2 total time: %.1fs", time.time() - t_start)
@@ -2276,9 +2615,20 @@ def calculate_summary_stats(
 
     For each tag, reads back the two flags already written by
     combine_intermediate_flags / write_final_qa_flags (`flag_time_varying_name`,
-    `flag_time_invariant_name`) and computes six prevalence fractions -- three
+    `flag_time_invariant_name`) and computes six area-weighted prevalence fractions -- three
     over the full grid and three restricted to `land_mask_u8` -- in one
     dask.compute() call per tag, rather than six separate `.compute()` calls.
+
+    Every spatial average here is weighted by ``cos(latitude)`` (saidownscale.qaqc.area_weights),
+    not a naive per-pixel mean: an unweighted mean overstates the high-latitude signal, since a
+    0.25 degree cell near the pole covers a fraction of the area of one at the equator (see the
+    ocean:land stratification in output-integrity-checks.ipynb for the same reasoning applied to
+    the temperature-ordering flags). `time` is not weighted -- each timestep counts equally --
+    only `lat`/`lon`: for the three ``*_time_varying`` fractions, this means an area-weighted
+    spatial mean is taken at every timestep first, then those per-timestep values are averaged
+    uniformly over time. A NaN in a flag array (e.g. a structural interpolation border) is
+    excluded from both the numerator and its cell's weight, rather than only from the numerator
+    the way the old ``sum()``-based land fractions did.
 
     Parameters
     ----------
@@ -2305,15 +2655,15 @@ def calculate_summary_stats(
     -------
     pd.DataFrame
         One row per tag, with columns ``tag``, ``gcm``, ``variable``,
-        ``scenario``, ``ensemble_member``, ``method``, and the six fraction
-        columns described above.
+        ``scenario``, ``ensemble_member``, ``method``, and the six
+        area-weighted fraction columns described above.
     """
     summary_rows = []
 
-    n_land_time_invariant = int(land_mask_u8.sum())  # land pixel count, compute once
-
-    # time-varying: land count is per-timestep-constant since land_mask has no time dim
-    n_land = n_land_time_invariant
+    # cos(latitude) weights, broadcast to the full grid so a value can be zeroed outside land;
+    # depends only on the (shared, tag-independent) lat/lon grid, so this is computed once.
+    weights = area_weights(land_mask_u8["lat"]).broadcast_like(land_mask_u8)
+    land_weights = weights.where(land_mask_u8 > 0, 0.0)
 
     for i, tag in enumerate(tags):
         [gcm, var, scenario, ens, method] = parse_tag(tag)
@@ -2327,12 +2677,12 @@ def calculate_summary_stats(
             var_to_analyze=flag_time_invariant_name,
             is_downscaled=is_downscaled,
         )
-        flag_time_varying_land = flag_time_varying * land_mask_u8
-        flag_time_invariant_land = flag_time_invariant * land_mask_u8
-        n_time = flag_time_varying.sizes["time"]
+        ever_flagged_time_varying = flag_time_varying.sum(dim="time") > 0
 
-        # We calculate the land_frac means with sum() divided by n_land instead of
-        # mean() with a mask so it goes quickly with the uint8 data type
+        # DataArray.weighted(...).mean(...) zeroes a NaN cell's weight along with its value, so
+        # NaN is excluded from both the numerator and denominator rather than deflating only the
+        # numerator. For the *_time_varying fractions, only lat/lon are weighted; the resulting
+        # per-timestep values are then averaged uniformly over time with a second, plain .mean().
         (
             frac_flagged_time_varying,
             frac_space_flagged_time_varying,
@@ -2341,12 +2691,12 @@ def calculate_summary_stats(
             land_frac_space_flagged_time_varying,
             land_frac_space_flagged_time_invariant,
         ) = dask.compute(
-            np.nanmean(flag_time_varying),
-            np.nanmean(flag_time_varying.sum(dim="time") > 0),
-            np.nanmean(flag_time_invariant),
-            flag_time_varying_land.sum() / (n_land * n_time),
-            (flag_time_varying_land.sum(dim="time") > 0).sum() / n_land,
-            flag_time_invariant_land.sum() / n_land,
+            flag_time_varying.weighted(weights).mean(dim=("lat", "lon")).mean(dim="time"),
+            ever_flagged_time_varying.weighted(weights).mean(dim=("lat", "lon")),
+            flag_time_invariant.weighted(weights).mean(dim=("lat", "lon")),
+            flag_time_varying.weighted(land_weights).mean(dim=("lat", "lon")).mean(dim="time"),
+            ever_flagged_time_varying.weighted(land_weights).mean(dim=("lat", "lon")),
+            flag_time_invariant.weighted(land_weights).mean(dim=("lat", "lon")),
         )
 
         # Sanity check: these should each be 0 or 1
@@ -2356,27 +2706,27 @@ def calculate_summary_stats(
         if verbose:
             logger.info("%s:", tag)
             logger.info(
-                "  frac of dataset [time, lat, lon] flagged (time-varying):     %.4g",
+                "  area-wtd frac of dataset [time, lat, lon] flagged (time-varying):     %.4g",
                 frac_flagged_time_varying,
             )
             logger.info(
-                "  frac of space [lat, lon] with >=1 flagged timestep:          %.4g",
+                "  area-wtd frac of space [lat, lon] with >=1 flagged timestep:          %.4g",
                 frac_space_flagged_time_varying,
             )
             logger.info(
-                "  frac of space [lat, lon] with time-invariant flag:           %.4g",
+                "  area-wtd frac of space [lat, lon] with time-invariant flag:           %.4g",
                 frac_space_flagged_time_invariant,
             )
             logger.info(
-                "  land frac of dataset [time, lat, lon] flagged (time-varying):%.4g",
+                "  area-wtd land frac of dataset [time, lat, lon] flagged (time-varying):%.4g",
                 land_frac_flagged_time_varying,
             )
             logger.info(
-                "  land frac of space [lat, lon] with >=1 flagged timestep:     %.4g",
+                "  area-wtd land frac of space [lat, lon] with >=1 flagged timestep:     %.4g",
                 land_frac_space_flagged_time_varying,
             )
             logger.info(
-                "  land frac of space [lat, lon] with time-invariant flag:      %.4g",
+                "  area-wtd land frac of space [lat, lon] with time-invariant flag:      %.4g",
                 land_frac_space_flagged_time_invariant,
             )
 
