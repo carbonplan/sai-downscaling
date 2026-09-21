@@ -1,5 +1,5 @@
 """
-Unit tests for BCSDOrchestrator.
+Unit tests for DownscalingOrchestrator.
 
 Tests focus on:
 - Cache instance management (_get_cache)
@@ -9,7 +9,7 @@ Tests focus on:
 - run_full_workflow deduplication and stage ordering
 - get_status correctness
 
-BCSDPipeline is always mocked so no real compute or S3 access is required.
+DownscalingPipeline is always mocked so no real compute or S3 access is required.
 """
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import make_icechunk_group as _make_icechunk_group
 
-from srm.bcsd_config import BCSDConfig, PipelineOptions
-from srm.cache import ArtifactCache
-from srm.orchestration import BCSDOrchestrator
+from saidownscale.cache import ArtifactCache
+from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
+from saidownscale.orchestration import DownscalingOrchestrator
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -43,8 +43,8 @@ def pipeline_options(tmp_path) -> PipelineOptions:
 
 
 @pytest.fixture
-def orchestrator(pipeline_options) -> BCSDOrchestrator:
-    return BCSDOrchestrator(pipeline_options)
+def orchestrator(pipeline_options) -> DownscalingOrchestrator:
+    return DownscalingOrchestrator(pipeline_options)
 
 
 def _make_config(
@@ -54,8 +54,8 @@ def _make_config(
     scenario="SSP245",
     subset_bounds=None,
     downscaling_method="BCSD",
-) -> BCSDConfig:
-    return BCSDConfig(
+) -> DownscalingConfig:
+    return DownscalingConfig(
         gcm=gcm,
         downscaling_method=downscaling_method,
         variable=variable,
@@ -68,12 +68,12 @@ def _make_config(
 
 
 @pytest.fixture
-def config() -> BCSDConfig:
+def config() -> DownscalingConfig:
     return _make_config()
 
 
 @pytest.fixture
-def multi_configs() -> list[BCSDConfig]:
+def multi_configs() -> list[DownscalingConfig]:
     """Three configs covering two GCMs and two variables for deduplication tests."""
     return [
         _make_config(gcm="CESM2-WACCM6", variable="tas", ensemble_member="r1i1p1f1"),
@@ -108,8 +108,8 @@ class TestGetCache:
     def test_different_branch_orchestrator_has_different_cache(self, tmp_path):
         opts_v2 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), branch="v2")
         opts_v3 = PipelineOptions(scratch_dir=str(tmp_path / "cache"), branch="v3")
-        orch_v2 = BCSDOrchestrator(opts_v2)
-        orch_v3 = BCSDOrchestrator(opts_v3)
+        orch_v2 = DownscalingOrchestrator(opts_v2)
+        orch_v3 = DownscalingOrchestrator(opts_v3)
         assert orch_v2._get_cache().branch == "v2"
         assert orch_v3._get_cache().branch == "v3"
 
@@ -557,7 +557,7 @@ class TestSubmitToCoiled:
 
 class TestRunLocal:
     def test_routes_prepare_observations(self, orchestrator, config):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.DownscalingPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -570,7 +570,7 @@ class TestRunLocal:
         assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_fit_historical(self, orchestrator, config):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.DownscalingPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -584,7 +584,7 @@ class TestRunLocal:
         assert result == [f"{loc.store_path}::{loc.group}"]
 
     def test_routes_transform_scenario(self, orchestrator, config):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.DownscalingPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -600,7 +600,7 @@ class TestRunLocal:
             orchestrator._run_local("bad_stage", [config])
 
     def test_creates_pipeline_per_config(self, orchestrator, multi_configs):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.DownscalingPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
             mock_instance.prepare_observations.return_value = "path"
@@ -610,7 +610,7 @@ class TestRunLocal:
         assert MockPipeline.call_count == len(multi_configs)
 
     def test_returns_path_per_config(self, orchestrator, multi_configs):
-        with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+        with patch("saidownscale.orchestration.DownscalingPipeline") as MockPipeline:
             mock_instance = MagicMock()
             MockPipeline.return_value = mock_instance
 
@@ -627,7 +627,7 @@ class TestRunLocal:
         }
         for stage, method_name in stage_to_method.items():
             with subtests.test(stage=stage):
-                with patch("srm.orchestration.BCSDPipeline") as MockPipeline:
+                with patch("saidownscale.orchestration.DownscalingPipeline") as MockPipeline:
                     mock_instance = MagicMock()
                     MockPipeline.return_value = mock_instance
                     getattr(mock_instance, method_name).return_value = f"{stage}_path"
@@ -835,41 +835,41 @@ class TestVmSizing:
         for stage in _STAGES:
             with subtests.test(stage=stage):
                 assert (
-                    BCSDOrchestrator._vm_types_for(stage, configs)
-                    == (BCSDOrchestrator._STAGE_VM_TYPES[stage])
+                    DownscalingOrchestrator._vm_types_for(stage, configs)
+                    == (DownscalingOrchestrator._STAGE_VM_TYPES[stage])
                 )
 
     def test_regional_batch_is_smaller_than_global(self, subtests):
         configs = [_make_config(subset_bounds=_SA_BOUNDS)]
         for stage in _STAGES:
             with subtests.test(stage=stage):
-                regional = BCSDOrchestrator._vm_types_for(stage, configs)
-                assert regional == BCSDOrchestrator._REGIONAL_STAGE_VM_TYPES[stage]
-                assert regional != BCSDOrchestrator._STAGE_VM_TYPES[stage]
+                regional = DownscalingOrchestrator._vm_types_for(stage, configs)
+                assert regional == DownscalingOrchestrator._REGIONAL_STAGE_VM_TYPES[stage]
+                assert regional != DownscalingOrchestrator._STAGE_VM_TYPES[stage]
 
     def test_mixed_batch_sized_as_global(self, subtests):
         """One instance type covers the batch, so it must fit the largest task in it."""
         configs = [_make_config(subset_bounds=_SA_BOUNDS), _make_config()]
-        assert BCSDOrchestrator._is_regional(configs) is False
+        assert DownscalingOrchestrator._is_regional(configs) is False
         for stage in _STAGES:
             with subtests.test(stage=stage):
                 assert (
-                    BCSDOrchestrator._vm_types_for(stage, configs)
-                    == (BCSDOrchestrator._STAGE_VM_TYPES[stage])
+                    DownscalingOrchestrator._vm_types_for(stage, configs)
+                    == (DownscalingOrchestrator._STAGE_VM_TYPES[stage])
                 )
 
     def test_empty_batch_sized_as_global(self):
-        assert BCSDOrchestrator._is_regional([]) is False
+        assert DownscalingOrchestrator._is_regional([]) is False
         assert (
-            BCSDOrchestrator._vm_types_for("transform_scenario", [])
-            == (BCSDOrchestrator._STAGE_VM_TYPES["transform_scenario"])
+            DownscalingOrchestrator._vm_types_for("transform_scenario", [])
+            == (DownscalingOrchestrator._STAGE_VM_TYPES["transform_scenario"])
         )
 
     def test_unknown_stage_falls_back_to_default(self, subtests):
         for configs in ([_make_config()], [_make_config(subset_bounds=_SA_BOUNDS)]):
-            with subtests.test(regional=BCSDOrchestrator._is_regional(configs)):
-                assert BCSDOrchestrator._vm_types_for("no_such_stage", configs) == (
-                    BCSDOrchestrator._DEFAULT_VM_TYPE
+            with subtests.test(regional=DownscalingOrchestrator._is_regional(configs)):
+                assert DownscalingOrchestrator._vm_types_for("no_such_stage", configs) == (
+                    DownscalingOrchestrator._DEFAULT_VM_TYPE
                 )
 
 
@@ -945,7 +945,7 @@ class TestSubmitBatchJob:
         assert overrides["command"] == [
             "python",
             "-m",
-            "srm.batch_runner",
+            "saidownscale.batch_runner",
             "transform_scenario",
         ]
 
@@ -1148,7 +1148,7 @@ class TestSubmitToAwsBatch:
         client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", return_value=True),
             patch("time.sleep"),
         ):
@@ -1162,7 +1162,7 @@ class TestSubmitToAwsBatch:
         client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", return_value=False),
             patch("time.sleep"),
         ):
@@ -1175,7 +1175,7 @@ class TestSubmitToAwsBatch:
         client.describe_jobs.return_value = {"jobs": [{"status": "SUCCEEDED"}]}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest") as mock_write,
+            patch("saidownscale.batch_manifest.write_manifest") as mock_write,
             patch.object(ArtifactCache, "exists", return_value=True),
             patch("time.sleep"),
         ):
@@ -1186,7 +1186,7 @@ class TestSubmitToAwsBatch:
 class TestExecutorRouting:
     def test_routes_to_aws_batch_when_selected(self, pipeline_options, config):
         pipeline_options.executor = "aws-batch"
-        orchestrator = BCSDOrchestrator(pipeline_options)
+        orchestrator = DownscalingOrchestrator(pipeline_options)
         with patch.object(
             orchestrator, "_submit_to_aws_batch", return_value=["s3://x::g"]
         ) as mock_batch:
@@ -1195,7 +1195,7 @@ class TestExecutorRouting:
 
     def test_explicit_executor_argument_overrides_options(self, pipeline_options, config):
         pipeline_options.executor = "coiled"
-        orchestrator = BCSDOrchestrator(pipeline_options)
+        orchestrator = DownscalingOrchestrator(pipeline_options)
         with patch.object(orchestrator, "_run_local", return_value=["s3://x::g"]) as mock_local:
             orchestrator.submit_stage("prepare_observations", [config], executor="local")
         mock_local.assert_called_once()
@@ -1233,7 +1233,7 @@ class TestJobName:
 
     def test_short_name_is_left_alone(self, orchestrator, config):
         name = orchestrator._job_name("fit_historical", [config])
-        assert name.startswith("bcsd-fit_historical-CESM2-WACCM6-tas-")
+        assert name.startswith("saidownscale-fit_historical-CESM2-WACCM6-tas-")
         assert len(name) < 128
 
 
@@ -1254,7 +1254,7 @@ class TestFailedJobIsNotMaskedByStaleCache:
         client.describe_jobs.return_value = {"jobs": [{"status": status}]}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", return_value=True),
             patch("time.sleep"),
         ):
@@ -1281,7 +1281,7 @@ class TestFailedJobIsNotMaskedByStaleCache:
         client.describe_jobs.return_value = {"jobs": []}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", return_value=True),
             patch("time.sleep"),
         ):
@@ -1299,7 +1299,7 @@ class TestFailedJobIsNotMaskedByStaleCache:
         client.describe_jobs.return_value = {"jobs": []}
         with (
             patch("boto3.client", return_value=client),
-            patch("srm.batch_manifest.write_manifest", return_value="s3://b/m.json"),
+            patch("saidownscale.batch_manifest.write_manifest", return_value="s3://b/m.json"),
             patch.object(ArtifactCache, "exists", side_effect=[False] * n + [True] * (2 * n)),
             patch("time.sleep"),
         ):
@@ -1417,7 +1417,7 @@ class TestResolveJobDefinition:
 
     def test_pinned_revision_is_described_directly(self, pipeline_options):
         pipeline_options.batch_job_definition = "srm-downscaling:7"
-        orch = BCSDOrchestrator(pipeline_options)
+        orch = DownscalingOrchestrator(pipeline_options)
         client = MagicMock()
         client.describe_job_definitions.return_value = {
             "jobDefinitions": [
@@ -1441,7 +1441,7 @@ class TestResolveJobDefinition:
         # AWS resolves a bare name to the highest ACTIVE revision at submit time, so the
         # preview has to do the same or it would name the wrong image.
         pipeline_options.batch_job_definition = "srm-downscaling"
-        orch = BCSDOrchestrator(pipeline_options)
+        orch = DownscalingOrchestrator(pipeline_options)
         client = MagicMock()
         client.describe_job_definitions.return_value = {
             "jobDefinitions": [
@@ -1472,7 +1472,7 @@ class TestResolveJobDefinition:
         # would submit against "arn:9" and every job would fail to place.
         arn = "arn:aws:batch:us-west-2:123456789012:job-definition/srm-downscaling:9"
         pipeline_options.batch_job_definition = arn
-        orch = BCSDOrchestrator(pipeline_options)
+        orch = DownscalingOrchestrator(pipeline_options)
         client = MagicMock()
         client.describe_job_definitions.return_value = {
             "jobDefinitions": [
@@ -1488,7 +1488,7 @@ class TestResolveJobDefinition:
         assert resolved == {"job_definition": "srm-downscaling:9", "image": "ecr/img:sha9"}
 
     def test_missing_definition_raises(self, pipeline_options):
-        orch = BCSDOrchestrator(pipeline_options)
+        orch = DownscalingOrchestrator(pipeline_options)
         client = MagicMock()
         client.describe_job_definitions.return_value = {"jobDefinitions": []}
         with patch("boto3.client", return_value=client):
@@ -1515,7 +1515,7 @@ class TestSubmissionUsesTheResolvedDefinition:
 
     def test_submits_against_the_pinned_revision(self, pipeline_options, config):
         pipeline_options.batch_job_definition = "srm-downscaling"
-        orch = BCSDOrchestrator(pipeline_options)
+        orch = DownscalingOrchestrator(pipeline_options)
         client = self._client()
         with patch("boto3.client", return_value=client):
             orch._submit_batch_job("fit_historical", [config], None)
@@ -1524,7 +1524,7 @@ class TestSubmissionUsesTheResolvedDefinition:
         assert client.submit_job.call_args.kwargs["jobDefinition"] == "srm-downscaling:4"
 
     def test_resolution_is_reused_across_a_run(self, pipeline_options, config):
-        orch = BCSDOrchestrator(pipeline_options)
+        orch = DownscalingOrchestrator(pipeline_options)
         client = self._client()
         with patch("boto3.client", return_value=client):
             orch.resolve_job_definition()
@@ -1538,7 +1538,7 @@ class TestSubmissionUsesTheResolvedDefinition:
         self, pipeline_options, config
     ):
         pipeline_options.batch_job_definition = "srm-downscaling"
-        orch = BCSDOrchestrator(pipeline_options)
+        orch = DownscalingOrchestrator(pipeline_options)
         client = self._client()
         client.describe_job_definitions.side_effect = RuntimeError("denied")
         with patch("boto3.client", return_value=client):
@@ -1564,7 +1564,7 @@ class TestBothExecutorsAgreeOnProcessCount:
         assert env["SRM_NR_PROCESSES"] == str(expected)
 
     def test_the_two_executors_send_the_same_number(self, orchestrator, multi_configs):
-        from srm.cost import vcpus
+        from saidownscale.cost import vcpus
 
         stage = "transform_scenario"
         assert (
@@ -1581,7 +1581,7 @@ class TestResourcesDerivedFromOneTable:
             orchestrator._resources_for("polish_the_output", [config])
 
     def test_matches_the_instance_the_coiled_path_would_pick(self, orchestrator, config):
-        from srm.cost import memory_mib, vcpus
+        from saidownscale.cost import memory_mib, vcpus
 
         vm_type = orchestrator._vm_types_for("transform_scenario", [config])[0]
         assert orchestrator._resources_for("transform_scenario", [config]) == {
@@ -1595,7 +1595,7 @@ class TestJobDefinitionPagination:
         # describe_job_definitions caps a page at 100, and a revision is registered per
         # deploy, so reading only the first page would eventually pin a stale revision.
         pipeline_options.batch_job_definition = "srm-downscaling"
-        orch = BCSDOrchestrator(pipeline_options)
+        orch = DownscalingOrchestrator(pipeline_options)
         client = MagicMock()
         client.describe_job_definitions.side_effect = [
             {

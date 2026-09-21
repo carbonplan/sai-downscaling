@@ -64,7 +64,7 @@ jobs:
                     IFS=',' read -ra VAR_LIST <<< "$VARIABLES"
                   fi
 
-                  CMD=(uv run python src/srm/input_data/era5.py era5)
+                  CMD=(uv run python src/saidownscale/input_data/era5.py era5)
                   for var in "${VAR_LIST[@]}"; do
                     CMD+=(--variable "$(echo "$var" | xargs)")
                   done

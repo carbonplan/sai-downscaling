@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from srm import catalog
-from srm.cache import StoreLocation
-from srm.config import SCENARIO_TO_GROUP, _ensure_root_group
-from srm.datasets import BaseDataset, Datatree
+from saidownscale import catalog
+from saidownscale.cache import StoreLocation
+from saidownscale.config import SCENARIO_TO_GROUP, _ensure_root_group
+from saidownscale.datasets import BaseDataset, Datatree
 
 
 def make_icechunk_group(loc: StoreLocation, branch: str = "main") -> None:

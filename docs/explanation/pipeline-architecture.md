@@ -1,10 +1,10 @@
 # Pipeline Architecture
 
-This page explains how the BCSD downscaling pipeline is structured, why it is designed the way it is, and how its components fit together.
+This page explains how the downscaling pipeline is structured, why it is designed the way it is, and how its components fit together.
 
 ## The Three-Stage Pipeline
 
-The BCSD pipeline consists of three stages that automatically cache and reuse artifacts:
+The downscaling pipeline consists of three stages that automatically cache and reuse artifacts:
 
 ```mermaid
 graph TB
@@ -111,9 +111,9 @@ graph TB
 
 Daily minimum temperature is **not** bias-corrected directly. Bias-correcting `tasmax` and `tasmin` independently can leave the pair physically inconsistent, so the pipeline instead bias-corrects `tasmax` and the diurnal temperature range `dtr` (`= tasmax − tasmin`) and reconstructs `tasmin = tasmax − dtr` from their debiased-coarse outputs. This mirrors the NASA-NEX approach and is implemented in the dedicated stage variants `fit_historical_tasmin` and `transform_scenario_tasmin`, which read the `debiased_coarse` `tasmax` and `dtr` groups written by those stages (see [Managing the Cache](../how-to/manage-cache.md)). The reconstruction helper (`derive_tasmin`) requires its two inputs to share an identical time axis and raises if they do not, so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result (issue #363).
 
-`tasmax` and `tasmin` are still spatially disaggregated **independently**, and that final interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step (`reconcile_temperature_extremes`) closes this gap: once both fine fields exist it swaps the offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields (issue #331). The swap is NaN-safe and structurally monotone, and the `bcsd validate-output` gate blocks any run whose stored output still contains an inversion.
+`tasmax` and `tasmin` are still spatially disaggregated **independently**, and that final interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step (`reconcile_temperature_extremes`) closes this gap: once both fine fields exist it swaps the offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields (issue #331). The swap is NaN-safe and structurally monotone, and the `saidownscale validate-output` gate blocks any run whose stored output still contains an inversion.
 
-Both behaviors are keyed on the **variable**, not on which entry point runs the stage. `fit_historical` and `transform_scenario` route a `tasmin` config to their `_tasmin` variants at the top of the method, so the distributed `batch_runner`, the local `run_full_pipeline`, and the CLI all produce derived-and-reconciled `tasmin` identically. Because the derivation reads the `tasmax` and `dtr` outputs, `tasmin` must run after them; `BCSDOrchestrator` enforces this by scheduling `tasmin` in a later intra-stage dependency wave.
+Both behaviors are keyed on the **variable**, not on which entry point runs the stage. `fit_historical` and `transform_scenario` route a `tasmin` config to their `_tasmin` variants at the top of the method, so the distributed `batch_runner`, the local `run_full_pipeline`, and the CLI all produce derived-and-reconciled `tasmin` identically. Because the derivation reads the `tasmax` and `dtr` outputs, `tasmin` must run after them; `DownscalingOrchestrator` enforces this by scheduling `tasmin` in a later intra-stage dependency wave.
 
 ## `dtr` is bias-corrected but not published
 
@@ -138,7 +138,7 @@ zarr group paths on a named branch (defaulting to the installed package version)
 ```text
 # Scratch store — obs regridded + optional intermediates
 s3://carbonplan-srm/scratch/cache/{environment}/{gcm}-{obs_dataset}-{subset_id}.icechunk
-  branch: v1.2.3        ← installed package version (BCSD_BRANCH to override)
+  branch: v1.2.3        ← installed package version (SAIDOWNSCALE_BRANCH to override)
     obs/{variable}                                                   # shared by both methods
     {method}/detrended_scenario/{scenario_group}/{variable}/{ensemble_member}  # only if save_intermediate=True
     {method}/trend_scenario/{scenario_group}/{variable}/{ensemble_member}      # only if save_intermediate=True
@@ -164,21 +164,20 @@ Where:
 
 This design concentrates all artifacts for a GCM into two stores instead of scattering them across
 dozens of separate icechunk repositories. Branching — rather than path segments — provides version
-isolation: bumping the package version (or setting `BCSD_BRANCH`) starts a fresh branch with no
+isolation: bumping the package version (or setting `SAIDOWNSCALE_BRANCH`) starts a fresh branch with no
 inherited ancestry, so the existence checks never find stale artifacts from a previous run.
 
 The paths above are the scratch defaults. Production runs override `output_dir` to CarbonPlan's
-public [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling), so the
-current published outputs live at
-`s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/CESM2-WACCM-ERA5-global.icechunk`
-on branch `v0.13.0`. See [How to Access Downscaled Output Data](../access-data.md) for reading
-published stores.
+public [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling). For the
+current store paths and release branch, see
+[Data location](../access-data/whats-available.md#data-location), and see
+[Access utilities](../access-data/access-utilities.md) for reading published stores.
 
 ## Distributed Execution
 
 Every stage task is one `(gcm, scenario, member, variable)` leaf that reads a config, runs a stage, writes to S3, and exits. The tasks never talk to each other, so the pipeline needs task placement rather than a distributed scheduler.
 
-`BCSDOrchestrator.submit_stage` dispatches through an executor seam, and all three executors share the signature `(stage, configs) -> list[str]`. Everything upstream of that seam is executor-agnostic.
+`DownscalingOrchestrator.submit_stage` dispatches through an executor seam, and all three executors share the signature `(stage, configs) -> list[str]`. Everything upstream of that seam is executor-agnostic.
 
 | Executor | Mechanism | Cost per vCPU-hour |
 | --- | --- | --- |
@@ -186,7 +185,7 @@ Every stage task is one `(gcm, scenario, member, variable)` leaf that reads a co
 | `coiled` | [Coiled](https://coiled.io) batch API | $0.1089 (EC2 plus a $0.05 platform fee) |
 | `local` | Sequential, in the current process | none |
 
-Deploys use `aws-batch`. The output is identical either way, because both remote executors run the same `srm.batch_runner` entry point against the same config payload.
+Deploys use `aws-batch`. The output is identical either way, because both remote executors run the same `saidownscale.batch_runner` entry point against the same config payload.
 
 ### Config delivery differs between the two
 
@@ -204,8 +203,8 @@ The sequence below is the Coiled path specifically. The AWS Batch path differs o
 
 ```mermaid
 sequenceDiagram
-    participant CLI as bcsd CLI
-    participant Orch as BCSDOrchestrator
+    participant CLI as saidownscale CLI
+    participant Orch as DownscalingOrchestrator
     participant Coiled as Coiled Batch API
     participant S3 as S3 Cache
     participant VM as Coiled VMs
@@ -221,8 +220,8 @@ sequenceDiagram
     
     loop For each task
         Coiled->>VM: Start VM with CONFIG_JSON env var
-        VM->>VM: python -m srm.batch_runner {stage}
-        Note over VM: batch_runner reads CONFIG_JSON<br/>Creates BCSDPipeline<br/>Runs stage
+        VM->>VM: python -m saidownscale.batch_runner {stage}
+        Note over VM: batch_runner reads CONFIG_JSON<br/>Creates DownscalingPipeline<br/>Runs stage
         VM->>S3: Write output to cache/output_dir
         VM-->>Coiled: Task complete
     end
@@ -261,38 +260,38 @@ AWS Batch takes resource requirements rather than instance types and picks the i
 
 The CLI is built on several key components:
 
-1. **BCSDConfig** + **PipelineOptions** ([src/srm/bcsd_config.py](../../src/srm/bcsd_config.py))
-   - **BCSDConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `is_sai_scenario`. Variable-specific parameters (`detrend_data`, `disaggregation_method`, `debias_approach`, etc.) live only on the nested `variable_config`, never as accessors on `BCSDConfig`. The required top-level `downscaling_method` (`BCSD` or `QDMSD`) is a `BCSDConfig` field: it selects which per-variable defaults table `variable_config` is read from.
+1. **DownscalingConfig** + **PipelineOptions** ([src/saidownscale/downscaling_config.py](../../src/saidownscale/downscaling_config.py))
+   - **DownscalingConfig** — run identity: `gcm`, `variable`, `ensemble_member`, `scenario`, time periods, `subset_bounds`, `variable_config`. Field validators for SAI scenarios, time periods, spatial bounds. Computed fields: `run_id`, `config_hash`, `is_sai_scenario`. Variable-specific parameters (`detrend_data`, `disaggregation_method`, `debias_approach`, etc.) live only on the nested `variable_config`, never as accessors on `DownscalingConfig`. The required top-level `downscaling_method` (`BCSD` or `QDMSD`) is a `DownscalingConfig` field: it selects which per-variable defaults table `variable_config` is read from.
    - **PipelineOptions** — operational: `scratch_dir`, `output_dir`, `environment`, `branch`, `verbose`, `rechunk_workflow`, `apply_ocean_mask`, `save_intermediate`, `clip_values`, `clip_bounds`. The `branch` field (default: installed package version) names the icechunk branch all artifacts are written to and read from.
-   - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "BCSD_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
+   - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "SAIDOWNSCALE_"` and `extra = "ignore"`, so a single flat YAML populates both classes.
 
-2. **ArtifactCache** ([src/srm/cache.py](../../src/srm/cache.py))
+2. **ArtifactCache** ([src/saidownscale/cache.py](../../src/saidownscale/cache.py))
    - S3-based cache with fsspec backend
    - dependency tracking and validation
    - environment and spatial subset awareness
    - icechunk format with commit-based write verification
    - efficient prefix-based listing (not recursive globbing)
 
-3. **BCSDPipeline** ([src/srm/pipeline.py](../../src/srm/pipeline.py))
+3. **DownscalingPipeline** ([src/saidownscale/pipeline.py](../../src/saidownscale/pipeline.py))
    - three-stage API
    - each stage: check cache → compute if needed → write to cache
    - automatic metadata preservation (units, attributes)
    - rechunking strategy for optimal Dask performance
 
-4. **BCSDOrchestrator** ([src/srm/orchestration.py](../../src/srm/orchestration.py))
+4. **DownscalingOrchestrator** ([src/saidownscale/orchestration.py](../../src/saidownscale/orchestration.py))
    - batch execution with Coiled integration
    - automatic task deduplication across stages
    - status tracking and reporting
    - error handling and output verification
 
-5. **batch_runner** ([src/srm/batch_runner.py](../../src/srm/batch_runner.py))
+5. **batch_runner** ([src/saidownscale/batch_runner.py](../../src/saidownscale/batch_runner.py))
    - entry point for Coiled batch jobs
-   - reads `CONFIG_JSON` environment variable (structure: `{"options": {...PipelineOptions fields...}, ...BCSDConfig fields...}`)
-   - pops the `"options"` key to construct `PipelineOptions`; remaining keys construct `BCSDConfig`
-   - creates `BCSDPipeline(config, options)` and runs the requested stage
+   - reads `CONFIG_JSON` environment variable (structure: `{"options": {...PipelineOptions fields...}, ...DownscalingConfig fields...}`)
+   - pops the `"options"` key to construct `PipelineOptions`; remaining keys construct `DownscalingConfig`
+   - creates `DownscalingPipeline(config, options)` and runs the requested stage
    - minimal dependencies for fast VM startup
 
-6. **CLI** ([src/srm/cli.py](../../src/srm/cli.py))
+6. **CLI** ([src/saidownscale/cli.py](../../src/saidownscale/cli.py))
    - typer-based command-line interface
    - rich formatting for tables and progress display
    - configuration loading and validation
@@ -300,12 +299,12 @@ The CLI is built on several key components:
 
 ## Batch Execution Flow (Coiled)
 
-Detailed flow when running `uv run bcsd run --config-path configs/ --executor coiled`. Under `--executor aws-batch` the middle of this flow changes shape: the orchestrator writes one S3 manifest instead of per-task variables, submits a single array job instead of N VMs, and each child reads its entry by `AWS_BATCH_JOB_ARRAY_INDEX`. The cache verification at the end is identical.
+Detailed flow when running `uv run saidownscale run --config-path configs/ --executor coiled`. Under `--executor aws-batch` the middle of this flow changes shape: the orchestrator writes one S3 manifest instead of per-task variables, submits a single array job instead of N VMs, and each child reads its entry by `AWS_BATCH_JOB_ARRAY_INDEX`. The cache verification at the end is identical.
 
 ```mermaid
 flowchart TD
     A[CLI: Load configs from directory] --> B[CLI: Validate all configs]
-    B --> C[CLI: Create BCSDOrchestrator]
+    B --> C[CLI: Create DownscalingOrchestrator]
     C --> D[Orch: For each stage...]
     
     D --> E[Orch: Check cache for all configs]
@@ -321,10 +320,10 @@ flowchart TD
     K --> L[Coiled: Spin up N VMs in parallel]
     
     L --> M[VM: Set CONFIG_JSON environment variable]
-    M --> N[VM: Run 'python -m srm.batch_runner stage']
+    M --> N[VM: Run 'python -m saidownscale.batch_runner stage']
     
     N --> O[batch_runner: Parse CONFIG_JSON]
-    O --> P[batch_runner: Create BCSDPipeline]
+    O --> P[batch_runner: Create DownscalingPipeline]
     P --> Q[batch_runner: Run pipeline.stage]
     
     Q --> R{Stage}
@@ -348,7 +347,7 @@ flowchart TD
 
 ## Artifact Location and Existence Checks
 
-`ArtifactCache` translates a `BCSDConfig` into a `StoreLocation` — a pairing of an icechunk
+`ArtifactCache` translates a `DownscalingConfig` into a `StoreLocation` — a pairing of an icechunk
 repository path and a zarr group path within it. The store path is derived from
 `(environment, gcm, obs_dataset, subset_id)`; the group path encodes the stage and the specific
 run parameters (variable, ensemble member, scenario group). Because both components are
