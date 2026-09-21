@@ -4,13 +4,14 @@
 
 ## Links
 
-If you want to read the pipeline code, get the data, or read about the science, start with the
-resources below. Each one lives in a different place.
+If you want to read the pipeline code, get the data, read about the science, or understand how the
+project was shaped, start with the resources below. Each one lives in a different place.
 
 | Resource | What you'll find |
 | --- | --- |
 | [GitHub repository](https://github.com/carbonplan/sai-downscaling) | Pipeline code, run configs, and issue tracker |
 | [Source Cooperative](https://source.coop/carbonplan/srm-downscaling) | Published input and output data |
+| [Convenings summary (PDF)](assets/convenings-summary.pdf) | What we heard in the project convenings, and how each recommendation maps onto what we built |
 | Explainers | **TODO:** Link to the explainer once it's published. |
 
 ## Terms
