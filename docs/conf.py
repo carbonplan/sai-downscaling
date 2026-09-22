@@ -96,10 +96,6 @@ html_title = "SAI Downscaling"
 html_favicon = "assets/favicon-180x180-light.png"
 
 html_theme_options = {
-    "announcement": (
-        "<b>⚠️ Project in development</b> — This documentation describes a project that is "
-        "<em>actively under development</em>. We welcome feedback to help guide future updates."
-    ),
     "repository_url": "https://github.com/carbonplan/sai-downscaling",
     "repository_branch": "main",
     "path_to_docs": "docs",
