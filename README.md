@@ -39,7 +39,8 @@ print(dt)
 ```
 
 ## Documentation
-Project documentation: https://carbonplan.github.io/sai-downscaling/
+
+Project documentation: https://sai-downscaling.readthedocs.io/
 
 - [Data access](docs/access-data/access-utilities.md) — how to list and open input datasets
 - [CLI usage](docs/reference/cli.md) — running the downscaling pipeline from the command line
