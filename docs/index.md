@@ -35,7 +35,8 @@ The code and the data are released under different terms. The table below links 
 | What | Applies |
 | --- | --- |
 | Code | [MIT License](https://github.com/carbonplan/sai-downscaling/blob/main/LICENSE) |
-| Data | [Terms of Data Access](./access-data/terms-of-data-access.md) |
+| Data | [Licenses and citation](./access-data/licenses.md), which differ per GCM and scenario |
+| The project as a whole | [Terms of Data Access](./access-data/terms-of-data-access.md) |
 
 ```{toctree}
 :hidden:
@@ -43,6 +44,7 @@ The code and the data are released under different terms. The table below links 
 :caption: Access the data
 access-data/whats-available
 access-data/access-utilities
+access-data/licenses
 access-data/terms-of-data-access
 ```
 

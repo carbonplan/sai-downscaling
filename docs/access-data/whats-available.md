@@ -95,14 +95,10 @@ ds = xr.open_zarr(session.store, group="bcsd/g6_1p5k/tas/001", consolidated=Fals
 
 ## Licenses
 
-The input and output data carry separate licenses, and we record both on Source Cooperative next to
-the data they cover. Accessing either one means agreeing to its license and to the
-[Terms of Data Access](terms-of-data-access.md).
-
-| Data | License |
-| --- | --- |
-| Input data | **TODO:** Link to the input data license on Source Cooperative. |
-| Output data | **TODO:** Link to the output data license on Source Cooperative. |
+Our downscaled output is licensed CC-BY-4.0. The input simulations carry several different licenses,
+one per GCM and scenario, so check the row for the scenario you are using. See
+[Licenses and citation](licenses.md) for the full table, the attribution text to cite, and the
+[Terms of Data Access](terms-of-data-access.md) that using any of this data implies.
 
 ## Data shape
 
