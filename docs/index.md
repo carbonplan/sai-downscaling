@@ -28,14 +28,14 @@ project was shaped, start with the resources below. Each one lives in a differen
 | [Convenings summary (PDF)](assets/convenings-summary.pdf) | What we heard in the project convenings, and how each recommendation maps onto what we built |
 | Explainers | **TODO:** Link to the explainer once it's published. |
 
-## Terms
+## Licenses and terms
 
 The code and the data are released under different terms. The table below links to each.
 
-| What | Terms |
+| What | Applies |
 | --- | --- |
 | Code | [MIT License](https://github.com/carbonplan/sai-downscaling/blob/main/LICENSE) |
-| Data | [Access terms](./access-data/access-terms.md) |
+| Data | [Terms of Data Access](./access-data/terms-of-data-access.md) |
 
 ```{toctree}
 :hidden:
@@ -43,7 +43,7 @@ The code and the data are released under different terms. The table below links 
 :caption: Access the data
 access-data/whats-available
 access-data/access-utilities
-access-data/access-terms
+access-data/terms-of-data-access
 ```
 
 ```{toctree}

@@ -39,6 +39,11 @@ data they were built from. The table below summarizes all 3.
 
 ## Data location
 
+:::{warning}
+By downloading, copying, or using this data, you agree to the
+[Terms of Data Access](terms-of-data-access.md).
+:::
+
 All data lives in CarbonPlan's
 [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling). The bucket is
 public in AWS `us-west-2`, so you don't need AWS credentials to read it. Each {term}`store` is an
@@ -87,6 +92,17 @@ session = repo.readonly_session(branch="v1.0.0")
 
 ds = xr.open_zarr(session.store, group="bcsd/g6_1p5k/tas/001", consolidated=False)
 ```
+
+## Licenses
+
+The input and output data carry separate licenses, and we record both on Source Cooperative next to
+the data they cover. Accessing either one means agreeing to its license and to the
+[Terms of Data Access](terms-of-data-access.md).
+
+| Data | License |
+| --- | --- |
+| Input data | **TODO:** Link to the input data license on Source Cooperative. |
+| Output data | **TODO:** Link to the output data license on Source Cooperative. |
 
 ## Data shape
 
