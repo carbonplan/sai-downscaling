@@ -33,7 +33,7 @@ data they were built from. The table below summarizes all three.
 | --- | --- | --- | --- |
 | Downscaled | Bias-corrected and spatially disaggregated. This is the main product. | 0.25° | `tas`, `tasmax`, `tasmin`, `pr`, `rsds` |
 | Coarse bias-corrected | Bias-corrected, but not spatially disaggregated. | Native GCM grid, about 1° to 2° | The same five, plus `dtr` (diurnal temperature range) |
-| Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same 5 |
+| Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same five |
 
 ## Data location
 
@@ -127,12 +127,12 @@ both methods publish the same members, and under `debiased_coarse`, `dtr` has th
 | `historical` | `pr`, `rsds`, `tas` | `r1i1p1f1`, `r2i1p1f1`, `r3i1p1f1` | 1978 to 2014 |
 | `historical` | `tasmax`, `tasmin` | `001` | 1978 to 2014 |
 | `ssp245` | `pr`, `rsds`, `tas` | `001` to `005` | 2015 to 2099 |
-| `ssp245` | All 5 | `006` | 2015 to 2068 |
-| `ssp245` | All 5 | `007` to `010` | 2015 to 2069 |
-| `g6_1p5k` | All 5 | `001`, `002`, `003` | 2035 to 2084 |
-| `g6_1p5k_end` | All 5 | `002` | 2085 to 2100 |
+| `ssp245` | All five | `006` | 2015 to 2068 |
+| `ssp245` | All five | `007` to `010` | 2015 to 2069 |
+| `g6_1p5k` | All five | `001`, `002`, `003` | 2035 to 2084 |
+| `g6_1p5k_end` | All five | `002` | 2085 to 2100 |
 
-For the model `CESM2-WACCM6`, no historical ensemble member carries all 5 variables, and in
+For the model `CESM2-WACCM6`, no historical ensemble member carries all five variables, and in
 `ssp245` only members `006` to `010` do. To avoid mixing realizations, we advise you to pick an
 ensemble member that carries every variable you need.
 
@@ -140,9 +140,9 @@ ensemble member that carries every variable you need.
 
 | Scenario | Variables | Members | Years |
 | --- | --- | --- | --- |
-| `historical` | All 5 | `u-by791` | 1978 to 2014 |
-| `ssp245` | All 5 | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2015 to 2099 |
-| `g6_1p5k` | All 5 | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2035 to 2084 |
+| `historical` | All five | `u-by791` | 1978 to 2014 |
+| `ssp245` | All five | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2015 to 2099 |
+| `g6_1p5k` | All five | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2035 to 2084 |
 
 The `UKESM1-1-LL` historical ensemble member is labeled by its model suite ID, `u-by791`, rather
 than by a variant label like `r2i1p1f2`. It is one realization like any other, and every
