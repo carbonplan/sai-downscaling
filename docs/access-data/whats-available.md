@@ -1,7 +1,6 @@
 # What's available
 
-We are publishing downscaled, daily climate model output for stratospheric aerosol injection (SAI)
-scenarios. The outputs cover 4 scenarios, 2 global climate models (GCMs), all available ensemble
+We are publishing statistically downscaled, daily climate model output. The outputs cover 4 scenarios, 2 global climate models (GCMs), all available ensemble
 members, and 5 variables. We bias-correct GCM output against ERA5 and downscale it to a global
 0.25° grid with 2 methods.
 
@@ -34,7 +33,7 @@ data they were built from. The table below summarizes all 3.
 | Product | Description | Grid | Variables |
 | --- | --- | --- | --- |
 | Downscaled | Bias-corrected and spatially disaggregated. This is the main product. | 0.25° | `tas`, `tasmax`, `tasmin`, `pr`, `rsds` |
-| Coarse bias-corrected | Bias-corrected, but not spatially disaggregated. Use it to evaluate the effect of bias correction without the spatial disaggregation step. | Native GCM grid, about 1° to 2° | The same 5, plus `dtr` (diurnal temperature range) |
+| Coarse bias-corrected | Bias-corrected, but not spatially disaggregated. | Native GCM grid, about 1° to 2° | The same 5, plus `dtr` (diurnal temperature range) |
 | Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same 5 |
 
 ## Data location
