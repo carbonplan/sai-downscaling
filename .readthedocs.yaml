@@ -1,0 +1,26 @@
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+
+# Required
+version: 2
+
+# Set the version of Python and other tools you might need
+build:
+    os: ubuntu-24.04
+    tools:
+        python: "3.13"
+    jobs:
+        create_environment:
+            - asdf plugin add uv
+            - asdf install uv latest
+            - asdf global uv latest
+        install:
+            - uv sync --group docs --frozen
+        build:
+            html:
+                # nb_execution_mode=off stops the {code-cell} blocks in .md pages from running.
+                # They open icechunk stores under s3://carbonplan-srm/, a private bucket that Read
+                # the Docs has no credentials for. conf.py sets nb_execution_raise_on_error =
+                # False, so without this flag the build would still succeed and publish pages
+                # containing the credential tracebacks.
+                - uv run sphinx-build -D nb_execution_mode=off -b html docs $READTHEDOCS_OUTPUT/html
