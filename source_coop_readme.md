@@ -108,7 +108,8 @@ Project documentation: https://sai-downscaling.readthedocs.io
 ## Terms of use
 
 By viewing this data, you agree to CarbonPlan’s [Terms of Use](https://carbonplan.org/terms) and [Privacy Policy](https://carbonplan.org/privacy).
-License and attribution information are stored along side the data in colocated LICENSE.txt files.
+> [!IMPORTANT]
+> Data associated with this repository are subject to additional [terms of data access](https://github.com/carbonplan/sai-downscaling/blob/main/TERMS_OF_DATA_ACCESS).
 
 ### Output data
 Output data is licensed CC BY 4.0. Details are in [output/LICENSE.txt](https://data.source.coop/carbonplan/srm-downscaling/output/LICENSE.txt).
