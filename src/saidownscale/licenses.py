@@ -18,8 +18,9 @@ from dataclasses import dataclass
 CC_BY_4_0 = "CC-BY-4.0"
 OGL_UK_3_0 = "OGL-UK-3.0"
 
-#: Markdown spelling in ``docs/access-data/licenses.md`` -> SPDX identifier.
-SPDX_BY_DOCS_NAME: dict[str, str] = {"CC-BY-4.0": CC_BY_4_0, "OGLv3": OGL_UK_3_0}
+#: Markdown spelling in ``docs/access-data/licenses.md`` -> SPDX identifier. Only the current
+#: spellings are listed, so a stale one in the docs table fails the check rather than passing.
+SPDX_BY_DOCS_NAME: dict[str, str] = {"CC BY 4.0": CC_BY_4_0, "OGLv3": OGL_UK_3_0}
 
 LICENSE_URLS: dict[str, str] = {
     CC_BY_4_0: "https://creativecommons.org/licenses/by/4.0/",
@@ -62,7 +63,9 @@ INPUT_ATTRIBUTION: dict[tuple[str, str], Attribution] = {
         references=(
             "Danabasoglu, Gokhan (2019). NCAR CESM2-WACCM model output prepared for CMIP6 "
             "CMIP historical. Version 20191104. Earth System Grid Federation. "
-            "https://doi.org/10.22033/ESGF/CMIP6.10071"
+            "https://doi.org/10.22033/ESGF/CMIP6.10071 Note: CC BY-SA 4.0 International "
+            "License is named in the netCDF file; we understand this licensing is superseded "
+            "by CC BY 4.0, based on the CMIP6 Terms of Use."
         ),
     ),
     ("CESM2-WACCM6", "ssp245"): Attribution(
