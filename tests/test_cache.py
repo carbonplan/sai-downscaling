@@ -880,7 +880,7 @@ def _write_artifact_with_attrs(loc: StoreLocation, branch: str, attrs: dict | No
 
 def _provenance(config) -> dict:
     """The subset of pipeline provenance attrs that verification reads."""
-    return {"srm_downscaling:config_json": config.model_dump_json()}
+    return {"sai_downscaling:config_json": config.model_dump_json()}
 
 
 class TestVariableConfigVerification:

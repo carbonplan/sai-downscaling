@@ -28,7 +28,11 @@ from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
 from saidownscale.cache import COARSE_ONLY_VARIABLES, ArtifactCache, StoreLocation
-from saidownscale.config import _ensure_root_group, _icechunk_storage_for_path
+from saidownscale.config import (
+    SCENARIO_TO_GROUP,
+    _ensure_root_group,
+    _icechunk_storage_for_path,
+)
 from saidownscale.datasets import catalog as _catalog
 from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 from saidownscale.downscaling_utils import (
@@ -55,7 +59,9 @@ from saidownscale.encoding import (
     make_coarse_encoding,
     make_encoding,
 )
+from saidownscale.licenses import metadata_attrs
 from saidownscale.qa_checks import assert_no_nans
+from saidownscale.store_metadata import describe_source
 from saidownscale.utils import get_variable
 
 if TYPE_CHECKING:
@@ -601,37 +607,47 @@ class DownscalingPipeline:
             "institution": "CarbonPlan",
             "history": (
                 f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}: "
-                f"BCSD downscaling by srm v{version}"
+                f"{self.config.downscaling_method} downscaling by saidownscale v{version}"
             ),
             # Pipeline provenance — namespaced
-            "srm_downscaling:version": version,
-            "srm_downscaling:gcm": self.config.gcm,
-            "srm_downscaling:scenario": self.config.scenario or "historical",
-            "srm_downscaling:variable": self.config.variable,
-            "srm_downscaling:ensemble_member": self.config.ensemble_member,
-            "srm_downscaling:historical_ensemble_member": self._hist_member,
-            "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
-            "srm_downscaling:observation_dataset": self.config.obs_dataset,
-            "srm_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
-            "srm_downscaling:downscaling_method": self.config.downscaling_method,
-            "srm_downscaling:disaggregation_method": (
+            "sai_downscaling:version": version,
+            "sai_downscaling:gcm": self.config.gcm,
+            "sai_downscaling:scenario": self.config.scenario or "historical",
+            "sai_downscaling:variable": self.config.variable,
+            "sai_downscaling:ensemble_member": self.config.ensemble_member,
+            "sai_downscaling:historical_ensemble_member": self._hist_member,
+            "sai_downscaling:ssp245_ensemble_member": self._ssp245_member,
+            "sai_downscaling:observation_dataset": self.config.obs_dataset,
+            "sai_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
+            "sai_downscaling:downscaling_method": self.config.downscaling_method,
+            "sai_downscaling:disaggregation_method": (
                 self.config.variable_config.disaggregation_method
             ),
-            "srm_downscaling:train_period": (
+            "sai_downscaling:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
             ),
-            "srm_downscaling:config_hash": self.config.config_hash,
-            "srm_downscaling:config_json": self.config.model_dump_json(),
-            "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+            "sai_downscaling:config_json": self.config.model_dump_json(),
+            "sai_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
+        # License, attribution and contact, so a run from scratch publishes data that is already
+        # correctly labelled rather than waiting on a metadata pass afterwards.
+        scenario_group = SCENARIO_TO_GROUP[self.config.scenario or "historical"]
+        attrs.update(metadata_attrs(self.config.gcm, scenario_group, product="output"))
+        attrs["source"] = describe_source(
+            self.config.gcm,
+            self.config.scenario or "historical",
+            self.config.obs_dataset,
+            self.config.downscaling_method,
+        )
+
         description = self._gcm_description()
         if description is not None:
-            attrs["srm_downscaling:gcm_description"] = description
+            attrs["sai_downscaling:gcm_description"] = description
         # Only present on scenarios that continue an earlier SAI run, so readers can tell
         # which run supplied the pre-scenario years of the bridge.
         if self._sai_parent is not None:
-            attrs["srm_downscaling:sai_parent_scenario"] = self._sai_parent.scenario
-            attrs["srm_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
+            attrs["sai_downscaling:sai_parent_scenario"] = self._sai_parent.scenario
+            attrs["sai_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
         return attrs
 
     def _build_obs_attrs(self) -> dict:
@@ -646,7 +662,7 @@ class DownscalingPipeline:
         method, a scenario, a member, a train period, and a config hash, each fixed to
         whatever run happened to write the artifact first. Only the fields the artifact
         is actually keyed on are recorded, which makes the presence of
-        ``srm_downscaling:downscaling_method`` a reliable signal that a group depends
+        ``sai_downscaling:downscaling_method`` a reliable signal that a group depends
         on the method.
 
         Returns
@@ -661,18 +677,18 @@ class DownscalingPipeline:
             "institution": "CarbonPlan",
             "history": (
                 f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}: "
-                f"observations regridded to the model grid by srm v{version}"
+                f"observations regridded to the model grid by saidownscale v{version}"
             ),
             # Pipeline provenance — namespaced. Only what this artifact is keyed on.
-            "srm_downscaling:version": version,
-            "srm_downscaling:gcm": self.config.gcm,
-            "srm_downscaling:variable": self.config.variable,
-            "srm_downscaling:observation_dataset": self.config.obs_dataset,
-            "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+            "sai_downscaling:version": version,
+            "sai_downscaling:gcm": self.config.gcm,
+            "sai_downscaling:variable": self.config.variable,
+            "sai_downscaling:observation_dataset": self.config.obs_dataset,
+            "sai_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
         description = self._gcm_description()
         if description is not None:
-            attrs["srm_downscaling:gcm_description"] = description
+            attrs["sai_downscaling:gcm_description"] = description
         return attrs
 
     def _write_to_icechunk(

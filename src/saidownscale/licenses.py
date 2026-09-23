@@ -6,25 +6,24 @@ from it, and ``tests/test_terms_of_data_access.py`` fails if the two disagree. E
 then re-sync the docs table. The ``LICENSE.txt`` files published beside the data on Source
 Cooperative are not generated from this module yet.
 
-Licenses are named by their SPDX identifier so that generic tooling can resolve them. A license of
-``None`` means we assert no license for that simulation, which is different from not knowing: the
-attribution is still recorded, and nothing downstream may invent a license in its place.
+Licenses are named exactly as ``docs/access-data/licenses.md`` names them, so the published data
+and the published table never disagree, and each one pairs with a ``license_url`` that resolves it.
+A license of ``None`` means we assert no license for that simulation, which is different from not
+knowing: the attribution is still recorded, and nothing downstream may invent one in its place.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-CC_BY_4_0 = "CC-BY-4.0"
-OGL_UK_3_0 = "OGL-UK-3.0"
+CC_BY_4_0 = "CC BY 4.0"
+OGL_V3 = "OGLv3"
 
-#: Markdown spelling in ``docs/access-data/licenses.md`` -> SPDX identifier. Only the current
-#: spellings are listed, so a stale one in the docs table fails the check rather than passing.
-SPDX_BY_DOCS_NAME: dict[str, str] = {"CC BY 4.0": CC_BY_4_0, "OGLv3": OGL_UK_3_0}
-
+#: Every license we name, mapped to the text that governs it. The keys double as the set of
+#: spellings the docs table may use, so a stale spelling there fails rather than passing quietly.
 LICENSE_URLS: dict[str, str] = {
     CC_BY_4_0: "https://creativecommons.org/licenses/by/4.0/",
-    OGL_UK_3_0: "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+    OGL_V3: "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
 }
 
 #: Our downscaled output carries one license, whatever it was derived from. The upstream
@@ -32,6 +31,17 @@ LICENSE_URLS: dict[str, str] = {
 OUTPUT_LICENSE = CC_BY_4_0
 
 INSTITUTION = "CarbonPlan"
+
+#: Where to write about the data. Set on our own output only, alongside ``institution``.
+CONTACT = "hello@carbonplan.org"
+
+#: TK: mint a DOI for the published dataset, then set this and re-run the metadata script.
+DOI: str | None = None
+
+#: TK: the published Terms of Data Access URL, once the docs host and versioning scheme settle.
+#: https://github.com/carbonplan/sai-downscaling/blob/main/TERMS_OF_DATA_ACCESS is the stable
+#: fallback if a docs URL is not wanted.
+TERMS_OF_DATA_ACCESS: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,7 +51,8 @@ class Attribution:
     Parameters
     ----------
     license : str or None
-        SPDX identifier, e.g. ``"CC-BY-4.0"``. ``None`` where we assert no license.
+        License name as the docs table spells it, e.g. ``"CC BY 4.0"``. ``None`` where we assert
+        no license.
     references : str
         Citation text, written to the CF ``references`` attribute. Always present, because a
         simulation we publish is always one we can credit.
@@ -110,7 +121,7 @@ INPUT_ATTRIBUTION: dict[tuple[str, str], Attribution] = {
         ),
     ),
     ("UKESM1-1-LL", "ssp245"): Attribution(
-        license=OGL_UK_3_0,
+        license=OGL_V3,
         references=(
             "These simulations were run by Andy Jones in collaboration with Jim Haywood and "
             "Matthew Henry, and provided by Matthew Henry. The UK Earth System Model is "
@@ -118,7 +129,7 @@ INPUT_ATTRIBUTION: dict[tuple[str, str], Attribution] = {
         ),
     ),
     ("UKESM1-1-LL", "g6_1p5k"): Attribution(
-        license=OGL_UK_3_0,
+        license=OGL_V3,
         references=(
             "These simulations were run by Andy Jones in collaboration with Jim Haywood and "
             "Matthew Henry, and provided by Matthew Henry. The UK Earth System Model is "
@@ -186,9 +197,9 @@ def metadata_attrs(gcm: str, scenario_group: str, *, product: str) -> dict[str, 
     -----
     Two keys are deliberately conditional. ``license`` and ``license_url`` are omitted for an
     input simulation that asserts no license, so that no caller mistakes silence for a grant.
-    ``institution`` is set only on output, because ACDD defines it as the producer of the data:
-    on an input group that is the modeling center, not us, and several input groups already
-    record their own.
+    ``institution`` and ``contact`` are set only on output, because ACDD defines ``institution``
+    as the producer of the data: on an input group that is the modeling center, not us, and
+    several input groups already record their own.
     """
     upstream = attribution_for(gcm, scenario_group)
     attrs = {"references": upstream.references}
@@ -196,6 +207,13 @@ def metadata_attrs(gcm: str, scenario_group: str, *, product: str) -> dict[str, 
         attrs["license"] = OUTPUT_LICENSE
         attrs["license_url"] = LICENSE_URLS[OUTPUT_LICENSE]
         attrs["institution"] = INSTITUTION
+        attrs["contact"] = CONTACT
+        # Written only once set. A placeholder in published metadata is worse than no attribute,
+        # because a reader cannot tell a stand-in from a real identifier.
+        if DOI:
+            attrs["doi"] = DOI
+        if TERMS_OF_DATA_ACCESS:
+            attrs["terms_of_data_access"] = TERMS_OF_DATA_ACCESS
     elif upstream.license is not None:
         attrs["license"] = upstream.license
         attrs["license_url"] = upstream.license_url

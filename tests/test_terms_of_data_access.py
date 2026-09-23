@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from saidownscale.licenses import INPUT_ATTRIBUTION, SPDX_BY_DOCS_NAME
+from saidownscale.licenses import INPUT_ATTRIBUTION, LICENSE_URLS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = REPO_ROOT / "TERMS_OF_DATA_ACCESS"
@@ -109,11 +109,11 @@ def test_every_row_carries_attribution() -> None:
 
 
 def test_named_licenses_are_recognized() -> None:
-    """A blank license cell is allowed, but a filled one must resolve to an SPDX identifier."""
+    """A blank license cell is allowed, but a filled one must be a license we can resolve."""
     for gcm, scenario, license_name, _ in _license_table_rows():
         if not license_name:
             continue
-        assert license_name in SPDX_BY_DOCS_NAME, (
+        assert license_name in LICENSE_URLS, (
             f"{gcm}/{scenario} names an unrecognized license: {license_name!r}"
         )
 
@@ -125,7 +125,7 @@ def test_module_and_docs_table_agree() -> None:
     what readers see, and nothing else compares them.
     """
     documented = {
-        (gcm, scenario): (SPDX_BY_DOCS_NAME.get(license_name), attribution)
+        (gcm, scenario): (license_name or None, attribution)
         for gcm, scenario, license_name, attribution in _license_table_rows()
     }
     assert set(documented) == set(INPUT_ATTRIBUTION), (

@@ -8,15 +8,24 @@ it safe to run against published stores.
 The values come from :mod:`saidownscale.licenses` and the rules from
 :mod:`saidownscale.store_metadata`. Addresses issues #697 (input) and #700 (output).
 
+Data published before the provenance namespace was renamed needs 2 runs, because a legacy attr is
+only removed once its replacement is present. The first run copies ``srm_downscaling:`` across to
+``sai_downscaling:`` and leaves both in place, so every reader keeps working. Update anything that
+reads the old names, then run again with ``--prune`` to drop them.
+
 Examples
 --------
 See what would change, without writing::
 
     uv run python scripts/add_store_metadata.py --store <store-uri> --branch v1.0.0 --dry-run
 
-Apply it::
+Run 1, add metadata and copy provenance onto the current namespace::
 
-    uv run python scripts/add_store_metadata.py --store <store-uri> --branch v1.0.0 --yes
+    uv run python scripts/add_store_metadata.py --store <store-uri> --branch v1.0.0 --repair --yes
+
+Run 2, once nothing reads the old names, drop them::
+
+    uv run python scripts/add_store_metadata.py --store <store-uri> --branch v1.0.0 --prune --yes
 """
 
 from __future__ import annotations
@@ -119,22 +128,47 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="replace attrs that already hold a different value (off by default)",
     )
+    parser.add_argument(
+        "--repair",
+        action="store_true",
+        help=(
+            "correct attrs we wrote that are provably wrong, such as a history entry naming a "
+            "method the group did not run (off by default)"
+        ),
+    )
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="delete deprecated attrs we no longer write (off by default, cannot be undone)",
+    )
     parser.add_argument("--yes", "-y", action="store_true", help="skip the confirmation prompt")
     parser.add_argument("--message", help="commit message")
     return parser.parse_args(argv)
 
 
-def _report(plans: list[GroupPlan], unresolved: list[tuple[str, str]], overwrite: bool) -> None:
+def _report(
+    plans: list[GroupPlan],
+    unresolved: list[tuple[str, str]],
+    overwrite: bool,
+    repair: bool,
+    prune: bool,
+) -> None:
     """Print the plan for a human to read before anything is written."""
     for plan in plans:
-        if not (plan.writes or plan.conflicts):
+        if not (plan.writes or plan.conflicts or plan.repairs or plan.removals):
             continue
         print(f"  {plan.path}")
         if plan.to_set:
             print(f"      + {' '.join(sorted(plan.to_set))}")
+        for key, (current, corrected) in sorted(plan.repairs.items()):
+            verb = "repair" if repair else "SKIP"
+            print(f"      ~ {key}: {current!r} -> {corrected!r}  [{verb}]")
         for key, (current, wanted) in sorted(plan.conflicts.items()):
             verb = "overwrite" if overwrite else "KEEP"
             print(f"      ! {key}: {current!r} -> {wanted!r}  [{verb}]")
+        for key, current in sorted(plan.removals.items()):
+            verb = "delete" if prune else "SKIP"
+            print(f"      - {key}: {current!r}  [{verb}]")
     for path, why in unresolved:
         print(f"  UNRESOLVED {path}: {why}")
 
@@ -167,8 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"store    {args.store}")
     print(f"branch   {args.branch}")
     print(f"gcm      {gcm}")
-    print(f"groups   {len(plans)} planned, {sum(p.writes for p in plans)} need attrs\n")
-    _report(plans, unresolved, args.overwrite)
+    changing = [p for p in plans if p.writes or p.conflicts or p.repairs or p.removals]
+    print(f"groups   {len(plans)} planned, {len(changing)} with something to change\n")
+    _report(plans, unresolved, args.overwrite, args.repair, args.prune)
 
     conflicted = [p for p in plans if p.conflicts]
     if conflicted and not args.overwrite:
@@ -177,7 +212,28 @@ def main(argv: list[str] | None = None) -> int:
             "They are left alone. Re-run with --overwrite to replace them."
         )
 
-    writers = [p for p in plans if p.writes or (p.conflicts and args.overwrite)]
+    repairable = [p for p in plans if p.repairs]
+    if repairable and not args.repair:
+        print(
+            f"\n{len(repairable)} group(s) carry an attr we wrote that is provably wrong. "
+            "They are left alone. Re-run with --repair to correct them."
+        )
+
+    prunable = [p for p in plans if p.removals]
+    if prunable and not args.prune:
+        print(
+            f"\n{len(prunable)} group(s) carry a deprecated attr. They are left alone. "
+            "Re-run with --prune to delete them."
+        )
+
+    writers = [
+        p
+        for p in plans
+        if p.writes
+        or (p.conflicts and args.overwrite)
+        or (p.repairs and args.repair)
+        or (p.removals and args.prune)
+    ]
     if not writers:
         print("\nnothing to write")
     elif args.dry_run:
@@ -199,9 +255,15 @@ def main(argv: list[str] | None = None) -> int:
         session = repo.writable_session(args.branch)
         for plan in writers:
             updates = dict(plan.to_set)
+            if args.repair:
+                updates.update({k: corrected for k, (_, corrected) in plan.repairs.items()})
             if args.overwrite:
                 updates.update({k: wanted for k, (_, wanted) in plan.conflicts.items()})
-            zarr.open_group(session.store, path=plan.path, mode="a").attrs.update(updates)
+            group = zarr.open_group(session.store, path=plan.path, mode="a")
+            group.attrs.update(updates)
+            if args.prune:
+                for key in plan.removals:
+                    del group.attrs[key]
         snapshot = session.commit(args.message or f"add license and attribution attrs for {gcm}")
         print(f"\ncommitted {snapshot} to {args.branch}: {len(writers)} group(s)")
 

@@ -47,7 +47,7 @@ passes that value through `SAIDOWNSCALE_BATCH_JOB_DEFINITION`.
 
 Every build tags the image with the commit SHA, and a release additionally tags it with the package
 version and moves `latest`. The version tag is what lets you walk backward from data to code: we
-stamp every output store with `srm_downscaling:version` and write it to an icechunk branch of that
+stamp every output store with `sai_downscaling:version` and write it to an icechunk branch of that
 version, so the tag names the image that produced it. Only a release moves `latest`, because the job
 definition's fallback image is `latest` and a dispatch from a feature branch would otherwise
 repoint unpinned runs at its code.
