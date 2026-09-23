@@ -16,6 +16,12 @@ If you want the data, start with [What's available](./access-data/whats-availabl
 to know how we produced it, start with [Scientific approach](./methods/scientific-approach.md), and
 [Developer resources](./developer-resources.md) covers running the pipeline yourself.
 
+:::{warning}
+By downloading or accessing SAI Downscaling data, you agree to the
+[Terms of Data Access](./access-data/terms-of-data-access.md). Those terms cover every product,
+while the [licenses and citation](./access-data/licenses.md) differ per GCM and scenario.
+:::
+
 ## Links
 
 If you want to read the pipeline code, get the data, read about the science, or understand how the
