@@ -114,4 +114,4 @@ License and attribution information are stored along side the data in colocated 
 Output data is licensed CC-BY-4.0. Details are in [output/LICENSE.txt](https://data.source.coop/carbonplan/srm-downscaling/output/LICENSE.txt).
 
 ### Input data
-Input data is covered by multiple licenses. Details can be found in [input/LICENSE.txt](https://data.source.coop/carbonplan/srm-downscaling/input/LICENSE.txt).
+Input data is covered by multiple licenses. Details can be found in the [licenses](https://sai-downscaling.readthedocs.org/access-data/licenses.html) section of our documentation.
