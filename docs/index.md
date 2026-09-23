@@ -17,6 +17,11 @@ publish both for every scenario, variable, and ensemble member.
 If you want the data, start with [What's available](./access-data/whats-available.md). If you want
 to know how we produced it, start with [Scientific methods](./methods/scientific-approach.md).
 
+We also encourage developers to explore the extensive explanatory information in our
+[GitHub repo](https://github.com/carbonplan/sai-downscaling). These resources will help anyone
+interested in modifying or extending the pipeline for other use cases. We welcome feedback or
+contributions by [opening an issue](https://github.com/carbonplan/sai-downscaling/issues/new).
+
 :::{important}
 By downloading or accessing SAI Downscaling data, you agree to the [Terms of Data Access](./access-data/terms-of-data-access.md).
 See the [licenses and citation](./access-data/licenses.md) section for guidance specific to each of the products in this data release.
@@ -37,6 +42,5 @@ access-data/terms-of-data-access
 :maxdepth: 2
 :caption: Methods
 methods/scientific-approach
-methods/pipeline-architecture
 Convenings summary <https://github.com/carbonplan/sai-downscaling/blob/main/docs/assets/convenings-summary.pdf>
 ```
