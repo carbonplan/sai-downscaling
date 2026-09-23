@@ -18,9 +18,8 @@ If you want the data, start with [What's available](./access-data/whats-availabl
 to know how we produced it, start with [Scientific methods](./methods/scientific-approach.md).
 
 :::{important}
-By downloading or accessing SAI Downscaling data, you agree to the
-[Terms of Data Access](./access-data/terms-of-data-access.md). Those terms cover every product,
-while the [licenses and citation](./access-data/licenses.md) differ per GCM and scenario.
+By downloading or accessing SAI Downscaling data, you agree to the [Terms of Data Access](./access-data/terms-of-data-access.md).
+See the [licenses and citation](./access-data/licenses.md) section for guidance specific to each of the products in this data release.
 :::
 
 ```{toctree}

@@ -1,13 +1,10 @@
 # Access utilities
 
 We've made a set of utilities to help you access the data stored on Source Cooperative. We have
-tried to accommodate users with a range of levels of experience with Python, including those who
-have never worked in the cloud or used packages like {term}`Zarr` before. The utilities are all
-housed in the
-[sai-downscaling-data-utils](https://github.com/carbonplan/sai-downscaling-data-utils) repository.
-Follow the instructions in that repository's
-[README](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/README.md) to learn how
-to install and use the utilities.
+tried to accommodate users with a range of levels of experience with Python. The utilities are all
+housed in the [sai-downscaling-data-utils](https://github.com/carbonplan/sai-downscaling-data-utils) repository.
+Follow the instructions in that repository's [README](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/README.md)
+to learn how to install and use the utilities.
 
 The table below can help you find the right utility for what you want to do, whether you want the
 downscaled output or the global climate model (GCM) input it came from. If you're new to the data,
