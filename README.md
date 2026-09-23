@@ -73,7 +73,8 @@ uv sync --all-groups
 ## License
 
 SAI-downscaling code is licensed under the MIT License - see the [LICENSE](https://github.com/carbonplan/sai-downscaling/blob/main/LICENSE) file for details. See the [licenses](https://sai-downscaling.readthedocs.org/access-data/licenses.html) section of our documentation for details about the licenses for all of the input and output datasets.
-
+> [!IMPORTANT]
+> Data associated with this repository are subject to additional [terms of data access](https://github.com/carbonplan/sai-downscaling/blob/main/TERMS_OF_DATA_ACCESS).
 ## About Us
 
 CarbonPlan is a nonprofit organization that uses data and science for climate action. We aim to improve the transparency and scientific integrity of climate solutions through open data and tools. Find out more at [carbonplan.org](https://carbonplan.org/) or get in touch by [opening an issue](https://github.com/carbonplan/sai-downscaling/issues/new) or [sending us an email](mailto:hello@carbonplan.org).
