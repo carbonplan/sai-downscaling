@@ -1,8 +1,7 @@
 # What's available
 
-We are publishing statistically downscaled, daily climate model output. The outputs cover 4
-scenarios, 2 global climate models (GCMs), all available ensemble members, and 5 variables. We
-bias-correct GCM output against ERA5 and downscale it to a global 0.25° grid with 2 methods.
+We are publishing statistically downscaled, daily climate model output to support the regional evaluation of the potential impacts of stratospheric aerosol injection (SAI). The outputs cover 4
+scenarios, 2 global climate models (GCMs), all available ensemble members, and 5 variables. We bias-correct GCM output against ERA5 and downscale it to a global 0.25° grid with 2 methods.
 
 | Property | Value |
 | --- | --- |
@@ -15,10 +14,10 @@ bias-correct GCM output against ERA5 and downscale it to a global 0.25° grid wi
 | Spatial extent | Global |
 
 In addition to the historical period (`historical`) and the baseline climate scenario (`ssp245`),
-we downscale 2 stratospheric aerosol injection scenarios. In the scenario `g6_1p5k`, greenhouse gas
+we downscale two stratospheric aerosol injection scenarios. In the scenario `g6_1p5k`, greenhouse gas
 emissions continue at `ssp245` levels while sulfate aerosols are injected into the stratosphere to
 hold warming to 1.5 °C. The termination shock scenario (`g6_1p5k_end`) extends `g6_1p5k` ensemble
-member `002` to 2100, simulating an abrupt end of aerosol injection at the end of 2084.
+member `002` from `CESM2-WACCM6` to 2100, simulating an abrupt end of aerosol injection at the end of 2084.
 
 | Scenario | Group name | Years | GCMs |
 | --- | --- | --- | --- |
@@ -27,18 +26,18 @@ member `002` to 2100, simulating an abrupt end of aerosol injection at the end o
 | G6-1.5K | `g6_1p5k` | 2035 to 2084 | `CESM2-WACCM6` and `UKESM1-1-LL` |
 | G6-1.5K termination | `g6_1p5k_end` | 2085 to 2100 | `CESM2-WACCM6` only |
 
-At a high level, the release includes 2 output data products, along with the processed GCM input
-data they were built from. The table below summarizes all 3.
+At a high level, the release includes two output data products, along with the processed GCM input
+data they were built from. The table below summarizes all three.
 
 | Product | Description | Grid | Variables |
 | --- | --- | --- | --- |
 | Downscaled | Bias-corrected and spatially disaggregated. This is the main product. | 0.25° | `tas`, `tasmax`, `tasmin`, `pr`, `rsds` |
-| Coarse bias-corrected | Bias-corrected, but not spatially disaggregated. | Native GCM grid, about 1° to 2° | The same 5, plus `dtr` (diurnal temperature range) |
+| Coarse bias-corrected | Bias-corrected, but not spatially disaggregated. | Native GCM grid, about 1° to 2° | The same five, plus `dtr` (diurnal temperature range) |
 | Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same 5 |
 
 ## Data location
 
-:::{warning}
+:::{important}
 By downloading, copying, or using this data, you agree to the
 [Terms of Data Access](terms-of-data-access.md).
 :::
@@ -62,7 +61,7 @@ only `v1.0.0`, which is the branch the example below opens. The input stores kee
 
 ### Data access
 
-We offer 2 ways to access the data from the Source Cooperative repository. Which one fits best
+We offer two ways to access the data from the Source Cooperative repository. Which one fits best
 depends on how much data you need and whether you want a local copy.
 
 - **Download a local copy.** If you want to work with a small amount of data on your own machine,
@@ -92,12 +91,6 @@ session = repo.readonly_session(branch="v1.0.0")
 ds = xr.open_zarr(session.store, group="bcsd/g6_1p5k/tas/001", consolidated=False)
 ```
 
-## Licenses
-
-Our downscaled output is licensed CC-BY-4.0. The input simulations carry several different licenses,
-one per GCM and scenario, so check the row for the scenario you are using. See
-[Licenses and citation](licenses.md) for the full table, the attribution text to cite, and the
-[Terms of Data Access](terms-of-data-access.md) that using any of this data implies.
 
 ## Data shape
 
