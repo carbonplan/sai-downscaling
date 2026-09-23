@@ -72,7 +72,7 @@ uv sync --all-groups
 
 ## License
 
-SAI-downscaling code is licensed under the MIT License - see the [LICENSE](https://github.com/carbonplan/sai-downscaling/blob/main/LICENSE) file for details. See the [license file on Source Cooperative](https://source.coop/carbonplan/srm-downscaling/output/LICENSE.txt) for details about the licenses for all of the datasets.
+SAI-downscaling code is licensed under the MIT License - see the [LICENSE](https://github.com/carbonplan/sai-downscaling/blob/main/LICENSE) file for details. See the [licenses](https://sai-downscaling.readthedocs.org/access-data/licenses.html) section of our documentation for details about the licenses for all of the input and output datasets.
 
 ## About Us
 
