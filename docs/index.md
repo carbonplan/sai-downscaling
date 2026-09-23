@@ -13,8 +13,7 @@ uncertainty that users should be able to see in the data. Bias correction and sp
 step. We publish both for every scenario, variable, and ensemble member.
 
 If you want the data, start with [What's available](./access-data/whats-available.md). If you want
-to know how we produced it, start with [Scientific approach](./methods/scientific-approach.md), and
-[Developer resources](./developer-resources.md) covers running the pipeline yourself.
+to know how we produced it, start with [Scientific approach](./methods/scientific-approach.md).
 
 :::{warning}
 By downloading or accessing SAI Downscaling data, you agree to the
@@ -60,11 +59,4 @@ access-data/terms-of-data-access
 :caption: Methods
 methods/scientific-approach
 methods/pipeline-architecture
-```
-
-```{toctree}
-:hidden:
-:maxdepth: 2
-:caption: Developer resources
-developer-resources
 ```

@@ -1,8 +1,9 @@
 # Pipeline architecture
 
 This page explains how we structured the downscaling pipeline, why we designed it that way, and
-how its components fit together. If you want to run it rather than understand it, see
-[Run the pipeline](../how-to/run-pipeline.md) instead.
+how its components fit together. If you want to run the pipeline rather than understand it, the
+guides for doing so live in the [`docs/` directory of the repository](https://github.com/carbonplan/sai-downscaling/tree/main/docs) rather than on
+this site.
 
 ## The 3-stage pipeline
 
@@ -127,7 +128,7 @@ bias-corrects `tasmax` and the diurnal temperature range `dtr` (`= tasmax − ta
 reconstructs `tasmin = tasmax − dtr` from their debiased-coarse outputs. This mirrors the NASA-NEX
 approach, and we implement it in the dedicated stage variants `fit_historical_tasmin` and
 `transform_scenario_tasmin`, which read the `debiased_coarse` `tasmax` and `dtr` groups those stages
-write (see [Manage the cache](../how-to/manage-cache.md)). The reconstruction helper
+write (see the cache guide in the repository). The reconstruction helper
 (`derive_tasmin`) requires its 2 inputs to share an identical time axis and raises if they do not,
 so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result
 (issue #363).
