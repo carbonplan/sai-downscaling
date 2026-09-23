@@ -1,119 +1,109 @@
-# Scientific approach
+# Scientific methods
 
-TK high level overview.
+The text here offers a more detailed description of the methods behind a downscaled dataset of stratospheric aerosol injection (SAI) simulations, introduced by this [explainer](https://carbonplan.org/research/sai-downscaling-explainer). Here we present the input data and detailed algorithm implementations, as well as descriptions of the outputs, including a set of quality assurance flags which aid in understanding limitations of the dataset. See [here](https://github.com/carbonplan/sai-downscaling-data-utils) for guidance on how to access all data associated with this project, which is stored on [Source Cooperative](https://source.coop/carbonplan/srm-downscaling). For a complete understanding of our methods or any desire to reproduce our results, please refer to the public repository with our [codebase](https://github.com/carbonplan/sai-downscaling).
 
 ## Input data used
+Our starting point was global climate model (GCM) results from four different scenarios, outlined in the table below.
 
-We downscaled 3 main model scenarios: historical, ssp245, and G6-1.5K. TK what are these scenarios,
-how do they relate to each other. Big caveat: scenarios =/= reality of how SRM would go, these are
-idealized, see Sanderson paper.
+|Name| Description| 
+|-------|--------|
+| `historical` | The climate up until 2014, modeled using historical greenhouse gas emissions. |
+| `ssp245` | The future scenario, typically used as the “baseline” scenario for comparison against the SAI simulations. Greenhouse gas emissions peak in ~2040 and then decay through the end of the 21st century. |
+| `g6_1p5k`* | Future scenario, following the same greenhouse gas emissions as `ssp245`, but with SO<sub>2</sub> injections beginning in 2035 and ramping up through 2085. |
+| `g6_1p5k_end` | An extension of `g6_1p5k` through the end of the century, but with an abrupt end to aerosol injection in 2085. | 
 
-We also added a new model run.
+*Note that the official scenario names in the Geoengineering Model Intercomparison Project (GeoMIP) are [`G6-1.5K-SAI`](https://doi.org/10.5194/acp-26-7463-2026) and `G6-1.5K-SAI-End`. We use lowercase names `g6_1p5k` and `g6_1p5k_end` throughout this methods document to follow the naming convention used in our downscaling pipeline and output data. SSP2-4.5 is referred to as `ssp245` following the CMIP convention.
 
-Figure TK. Super rough schematic as example.
+See [Figure 2](https://carbonplan.org/research/sai-downscaling-explainer) in our explainer for a visualization of the emissions and injection pathways, as well as the resulting global mean temperature trajectories of all the members in the input data ensemble. We emphasize that the ensemble here is merely one realization of how SAI might be implemented. They are idealized simulations and there are only a handful of ensemble members assessing the potential outcomes from these forcings. We highlight the particular absence of any more complicated shocks or societal feedbacks (Sanderson et al., 2026).
 
-We downscaled a bunch of variables and ensemble members. See below.
+We downscaled simulations of five variables: daily mean temperature (`tas`), daily maximum temperature (`tasmax`), daily minimum temperature (`tasmin`), precipitation (`pr`), and downwelling shortwave radiation at the surface (`rsds`). We used results from two GCMs and four different scenarios, but not all scenarios and variables were available for each model. All told, we downscaled 116 realizations of climatic variables.
 
-Table TK. Number of ensemble members for each model, experiment, and variable.
+| Model        | Experiment       | `tas` | `tasmax` | `tasmin` | `pr` | `rsds` | Years     |
+|--------------|------------------|-----|--------|--------|----|----|-----------|
+| CESM2-WACCM  | `historical`       | 3   | 1      | 1      | 3  | 3  | 1978–2014 |
+|              | `ssp245` (001-005) | 5   | 0      | 0      | 5  | 5  | 2015–2099 |
+|              | `ssp245` (006-010) | 5   | 5      | 5      | 5  | 5  | 2015–2069 |
+|              | `g6_1p5k`         | 3   | 3      | 3      | 3  | 3  | 2035–2084 |
+|              | `g6_1p5k_end`   | 1   | 1      | 1      | 1  | 1  | 2085–2100 |
+| UKESM1-0-LL  | `historical`       | 1   | 1      | 1      | 1  | 1  | 1978–2014 |
+|              | `ssp245`           | 3   | 3      | 3      | 3  | 3  | 2015–2099 |
+|              | `g6_1p5k`         | 3   | 3      | 3      | 3  | 3  | 2035–2084 |
 
-For observations, we used ERA5.
 
-## Downscaling algorithm
+We used the 0.25° ERA5 daily reanalysis product as our training dataset (Hersbach et al., 2017), accessed via Google Research's public [ARCO-ERA5](https://github.com/google-research/arco-era5) Google Cloud Storage bucket.
 
-We debiased and downscaled coarse model output using a daily variant of the bias correction /
-spatial disaggregation (BCSD) method, largely following the implementation from the NASA Earth
-eXchange Downscaled CMIP6 Climate Projections (NEX-GDDP). This implementation is a daily variant of
-the monthly method in @Wood2002 and @Wood2004, and consists of 4 high-level steps: pre-processing
-data, detrending, bias correction, and spatial disaggregation. We used a
-[Github repo](TK link specific to tag/commit) and a [technical document](https://TK) as points of
-reference for understanding the NEX-GDDP implementation. Below, we describe the high-level steps as
-we implemented them for mean temperature, and then describe variable-specific differences in the
-implementation.
+## Downscaling algorithms overview
+We downscaled the coarser GCM data into a finer scale (0.25°) climate product using two different approaches to support investigation of uncertainty related to the downscaling method itself. For this project we implemented two downscaling approaches: (1) the widely-used bias correction (BC) and spatial disaggregation (SD) approach (collectively termed BCSD), and (2) a bespoke method we call QDM-SD, which uses the SD part of BCSD, but which swaps out the BC step to use the newer quantile delta mapping (QDM) approach (Cannon et al., 2015). 
 
-### Pre-processing data pt 1 (what to call this?)
+Our BCSD implementation (and the SD portion of QDM-SD) follows the approach used in the NASA Earth eXchange Downscaled CMIP6 Climate Projections (NEX-GDDP) effort (Thrasher et al., 2022). This implementation is a daily variant of the monthly method in Wood et al. (2002) and Wood et al. (2004). We got additional points of reference from the Github repo [here](https://github.com/bthrasher/daily_BCSD/branches), the NEX-GDDP Tech Notes [#1](https://www.nccs.nasa.gov/wp-content/uploads/2024/03/NEX-GDDP-CMIP6-Tech_Note_4.pdf) and [#2](https://www.nccs.nasa.gov/wp-content/uploads/2025/06/NEX-GDDP-CMIP6-v2-Tech_Note.pdf), as well as personal communication with Bridget Thrasher. Both downscaling approaches share all parts of the pipeline aside from the bias correction step.
 
-The raw inputs for this product are model output from GCM simulations at the daily resolution and
-atmospheric reanalysis from ERA5 at the hourly(?) resolution. The raw GCM inputs are available at
-TK-link and the ERA5 data is available at TK-link. Because these datasets come from different
-modeling centers for general use cases, they are not immediately ready for cloud-based statistical
-downscaling. We pre-processed these files to prepare them for our workflow. Specifically, we
-processed data so that all variables have the same name and units, GCM ensemble members were labeled
-in a consistent way, non-physical negative values were removed (TK this is possible because of
-rounding errors, link to example), TK other preprocessing, and datasets were chunked in a way
-efficient for our workflow. These preprocessed inputs are available in our data catalog.
+## Input preprocessing
+The raw inputs for this product are model output from GCM simulations at the daily resolution and atmospheric reanalysis from ERA5 at the hourly resolution. Because the input datasets come from different modeling centers for general use cases, they are not immediately ready for cloud-based statistical downscaling. We preprocessed these files to prepare them for our workflow, including aligning on standardized variable names and units, removing non-physical negative values (possible because of rounding errors), temporally interpolating outputs to follow a Gregorian calendar, and chunking datasets in a way efficient for our workflow. These preprocessed inputs are available in our data catalog. 
 
-After pre-processing model inputs, we went through the BCSD workflow below for each model,
-experiment, and ensemble member. The sections that follow describe each step in the order the
-pipeline runs it.
+We did not adjust the ensemble member naming of the input datasets, but instead built a utility to handle the input data [lineage](https://carbonplan.github.io/sai-downscaling/how-to/ensemble-member-lineage.html). 
+We also created an intermediate variable of diurnal temperature range (`dtr`) by calculating the difference between daily maximum and minimum temperatures in both the GCM and the ERA5 data. We performed the subsequent coarsening, detrending, and bias correction steps on `dtr`, and then subtracted it from `tasmin`, following Thrasher et al. (2012), before the final disaggregation step.
 
-### Coarsening training dataset
+The raw NetCDF files and the results of this preprocessing are available in the `inputs/raw` and `inputs/processed` directories [here](https://source.coop/carbonplan/srm-downscaling). After preprocessing the model inputs, we went through the downscaling workflow below for each model, experiment, and ensemble member.
 
-In BCSD the bias correction requires training a different independent model for each GCM pixel based
-on observational data at that same resolution. Because the ERA5 training data’s native scale is on a
-different (i.e. finer) grid from the GCM data, the ERA5 training data must be regridded to match the
-resolution of each GCM simulation. Because GCMs often have different resolutions, this regridding
-must be done separately for each GCM. We used the conservative, rectilinear regridding as
-implemented in the [xarray-regrid](https://xarray-regrid.readthedocs.io/en/latest/index.html)
-package.
+## Coarsening training dataset
+The downscaling routines implemented here require training a different independent quantile mapping for each GCM pixel based on observational data at that same resolution. Because the ERA5 training data’s native scale is on a different (i.e., finer) grid from the GCM data, the ERA5 training data must be regridded to match each GCM’s resolution. Because GCMs often have different resolutions, this regridding must be done separately for each GCM. We used the conservative, rectilinear regridding as implemented in the [xarray-regrid](https://xarray-regrid.readthedocs.io/en/latest/) package. This coarsened training dataset was used for both downscaling approaches.
 
-### Detrending
+## Bias correction
+We used the `ibicus` python package for all of the bias correction implementations described below (Spuler et al., 2024). Bias correction builds a relationship between a historical and future GCM simulation, conditioned by an observational training dataset. We used all available ensemble members for each GCM. This meant we needed to decide which historical ensemble member(s) to pair with future ensemble members. For CESM, we dealt with this by linking historical and future ensemble members based on which historical ensemble members’ future simulations branched from, as described in their metadata. We made an exception for `tasmax` and `tasmin`, which were only saved for one ensemble member, so we used that single ensemble member to bias correct `tasmax` and `tasmin` for all future ensemble members. For UKESM, we only had access to one historical ensemble member, so we used that for all the future ensemble members.
 
-Next, we detrended the GCM model output from future scenarios (ssp245 and G6-1.5K). We did this by
-first calculating the modeled historical mean monthly climatology from 1978 to 2014 (historical).
-Then, we calculated the GCM scenario trend as the 9-year running average for each month (e.g.
-running mean of all Februaries) minus the historical mean monthly climatology. We then removed the
-trend (either additively for temperature, or multiplicatively for precipitation and solar radiation)
-from the GCM scenario data and used this detrended GCM data for the subsequent bias correction step.
-We saved the trend, which we reapplied to the data at the end of the bias correction step.
+### BCSD: (Detrended) quantile mapping
+We largely followed the bias correction implementation from the NEX-GDDP approach. First, we detrended the GCM daily mean and maximum temperature output from the future scenarios (`ssp245` and `g6_1p5k`). We did this by first calculating the modeled historical mean monthly climatology from 1978 to 2014 (historical). Then, we calculated the GCM scenario trend as the 9-year running average for each month (e.g., running mean of all Februaries) minus the historical mean monthly climatology. We then additively removed the trend from the GCM scenario data and used this detrended GCM data for the subsequent bias correction step. We saved the trend, which we reapplied to the data at the end of the bias correction step.
 
-### Bias correction
+Next, we bias-corrected the GCM data on each GCM’s coarse, native grid using quantile mapping. We used the historical 1978-2014 period to define cumulative distribution functions (CDFs) for quantile mapping from the historical GCM to the historical coarsened training dataset. We constructed the CDF separately for each calendar day, based on values in the 31-day window centered on the calendar day being adjusted. For example, the bias correction for February 10 mean temperature in a given grid cell is based on the distribution of all mean temperatures in that grid cell from January 26 to February 25, during the 1978-2014 period. For all variables, we used nonparametric quantile mapping whenever the GCM data (whether detrended, for `tas` and `tasmax`; or raw, for `pr`, `rsds`, or `dtr`) fell within the bounds of the historical observations. When the detrended GCM data fell outside of the bounds of the historical observations, we extrapolated by using parametric quantile mapping. For `pr`, `dtr`, and `rsds`, we used an extreme value type III (Weibull) distribution for extrapolation below the lower bound, and an extreme value type I (Gumbel) distribution for extrapolation above the upper bound. For `tas` and `tasmax`, we used normal distributions for extrapolation in both directions. 
 
-Next, we bias corrected the GCM data on each GCM’s coarse, native grid. Then, we used the historical
-1978-2014 period to define cumulative distribution functions (CDFs) for quantile mapping from
-historical detrended GCM to historical coarsened observations. We constructed the CDF separately for
-each calendar day, based on values in the 31-day window centered on the calendar day being adjusted.
-For example, the bias correction for February 10 mean temperature in a given grid cell is based on
-the distribution of all mean temperatures in that grid cell from January 26 to February 25, during
-the 1978-2014 period. We used the ibicus python package (@spuler2024) to debias the detrended GCM
-data using nonparametric quantile mapping. After completing the bias correction, we reapplied the
-GCM trend that we had saved during the detrending step above. The output of this step is debiased
-coarse GCM data.
+After completing the bias correction, for `tas` and `tasmax` we reapplied the GCM trend that we had saved during the detrending step above. We then subtracted the `dtr` to derive the coarse, bias-corrected `tasmin`. The bias correction can introduce small negative precipitation or solar radiation values, so these were finally clipped to 0. The output of this step is debiased coarse GCM data, which is available in the `coarse_debiased` group of the outputs [here](https://source.coop/carbonplan/srm-downscaling). Some users may prefer to use these data before the spatial disaggregation, a step which can introduce artifacts.
 
-### Spatial disaggregation
+### QDMSD: Quantile delta mapping
+We implemented QDM largely following the canonical implementation from Cannon et al. (2015). QDM is directly trend-preserving, mapping the quantile-wise changes between the modeled historical and future periods. So we did not detrend the GCM values as we did for the quantile-mapping of temperature in BCSD, and instead used the raw GCM values for all variables. The canonical implementation uses a 31-year moving window for delta calculations. To fully populate those distributions, we used 15 years of each of the `historical`, `ssp245`, and `g6_1p5k` simulations to respectively pad the starts of the `ssp245`, `g6_1p5k`, and `g6_1p5k_end` simulations. As in BCSD, for the historical period we used non-parametric quantile mapping, but we used a wider 91-day window (with a 31-day step) to remain consistent with the canonical QDM implementation.
+For most variables, we used the default implementations in `ibicus` (i.e., absolute trend preservation for `tas` and `tasmax`, and relative trend preservation for `pr`). For `rsds` and `dtr`, which had no built-in implementation in `ibicus`, we used nonparametric QDM with relative trend preservation. We implemented a set of targeted safeguards against numerical instability due to division by tiny numbers. See our [codebase](https://github.com/carbonplan/sai-downscaling/blob/main/src/saidownscale/pipeline.py) for greater detail. As in BCSD, we subtracted the `dtr` from `tasmax` to create a bias-corrected `tasmin`.
 
-We then spatially disaggregated the debiased coarse GCM data to the high-resolution observational
-grid. First, we calculated the daily climatology of the high-resolution observations, which we then
-smoothed the raw daily climatology using a Fast Fourier Transform, keeping 3 harmonics. Next, we
-aggregated the high-resolution smoothed daily climatology to the coarse resolution GCM grid. We then
-removed the coarse daily climatology from the coarse bias-corrected GCM data. This step creates an
-anomaly layer that describes, for example, how different, at the coarse scale, a particular February
-10 is from the average February 10 in the observations. Next, we bilinearly interpolated the coarse
-residuals to the high-resolution observational grid. Finally, we returned the high-resolution
-climatology from step one to the high-resolution residuals. We removed/returned the climatology
-using subtraction/addition for temperature, and using division/multiplication for other variables
-(see section TK).
 
-### Variable-specific implementation
 
-The implementation above applies to mean temperature (`tas`) and maximum temperature (`tasmax`).
-We do not bias-correct minimum temperature (`tasmin`) directly. Following the NASA-NEX approach,
-we bias-correct `tasmax` and the diurnal temperature range (`dtr = tasmax − tasmin`), reconstruct
-`tasmin = tasmax − dtr` on the debiased coarse grid, and then swap any fine cells left with
-`tasmax < tasmin`, so that the physical constraint `tasmax >= tasmin` holds everywhere in the
-published output. That last step is needed because we spatially disaggregate `tasmax` and `tasmin`
-independently. Precip: . Special constraints for relative humidity.
+## Spatial disaggregation
+We next disaggregated the debiased coarse GCM data to the high-resolution observational grid. First, we calculated the daily climatology of the high-resolution observations, which we smoothed using a Fast Fourier Transform, keeping three harmonics. Next, we regridded the high-resolution smoothed daily climatology to the coarse resolution GCM grid using conservative, rectilinear regridding. We then removed the coarse daily climatology from the coarse bias-corrected GCM data by subtracting the coarse daily climatology for `tas` and `tasmax`, and dividing by the coarse daily climatology for `rsds`, `pr`, and `dtr`. This step creates a residual layer that describes, for example, how different, at the coarse scale, a particular February 10 is from the average February 10 in the coarse observations. Next, we interpolated the coarse residuals to the high-resolution observational grid using the `slinear` method in the `scipy` package, chosen to avoid introducing small negative values into the `pr` and `rsds` fields, which should always remain positive. Finally, we returned the high-resolution climatology from step one to the high-resolution residuals. We then returned the climatology additively for temperature variables, and multiplicatively for other variables. 
+In circumstances with a small `dtr`, `tasmax` can become lower than `tasmin` after the spatial disaggregation process. To remedy this, as a final pass, any instances of `tasmax` less than `tasmin` were interchanged. Inconsistencies of `tasmax` < `tas` or `tasmin` > `tas` were not remedied. See the [codebase](https://github.com/carbonplan/sai-downscaling/blob/main/src/saidownscale/pipeline.py) for additional safeguards against numerical instability when near-zero denominators in the `pr` or `rsds` workflows can introduce anomalously large values. These instances are also highlighted by the `Below tiny threshold` and `Low solar-radiation days` flags outlined below.
 
-## Quality checks
+## Released products
+The input datasets, downscaled datasets, as well as the intermediate coarse, debiased (pre-disaggregation) data are all available via maximally open licenses on Source Cooperative. The structures of these data products are described in greater detail [here](https://carbonplan.github.io/sai-downscaling/access-data/whats-available.html) alongside guidance for [accessing the datasets](https://carbonplan.github.io/sai-downscaling/access-data/access-utilities.html). Paired with these data products we also share quality flags, whose design and intended use is described in detail below.
 
-The notebooks below show the quality checks we ran on the inputs and outputs. They live in the
-`notebooks/QA_QC/` folder of the GitHub repository.
+### Quality flags
+Statistical debiasing and downscaling algorithms can result in physically unrealistic values or instances where the downscaling process meaningfully alters the raw GCM climate signal. In our dataset, each output data array is accompanied by two flags to help orient data users to where these issues can arise. A comprehensive description of the flags is found in the [codebase](https://github.com/carbonplan/sai-downscaling/tree/main/notebooks/QA_QC/qa_flags), but we include an overview of each flag, as well as potential use cases, here. 
 
-- [Input data global mean time series](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/input-data-global-timeseries.ipynb)
-- [Plausible value check](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/plausible-value-check.ipynb)
-- [Output integrity checks](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/output-integrity-checks.ipynb)
-- [Trend distortion check](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/trend-distortion-check.ipynb)
-- [Regional run small multiples](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/regional-run-small-multiples.ipynb)
+The first flag is `qa_flag_time_varying` (dimensions `[lat, lon, time]`), which flags any days when one or more of the following conditions are met:
+- _Outside global plausible range_: Flags days when values exceed a global physically-plausible range for each variable (e.g., [150, 400] K for temperature variables).
+- _Annual outliers_: Flags days whose value falls outside a local envelope of plausible values derived from ERA5. The envelope’s upper and lower bounds are the observed historical maximum and minimum at each pixel, padded by five standard deviations of values for that day of year. This flag catches extremes — places can be flagged either because a value is physically unrealistic for that location (e.g., due to division by small numbers), or because it’s extremely far outside the range of the historical bounds, and debiasing can become unstable at these tails.
+- _Above latitude-specific `rsds` plausible max_: Flags days on which `rsds` exceeds the estimated maximum plausible values for that latitude and day of year.
+- _Temperature inconsistency_: Flags days on which the physical ordering of temperature variables (`tasmin ≤ tas ≤ tasmax`) is violated. Because each variable is downscaled independently, the ordering of temperature variables can break. Our algorithm ensures that `tasmin ≤ tasmax`, but does not ensure that `tas` is physically consistent with `tasmax` and `tasmin`.
+- _Below tiny threshold_: Flags days on which the observed (ERA5) climatological value for `pr` and `rsds` for that pixel and day of year falls below a variable-specific threshold used for [numerical instability safeguards](https://github.com/carbonplan/sai-downscaling/blob/2fd4467bcadffd7d293d00d364061bb9d030334d/src/saidownscale/downscaling_utils.py#L748). Below this threshold, downscaled data are clipped to the climatological mean for that day of year to avoid dividing by very small numbers. These typically occur during very dry periods or polar night.
+- _Low solar-radiation days_: Flags low solar-radiation days, defined as days where `rsds` is below 10 W m⁻², for the QDMSD method only. Below this floor, the QDM debiasing approach divides by a modeled historical quantile that can be near zero, leading to a numerical instability. On these days the pipeline instead uses the raw GCM value. Situations with this flag include when the raw GCM data was used instead of the debiased values.
+
+The second flag is `trend_distortion_flag` (dimensions `[lat, lon]`). This flag identifies pixels where debiasing and/or downscaling meaningfully changes common scenario intercomparisons, relative to raw GCM output. For each variable, it evaluates future scenarios (`g6_1p5k`, `g6_1p5k_end`, and `ssp245`) and assesses whether the change signals, either (1) among them or (2) between each of them, and the historical scenario are distorted meaningfully in either magnitude or sign of change. We conduct this evaluation in the ensemble mean to focus on scenario differences rather than the effects of internal variability. A distortion in any scenario intercomparison flags the entire ensemble for both scenarios in the comparison.
+
+It is not necessarily a problem if downscaling distorts the raw GCM signal. For example, a GCM could underestimate precipitation in the summer, but be unbiased during other times of the year. Debiasing is seasonally varying, so it would adjust all scenario values in the summer a lot, but minimally adjust values in other seasons. Averaged into an annual mean, that combination can produce a change signal that looks different from the raw GCM, even though the debiasing is doing exactly what it’s intended to do. Further, the two debiasing approaches implemented here address trends differently. The quantile mapping implemented as part of BCSD does not claim to preserve trends, only preserving a broad decadal trend for temperature variables. In contrast, QDM preserves trends for individual quantiles and moving windows, which does not necessarily translate into trend preservation in the annual mean.
+
+Regardless, it is important for researchers to understand when large-scale trends are distorted, because it means that much of the signal in a flagged pixel may be coming from the downscaling process itself, rather than from the upstream GCM’s own projected climate change. 
+
+These quality flags both expose what downscaling is actually doing and what the limitations are, and empower downstream impacts researchers to determine what to do with these flagged days. For example, if there is an anomalously high temperature flagged in a study region, researchers may want to adjust it to be more physically realistic (e.g., clip it to a plausible maximum, interpolate it differently, substitute historical values, etc.). Or, if a study region is flagged as having trend distortions, the researchers may want to compare the downscaled data to the raw GCM data to determine if that trend distortion makes sense, and contextualize or caveat their conclusions appropriately.
 
 ## References
+* Cannon et al. (2015). Bias correction of GCM precipitation by quantile mapping: How well do methods preserve changes in quantiles and extremes? Journal of Climate. [https://doi.org/10.1175/JCLI-D-14-00754.1](https://doi.org/10.1175/JCLI-D-14-00754.1)
+* Carver and Merose (2023). ARCO-ERA5: An analysis-ready cloud-optimized reanalysis dataset. American Meteorological Society 103rd Annual Meeting. [https://ams.confex.com/ams/103ANNUAL/meetingapp.cgi/Paper/415842](https://ams.confex.com/ams/103ANNUAL/meetingapp.cgi/Paper/415842)
+* Hersbach et al. (2017). ERA5 hourly data on single levels from 1940 to present. [https://doi.org/10.24381/cds.adbb2d47](https://doi.org/10.24381/cds.adbb2d47)
+* Sanderson (2026). Robust assessment of Solar Radiation Modification risks and uncertainties must include shocks and societal feedbacks. EGUsphere [preprint]. [https://doi.org/10.5194/egusphere-2026-28](https://doi.org/10.5194/egusphere-2026-28)
+* Spuler et al. (2024). ibicus: A new open-source Python package and comprehensive interface for statistical bias adjustment and evaluation in climate modelling (v1.0.1). Geoscientific Model Development. [https://doi.org/10.5194/gmd-17-1249-2024](https://doi.org/10.5194/gmd-17-1249-2024)
+* Thrasher et al. (2012). Technical note: Bias correcting climate model simulated daily temperature extremes with quantile mapping. Hydrology and Earth System Sciences. [https://doi.org/10.5194/hess-16-3309-2012](https://doi.org/10.5194/hess-16-3309-2012)
+* Thrasher et al. (2022). NASA global daily downscaled projections, CMIP6. Scientific Data. [https://doi.org/10.1038/s41597-022-01393-4](https://doi.org/10.1038/s41597-022-01393-4)
+* Virtanen et al. (2020). SciPy 1.0: Fundamental algorithms for scientific computing in Python. Nature Methods. [https://doi.org/10.1038/s41592-019-0686-2](https://doi.org/10.1038/s41592-019-0686-2)
+* Wood et al. (2002). Long-range experimental hydrologic forecasting for the eastern United States. Journal of Geophysical Research: Atmospheres. [https://doi.org/10.1029/2001JD000659](https://doi.org/10.1029/2001JD000659)
+* Wood et al. (2004). Hydrologic implications of dynamical and statistical approaches to sownscaling climate model outputs. Climatic Change. [https://doi.org/10.1023/B:CLIM.0000013685.99609.9e](https://doi.org/10.1023/B:CLIM.0000013685.99609.9e)
 
-TK
+## Acknowledgments
+
+Thanks to the climate modeling centers for their model development efforts, for running the GCM simulations, and for publicly sharing their data. See acknowledgment and citations for each of their GCM simulations [here]https://sai-downscaling.readthedocs.build/en/access-data/licenses.html.
+
+The results here depend on modified Copernicus Climate Change Service information (2022). Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.
