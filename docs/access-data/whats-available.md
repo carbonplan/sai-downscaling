@@ -44,18 +44,18 @@ By downloading, copying, or using this data, you agree to the
 
 All data lives in CarbonPlan's
 [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling). The bucket is
-public in AWS `us-west-2`, so you don't need AWS credentials to read it. Each {term}`store` is an
-{term}`Icechunk` {term}`repository` under
+public in AWS `us-west-2`, so you don't need AWS credentials to read it. Each store is an
+Icechunk repository under
 `s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/`, at the paths below.
 
-| Data | Path | {term}`Branch <branch>` |
+| Data | Path | Branch |
 | --- | --- | --- |
 | `CESM2-WACCM6` output | `output/production/CESM2-WACCM6-ERA5-global.icechunk` | `v1.0.0` |
 | `UKESM1-1-LL` output | `output/production/UKESM1-1-LL-ERA5-global.icechunk` | `v1.0.0` |
 | `CESM2-WACCM6` input | `input/processed/CESM2-WACCM6.icechunk` | `main` |
 | `UKESM1-1-LL` input | `input/processed/UKESM1-1-LL.icechunk` | `main` |
 
-A {term}`branch` is a version of a store. We publish one branch per release, and so far that is
+A branch is a version of a store. We publish one branch per release, and so far that is
 only `v1.0.0`, which is the branch the example below opens. The input stores keep their data on
 `main`.
 
@@ -97,11 +97,11 @@ ds = xr.open_zarr(session.store, group="bcsd/g6_1p5k/tas/001", consolidated=Fals
 ### Group layout
 
 Zarr organizes data in a nested structure that you can think of as a file system. The key building
-block is the {term}`group`, a bundle of arrays and metadata at a particular path that you can open
+block is the group, a bundle of arrays and metadata at a particular path that you can open
 as a single labeled dataset.
 
-Each output {term}`store` holds both data products for one GCM, and each release of that store is
-a {term}`branch`. Within a branch, a group's path is built from the method, scenario, variable, and
+Each output store holds both data products for one GCM, and each release of that store is
+a branch. Within a branch, a group's path is built from the method, scenario, variable, and
 ensemble member, with an extra `debiased_coarse` level for the coarse bias-corrected product.
 Opening one group gives you a dataset with one climate variable on `(time, lat, lon)`, plus any
 quality flags. Both methods publish the same set of groups.
@@ -151,13 +151,13 @@ than by a variant label like `r2i1p1f2`. It is one realization like any other, a
 ### Grid, time, and chunks
 
 The groups described above tell you which part of the data you're reading. Within a group, each
-variable is an {term}`array` that is physically split into {term}`chunks <chunk>`: fixed-size blocks
+variable is an array that is physically split into chunks: fixed-size blocks
 that are compressed and read as a single unit. A read fetches whole chunks, so how much data a
 request moves depends on how many chunks it touches rather than how many values it returns. For this
 dataset, a time series at a single point reads about one chunk per year, while a wide region reads
 many chunks for every year.
 
-Chunks are bundled into larger files called {term}`shards <shard>`. Shards don't change which chunks
+Chunks are bundled into larger files called shards. Shards don't change which chunks
 a request reads, so you can mostly ignore them when estimating how much a request will move. The
 table below summarizes the grid, time axis, and chunk layout of both output products.
 
@@ -168,13 +168,13 @@ table below summarizes the grid, time axis, and chunk layout of both output prod
 | Longitude convention | -180 to 180 | -180 to 180 |
 | Calendar | Proleptic Gregorian | Proleptic Gregorian |
 | Data type | `float32` | `float32` |
-| {term}`Chunk <chunk>` size (`time`, `lat`, `lon`) | 365 × 36 × 72 (1 year × 9° × 18°) | 365 × 30 × 60 |
-| {term}`Shard <shard>` size (`time`, `lat`, `lon`) | 1095 × 180 × 360 (3 years × 45° × 90°) | 1095 × 90 × 180 |
+| Chunk size (`time`, `lat`, `lon`) | 365 × 36 × 72 (1 year × 9° × 18°) | 365 × 30 × 60 |
+| Shard size (`time`, `lat`, `lon`) | 1095 × 180 × 360 (3 years × 45° × 90°) | 1095 × 90 × 180 |
 
 ### Quality flags
 
 Groups carry quality flags alongside their variable, in both products. Each flag is a `uint8`
-{term}`array` where `0` means no known issue and `1` means a known issue. The `dtr` groups under
+array where `0` means no known issue and `1` means a known issue. The `dtr` groups under
 `debiased_coarse` carry no flags.
 
 | Flag | Dimensions | Present on | Marks |
@@ -187,74 +187,3 @@ The flags summarize checks we run after downscaling. For the details of each che
 and
 [trend distortion check](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/trend-distortion-check.ipynb)
 notebooks.
-
-## Glossary
-
-The access data pages use these storage terms in the same sense as the Icechunk, Zarr, and
-xarray documentation. Where this dataset uses a term more narrowly, the definition says how. For
-terms that come up in the access utilities, such as lazy loading and data read, see the utilities'
-[glossary](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/GLOSSARY.md).
-
-:::{glossary}
-array
-  A block of values laid out along named dimensions, like a table extended to more than two
-  dimensions. In this dataset, `tas` is an array on `(time, lat, lon)`, and each quality flag is an
-  array too. Arrays hold the actual numbers, and xarray shows each one as a variable when you open a
-  {term}`group`. Zarr splits every array into {term}`chunks <chunk>` for storage.
-
-branch
-  A named version of a {term}`repository`. We publish each release of this dataset as a branch named
-  after the release, as of now only `v1.0.0`, so you can keep reading the same release even after a
-  newer one comes out. When you open a repository, always choose a branch by name. The `main`
-  branch of an output store exists but holds no data.
-
-chunk
-  A fixed-size block of an {term}`array`, compressed and stored on its own. Splitting arrays into
-  chunks means you can read just the part of the data you need, instead of the whole dataset.
-  Because a chunk is always read in full, the number of chunks a request touches sets how much
-  data it moves. In the downscaled product, one chunk covers 1 year over a 9° × 18° tile, about
-  3.8 MB before compression.
-
-group
-  A named container for {term}`arrays <array>` and other groups, much like a folder that holds files
-  and subfolders. Groups let a single {term}`store` hold many datasets, so you can open just the one
-  you need. In the output stores, the path `bcsd/ssp245/tas/003` points to one group, and opening it
-  with xarray gives you a dataset with that variable, its coordinates, and any quality flags.
-
-Icechunk
-  An open-source storage engine for {term}`Zarr` data that adds version control, similar to how Git
-  tracks changes to code. Every change is saved as a snapshot, and {term}`branches <branch>` give
-  names to the versions you can open. We use Icechunk so that you can open any release by name. See
-  the [Icechunk documentation](https://icechunk.io/) to learn more.
-
-repository
-  Icechunk's word for a {term}`store` that also keeps a history of its versions. In these docs,
-  "store" and "repository" refer to the same thing: each GCM's output is one repository, and so is
-  each GCM's input. To read data, you open the repository and then choose one of its
-  {term}`branches <branch>`, as the example under [Data location](#data-location) shows.
-
-shard
-  A bundle of {term}`chunks <chunk>` saved together as a single file in cloud storage, so the store
-  holds fewer, larger files. You can mostly ignore shards when you read data. A request still reads
-  only the chunks it needs, so shards don't change how much it moves. A downscaled shard holds 75
-  chunks, covering 3 years over a 45° × 90° tile.
-
-store
-  The container that holds a whole {term}`tree` of groups and arrays, along with their metadata. A
-  store takes the place that a single file has in formats like netCDF, but its contents are spread
-  across many smaller files in cloud storage. We publish one store per GCM for the output and one
-  per GCM for the input. In code, `session.store` is the store you pass to xarray or zarr-python.
-
-tree
-  The way {term}`groups <group>` nest inside a {term}`store`, like folders within folders. Zarr
-  calls this a hierarchy. Each part of a group's path is one level of the tree: in
-  `bcsd/ssp245/tas/003`, the levels are the method, scenario, variable, and ensemble member. xarray
-  can open a whole tree as a `DataTree`, but when you only need one dataset, opening its group
-  directly is quicker.
-
-Zarr
-  An open, cloud-friendly format for large multidimensional {term}`arrays <array>`. Instead of
-  saving everything in one big file, Zarr stores data as many {term}`chunks <chunk>` organized into
-  a {term}`tree` of {term}`groups <group>`, so tools can read just the pieces they need over the
-  internet. The stores in this dataset use Zarr version 3, which xarray and zarr-python can read.
-:::

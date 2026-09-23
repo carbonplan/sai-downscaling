@@ -20,7 +20,8 @@ start to finish.
 | Download a subset of the data with Python | [`scripts/download.py`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/scripts/download.py) |
 | Download a subset of the data with Bash | [`scripts/download.sh`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/scripts/download.sh) |
 
-If you come across a term you don't know, check the [glossary](whats-available.md#glossary). The
-access utilities repository also has its own
-[glossary](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/GLOSSARY.md),
-which covers terms from the notebooks and the command-line tool.
+If you come across a term you don't know, check the
+[glossary](https://github.com/carbonplan/sai-downscaling/blob/main/GLOSSARY.md) in the repository.
+The access utilities repository also has its own
+[glossary](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/GLOSSARY.md), which
+covers terms from the notebooks and the command-line tool.
