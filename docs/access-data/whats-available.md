@@ -1,8 +1,8 @@
 # What's available
 
-We are publishing statistically downscaled, daily climate model output. The outputs cover 4 scenarios, 2 global climate models (GCMs), all available ensemble
-members, and 5 variables. We bias-correct GCM output against ERA5 and downscale it to a global
-0.25° grid with 2 methods.
+We are publishing statistically downscaled, daily climate model output. The outputs cover 4
+scenarios, 2 global climate models (GCMs), all available ensemble members, and 5 variables. We
+bias-correct GCM output against ERA5 and downscale it to a global 0.25° grid with 2 methods.
 
 | Property | Value |
 | --- | --- |
@@ -151,22 +151,22 @@ ensemble member that carries every variable you need.
 | `ssp245` | All 5 | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2015 to 2099 |
 | `g6_1p5k` | All 5 | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2035 to 2084 |
 
-The `UKESM1-1-LL` historical run is a single model suite rather than one realization of an
-ensemble, so it is named by its suite ID, `u-by791`, instead of a label like `r2i1p1f2`. Every
-`UKESM1-1-LL` scenario member branches from that one run.
+The `UKESM1-1-LL` historical ensemble member is labeled by its model suite ID, `u-by791`, rather
+than by a variant label like `r2i1p1f2`. It is one realization like any other, and every
+`UKESM1-1-LL` scenario member branches from it.
 
 ### Grid, time, and chunks
 
 The groups described above tell you which part of the data you're reading. Within a group, each
 variable is an {term}`array` that is physically split into {term}`chunks <chunk>`: fixed-size blocks
-that are compressed and read as a single unit. A read fetches whole chunks, so the cost of a request
-depends on how many chunks it touches rather than how many values it returns. For this dataset, a
-time series at a single point reads about one chunk per year, while a wide region reads many chunks
-for every year.
+that are compressed and read as a single unit. A read fetches whole chunks, so how much data a
+request moves depends on how many chunks it touches rather than how many values it returns. For this
+dataset, a time series at a single point reads about one chunk per year, while a wide region reads
+many chunks for every year.
 
 Chunks are bundled into larger files called {term}`shards <shard>`. Shards don't change which chunks
-a request reads, so you can mostly ignore them when estimating what a request costs. The table below
-summarizes the grid, time axis, and chunk layout of both output products.
+a request reads, so you can mostly ignore them when estimating how much a request will move. The
+table below summarizes the grid, time axis, and chunk layout of both output products.
 
 | Property | Downscaled | Coarse bias-corrected |
 | --- | --- | --- |
@@ -186,13 +186,8 @@ Groups carry quality flags alongside their variable, in both products. Each flag
 
 | Flag | Dimensions | Present on | Marks |
 | --- | --- | --- | --- |
-| `qa_flag_time_varying` | `time`, `lat`, `lon` | Every group except `dtr` | Pixel-days that fail a quality check: outlier screening, a variable-specific plausible range, or a physical relationship such as `tasmax` not falling below `tas`. |
+| `qa_flag_time_varying` | `time`, `lat`, `lon` | Every group except `dtr` | Pixel-days that fail a quality check: outlier screening, a variable-specific plausible range, or a physical relationship such as `tasmin` not falling below `tas`. |
 | `trend_distortion_flag` | `lat`, `lon` | Every group except `dtr` | Pixels where debiasing or downscaling distorts how scenarios compare with each other or with historical, relative to raw GCM output. It's evaluated on the ensemble mean. |
-| `qa_flag_time_invariant` | `lat`, `lon` | Some members only, listed below | Pixels where debiasing or downscaling distorts the same scenario comparisons for a single member, beyond a 5% threshold. |
-
-`qa_flag_time_invariant` is present on these ensemble members only. On `CESM2-WACCM6`, they're
-`r2i1p1f1`, `r3i1p1f1`, and `001` in `historical`, `003` and `008` in `ssp245`, `002` and `003` in
-`g6_1p5k`, and `002` in `g6_1p5k_end`. On `UKESM1-1-LL`, they're `u-by791` and `r2i1p1f2`.
 
 The flags summarize checks we run after downscaling. For the details of each check, see the
 [output integrity checks](https://github.com/carbonplan/sai-downscaling/blob/main/notebooks/QA_QC/output-integrity-checks.ipynb)
@@ -223,9 +218,9 @@ branch
 chunk
   A fixed-size block of an {term}`array`, compressed and stored on its own. Splitting arrays into
   chunks means you can read just the part of the data you need, instead of the whole dataset.
-  Because a chunk is always read in full, the number of chunks a request touches sets its cost. In
-  the downscaled product, one chunk covers 1 year over a 9° × 18° tile, about 3.8 MB before
-  compression.
+  Because a chunk is always read in full, the number of chunks a request touches sets how much
+  data it moves. In the downscaled product, one chunk covers 1 year over a 9° × 18° tile, about
+  3.8 MB before compression.
 
 group
   A named container for {term}`arrays <array>` and other groups, much like a folder that holds files
@@ -248,7 +243,7 @@ repository
 shard
   A bundle of {term}`chunks <chunk>` saved together as a single file in cloud storage, so the store
   holds fewer, larger files. You can mostly ignore shards when you read data. A request still reads
-  only the chunks it needs, so shards don't change what it costs. A downscaled shard holds 75
+  only the chunks it needs, so shards don't change how much it moves. A downscaled shard holds 75
   chunks, covering 3 years over a 45° × 90° tile.
 
 store
