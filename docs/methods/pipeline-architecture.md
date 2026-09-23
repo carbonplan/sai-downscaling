@@ -2,8 +2,9 @@
 
 This page explains how we structured the downscaling pipeline, why we designed it that way, and
 how its components fit together. If you want to run the pipeline rather than understand it, the
-guides for doing so live in the [`docs/` directory of the repository](https://github.com/carbonplan/sai-downscaling/tree/main/docs) rather than on
-this site.
+guides for doing so live in the
+[`docs/` directory of the repository](https://github.com/carbonplan/sai-downscaling/tree/main/docs)
+rather than on this site.
 
 ## The 3-stage pipeline
 
@@ -128,7 +129,9 @@ bias-corrects `tasmax` and the diurnal temperature range `dtr` (`= tasmax − ta
 reconstructs `tasmin = tasmax − dtr` from their debiased-coarse outputs. This mirrors the NASA-NEX
 approach, and we implement it in the dedicated stage variants `fit_historical_tasmin` and
 `transform_scenario_tasmin`, which read the `debiased_coarse` `tasmax` and `dtr` groups those stages
-write (see the cache guide in the repository). The reconstruction helper
+write (see the
+[cache guide](https://github.com/carbonplan/sai-downscaling/blob/main/docs/how-to/manage-cache.md)
+in the repository). The reconstruction helper
 (`derive_tasmin`) requires its 2 inputs to share an identical time axis and raises if they do not,
 so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result
 (issue #363).
@@ -329,7 +332,7 @@ We build the CLI on the components below. Each one owns a single concern, and th
 module that implements it.
 
 1. **DownscalingConfig** and **PipelineOptions**, in
-   [src/saidownscale/downscaling_config.py](../../src/saidownscale/downscaling_config.py)
+   [src/saidownscale/downscaling_config.py](https://github.com/carbonplan/sai-downscaling/blob/main/src/saidownscale/downscaling_config.py)
    - **DownscalingConfig** holds run identity: `gcm`, `variable`, `ensemble_member`, `scenario`,
      time periods, `subset_bounds`, and `variable_config`. It carries field validators for
      stratospheric aerosol injection (SAI) scenarios, time periods, and spatial bounds, and the
@@ -345,27 +348,30 @@ module that implements it.
    - Both extend `pydantic_settings.BaseSettings` with `env_prefix = "SAIDOWNSCALE_"` and
      `extra = "ignore"`, so a single flat YAML populates both classes.
 
-2. **ArtifactCache** ([src/saidownscale/cache.py](../../src/saidownscale/cache.py))
+2. **ArtifactCache**, in
+   [src/saidownscale/cache.py](https://github.com/carbonplan/sai-downscaling/blob/main/src/saidownscale/cache.py)
    - S3-based cache with fsspec backend
    - dependency tracking and validation
    - environment and spatial subset awareness
    - icechunk format with commit-based write verification
    - efficient prefix-based listing (not recursive globbing)
 
-3. **DownscalingPipeline** ([src/saidownscale/pipeline.py](../../src/saidownscale/pipeline.py))
+3. **DownscalingPipeline**, in
+   [src/saidownscale/pipeline.py](https://github.com/carbonplan/sai-downscaling/blob/main/src/saidownscale/pipeline.py)
    - a 3-stage API
    - each stage: check cache → compute if needed → write to cache
    - automatic metadata preservation (units, attributes)
    - rechunking strategy for optimal Dask performance
 
 4. **DownscalingOrchestrator**, in
-   [src/saidownscale/orchestration.py](../../src/saidownscale/orchestration.py)
+   [src/saidownscale/orchestration.py](https://github.com/carbonplan/sai-downscaling/blob/main/src/saidownscale/orchestration.py)
    - batch execution with Coiled integration
    - automatic task deduplication across stages
    - status tracking and reporting
    - error handling and output verification
 
-5. **batch_runner** ([src/saidownscale/batch_runner.py](../../src/saidownscale/batch_runner.py))
+5. **batch_runner**, in
+   [src/saidownscale/batch_runner.py](https://github.com/carbonplan/sai-downscaling/blob/main/src/saidownscale/batch_runner.py)
    - entry point for Coiled batch jobs
    - reads `CONFIG_JSON` environment variable (structure:
      `{"options": {...PipelineOptions fields...}, ...DownscalingConfig fields...}`)
@@ -374,7 +380,8 @@ module that implements it.
    - creates `DownscalingPipeline(config, options)` and runs the requested stage
    - minimal dependencies for fast VM startup
 
-6. **CLI** ([src/saidownscale/cli.py](../../src/saidownscale/cli.py))
+6. **CLI**, in
+   [src/saidownscale/cli.py](https://github.com/carbonplan/sai-downscaling/blob/main/src/saidownscale/cli.py)
    - typer-based command-line interface
    - rich formatting for tables and progress display
    - configuration loading and validation
