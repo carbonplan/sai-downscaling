@@ -18,8 +18,8 @@ to know how we produced it, start with [Scientific approach](./methods/scientifi
 
 :::{warning}
 By downloading or accessing SAI Downscaling data, you agree to the
-[Terms of Data Access](./access-data/terms-of-data-access.md). They apply to the downscaled output
-and to the input simulations alike, whatever license each one carries.
+[Terms of Data Access](./access-data/terms-of-data-access.md). Those terms cover every product,
+while the [licenses and citation](./access-data/licenses.md) differ per GCM and scenario.
 :::
 
 ## Links
