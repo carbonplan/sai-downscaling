@@ -18,28 +18,6 @@ By downloading or accessing SAI Downscaling data, you agree to the
 while the [licenses and citation](./access-data/licenses.md) differ per GCM and scenario.
 :::
 
-## Links
-
-If you want to read the pipeline code, get the data, read about the science, or understand how the
-project was shaped, start with the resources below. Each one lives in a different place.
-
-| Resource | What you'll find |
-| --- | --- |
-| [GitHub repository](https://github.com/carbonplan/sai-downscaling) | Pipeline code, run configs, and issue tracker |
-| [Source Cooperative](https://source.coop/carbonplan/srm-downscaling) | Published input and output data |
-| [Convenings summary (PDF)](assets/convenings-summary.pdf) | What we heard in the project convenings, and how each recommendation maps onto what we built |
-| Explainers | **TODO:** Link to the explainer once it's published. |
-
-## Licenses and terms
-
-The code and the data are released under different terms. The table below links to each.
-
-| What | Applies |
-| --- | --- |
-| Code | [MIT License](https://github.com/carbonplan/sai-downscaling/blob/main/LICENSE) |
-| Data | [Licenses and citation](./access-data/licenses.md), which differ per GCM and scenario |
-| The project as a whole | [Terms of Data Access](./access-data/terms-of-data-access.md) |
-
 ```{toctree}
 :hidden:
 :maxdepth: 2
@@ -56,4 +34,5 @@ access-data/terms-of-data-access
 :caption: Methods
 methods/scientific-approach
 methods/pipeline-architecture
+Convenings summary <https://github.com/carbonplan/sai-downscaling/blob/main/docs/assets/convenings-summary.pdf>
 ```

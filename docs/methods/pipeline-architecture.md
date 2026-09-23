@@ -1,10 +1,6 @@
 # Pipeline architecture
 
-This page explains how we structured the downscaling pipeline, why we designed it that way, and
-how its components fit together. If you want to run the pipeline rather than understand it, the
-guides for doing so live in the
-[`docs/` directory of the repository](https://github.com/carbonplan/sai-downscaling/tree/main/docs)
-rather than on this site.
+This page explains how we structured the downscaling pipeline, why we designed it that way, and how its components fit together. We also encourage developers to explore the extensive explanatory information in our [Github repo](https://github.com/carbonplan/sai-downscaling). These resources will help anyone interested in modifying or extending the pipeline for other use cases. We also welcome feedback or contributions by [opening an issue](https://github.com/carbonplan/sai-downscaling/issues/new)
 
 ## The 3-stage pipeline
 
