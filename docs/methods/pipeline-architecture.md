@@ -119,7 +119,7 @@ graph TB
 
 ## Derived variables: `tasmin`
 
-We do **not** bias-correct daily minimum temperature directly. Bias-correcting `tasmax` and
+We do not bias-correct daily minimum temperature directly. Bias-correcting `tasmax` and
 `tasmin` independently can leave the pair physically inconsistent, so the pipeline instead
 bias-corrects `tasmax` and the diurnal temperature range `dtr` (`= tasmax − tasmin`) and
 reconstructs `tasmin = tasmax − dtr` from their debiased-coarse outputs. This mirrors the NASA-NEX
@@ -132,14 +132,14 @@ in the repository). The reconstruction helper
 so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result
 (issue #363).
 
-We still spatially disaggregate `tasmax` and `tasmin` **independently**, and that final
+We still spatially disaggregate `tasmax` and `tasmin` independently, and that final
 interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step
 (`reconcile_temperature_extremes`) closes this gap: once both fine fields exist it swaps the
 offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields
 (issue #331). The swap is NaN-safe and structurally monotone, and the `saidownscale validate-output`
 gate blocks any run whose stored output still contains an inversion.
 
-Both behaviors are keyed on the **variable**, not on which entry point runs the stage.
+Both behaviors are keyed on the variable, not on which entry point runs the stage.
 `fit_historical` and `transform_scenario` route a `tasmin` config to their `_tasmin` variants at the
 top of the method, so the distributed `batch_runner`, the local `run_full_pipeline`, and the CLI all
 produce derived-and-reconciled `tasmin` identically. Because the derivation reads the `tasmax` and
