@@ -9,6 +9,8 @@
 
 # SAI Downscaling
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22932138.svg)](https://doi.org/10.5281/zenodo.22932138)
+
 ## Scalable downscaling pipeline for Stratospheric Aerosol Injection (SAI) model outputs
 
 This repository implements a scalable, cloud-native pipeline for downscaling SAI climate model outputs. It uses the Bias-Correction and Spatial Disaggregation (BCSD) and Quantile Delta Mapping - Spatial Disaggregation (QDMSD) methods to spatially downscale daily `CESM2-WACCM6` and `UKESM1-1-LL` GCM output from historical, SSP2-4.5, and G6-1.5K-SAI scenarios, plus a novel `CESM2-WACCM6` G6-1.5K-SAI termination shock run, trained upon daily ERA5 reanalysis data. Results of this pipeline are described in an explainer [here](https://carbonplan.org/research/sai-downscaling-explainer).
