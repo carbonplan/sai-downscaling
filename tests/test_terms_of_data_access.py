@@ -16,7 +16,7 @@ COPIES = [REPO_ROOT / "docs" / "access-data" / "terms-of-data-access.md"]
 # The clauses the CarbonPlan Terms of Data Access guidance requires verbatim. They are listed
 # separately from the whole-file comparison so a reworded canonical file fails loudly too.
 REQUIRED_CLAUSES = [
-    "## Our Terms of Use Apply to SAI Downscaling",
+    "## Our Terms of Use apply to SAI Downscaling",
     "you agree to CarbonPlan’s Terms Of Use",
     "https://carbonplan.org/terms",
     "data provided by CarbonPlan may originate from third parties",
