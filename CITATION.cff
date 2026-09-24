@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it as below. If you use the downscaled data, also cite the
+  source simulations listed at https://sai-downscaling.readthedocs.io/access-data/licenses.html.
+type: software
+title: "carbonplan / sai-downscaling"
+abstract: >-
+  A scalable, cloud-native pipeline for downscaling Stratospheric Aerosol Injection (SAI) climate
+  model outputs. It implements Bias-Correction and Spatial-Disaggregation (BCSD) and Quantile Delta
+  Mapping with Spatial Disaggregation (QDMSD), and applies them to daily CESM2-WACCM6 and
+  UKESM1-1-LL output from the historical, SSP2-4.5, and G6-1.5K-SAI scenarios, plus a CESM2-WACCM6
+  G6-1.5K-SAI termination-shock run, trained on daily ERA5 reanalysis.
+authors:
+  - name: CarbonPlan
+    website: "https://carbonplan.org"
+    email: hello@carbonplan.org
+doi: 10.5281/zenodo.22932138
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.22932138
+    description: Concept DOI for all archived versions; resolves to the latest.
+  - type: doi
+    value: 10.5281/zenodo.22932139
+    description: The code used to create v1 of the dataset.
+repository-code: "https://github.com/carbonplan/sai-downscaling"
+url: "https://sai-downscaling.readthedocs.io"
+license: MIT
+keywords:
+  - statistical downscaling
+  - bias correction
+  - BCSD
+  - quantile delta mapping
+  - QDM
+  - QDMSD
+  - stratospheric aerosol injection
+  - solar radiation modification
+  - GeoMIP
+  - G6-1.5K-SAI
+  - CMIP6
+  - ERA5
+  - CESM2-WACCM6
+  - UKESM1-1-LL
+  - climate data
+  - icechunk
+  - zarr
+  - xarray
+  - Python
