@@ -1,6 +1,6 @@
 # Access utilities
 
-We've made a set of utilities to help you access the data stored on Source Cooperative. We have
+We've made a set of utilities to help you access the data stored on [Source Cooperative](https://source.coop/carbonplan/srm-downscaling/README.md). We have
 tried to accommodate users with a range of levels of experience with Python. The utilities are all
 housed in the [sai-downscaling-data-utils](https://github.com/carbonplan/sai-downscaling-data-utils) repository.
 Follow the instructions in that repository's [README](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/README.md)
