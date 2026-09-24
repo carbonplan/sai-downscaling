@@ -1,279 +1,180 @@
 import numpy as np
+import pytest
 import xarray as xr
 
-from saidownscale.snapshot.compare import DiffReport, LeafDiff, _compare_dataarray, compare
+from saidownscale.snapshot.baselines import CESM2_WACCM_GLOBAL
+from saidownscale.snapshot.compare import (
+    DiffReport,
+    InvariantCheck,
+    LeafDiff,
+    _compare_dataarray,
+    compare,
+)
+from saidownscale.snapshot.tolerances import TOLERANCES
 
 
 def _da(values):
     return xr.DataArray(np.asarray(values, dtype="float64"), dims=["x"])
 
 
-def test_identical_arrays_within_tol():
-    a = _da([1.0, 2.0, 3.0])
-    d = _compare_dataarray(a, a, path="g/v", variable="tas")
-    assert isinstance(d, LeafDiff)
-    assert d.within_tol is True
-    assert d.max_abs_diff == 0.0
-    assert d.frac_over_tol == 0.0
-    assert d.nan_mismatch_count == 0
-    assert d.shape_mismatch is False
-
-
-def test_tiny_change_fails():
-    # No tolerance floor anymore: a change far smaller than the old atol still fails.
-    a = _da([1.0, 2.0, 3.0])
-    b = _da([1.0, 2.0, 3.0 + 5e-4])
-    d = _compare_dataarray(b, a, path="g/v", variable="tas")
-    assert d.within_tol is False
-    assert d.frac_over_tol > 0.0
-    assert 4e-4 < d.max_abs_diff < 6e-4
-
-
-def test_change_fails():
-    a = _da([1.0, 2.0, 3.0])
-    b = _da([1.0, 2.0, 3.5])
-    d = _compare_dataarray(b, a, path="g/v", variable="tas")
-    assert d.within_tol is False
-    assert d.frac_over_tol > 0.0
-    assert abs(d.max_abs_diff - 0.5) < 1e-9
-
-
-def test_shape_mismatch_flagged():
-    a = _da([1.0, 2.0, 3.0])
-    b = _da([1.0, 2.0])
-    d = _compare_dataarray(b, a, path="g/v", variable="tas")
-    assert d.shape_mismatch is True
-    assert d.within_tol is False
-
-
-def test_new_nan_is_a_mismatch():
-    a = _da([1.0, 2.0, 3.0])
-    b = _da([1.0, np.nan, 3.0])
-    d = _compare_dataarray(b, a, path="g/v", variable="tas")
-    assert d.nan_mismatch_count == 1
-    assert d.within_tol is False
-
-
-def test_shared_nan_is_not_a_mismatch():
-    a = _da([1.0, np.nan, 3.0])
-    b = _da([1.0, np.nan, 3.0])
-    d = _compare_dataarray(b, a, path="g/v", variable="tas")
-    assert d.nan_mismatch_count == 0
-    assert d.within_tol is True
-
-
-def test_explicit_atol_band_still_available():
-    # rtol/atol default to 0.0 (exact equality), but a caller can still opt into the
-    # old tolerance band directly on _compare_dataarray.
-    a = _da([1.0, 2.0, 3.0])
-    b = _da([1.0, 2.0, 3.0 + 5e-4])
-    d = _compare_dataarray(b, a, path="g/v", variable="tas", rtol=0.0, atol=1e-3)
-    assert d.within_tol is True
-    assert d.frac_over_tol == 0.0
-
-
 def _ds(values, name="tas"):
-    return xr.Dataset({name: xr.DataArray(np.asarray(values, dtype="float64"), dims=["x"])})
-
-
-def test_compare_dataset_clean():
-    a = _ds([1.0, 2.0, 3.0])
-    report = compare(a, a)
-    assert isinstance(report, DiffReport)
-    assert report.within_tolerance is True
-    assert len(report.leaves) == 1
-    assert report.leaves[0].variable == "tas"
-
-
-def test_compare_dataset_detects_drift():
-    a = _ds([1.0, 2.0, 3.0])
-    b = _ds([1.0, 2.0, 9.0])
-    report = compare(b, a)
-    assert report.within_tolerance is False
-
-
-def test_compare_defaults_to_exact_no_per_variable_tolerance():
-    # With no tolerances passed, the same tiny change fails for every variable, not just
-    # the ones that used to carry a tight atol (e.g. pr).
-    a = _ds([0.0, 0.0, 0.0], name="pr")
-    b = _ds([0.0, 0.0, 1e-3], name="pr")
-    assert compare(b, a).within_tolerance is False
-    a2 = _ds([0.0, 0.0, 0.0], name="tas")
-    b2 = _ds([0.0, 0.0, 1e-3], name="tas")
-    assert compare(b2, a2).within_tolerance is False
-
-
-def test_compare_tolerances_param_restores_per_variable_band():
-    # Passing the TOLERANCES table opts back into the old banded comparison: pr keeps a
-    # tight near-zero atol floor, so the same 1e-3 change fails for pr...
-    from saidownscale.snapshot.tolerances import TOLERANCES
-
-    a = _ds([0.0, 0.0, 0.0], name="pr")
-    b = _ds([0.0, 0.0, 1e-3], name="pr")
-    assert compare(b, a, tolerances=TOLERANCES).within_tolerance is False
-    # ...but passes for tas, whose atol=1e-3 floor covers it.
-    a2 = _ds([0.0, 0.0, 0.0], name="tas")
-    b2 = _ds([0.0, 0.0, 1e-3], name="tas")
-    assert compare(b2, a2, tolerances=TOLERANCES).within_tolerance is True
-
-
-def test_compare_datatree_walks_leaves():
-    a = xr.DataTree.from_dict(
-        {
-            "g6_1p5k/tas": _ds([1.0, 2.0], name="tas"),
-            "g6_1p5k/pr": _ds([0.0, 0.0], name="pr"),
-        }
-    )
-    b = xr.DataTree.from_dict(
-        {
-            "g6_1p5k/tas": _ds([1.0, 2.0], name="tas"),
-            "g6_1p5k/pr": _ds([0.0, 5.0], name="pr"),
-        }
-    )
-    report = compare(b, a)
-    assert {leaf.variable for leaf in report.leaves} == {"tas", "pr"}
-    assert report.within_tolerance is False
-    pr_leaf = next(leaf for leaf in report.leaves if leaf.variable == "pr")
-    assert pr_leaf.within_tol is False
-
-
-def test_to_lines_is_plain_text():
-    a = _ds([1.0, 2.0, 3.0])
-    b = _ds([1.0, 2.0, 9.0])
-    lines = compare(b, a).to_lines()
-    assert any("tas" in line for line in lines)
-    assert all(isinstance(line, str) for line in lines)
-
-
-def _passing_leaf():
-    return LeafDiff("g/tas", "tas", 0.0, 0.0, 0.0, 0, False, True)
-
-
-def test_report_with_no_invariants_passes_on_leaves_alone():
-    from saidownscale.snapshot.compare import DiffReport
-
-    report = DiffReport(leaves=[_passing_leaf()])
-    assert report.within_tolerance is True
-    assert report.invariants_hold is True  # vacuously true when no checks ran
-    assert report.passed is True
-
-
-def test_invariant_violation_fails_passed_even_when_leaves_within_tol():
-    from saidownscale.snapshot.compare import DiffReport, InvariantCheck
-
-    report = DiffReport(
-        leaves=[_passing_leaf()],
-        invariant_checks=[
-            InvariantCheck(
-                "ssp245/tasmax_ge_tasmin/008", False, "tasmax < tasmin at 2 grid point(s)"
-            )
-        ],
-    )
-    assert report.within_tolerance is True  # leaves are fine on their own
-    assert report.invariants_hold is False
-    assert report.passed is False  # the invariant violation gates the overall verdict
-
-
-def test_report_passes_when_invariant_holds():
-    from saidownscale.snapshot.compare import DiffReport, InvariantCheck
-
-    report = DiffReport(
-        leaves=[_passing_leaf()],
-        invariant_checks=[InvariantCheck("ssp245/tasmax_ge_tasmin/008", True, "")],
-    )
-    assert report.passed is True
-
-
-def test_global_baseline_pointer_is_well_formed():
-    from saidownscale.snapshot.baselines import CESM2_WACCM_GLOBAL
-
-    assert CESM2_WACCM_GLOBAL.uri.startswith(
-        "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/"
-    )
-    assert CESM2_WACCM_GLOBAL.uri.endswith(".icechunk")
-    assert CESM2_WACCM_GLOBAL.branch
-    # "main" is an empty anchor commit, not a run (see baselines.py). Repointing the
-    # baseline at it would make every comparison diff against nothing.
-    assert CESM2_WACCM_GLOBAL.branch != "main"
-
-
-def test_partial_coordinate_overlap_not_within_tol():
-    # Same shape, equal values on the overlap, but coordinates only partially overlap.
-    # A shape-only verdict inner-joins to x=[1, 2] and calls this a match; the
-    # join="exact" alignment inside _compare_dataarray must not.
-    a = xr.DataArray(np.full(3, 5.0), dims="x", coords={"x": [0, 1, 2]})
-    b = xr.DataArray(np.full(3, 5.0), dims="x", coords={"x": [1, 2, 3]})
-    d = _compare_dataarray(a, b, path="g/v", variable="tas")
-    assert d.within_tol is False
+    return xr.Dataset({name: _da(values)})
 
 
 def _grid(values, dims=("lat", "lon"), coords=None):
-    """2-D array with named dims, for the dimension- and coordinate-identity checks."""
     arr = np.asarray(values, dtype="float64")
     coords = coords or {d: np.arange(s, dtype="float64") for d, s in zip(dims, arr.shape)}
     return xr.DataArray(arr, dims=dims, coords=coords)
 
 
-def test_inf_in_snapshot_is_not_an_exact_match():
-    # tol = atol + rtol * abs(snapshot) is NaN when the snapshot holds inf and rtol is 0,
-    # and every comparison against NaN is False, so `abs_diff > tol` sees no mismatch.
-    # The verdict comes from assert_equal instead, which rejects the leaf.
-    candidate, snapshot = _da([1.0, 5.0, 3.0]), _da([1.0, np.inf, 3.0])
-    d = _compare_dataarray(candidate, snapshot, path="g/v", variable="tas")
-    assert d.within_tol is False
-    # The descriptive metric genuinely cannot see it; this is why it must not be the gate.
-    assert d.frac_over_tol == 0.0
+def test_compare_dataarray_verdicts(subtests):
+    square = [[5.0, 5.0], [5.0, 5.0]]
+    cases = {
+        "identical": (
+            _da([1.0, 2.0, 3.0]),
+            _da([1.0, 2.0, 3.0]),
+            {},
+            {
+                "within_tol": True,
+                "max_abs_diff": 0.0,
+                "frac_over_tol": 0.0,
+                "nan_mismatch_count": 0,
+                "shape_mismatch": False,
+            },
+        ),
+        "tiny_change_fails_without_a_floor": (
+            _da([1.0, 2.0, 3.0 + 5e-4]),
+            _da([1.0, 2.0, 3.0]),
+            {},
+            {"within_tol": False, "frac_over_tol": 1 / 3, "max_abs_diff": 5e-4},
+        ),
+        "change_fails": (
+            _da([1.0, 2.0, 3.5]),
+            _da([1.0, 2.0, 3.0]),
+            {},
+            {"within_tol": False, "frac_over_tol": 1 / 3, "max_abs_diff": 0.5},
+        ),
+        "explicit_atol_band": (
+            _da([1.0, 2.0, 3.0 + 5e-4]),
+            _da([1.0, 2.0, 3.0]),
+            {"rtol": 0.0, "atol": 1e-3},
+            {"within_tol": True, "frac_over_tol": 0.0},
+        ),
+        "shape_mismatch": (
+            _da([1.0, 2.0]),
+            _da([1.0, 2.0, 3.0]),
+            {},
+            {"shape_mismatch": True, "within_tol": False},
+        ),
+        "new_nan": (
+            _da([1.0, np.nan, 3.0]),
+            _da([1.0, 2.0, 3.0]),
+            {},
+            {"nan_mismatch_count": 1, "within_tol": False},
+        ),
+        "shared_nan": (
+            _da([1.0, np.nan, 3.0]),
+            _da([1.0, np.nan, 3.0]),
+            {},
+            {"nan_mismatch_count": 0, "within_tol": True},
+        ),
+        "partial_coordinate_overlap": (
+            xr.DataArray(np.full(3, 5.0), dims="x", coords={"x": [0, 1, 2]}),
+            xr.DataArray(np.full(3, 5.0), dims="x", coords={"x": [1, 2, 3]}),
+            {},
+            {"within_tol": False},
+        ),
+        "inf_in_snapshot_invisible_to_frac_but_still_fails": (
+            _da([1.0, 5.0, 3.0]),
+            _da([1.0, np.inf, 3.0]),
+            {},
+            {"within_tol": False, "frac_over_tol": 0.0},
+        ),
+        "opposite_infinities": (_da([-np.inf]), _da([np.inf]), {}, {"within_tol": False}),
+        "matching_infinities": (_da([1.0, np.inf]), _da([1.0, np.inf]), {}, {"within_tol": True}),
+        "renamed_dims": (
+            _grid(square, dims=("lat", "lon")),
+            _grid(square, dims=("y", "x")),
+            {},
+            {"shape_mismatch": True, "within_tol": False},
+        ),
+        "shifted_coordinates": (
+            _grid([[1.0, 2.0]]),
+            _grid([[1.0, 2.0]], coords={"lat": [9.0], "lon": [8.0, 9.0]}),
+            {},
+            {"shape_mismatch": True, "within_tol": False},
+        ),
+    }
+    for case, (candidate, snapshot, kwargs, expected) in cases.items():
+        with subtests.test(case=case):
+            d = _compare_dataarray(candidate, snapshot, path="g/v", variable="tas", **kwargs)
+            assert isinstance(d, LeafDiff)
+            assert {k: getattr(d, k) for k in expected} == pytest.approx(expected)
 
 
-def test_opposite_infinities_are_not_an_exact_match():
-    d = _compare_dataarray(_da([-np.inf]), _da([np.inf]), path="g/v", variable="tas")
-    assert d.within_tol is False
+def test_compare_dataset_tolerances(subtests):
+    zeros, bumped = [0.0, 0.0, 0.0], [0.0, 0.0, 1e-3]
+    cases = {
+        "drift": ([1.0, 2.0, 9.0], [1.0, 2.0, 3.0], "tas", None, False),
+        "default_exact_pr": (bumped, zeros, "pr", None, False),
+        "default_exact_tas": (bumped, zeros, "tas", None, False),
+        "table_keeps_pr_tight": (bumped, zeros, "pr", TOLERANCES, False),
+        "table_bands_tas": (bumped, zeros, "tas", TOLERANCES, True),
+        "table_still_catches_inf": ([1.0, 5.0], [1.0, np.inf], "tas", TOLERANCES, False),
+        "partial_mapping_leaves_tas_exact": (bumped, zeros, "tas", {"pr": TOLERANCES["pr"]}, False),
+        "empty_mapping_is_exact": (bumped, zeros, "tas", {}, False),
+    }
+    for case, (cand, snap, name, tolerances, within) in cases.items():
+        with subtests.test(case=case):
+            report = compare(_ds(cand, name), _ds(snap, name), tolerances=tolerances)
+            assert report.within_tolerance is within
 
 
-def test_matching_infinities_are_an_exact_match():
-    a = _da([1.0, np.inf])
-    d = _compare_dataarray(a, a, path="g/v", variable="tas")
-    assert d.within_tol is True
+def test_compare_reports_leaves_and_plain_text_lines():
+    a = _ds([1.0, 2.0, 3.0])
+    clean = compare(a, a)
+    assert isinstance(clean, DiffReport)
+    assert clean.within_tolerance is True
+    assert [leaf.variable for leaf in clean.leaves] == ["tas"]
+
+    lines = compare(_ds([1.0, 2.0, 9.0]), a).to_lines()
+    assert any("tas" in line for line in lines)
+    assert all(isinstance(line, str) for line in lines)
 
 
-def test_inf_in_snapshot_is_caught_under_a_tolerance_band_too():
-    from saidownscale.snapshot.tolerances import TOLERANCES
-
-    candidate = xr.Dataset({"tas": _da([1.0, 5.0])})
-    snapshot = xr.Dataset({"tas": _da([1.0, np.inf])})
-    assert compare(candidate, snapshot, tolerances=TOLERANCES).within_tolerance is False
-
-
-def test_renamed_dims_are_a_shape_mismatch_not_a_match():
-    # Same shape and same values, different dim names. Subtracting these broadcasts to
-    # the outer product rather than raising, so this must short-circuit before any
-    # arithmetic: on a real leaf the diff array would be O(N^2).
-    candidate = _grid([[5.0, 5.0], [5.0, 5.0]], dims=("lat", "lon"))
-    snapshot = _grid([[5.0, 5.0], [5.0, 5.0]], dims=("y", "x"))
-    d = _compare_dataarray(candidate, snapshot, path="g/v", variable="tas")
-    assert d.shape_mismatch is True
-    assert d.within_tol is False
+def test_compare_datatree_walks_leaves():
+    a = xr.DataTree.from_dict(
+        {"g6_1p5k/tas": _ds([1.0, 2.0], name="tas"), "g6_1p5k/pr": _ds([0.0, 0.0], name="pr")}
+    )
+    b = xr.DataTree.from_dict(
+        {"g6_1p5k/tas": _ds([1.0, 2.0], name="tas"), "g6_1p5k/pr": _ds([0.0, 5.0], name="pr")}
+    )
+    report = compare(b, a)
+    assert {leaf.variable: leaf.within_tol for leaf in report.leaves} == {"tas": True, "pr": False}
+    assert report.within_tolerance is False
 
 
-def test_shifted_coordinates_at_equal_shape_are_a_shape_mismatch():
-    candidate = _grid([[1.0, 2.0]], dims=("lat", "lon"))
-    snapshot = _grid([[1.0, 2.0]], dims=("lat", "lon"), coords={"lat": [9.0], "lon": [8.0, 9.0]})
-    d = _compare_dataarray(candidate, snapshot, path="g/v", variable="tas")
-    assert d.shape_mismatch is True
-    assert d.within_tol is False
+def test_invariant_checks_gate_the_report_verdict(subtests):
+    passing_leaf = LeafDiff("g/tas", "tas", 0.0, 0.0, 0.0, 0, False, True)
+    path = "ssp245/tasmax_ge_tasmin/008"
+    cases = {
+        "no_checks": ([], True),
+        "check_holds": ([InvariantCheck(path, True, "")], True),
+        "check_violated": ([InvariantCheck(path, False, "tasmax < tasmin at 2 point(s)")], False),
+    }
+    for case, (checks, passed) in cases.items():
+        with subtests.test(case=case):
+            report = DiffReport(leaves=[passing_leaf], invariant_checks=checks)
+            assert report.within_tolerance is True
+            assert report.invariants_hold is passed
+            assert report.passed is passed
 
 
-def test_partial_tolerances_mapping_leaves_unlisted_variables_exact():
-    # A mapping that names only `pr` must not silently band `tas` with the module-level
-    # table: a partial mapping can tighten the check, never loosen it.
-    from saidownscale.snapshot.tolerances import TOLERANCES
-
-    a = _ds([0.0, 0.0, 0.0], name="tas")
-    b = _ds([0.0, 0.0, 1e-3], name="tas")
-    assert compare(b, a, tolerances={"pr": TOLERANCES["pr"]}).within_tolerance is False
-
-
-def test_empty_tolerances_mapping_is_exact_not_loose():
-    a = _ds([0.0, 0.0, 0.0], name="tas")
-    b = _ds([0.0, 0.0, 1e-3], name="tas")
-    assert compare(b, a, tolerances={}).within_tolerance is False
+def test_global_baseline_pointer_is_well_formed():
+    """The branch must never be "main": that is an empty anchor commit, not a run."""
+    assert CESM2_WACCM_GLOBAL.uri.startswith(
+        "s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/output/production/"
+    )
+    assert CESM2_WACCM_GLOBAL.uri.endswith(".icechunk")
+    assert CESM2_WACCM_GLOBAL.branch
+    assert CESM2_WACCM_GLOBAL.branch != "main"
