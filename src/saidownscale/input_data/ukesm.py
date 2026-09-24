@@ -107,7 +107,7 @@ T_PR_MEMBER_RENAME: dict[str, dict[str, str]] = {
     },
 }
 
-# Historical is a single UM suite; the suite ID is the member ID (no CMIP6 ripf exists).
+# Delivered without a CMIP6 ripf label, so the UM suite ID serves as the member ID.
 HISTORICAL_MEMBER = "u-by791"
 
 ENSEMBLE_MEMBERS: dict[str, list[str]] = {
@@ -147,7 +147,7 @@ MODEL_ATTR_NOTE = (
     f"from this delivery are {MODEL}."
 )
 
-# --- Historical (single UM suite, delivered directly to S3) ---
+# --- Historical (delivered directly to S3) ---
 
 _HIST_STEM = f"daily_UKESM1-1-LL_historical_{HISTORICAL_MEMBER}_185001-201512.nc"
 # tas/tasmin/tasmax share one combined file
