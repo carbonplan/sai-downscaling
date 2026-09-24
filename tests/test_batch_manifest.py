@@ -14,23 +14,16 @@ from saidownscale.batch_manifest import (
 )
 
 
-def test_build_manifest_records_version_and_stage():
-    manifest = build_manifest("transform_scenario", [{"variable": "tas"}])
-    assert manifest["version"] == MANIFEST_VERSION
-    assert manifest["stage"] == "transform_scenario"
-    assert manifest["entries"] == [{"variable": "tas"}]
-
-
-def test_round_trip_returns_entry_at_index(tmp_path):
-    uri = str(tmp_path / "manifest.json")
+def test_manifest_round_trip_returns_entry_at_index(tmp_path):
     entries = [{"variable": "tas"}, {"variable": "pr"}, {"variable": "rsds"}]
-    write_manifest(uri, "fit_historical", entries)
-    assert read_manifest_entry(uri, 1) == {"variable": "pr"}
-
-
-def test_write_manifest_returns_the_uri(tmp_path):
+    assert build_manifest("fit_historical", entries) == {
+        "version": MANIFEST_VERSION,
+        "stage": "fit_historical",
+        "entries": entries,
+    }
     uri = str(tmp_path / "manifest.json")
-    assert write_manifest(uri, "fit_historical", [{"a": 1}]) == uri
+    assert write_manifest(uri, "fit_historical", entries) == uri
+    assert read_manifest_entry(uri, 1) == {"variable": "pr"}
 
 
 def test_rejects_unknown_manifest_version(tmp_path):
@@ -40,9 +33,10 @@ def test_rejects_unknown_manifest_version(tmp_path):
         read_manifest_entry(str(path), 0)
 
 
-@pytest.mark.parametrize("index", [-1, 3])
-def test_rejects_out_of_range_index(tmp_path, index):
+def test_rejects_out_of_range_index(tmp_path, subtests):
     uri = str(tmp_path / "manifest.json")
     write_manifest(uri, "fit_historical", [{"a": 1}, {"a": 2}, {"a": 3}])
-    with pytest.raises(IndexError, match="index"):
-        read_manifest_entry(uri, index)
+    for index in (-1, 3):
+        with subtests.test(index=index):
+            with pytest.raises(IndexError, match="index"):
+                read_manifest_entry(uri, index)
