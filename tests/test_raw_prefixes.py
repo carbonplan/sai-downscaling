@@ -8,18 +8,10 @@ from saidownscale.input_data import cesm2_waccm, ukesm
 from saidownscale.input_data.etl_utils import RAW_ROOT, get_aws_creds, raw_netcdf_prefix
 
 
-class TestRawNetcdfPrefix:
-    def test_builds_expected_layout(self):
-        assert raw_netcdf_prefix("CESM2-WACCM", "g6-1p5k") == (
-            "input/raw/CESM2-WACCM/netcdf/g6-1p5k"
-        )
-
-    def test_no_trailing_slash(self):
-        assert not raw_netcdf_prefix("UKESM", "ssp245").endswith("/")
-
-    def test_rooted_at_raw_root(self):
-        assert RAW_ROOT == "input/raw"
-        assert raw_netcdf_prefix("UKESM", "g6-1p5k").startswith(f"{RAW_ROOT}/")
+def test_raw_netcdf_prefix_layout():
+    assert RAW_ROOT == "input/raw"
+    assert raw_netcdf_prefix("CESM2-WACCM", "g6-1p5k") == "input/raw/CESM2-WACCM/netcdf/g6-1p5k"
+    assert not raw_netcdf_prefix("UKESM", "ssp245").endswith("/")
 
 
 ALL_PREFIXES = [
@@ -30,7 +22,6 @@ ALL_PREFIXES = [
 
 
 def _list_paths(prefix: str) -> list[str]:
-    """Return every object path under an S3 prefix in the carbonplan-srm bucket."""
     aws = get_aws_creds()
     region = aws.pop("region")
     store = from_url("s3://carbonplan-srm", region=region, **aws)
@@ -57,9 +48,7 @@ class TestRawPrefixesOnS3:
         ],
     )
     def test_all_configured_members_discovered(self, module, scenario):
-        # UKESM G6-1.5K is excluded: its T/PR drop carries raw source member ids
-        # (u-dp583) that only become CMIP6 ripf labels after T_PR_MEMBER_RENAME is
-        # applied downstream of discovery.
+        """UKESM G6-1.5K is excluded: its raw member ids are renamed after discovery."""
         expected = set(module.ENSEMBLE_MEMBERS[scenario])
         found = {m for m, _ in module._get_netcdf_urls(scenario, "tas")}
         assert expected <= found, f"missing members for {scenario}: {expected - found}"
@@ -67,19 +56,13 @@ class TestRawPrefixesOnS3:
     @pytest.mark.parametrize(
         "module, scenario, variables, forbidden",
         [
-            # Each row lists a SHORT prefix while a longer sibling exists, which is
-            # the only direction in which string-prefix matching could over-reach.
-            # obstore matches prefixes by path component and does not recurse, so
-            # neither the sibling's objects nor its child prefix are reachable today;
-            # these rows pin that behavior against a future listing-semantics change.
             (cesm2_waccm, "G6-1.5K", ["tas", "pr"], "/netcdf/g6-1p5k-end/"),
-            # SSP245 no longer lists S3 at all — paths are built from a filename
-            # template — so this row now pins that the template stays off the old drop.
             (ukesm, "SSP245", ["rsds", "pr"], "/netcdf/ssp245-t-pr/"),
             (ukesm, "G6-1.5K", ["hurs", "rsds"], "/netcdf/g6-1p5k-t-pr/"),
         ],
     )
     def test_no_sibling_prefix_bleed(self, module, scenario, variables, forbidden):
+        """Each row is a short prefix beside a longer sibling it must never pick up."""
         for variable in variables:
             paths = [p for _, p in module._get_netcdf_urls(scenario, variable)]
             assert paths, f"{scenario}/{variable} discovered nothing"
