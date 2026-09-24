@@ -144,9 +144,9 @@ ensemble member that carries every variable you need.
 | `ssp245` | All five | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2015 to 2099 |
 | `g6_1p5k` | All five | `r2i1p1f2`, `r3i1p1f2`, `r12i1p1f2` | 2035 to 2084 |
 
-The `UKESM1-1-LL` historical ensemble member is labeled by its model suite ID, `u-by791`, rather
-than by a variant label like `r2i1p1f2`. It is one realization like any other, and every
-`UKESM1-1-LL` scenario member branches from it.
+For `UKESM1-1-LL` we downscaled one historical member, `u-by791`. That name is a Met Office suite
+ID rather than a variant label like `r2i1p1f2`, and every scenario member above was bias-corrected
+against it.
 
 ### Grid, time, and chunks
 
