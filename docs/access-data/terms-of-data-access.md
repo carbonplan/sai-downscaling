@@ -1,6 +1,6 @@
-# Terms of Data Access
+# Terms of data access
 
-## Our Terms of Use Apply to SAI Downscaling
+## Our Terms of Use apply to SAI Downscaling
 
 By downloading, copying, or using this project, and/or any associated content
 or data, you agree to CarbonPlan’s Terms Of Use, which can be found here:
