@@ -560,7 +560,10 @@ class DownscalingPipeline:
                 pass
             else:
                 self._hist_member = lineage.historical
-                self._ssp245_member = lineage.ssp245_bridge
+                # A run with no bridge is SSP2-4.5 itself, so the SSP2-4.5 member it draws on is
+                # its own. Recording that rather than null keeps the attr meaning the same on
+                # every scenario group.
+                self._ssp245_member = lineage.ssp245_bridge or config.ensemble_member
                 self._ssp245_esgf_member = lineage.ssp245_esgf_bridge
                 self._sai_parent = lineage.sai_parent
 

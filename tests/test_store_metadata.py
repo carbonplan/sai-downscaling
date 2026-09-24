@@ -122,6 +122,12 @@ def test_plan_sets_missing_keeps_matching_and_reports_differing(subtests) -> Non
         plan = _out("bcsd/g6_1p5k/tas/001", {"license": "CC0-1.0"})
         assert plan.conflicts["license"] == ("CC0-1.0", CC_BY)
         assert "license" not in plan.to_set
+    for path in ("bcsd/ssp245/tas/001", "bcsd/debiased_coarse/ssp245/tas/001"):
+        with subtests.test("null ssp245 member filled from the path", path=path):
+            null = {"sai_downscaling:ssp245_ensemble_member": None}
+            plan = plan_group(path, {**OUTPUT_ATTRS, **null}, CESM, "output")
+            assert plan.to_set["sai_downscaling:ssp245_ensemble_member"] == "001"
+            assert "sai_downscaling:ssp245_ensemble_member" not in plan.removals
 
 
 def test_plan_refuses_to_guess(subtests) -> None:

@@ -47,9 +47,9 @@ def read_attr(attrs: Mapping[str, Any], field_name: str, default: Any = None) ->
     v1.0.0. A reader that looked only for the current namespace would find nothing there and
     quietly skip the check rather than fail, which is the more dangerous outcome.
 
-    Presence decides which namespace answers, not truthiness. Some provenance attrs are
-    legitimately null, such as ``ssp245_ensemble_member`` on a scenario that needs no bridge, and
-    a null under the current namespace is still the current answer.
+    Presence decides which namespace answers, not truthiness. A null under the current namespace
+    is still the current answer, such as the ``ssp245_ensemble_member`` that SSP2-4.5 groups
+    carried before it recorded their own member.
     """
     current = f"{ATTR_PREFIX}{field_name}"
     if current in attrs:

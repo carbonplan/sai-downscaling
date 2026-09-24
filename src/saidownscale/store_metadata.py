@@ -652,6 +652,11 @@ def plan_group(
         source = source_for(existing, gcm, published)
         if source is not None:
             target["source"] = source
+        if scenario_group == "ssp245":
+            # SSP2-4.5 groups were written with a null here, because the run needs no bridge.
+            # The SSP2-4.5 member they draw on is their own, which the path names.
+            member = path.rstrip("/").rsplit("/", 1)[-1]
+            target[f"{ATTR_PREFIX}ssp245_ensemble_member"] = member
     else:
         target = input_attrs(gcm, scenario_group)
 
