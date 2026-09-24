@@ -14,6 +14,7 @@ from saidownscale.input_data.etl_utils import apply_published_metadata
 from saidownscale.licenses import metadata_attrs
 from saidownscale.store_metadata import (
     DATA_SOURCE,
+    SCENARIO_ONLY_FIELDS,
     UKESM_PROCESSING_STEPS,
     dropped_attrs,
     gcm_from_store,
@@ -215,6 +216,32 @@ def test_mislabeled_historical_scenario_is_repaired(subtests) -> None:
         )
         assert "sai_downscaling:config_json" not in plan.repairs
         assert "sai_downscaling:config_json" not in plan.removals
+    run_attrs = {
+        "sai_downscaling:ensemble_member": "001",
+        "sai_downscaling:ssp245_ensemble_member": "001",
+        "sai_downscaling:sai_parent_scenario": "G6-1.5K",
+        "sai_downscaling:sai_parent_ensemble_member": "001",
+        "srm_downscaling:ssp245_ensemble_member": "001",
+    }
+    for path in (HIST_PATH, "bcsd/debiased_coarse/historical/tas/r1i1p1f1"):
+        with subtests.test("member repaired from the path", path=path):
+            plan = plan_group(path, {**MISLABELED_HISTORICAL, **run_attrs}, CESM, "output")
+            assert plan.repairs["sai_downscaling:ensemble_member"] == ("001", "r1i1p1f1")
+            assert set(plan.removals) == set(run_attrs) - {"sai_downscaling:ensemble_member"}
+            assert not {k for k in plan.to_set if k.split(":")[-1] in SCENARIO_ONLY_FIELDS}
+    with subtests.test("legacy member does not block the prune once repaired"):
+        existing = {
+            **MISLABELED_HISTORICAL,
+            "sai_downscaling:ensemble_member": "r1i1p1f1",
+            "srm_downscaling:ensemble_member": "001",
+        }
+        plan = plan_group(HIST_PATH, existing, CESM, "output")
+        assert plan.removals == {"srm_downscaling:ensemble_member": "001"}
+        assert "sai_downscaling:ensemble_member" not in plan.repairs
+    with subtests.test("scenario groups keep their run provenance"):
+        plan = _out("bcsd/g6_1p5k_end/tas/001", run_attrs)
+        assert "sai_downscaling:ssp245_ensemble_member" not in plan.removals
+        assert "sai_downscaling:ensemble_member" not in plan.repairs
 
 
 def test_legacy_historical_group_migrates_without_copying_stale_scenario(subtests) -> None:
@@ -473,10 +500,15 @@ def test_pipeline_writes_labeled_licensed_attrs_in_one_pass(subtests) -> None:
     with subtests.test("historical write labeled historical"):
         hist = _output_attrs("G6-1.5K", "BCSD", for_historical=True)
         assert hist["sai_downscaling:scenario"] == "historical"
+        member = hist["sai_downscaling:historical_ensemble_member"]
+        assert hist["sai_downscaling:ensemble_member"] == member != "003"
+        assert not {f"sai_downscaling:{f}" for f in SCENARIO_ONLY_FIELDS} & hist.keys()
         assert hist["source"].startswith("CESM2-WACCM6 historical, downscaled")
     with subtests.test("scenario write labeled with the published name"):
         scenario_attrs = _output_attrs("G6-1.5K", "BCSD")
         assert scenario_attrs["sai_downscaling:scenario"] == "G6-1.5K-SAI"
+        assert scenario_attrs["sai_downscaling:ensemble_member"] == "003"
+        assert "sai_downscaling:ssp245_ensemble_member" in scenario_attrs
     for method in ("BCSD", "QDMSD"):
         with subtests.test(history_names_method=method):
             attrs = _output_attrs("SSP245", method)

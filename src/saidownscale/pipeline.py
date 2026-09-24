@@ -62,7 +62,7 @@ from saidownscale.encoding import (
 )
 from saidownscale.licenses import metadata_attrs
 from saidownscale.qa_checks import assert_no_nans
-from saidownscale.store_metadata import describe_source, published_name
+from saidownscale.store_metadata import SCENARIO_ONLY_FIELDS, describe_source, published_name
 from saidownscale.utils import get_variable
 
 if TYPE_CHECKING:
@@ -609,7 +609,10 @@ class DownscalingPipeline:
             variable, method, and member, so a historical artifact is produced inside whichever
             scenario run reached it first. Recording that run's scenario would label historical
             data ``G6-1.5K`` and cite the wrong upstream simulation, so the scenario is pinned to
-            ``historical`` here while ``config_json`` keeps the full run config.
+            ``historical`` here while ``config_json`` keeps the full run config. For the same
+            reason the member is the historical one, and the fields in
+            :data:`~saidownscale.store_metadata.SCENARIO_ONLY_FIELDS` are left out, since the
+            historical fit reads neither the SSP2-4.5 bridge nor a parent SAI run.
 
         Returns
         -------
@@ -667,6 +670,10 @@ class DownscalingPipeline:
         if self._sai_parent is not None:
             attrs["sai_downscaling:sai_parent_scenario"] = published_name(self._sai_parent.scenario)
             attrs["sai_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
+        if for_historical:
+            attrs["sai_downscaling:ensemble_member"] = self._hist_member
+            for field_name in SCENARIO_ONLY_FIELDS:
+                attrs.pop(f"sai_downscaling:{field_name}", None)
         return attrs
 
     def _build_obs_attrs(self) -> dict:

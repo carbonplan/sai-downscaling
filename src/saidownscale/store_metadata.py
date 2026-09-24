@@ -38,6 +38,15 @@ GCMS = ("CESM2-WACCM6", "UKESM1-1-LL")
 #: no cache path, so it recovers nothing that cannot be recomputed.
 DEPRECATED_FIELDS = frozenset({"config_hash"})
 
+#: Provenance fields that describe a scenario run and so do not belong on a historical group.
+#: Stage 2 is cached without the scenario in its key, and the historical fit reads no SSP2-4.5 or
+#: parent SAI data, yet it used to write the full attr set of whichever scenario run reached it
+#: first. A historical group therefore named that run's bridge and parent. Named without a
+#: namespace, like :data:`DEPRECATED_FIELDS`.
+SCENARIO_ONLY_FIELDS = frozenset(
+    {"ssp245_ensemble_member", "sai_parent_scenario", "sai_parent_ensemble_member"}
+)
+
 #: Attrs we do not republish, matched whole because they carry no namespace. Kept apart from
 #: :data:`DEPRECATED_FIELDS`, which names provenance fields under either namespace, and not all of
 #: these were ours to begin with.
@@ -499,7 +508,10 @@ def repair_history(existing: dict[str, str]) -> str | None:
 
 
 def _plan_provenance_namespace(
-    plan: GroupPlan, existing: dict[str, str], corrections: dict[str, str]
+    plan: GroupPlan,
+    existing: dict[str, str],
+    corrections: dict[str, str],
+    unwanted: frozenset[str] = DEPRECATED_FIELDS,
 ) -> None:
     """Plan the move of v1.0.0 provenance onto the current namespace.
 
@@ -528,13 +540,16 @@ def _plan_provenance_namespace(
     corrections : dict of str to str
         Current-namespace keys mapped to the value we consider authoritative, regardless of what
         the group records.
+    unwanted : frozenset of str
+        Field names, without a namespace, that this group must not carry. Each goes straight to
+        removal under either namespace and is never copied forward.
     """
     for key, value in sorted(existing.items()):
         for prefix in (ATTR_PREFIX, LEGACY_ATTR_PREFIX):
             if not key.startswith(prefix):
                 continue
             field_name = key[len(prefix) :]
-            if field_name in DEPRECATED_FIELDS:
+            if field_name in unwanted:
                 plan.removals[key] = value
             elif prefix == LEGACY_ATTR_PREFIX:
                 current = f"{ATTR_PREFIX}{field_name}"
@@ -652,15 +667,27 @@ def plan_group(
     # The group's own path decides which scenario it holds, so the published name for that path is
     # authoritative whether or not the group currently agrees with it.
     corrections = {f"{ATTR_PREFIX}scenario": published}
+    unwanted = DEPRECATED_FIELDS
+    historical_output = product == "output" and scenario_group == "historical"
+    if historical_output:
+        unwanted = DEPRECATED_FIELDS | SCENARIO_ONLY_FIELDS
+        # A historical group is shared by every scenario run of its historical member, so the
+        # member it holds is the one its path names, not the member of the run that wrote it.
+        member = path.rstrip("/").rsplit("/", 1)[-1]
+        member_key = f"{ATTR_PREFIX}ensemble_member"
+        corrections[member_key] = member
+        declared_member = read_attr(existing, "ensemble_member")
+        if declared_member is not None and declared_member != member:
+            plan.repairs[member_key] = (declared_member, member)
     # The parent names a different scenario than the group, so the path cannot settle it, but it
     # still has to be spelled the published way or one group carries 2 conventions at once.
     parent = read_attr(existing, "sai_parent_scenario")
-    if parent is not None:
+    if parent is not None and not historical_output:
         parent_key = f"{ATTR_PREFIX}sai_parent_scenario"
         corrections[parent_key] = published_name(parent)
         if corrections[parent_key] != parent:
             plan.repairs[parent_key] = (parent, corrections[parent_key])
-    _plan_provenance_namespace(plan, existing, corrections)
+    _plan_provenance_namespace(plan, existing, corrections, unwanted)
     for key, value in target.items():
         current = existing.get(key)
         if current is None:
