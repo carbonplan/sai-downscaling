@@ -10,6 +10,7 @@ import zarr
 
 from saidownscale import licenses
 from saidownscale.config import read_attr
+from saidownscale.licenses import metadata_attrs
 from saidownscale.store_metadata import (
     DROPPED_PLAIN_ATTRS,
     describe_data_source,
@@ -311,6 +312,17 @@ def test_input_groups_drop_personal_and_lineage_attrs_but_keep_provenance(subtes
         status = "2019-11-04;created;by someone@example.edu"
         plan = _in("historical", {"scenario": "historical", "status": status})
         assert plan.removals["status"] == status
+    with subtests.test("nothing we write is also on the drop list"):
+        # The set applies to both products, so listing an attr we write would delete it right
+        # after writing it. ``contact`` is the live example: ours is on every output group.
+        for product in ("input", "output"):
+            written = set(metadata_attrs("CESM2-WACCM6", "historical", product=product))
+            assert not written & DROPPED_PLAIN_ATTRS
+        assert "contact" not in DROPPED_PLAIN_ATTRS
+    with subtests.test("the r/i/p/f decomposition goes as a set"):
+        # Keeping one index without the others conveys nothing about the variant.
+        for key in ("forcing_index", "initialization_index", "physics_index"):
+            assert key in DROPPED_PLAIN_ATTRS
     with subtests.test("what a reader needs is kept"):
         # Without these a group cannot be interpreted: scenario is the published experiment label
         # and the one the path check reads, and source is the CF attr naming the model.

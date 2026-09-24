@@ -60,8 +60,16 @@ _DROPPED_OURS = frozenset({"experiment_lineage", "ensemble_derivation_logic", "l
 #: while its siblings held 16. What a reader needs is kept: ``scenario``, ``source``, ``model``,
 #: ``Conventions``, ``processing_steps``, ``case`` and ``model_doi_url`` all stay. ``status`` is
 #: also a privacy fix, since it embeds the email address of whoever created the file.
+#:
+#: ``contact`` is deliberately absent. On an input group it is the upstream institution's
+#: mailing list, which is who a reader should ask about that simulation, and this set applies
+#: to both products, so listing it would also delete our own ``contact`` from every output
+#: group.
 _DROPPED_INHERITED = frozenset(
     {
+        "activity_id",
+        "branch_method",
+        "branch_time_in_child",
         "data_specs_version",
         "ensemble_member_source",
         "experiment",
@@ -74,6 +82,13 @@ _DROPPED_INHERITED = frozenset(
         "host",
         "initial_file",
         "initialization_index",
+        "mip_era",
+        "parent_activity_id",
+        "parent_mip_era",
+        "parent_source_id",
+        "parent_time_units",
+        "parent_variant_label",
+        "physics_index",
         "product",
         "realm",
         "source_id",
