@@ -62,7 +62,7 @@ from saidownscale.encoding import (
 )
 from saidownscale.licenses import metadata_attrs
 from saidownscale.qa_checks import assert_no_nans
-from saidownscale.store_metadata import describe_source
+from saidownscale.store_metadata import describe_source, published_name
 from saidownscale.utils import get_variable
 
 if TYPE_CHECKING:
@@ -665,9 +665,7 @@ class DownscalingPipeline:
         # Only present on scenarios that continue an earlier SAI run, so readers can tell
         # which run supplied the pre-scenario years of the bridge.
         if self._sai_parent is not None:
-            attrs["sai_downscaling:sai_parent_scenario"] = PUBLISHED_SCENARIO_NAMES[
-                SCENARIO_TO_GROUP[self._sai_parent.scenario]
-            ]
+            attrs["sai_downscaling:sai_parent_scenario"] = published_name(self._sai_parent.scenario)
             attrs["sai_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
         return attrs
 

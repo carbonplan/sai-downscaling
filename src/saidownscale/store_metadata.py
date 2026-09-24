@@ -294,6 +294,32 @@ def scenario_attr_key(product: str) -> str:
     return "scenario" if product == "input" else f"{ATTR_PREFIX}scenario"
 
 
+def names_this_group(scenario: str, scenario_group: str) -> bool:
+    """Return True when a recorded scenario names this group, in either spelling.
+
+    A store we have already patched records the published name, so a re-run has to recognize its
+    own output. This is checked by comparison rather than by adding the published names to
+    ``SCENARIO_TO_GROUP``: that map decides cache paths, so a published name accepted there would
+    give one group path a second cache identity. It also cannot be inverted safely, since
+    ``ssp245`` and ``esgf_ssp245`` both publish ``SSP2-4.5``.
+
+    Parameters
+    ----------
+    scenario : str
+        The scenario a group records, in either spelling.
+    scenario_group : str
+        The group resolved from the path.
+
+    Returns
+    -------
+    bool
+        True when the 2 refer to the same scenario.
+    """
+    return SCENARIO_TO_GROUP.get(
+        scenario
+    ) == scenario_group or scenario == PUBLISHED_SCENARIO_NAMES.get(scenario_group)
+
+
 def published_name(scenario: str) -> str:
     """Return the published spelling of a scenario name.
 
@@ -535,7 +561,7 @@ def plan_group(
         raise ValueError(f"no scenario group in path {path!r}")
 
     declared = recorded_scenario(existing, product)
-    if declared and SCENARIO_TO_GROUP.get(declared) not in (None, scenario_group):
+    if declared and not names_this_group(declared, scenario_group):
         # Stage 2 is cached per GCM, variable, method, and member with no scenario in the key, so
         # whichever scenario's run wrote the historical leg first stamped its own config onto it.
         # The path is the reliable witness there, and ``config_json`` still holds the run's own

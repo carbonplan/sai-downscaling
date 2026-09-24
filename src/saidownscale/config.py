@@ -93,10 +93,6 @@ SCENARIO_TO_GROUP: dict[str, str] = {
     "esgf-SSP245": "esgf_ssp245",
     "esgf-ssp245": "esgf_ssp245",  # lowercase alias
     "esgf_ssp245": "esgf_ssp245",  # group-name pass-through
-    # Published names, accepted so a store already carrying one still resolves on a re-run.
-    "SSP2-4.5": "ssp245",
-    "G6-1.5K-SAI": "g6_1p5k",
-    "G6-1.5K-SAI-END": "g6_1p5k_end",
 }
 
 #: The scenario name we publish in store attrs, keyed on the group. These are the CMIP6 and GeoMIP

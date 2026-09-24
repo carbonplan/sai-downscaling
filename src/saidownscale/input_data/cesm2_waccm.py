@@ -20,12 +20,12 @@ from saidownscale.input_data.etl_utils import (
     CMORIZE_pr,
     _display_dry_run_result,
     _init_repo_from_uri,
-    apply_ensemble_provenance,
     build_encoding_dict,
     console,
     determine_write_mode,
     get_aws_creds,
     group_paths_by_member,
+    label_ensemble_coord,
     open_netcdf_from_s3,
     raw_netcdf_prefix,
     setup_logging,
@@ -202,7 +202,7 @@ def _finalize_metadata(ds: xr.Dataset, scenario: str) -> xr.Dataset:
     if "_source_manifest" in ds.attrs:
         del ds.attrs["_source_manifest"]
 
-    return apply_ensemble_provenance(ds)
+    return label_ensemble_coord(ds)
 
 
 def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:

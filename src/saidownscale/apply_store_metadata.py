@@ -34,7 +34,8 @@ Run 2, once nothing reads the old names, drop them::
 
 An input store needs only one run, because it carries no namespaced provenance to migrate::
 
-    uv run python -m saidownscale.apply_store_metadata --store <uri> --branch main --repair --prune --yes
+    uv run python -m saidownscale.apply_store_metadata --store <uri> \
+        --branch main --repair --prune --yes
 """
 
 from __future__ import annotations

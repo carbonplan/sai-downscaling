@@ -17,12 +17,12 @@ from saidownscale.config import SCENARIO_TO_GROUP, VarSpec, VarStandards, init_r
 from saidownscale.input_data.etl_utils import (
     _display_dry_run_result,
     _init_repo_from_uri,
-    apply_ensemble_provenance,
     build_encoding_dict,
     console,
     determine_write_mode,
     get_aws_creds,
     group_paths_by_member,
+    label_ensemble_coord,
     raw_netcdf_prefix,
     setup_logging,
     trim_negative_precipitation,
@@ -338,9 +338,7 @@ def _preprocess_ukesm(ds: xr.Dataset, scenario: str, subset: bool = False) -> xr
     return trim_negative_precipitation(ds)
 
 
-def _update_attrs(
-    ds: xr.Dataset, var_specs: dict, scenario: str, variable: str | None = None
-) -> xr.Dataset:
+def _update_attrs(ds: xr.Dataset, var_specs: dict, scenario: str) -> xr.Dataset:
     ds = update_variable_attrs(ds, var_specs)
     ds.attrs.update(
         {
@@ -356,7 +354,7 @@ def _update_attrs(
         for key in overwritten:
             ds.attrs[key] = MODEL
         ds.attrs["model_id_correction"] = MODEL_ATTR_NOTE
-    return apply_ensemble_provenance(ds)
+    return label_ensemble_coord(ds)
 
 
 def _run_dry_run(
@@ -455,7 +453,7 @@ def _process_single_variable(
         ds = ds[[variable]]
     log.info("variable=%s concat done shape=%s", variable, dict(ds.sizes))
 
-    ds = _update_attrs(ds, var_specs, scenario, variable)
+    ds = _update_attrs(ds, var_specs, scenario)
 
     if dry_run:
         _run_dry_run(ds, variable, group, dry_run_output, commit_message)
