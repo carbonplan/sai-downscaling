@@ -1,47 +1,31 @@
-# SAI Downscale
+# SAI Downscaling
 
-## Quick links
+We downscaled global stratospheric aerosol injection (SAI) climate model output to a 0.25° grid, so
+that researchers can study the potential regional impacts of SAI on domains such as public health,
+agriculture, and ecosystems, particularly in the Global South. You can read more about this
+project in the accompanying
+[explainer](https://carbonplan.org/research/sai-downscaling-explainer). The published dataset
+covers 2 global climate models (GCMs), 4 scenarios, and 5 variables at daily resolution, each
+bias-corrected against daily ERA5 reanalysis.
 
-- [**GitHub repository**](https://github.com/carbonplan/sai-downscaling)
-- [**Dataset releases**](https://github.com/carbonplan/sai-downscaling/releases)
+We downscaled with 2 methods rather than one to support the exploration of uncertainty associated
+with the choice of method itself. Bias correction and spatial disaggregation (BCSD) is the
+established starting point, and quantile delta mapping with spatial disaggregation (QDMSD) carries
+the climate trend through its own quantile mapping instead of a separate detrending step. We
+publish both for every scenario, variable, and ensemble member.
 
-## Getting Started
+If you want the data, start with [What's available](./access-data/whats-available.md). If you want
+to know how we produced it, start with [Scientific methods](./methods/scientific-approach.md).
 
-::::{tab-set}
-:::{tab-item} Using SRM Downscaled Data
-If you want to **access and analyze the downscaled data**:
+We also encourage developers to explore the extensive explanatory information in our
+[GitHub repo](https://github.com/carbonplan/sai-downscaling). These resources will help anyone
+interested in modifying or extending the pipeline for other use cases. We welcome feedback or
+contributions by [opening an issue](https://github.com/carbonplan/sai-downscaling/issues/new).
 
-1. Review what data is [available](./access-data/whats-available.md), explore the [access utilities](./access-data/access-utilities.md) we built to help you work with it, and read the [terms of access](./access-data/access-terms.md).
-2. Visit [Input data catalog](./input-data.md) for an overview of the raw GCM, ERA5, and NASA-NEX datasets fed into the pipeline.
-3. Check out the [Subsetting and exporting data](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb) notebook in the `sai-downscaling-data-utils` repository to learn how to work with the data in Python, including loading, exploring, and exporting subsets of the datasets.
+:::{important}
+By downloading or accessing SAI Downscaling data, you agree to the [Terms of Data Access](./access-data/terms-of-data-access.md).
+See the [licenses and citation](./access-data/licenses.md) section for guidance specific to each of the products in this data release.
 :::
-:::{tab-item} Running the Pipeline
-If you want to **run the downscaling pipeline**:
-
-4. Start with the [Interactive pipeline demo](./how-to/demo-new-pipeline.ipynb) notebook for a hands-on walkthrough with visualizations.
-5. Follow the [Run the pipeline](./how-to/run-pipeline.md) guide for installation, quick start, and batch processing.
-6. See the [CLI reference](./reference/cli.md) for all commands and options.
-7. See the [Configuration reference](./reference/configuration.md) for all config fields and validation rules.
-8. See [Deploy the pipeline](./how-to/deploy.md) for QA and production deployment via GitHub Actions.
-:::
-::::
-
-## Support
-
-- **Issues & Bug Reports**: [GitHub Issues](https://github.com/carbonplan/sai-downscaling/issues)
-- **General Inquiries**: [hello@carbonplan.org](mailto:hello@carbonplan.org)
-
-## License
-
-SAI Downscale code is released under the MIT License. See [LICENSE](https://github.com/carbonplan/sai-downscaling/blob/main/LICENSE) for details. See [Input data catalog](./input-data.md) for information about data licensing.
-
-```{toctree}
-:hidden:
-:maxdepth: 2
-input-data
-terms-of-data-access
-contributing
-```
 
 ```{toctree}
 :hidden:
@@ -49,46 +33,15 @@ contributing
 :caption: Access the data
 access-data/whats-available
 access-data/access-utilities
-access-data/access-terms
+access-data/licenses
+access-data/terms-of-data-access
 ```
 
 ```{toctree}
 :hidden:
 :maxdepth: 2
 :caption: Methods
-explanation/scientific-approach
-explanation/pipeline-architecture
-explanation/snapshot-testing
-explanation/qa-qc/input-data-global-timeseries
-explanation/qa-qc/plausible-value-check
-explanation/qa-qc/output-integrity-checks
-explanation/qa-qc/trend-distortion-check
-explanation/qa-qc/regional-run-small-multiples
-```
-
-```{toctree}
-:hidden:
-:maxdepth: 2
-:caption: Reference
-
-reference/cli
-reference/configuration
-reference/api/index
-```
-
-```{toctree}
-:hidden:
-:maxdepth: 2
-:caption: How-to guides
-
-how-to/pipeline-stage-debugger
-how-to/demo-new-pipeline
-how-to/run-pipeline
-how-to/manage-cache
-how-to/run-snapshot-tests
-how-to/snapshot-comparison
-how-to/deploy
-how-to/regenerate-input-data
-how-to/validate-input-data-stores
-how-to/ensemble-member-lineage
+methods/scientific-approach
+methods/pipeline-architecture
+Convenings summary <https://github.com/carbonplan/sai-downscaling/blob/main/docs/assets/convenings-summary.pdf>
 ```

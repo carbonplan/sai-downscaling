@@ -1,4 +1,5 @@
 ---
+orphan: true
 jupytext:
   text_representation:
     extension: .md
@@ -10,12 +11,18 @@ kernelspec:
   name: python3
 ---
 
-# Input Data Catalog
+# Input data catalog
 
-Input datasets are stored as [icechunk](https://icechunk.io) stores on S3 and exposed through the
-built-in catalog. The catalog holds three dataset types: `Datatree` (unified per-GCM stores
-organized as zarr group trees), `Dataset` (flat icechunk stores), and `VirtualDataset` (virtual
-icechunk stores that reference external chunks).
+We store input datasets, both global climate model (GCM) output and observations, as
+[icechunk](https://icechunk.io) stores on S3 and expose them through the built-in catalog. The
+catalog holds 3 dataset types, and which one an entry uses decides what `.to_xarray()` gives you
+back.
+
+| Type | What it holds | What `.to_xarray()` returns |
+| --- | --- | --- |
+| `Datatree` | A unified per-GCM store organized as a zarr group tree, one group per scenario | An `xr.DataTree`, or an `xr.Dataset` when you pass `group` |
+| `Dataset` | A flat icechunk store | An `xr.Dataset` |
+| `VirtualDataset` | A virtual icechunk store holding chunk references to an external bucket | An `xr.Dataset`, read through those references |
 
 ## Bucket layout
 
@@ -70,9 +77,9 @@ maps each drop directory to the key the ETL modules use to request it:
 | `UKESM` | `g6-1p5k-t-pr` | `G6-1.5K` | source for `pr`/`tas`/`tasmin`/`tasmax` |
 | `UKESM1-1LL` | `ssp245` | `SSP245` | SSP2-4.5, 2015-2100, 09-2026 update |
 
-ERA5, GDEX-GMF and NASA-NEX have no raw copy in this bucket. Their ETLs stream directly from
-ARCO-ERA5 on GCS, from OSDF/DTN over HTTPS, and by virtual reference into `s3://nex-gddp-cmip6`
-respectively.
+ERA5, GDEX-GMF, and NASA-NEX have no raw copy in this bucket. Their extract, transform, and load
+(ETL) modules stream directly from ARCO-ERA5 on Google Cloud Storage, from OSDF and DTN over HTTPS,
+and by virtual reference into `s3://nex-gddp-cmip6`, respectively.
 
 ## Listing available datasets
 
@@ -83,6 +90,8 @@ catalog.list()
 ```
 
 ## Dataset types and paths
+
+Every catalog entry resolves to one S3 path, listed below with the type that reads it:
 
 | Name | Type | S3 path |
 | --- | --- | --- |
@@ -122,7 +131,10 @@ cesm2_waccm_g6 = catalog.get("CESM2-WACCM6").to_xarray(group="g6_1p5k")
 cesm2_waccm_g6
 ```
 
-`g6_1p5k_end` is the termination-shock continuation of `g6_1p5k` member `002`: SAI stops at the end of year 2084 and then the termination shock run continues to the end of 2100. The group holds only those years — the 2035–2084 SAI years it continues stay in `g6_1p5k`.`
+`g6_1p5k_end` is the termination-shock continuation of `g6_1p5k` ensemble member `002`:
+stratospheric aerosol injection stops at the end of 2084, and the termination shock run then
+continues to the end of 2100. The group holds only those years, because the 2035 to 2084 injection
+years it continues stay in `g6_1p5k`.
 
 ```{code-cell} python
 cesm2_waccm_g6_end = catalog.get("CESM2-WACCM6").to_xarray(group="g6_1p5k_end")
@@ -144,8 +156,8 @@ gdex
 ## Opening a VirtualDataset (NASA-NEX)
 
 NASA-NEX stores are virtual: the icechunk store holds chunk references that point at the public
-`s3://nex-gddp-cmip6/` bucket. No credentials are needed to read NASA-NEX data; the virtual
-chunk container is configured for anonymous access automatically.
+`s3://nex-gddp-cmip6/` bucket. You need no credentials to read NASA-NEX data, because we configure
+the virtual chunk container for anonymous access automatically.
 
 ```{code-cell} python
 nex_ssp245 = catalog.get("NASA-NEX-SSP245").to_xarray()
@@ -159,7 +171,8 @@ nex_historical
 
 ## Opening a dataset with lower-level icechunk control
 
-If you need direct control over the icechunk session (e.g. to pin a specific snapshot or branch):
+If you need direct control over the icechunk session, open the repository yourself rather than
+going through the catalog. That is what you want in order to pin a specific snapshot or branch:
 
 ```{code-cell} python
 import icechunk
@@ -174,5 +187,6 @@ dt = xr.open_datatree(session.store, engine="zarr", consolidated=False, zarr_for
 dt
 ```
 
-See the [subsetting and exporting notebook](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb)
-for examples of loading spatial subsets and exporting to NetCDF.
+That gives you the session, which you can pin to a snapshot or a branch before opening it. For
+worked examples of loading spatial subsets and exporting to netCDF, see the
+[subsetting and exporting notebook](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb).

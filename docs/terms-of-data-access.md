@@ -1,9 +1,0 @@
-# TERMS OF DATA ACCESS
-
-## License Agreement
-
-SRM Downscaling data are made available under the licenses listed on the [Access terms](access-data/access-terms.md) page. By accessing the data, you agree to adhere to the license terms.
-
-## Our Terms of Use Apply To SRM Downscaling
-
-By downloading, copying, or using SRM Downscaling, and/or any associated content or data, you agree to CarbonPlan’s Terms Of Use, which can be found here: [https://carbonplan.org/terms](https://carbonplan.org/terms). As further explained in the Terms of Use, CarbonPlan makes its projects — including SRM Downscaling — available strictly on an “as-is” and “as-available” basis, without warranty of any kind, including without limitation the warranties of merchantability, fitness for a particular purpose, and noninfringement. Certain of the data provided originates from third parties, and CarbonPlan has not undertaken to verify its correctness, accuracy or reliability.
