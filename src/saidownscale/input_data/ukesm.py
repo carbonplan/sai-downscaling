@@ -17,6 +17,7 @@ from saidownscale.config import SCENARIO_TO_GROUP, VarSpec, VarStandards, init_r
 from saidownscale.input_data.etl_utils import (
     _display_dry_run_result,
     _init_repo_from_uri,
+    apply_published_metadata,
     build_encoding_dict,
     console,
     determine_write_mode,
@@ -354,7 +355,7 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, scenario: str) -> xr.Dataset:
         for key in overwritten:
             ds.attrs[key] = MODEL
         ds.attrs["model_id_correction"] = MODEL_ATTR_NOTE
-    return label_ensemble_coord(ds)
+    return label_ensemble_coord(apply_published_metadata(ds, MODEL, scenario))
 
 
 def _run_dry_run(

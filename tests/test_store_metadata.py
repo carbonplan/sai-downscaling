@@ -9,7 +9,8 @@ import xarray as xr
 import zarr
 
 from saidownscale import licenses
-from saidownscale.config import read_attr
+from saidownscale.config import PUBLISHED_SCENARIO_NAMES, read_attr
+from saidownscale.input_data.etl_utils import apply_published_metadata
 from saidownscale.licenses import metadata_attrs
 from saidownscale.store_metadata import (
     DROPPED_PLAIN_ATTRS,
@@ -524,3 +525,38 @@ def test_writing_attrs_adds_no_chunks_and_keeps_the_data(tmp_path: Path) -> None
     assert result.attrs["license"] == CC_BY
     assert result.attrs["Conventions"] == "CF-1.8", "existing attrs must survive"
     assert result.attrs["sai_downscaling:gcm"] == CESM
+
+
+def test_a_fresh_ingest_needs_no_metadata_pass(subtests) -> None:
+    """The ETL and the applier must agree, or a re-ingest reverts the published attrs."""
+    inherited = {
+        "host": "cheyenne4",
+        "table_id": "day",
+        "logname": "someone",
+        "status": "2019;created;by a@b.edu",
+    }
+    cases = [
+        ("CESM2-WACCM6", "SSP245", "ssp245", "lon_to_180"),
+        ("CESM2-WACCM6", "G6-1.5K", "g6_1p5k", "lon_to_180"),
+        ("CESM2-WACCM6", "G6-1.5K-END", "g6_1p5k_end", "lon_to_180"),
+        ("UKESM1-1-LL", "historical", "historical", None),
+        ("UKESM1-1-LL", "SSP245", "ssp245", None),
+    ]
+    for gcm, scenario, group, steps in cases:
+        with subtests.test(case=f"{gcm}/{scenario}"):
+            attrs = {"model": gcm, "Conventions": "CF-1.0", **inherited}
+            if steps:
+                attrs["processing_steps"] = steps
+            ds = xr.Dataset(
+                {"tas": ("time", np.zeros(2))},
+                coords={"ensemble_member": ("ensemble_member", ["001"])},
+                attrs=attrs,
+            )
+            ds = apply_published_metadata(ds, gcm, scenario)
+            plan = plan_group(group, dict(ds.attrs), gcm, "input")
+            assert not plan.to_set
+            assert not plan.repairs
+            assert not plan.removals
+            assert not plan.conflicts
+            assert ds.attrs["scenario"] == PUBLISHED_SCENARIO_NAMES[group]
+            assert not DROPPED_PLAIN_ATTRS & ds.attrs.keys()

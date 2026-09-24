@@ -20,6 +20,7 @@ from saidownscale.input_data.etl_utils import (
     CMORIZE_pr,
     _display_dry_run_result,
     _init_repo_from_uri,
+    apply_published_metadata,
     build_encoding_dict,
     console,
     determine_write_mode,
@@ -179,6 +180,10 @@ def _attach_source_manifest(ds: xr.Dataset, url: str) -> xr.Dataset:
     return ds
 
 
+#: Key into the licenses table, which is not the ``model`` attr: that still says CESM2-WACCM.
+GCM_KEY = "CESM2-WACCM6"
+
+
 def _finalize_metadata(ds: xr.Dataset, scenario: str) -> xr.Dataset:
     """Records the parsing and the lineage chain"""
 
@@ -202,7 +207,7 @@ def _finalize_metadata(ds: xr.Dataset, scenario: str) -> xr.Dataset:
     if "_source_manifest" in ds.attrs:
         del ds.attrs["_source_manifest"]
 
-    return label_ensemble_coord(ds)
+    return label_ensemble_coord(apply_published_metadata(ds, GCM_KEY, scenario))
 
 
 def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:
