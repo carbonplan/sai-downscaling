@@ -29,6 +29,7 @@ from icechunk.xarray import to_icechunk
 
 from saidownscale.cache import COARSE_ONLY_VARIABLES, ArtifactCache, StoreLocation
 from saidownscale.config import (
+    PUBLISHED_SCENARIO_NAMES,
     SCENARIO_TO_GROUP,
     _ensure_root_group,
     _icechunk_storage_for_path,
@@ -598,9 +599,28 @@ class DownscalingPipeline:
         entry = _catalog.datasets.get(self.config.gcm)
         return None if entry is None else entry.description
 
-    def _build_output_attrs(self) -> dict:
-        """Build dataset-level attributes for pipeline output artifacts."""
+    def _build_output_attrs(self, *, for_historical: bool = False) -> dict:
+        """Build dataset-level attributes for pipeline output artifacts.
+
+        Parameters
+        ----------
+        for_historical : bool, default False
+            True for a write into the ``{method}/historical/`` group. Stage 2 is cached per GCM,
+            variable, method, and member, so a historical artifact is produced inside whichever
+            scenario run reached it first. Recording that run's scenario would label historical
+            data ``G6-1.5K`` and cite the wrong upstream simulation, so the scenario is pinned to
+            ``historical`` here while ``config_json`` keeps the full run config.
+
+        Returns
+        -------
+        dict
+            Dataset-level attributes for the artifact.
+        """
         version = importlib.metadata.version("saidownscale")
+        scenario = "historical" if for_historical else (self.config.scenario or "historical")
+        scenario_group = SCENARIO_TO_GROUP[scenario]
+        # Stores publish the CMIP6 and GeoMIP experiment name, not our config spelling.
+        published_scenario = PUBLISHED_SCENARIO_NAMES[scenario_group]
         attrs = {
             # CF-standard — flat
             "Conventions": "CF-1.8",
@@ -612,7 +632,7 @@ class DownscalingPipeline:
             # Pipeline provenance — namespaced
             "sai_downscaling:version": version,
             "sai_downscaling:gcm": self.config.gcm,
-            "sai_downscaling:scenario": self.config.scenario or "historical",
+            "sai_downscaling:scenario": published_scenario,
             "sai_downscaling:variable": self.config.variable,
             "sai_downscaling:ensemble_member": self.config.ensemble_member,
             "sai_downscaling:historical_ensemble_member": self._hist_member,
@@ -630,12 +650,11 @@ class DownscalingPipeline:
             "sai_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
         # License, attribution and contact, so a run from scratch publishes data that is already
-        # correctly labelled rather than waiting on a metadata pass afterwards.
-        scenario_group = SCENARIO_TO_GROUP[self.config.scenario or "historical"]
+        # correctly labeled rather than waiting on a metadata pass afterwards.
         attrs.update(metadata_attrs(self.config.gcm, scenario_group, product="output"))
         attrs["source"] = describe_source(
             self.config.gcm,
-            self.config.scenario or "historical",
+            published_scenario,
             self.config.obs_dataset,
             self.config.downscaling_method,
         )
@@ -646,7 +665,9 @@ class DownscalingPipeline:
         # Only present on scenarios that continue an earlier SAI run, so readers can tell
         # which run supplied the pre-scenario years of the bridge.
         if self._sai_parent is not None:
-            attrs["sai_downscaling:sai_parent_scenario"] = self._sai_parent.scenario
+            attrs["sai_downscaling:sai_parent_scenario"] = PUBLISHED_SCENARIO_NAMES[
+                SCENARIO_TO_GROUP[self._sai_parent.scenario]
+            ]
             attrs["sai_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
         return attrs
 
@@ -811,6 +832,7 @@ class DownscalingPipeline:
         *,
         tasmin_fine: xr.DataArray | None = None,
         force: bool = False,
+        for_historical: bool = False,
     ) -> None:
         """Dedicated reconcile step: enforce ``tasmax >= tasmin`` on the fine outputs.
 
@@ -919,7 +941,7 @@ class DownscalingPipeline:
                 tasmin_corrected,
                 tasmin_loc,
                 encoding=make_encoding(self.config.variable),
-                dataset_attrs=self._build_output_attrs(),
+                dataset_attrs=self._build_output_attrs(for_historical=for_historical),
                 force=force,
             )
 
@@ -1197,7 +1219,7 @@ class DownscalingPipeline:
             ),
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
+            dataset_attrs=self._build_output_attrs(for_historical=True),
         )
         logger.info(
             "✓ Saved debiased coarse historical: %s/%s (%.2fs)",
@@ -1222,7 +1244,7 @@ class DownscalingPipeline:
             model_hist_downscaled,
             loc,
             encoding=make_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
+            dataset_attrs=self._build_output_attrs(for_historical=True),
             force=False,
         )
         logger.info(
@@ -1232,7 +1254,9 @@ class DownscalingPipeline:
         # Dedicated reconcile step: swap any tasmax < tasmin left by independent
         # disaggregation and write both corrected fields (issue #331).
         t0 = time.perf_counter()
-        self.reconcile_temperature_extremes(loc, tasmax_fine_loc, tasmin_fine=None, force=force)
+        self.reconcile_temperature_extremes(
+            loc, tasmax_fine_loc, tasmin_fine=None, force=force, for_historical=True
+        )
         logger.info(
             "✓ Reconciled + saved historical: %s/%s (%.2fs)",
             loc.store_path,
@@ -1331,7 +1355,7 @@ class DownscalingPipeline:
             model_hist_debiased,
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
+            dataset_attrs=self._build_output_attrs(for_historical=True),
         )
         logger.info(
             "✓ Saved debiased coarse historical: %s/%s (%.2fs)",
@@ -1360,7 +1384,7 @@ class DownscalingPipeline:
             da=model_hist_downscaled,
             loc=loc,
             encoding=make_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
+            dataset_attrs=self._build_output_attrs(for_historical=True),
             force=force,
         )
         logger.info(

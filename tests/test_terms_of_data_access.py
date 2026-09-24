@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from saidownscale.licenses import INPUT_ATTRIBUTION, LICENSE_URLS
+from saidownscale.licenses import INPUT_ATTRIBUTION, LICENSE_URLS, TERMS_OF_DATA_ACCESS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = REPO_ROOT / "TERMS_OF_DATA_ACCESS"
@@ -51,6 +51,17 @@ def test_copies_match_canonical(copy: Path) -> None:
     )
 
 
+def test_terms_url_matches_where_the_page_is_published() -> None:
+    """The URL goes into published store metadata, so a moved page would strand every reader.
+
+    Read the Docs serves this project multi-version, so the ``/en/latest/`` segment is part of the
+    URL: the un-versioned form 404s. The rest is the docs page's own path, derived here rather than
+    repeated, so renaming the page fails this test instead of silently dangling.
+    """
+    page = COPIES[0].relative_to(REPO_ROOT / "docs").with_suffix(".html").as_posix()
+    assert TERMS_OF_DATA_ACCESS == f"https://sai-downscaling.readthedocs.io/en/latest/{page}"
+
+
 LICENSES_PAGE = REPO_ROOT / "docs" / "access-data" / "licenses.md"
 
 
@@ -61,7 +72,7 @@ def _license_table_rows() -> list[tuple[str, str, str, str]]:
         if not line.startswith("|"):
             continue
         cells = [c.strip().strip("`") for c in line.strip("|").split("|")]
-        # The separator row is any run of dashes and colons, not only exactly three dashes.
+        # The separator row is any run of dashes and colons, not only exactly 3 dashes.
         if len(cells) != 4 or cells[0] == "GCM" or set(cells[0]) <= {"-", ":"}:
             continue
         rows.append(tuple(cells))
@@ -121,8 +132,9 @@ def test_named_licenses_are_recognized() -> None:
 def test_module_and_docs_table_agree() -> None:
     """The module is the source of truth, so the published table must match it exactly.
 
-    Without this the two can drift silently: the module feeds the store attrs while the table is
-    what readers see, and nothing else compares them.
+    Without this the 2 can drift silently: the module feeds the store attrs while the table is
+    what readers see, and nothing else compares them. A reader would then be told one license by
+    the data and another by the docs, with no way to tell which we meant.
     """
     documented = {
         (gcm, scenario): (license_name or None, attribution)

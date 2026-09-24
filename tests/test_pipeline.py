@@ -2215,10 +2215,13 @@ class TestTasminReconcileSequencing:
             writes.append((loc_.group, da))
             return "snap"
 
-        def capture_reconcile(tasmin_loc, tasmax_loc, *, tasmin_fine="_unset", force=False):
+        def capture_reconcile(
+            tasmin_loc, tasmax_loc, *, tasmin_fine="_unset", force=False, for_historical=False
+        ):
             reconcile["called"] = True
             reconcile["tasmin_fine"] = tasmin_fine
             reconcile["tasmin_loc_group"] = tasmin_loc.group
+            reconcile["for_historical"] = for_historical
 
         with (
             load_patch,
@@ -2261,6 +2264,8 @@ class TestTasminReconcileSequencing:
         assert reconcile.get("called")
         assert reconcile.get("tasmin_fine") is None
         assert reconcile.get("tasmin_loc_group") == loc.group
+        # The reconcile writes back into the historical group, so its attrs must say historical.
+        assert reconcile.get("for_historical") is True
 
     def test_transform_scenario_tasmin_persists_raw_then_store_to_store(self, tasmin_pipeline):
         p = tasmin_pipeline
@@ -2285,6 +2290,8 @@ class TestTasminReconcileSequencing:
         assert reconcile.get("called")
         assert reconcile.get("tasmin_fine") is None
         assert reconcile.get("tasmin_loc_group") == loc.group
+        # The scenario counterpart writes into the scenario group, so it keeps the run scenario.
+        assert reconcile.get("for_historical") is False
 
 
 class TestTasminCacheShortCircuit:

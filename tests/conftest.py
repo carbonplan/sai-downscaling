@@ -71,7 +71,8 @@ _DATATREE_PARAMS = [
     )
     for entry in catalog.datasets.values()
     if isinstance(entry, Datatree)
-    for group in SCENARIO_TO_GROUP.values()
+    # Deduplicated: the map holds several spellings per group, and a group needs testing once.
+    for group in dict.fromkeys(SCENARIO_TO_GROUP.values())
 ]
 
 

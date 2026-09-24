@@ -1,8 +1,8 @@
 """Canonical license and attribution for the SAI Downscaling inputs and output.
 
 This module is the single source of truth. The store attrs written by
-``scripts/add_store_metadata.py`` and the table in ``docs/access-data/licenses.md`` both derive
-from it, and ``tests/test_terms_of_data_access.py`` fails if the two disagree. Edit here first,
+:mod:`saidownscale.apply_store_metadata` and the table in ``docs/access-data/licenses.md`` derive
+from it, and ``tests/test_terms_of_data_access.py`` fails if the 2 disagree. Edit here first,
 then re-sync the docs table. The ``LICENSE.txt`` files published beside the data on Source
 Cooperative are not generated from this module yet.
 
@@ -10,6 +10,10 @@ Licenses are named exactly as ``docs/access-data/licenses.md`` names them, so th
 and the published table never disagree, and each one pairs with a ``license_url`` that resolves it.
 A license of ``None`` means we assert no license for that simulation, which is different from not
 knowing: the attribution is still recorded, and nothing downstream may invent one in its place.
+
+``None`` is published as an empty string rather than as a missing attribute, matching the blank cell
+in the docs table. An absent attribute reads as an oversight, while a blank one shows the question
+was asked and answered, and neither can be mistaken for a grant.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ LICENSE_URLS: dict[str, str] = {
 }
 
 #: Our downscaled output carries one license, whatever it was derived from. The upstream
-#: simulation still has to be credited, which is what ``references`` below is for.
+#: simulation still has to be credited, which is what the citation below is for.
 OUTPUT_LICENSE = CC_BY_4_0
 
 INSTITUTION = "CarbonPlan"
@@ -38,10 +42,13 @@ CONTACT = "hello@carbonplan.org"
 #: TK: mint a DOI for the published dataset, then set this and re-run the metadata script.
 DOI: str | None = None
 
-#: TK: the published Terms of Data Access URL, once the docs host and versioning scheme settle.
-#: https://github.com/carbonplan/sai-downscaling/blob/main/TERMS_OF_DATA_ACCESS is the stable
-#: fallback if a docs URL is not wanted.
-TERMS_OF_DATA_ACCESS: str | None = None
+#: Where we publish the Terms of Data Access. Set on both products, because the terms govern the
+#: input simulations we redistribute as much as the output we derive from them. Read the Docs serves
+#: this project multi-version, so the ``/en/latest/`` segment is part of the URL rather than
+#: optional: without it the page 404s.
+TERMS_OF_DATA_ACCESS = (
+    "https://sai-downscaling.readthedocs.io/en/latest/access-data/terms-of-data-access.html"
+)
 
 
 @dataclass(frozen=True)
@@ -54,8 +61,8 @@ class Attribution:
         License name as the docs table spells it, e.g. ``"CC BY 4.0"``. ``None`` where we assert
         no license.
     references : str
-        Citation text, written to the CF ``references`` attribute. Always present, because a
-        simulation we publish is always one we can credit.
+        Citation text. Published as ``attribution`` on an input group and as the CF ``references``
+        on our own output.
     """
 
     license: str | None
@@ -185,8 +192,8 @@ def metadata_attrs(gcm: str, scenario_group: str, *, product: str) -> dict[str, 
         Scenario group as the stores spell it.
     product : {"output", "input"}
         ``"output"`` is our downscaled product, uniformly :data:`OUTPUT_LICENSE`, and still
-        credits the upstream simulation through ``references``. ``"input"`` is the source
-        simulation, which carries its own license, or none.
+        credits the upstream simulation. ``"input"`` is the source simulation, which carries its
+        own license, or none.
 
     Returns
     -------
@@ -195,14 +202,17 @@ def metadata_attrs(gcm: str, scenario_group: str, *, product: str) -> dict[str, 
 
     Notes
     -----
-    Two keys are deliberately conditional. ``license`` and ``license_url`` are omitted for an
-    input simulation that asserts no license, so that no caller mistakes silence for a grant.
-    ``institution`` and ``contact`` are set only on output, because ACDD defines ``institution``
-    as the producer of the data: on an input group that is the modeling center, not us, and
-    several input groups already record their own.
+    The product decides which keys appear and what the citation is called. Input groups publish it
+    as ``attribution``, the name the licenses table uses, while our own output publishes the CF
+    ``references``. ``institution`` and ``contact`` are set only on output, because ACDD defines
+    ``institution`` as the producer of the data: on an input group that is the modeling center, not
+    us, and several input groups already record their own. Every group gets a license, a license
+    URL, a citation, and the terms, since a redistributed simulation needs crediting and governing
+    as much as our own product does.
     """
     upstream = attribution_for(gcm, scenario_group)
-    attrs = {"references": upstream.references}
+    citation_key = "attribution" if product == "input" else "references"
+    attrs = {citation_key: upstream.references, "terms_of_data_access": TERMS_OF_DATA_ACCESS}
     if product == "output":
         attrs["license"] = OUTPUT_LICENSE
         attrs["license_url"] = LICENSE_URLS[OUTPUT_LICENSE]
@@ -212,9 +222,9 @@ def metadata_attrs(gcm: str, scenario_group: str, *, product: str) -> dict[str, 
         # because a reader cannot tell a stand-in from a real identifier.
         if DOI:
             attrs["doi"] = DOI
-        if TERMS_OF_DATA_ACCESS:
-            attrs["terms_of_data_access"] = TERMS_OF_DATA_ACCESS
-    elif upstream.license is not None:
-        attrs["license"] = upstream.license
-        attrs["license_url"] = upstream.license_url
+    else:
+        # Blank where we assert no license, never absent. The pair stays whole either way, so a
+        # reader never finds a URL resolving a license the group does not name.
+        attrs["license"] = upstream.license or ""
+        attrs["license_url"] = upstream.license_url or ""
     return attrs

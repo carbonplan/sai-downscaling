@@ -184,13 +184,13 @@ def _finalize_metadata(ds: xr.Dataset, scenario: str) -> xr.Dataset:
 
     derivation_logic = "Ensemble member derived from filename case segment or variant_label"
 
-    parent_exp = ds.attrs.get("parent_experiment_id", "unknown_parent")
-    lineage = f"{parent_exp} -> {scenario}"
-
+    # No experiment lineage is recorded. It was derived from ``parent_experiment_id``, which only
+    # CMORized CMIP6 output carries, so on the raw CAM deliveries it read "unknown_parent -> " plus
+    # the scenario already recorded beside it. Where the parent is known it survives verbatim in
+    # ``parent_experiment_id``, which is the attribute a reader should use.
     etl_attrs = {
         "scenario": scenario,
         "model": "CESM2-WACCM",
-        "experiment_lineage": lineage,
         "ensemble_derivation_logic": derivation_logic,  # ie, did it come from attrs / parsing the filepath.
         "processing_steps": (
             "time_drop_duplicates, lon_to_180, lat_lon_sort, trim_negative_precip, convert_calendar_to_proleptic_gregorian"

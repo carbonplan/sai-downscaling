@@ -1,9 +1,9 @@
 """Resolve the license and attribution attrs a published store group should carry.
 
 Pure planning only: nothing here opens a store or writes to one, so the rules can be tested
-without S3 or icechunk. ``scripts/add_store_metadata.py`` supplies the I/O around it.
+without S3 or icechunk. :mod:`saidownscale.apply_store_metadata` supplies the I/O around it.
 
-Group paths differ between the two store layouts. Output stores nest as
+Group paths differ between the 2 store layouts. Output stores nest as
 ``{method}/{scenario}/{variable}/{member}``, with an extra ``debiased_coarse`` level for the
 coarse product; input stores hold one group per scenario at the top level. Rather than index into
 either shape, we look for the segment that names a known scenario group, which works for both.
@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from saidownscale.config import (
     ATTR_PREFIX,
     LEGACY_ATTR_PREFIX,
+    PUBLISHED_SCENARIO_NAMES,
     SCENARIO_TO_GROUP,
     read_attr,
 )
@@ -37,9 +38,35 @@ GCMS = ("CESM2-WACCM6", "UKESM1-1-LL")
 #: no cache path, so it recovers nothing that cannot be recomputed.
 DEPRECATED_FIELDS = frozenset({"config_hash"})
 
+#: Attrs we do not republish, matched whole because they carry no namespace. Kept apart from
+#: :data:`DEPRECATED_FIELDS`, which names provenance fields under either namespace, and not all of
+#: these were ours to begin with.
+#:
+#: - ``experiment_lineage`` was ours, derived from ``parent_experiment_id``, which only CMORized
+#:   CMIP6 output has. On 3 of the 4 CESM input groups it read "unknown_parent -> " plus the
+#:   scenario recorded beside it, and no UKESM group ever had it.
+#: - ``logname`` came from the source netCDF and is the personal account name of whoever ran the
+#:   simulation. The people behind each run are credited by name in ``attribution``, which is the
+#:   right place for it, so republishing a username adds nothing a reader needs.
+DROPPED_PLAIN_ATTRS = frozenset({"experiment_lineage", "logname"})
+
 #: A ``history`` entry, split so the method can be corrected without touching the timestamp or the
 #: producer. Both are the true record of what ran and when, even where the method name is wrong.
 HISTORY_ENTRY = re.compile(r"^(?P<stamp>.*?: )(?P<method>\S+)(?P<rest> downscaling by .*)$")
+
+#: Attrs that are only true together, so neither is written while the other is in dispute. A group
+#: whose inherited ``license`` we leave alone must not gain our ``license_url``, because the pair
+#: would then name 2 different licenses, which is worse than the incomplete metadata we found.
+PAIRED_ATTRS: tuple[frozenset[str], ...] = (frozenset({"license", "license_url"}),)
+
+#: The ``data_source`` sentence for an input group, assembled from these 3 parts. The middle clause
+#: is dropped for a group that records no ``processing_steps``, which is every UKESM input group, so
+#: that we never point a reader at an attr that is not there.
+_DATA_SOURCE_INGEST = "This icechunk store was created by ingesting netCDF files"
+_DATA_SOURCE_STEPS = (
+    " and processing following the steps outlined in the `processing_steps` attribute"
+)
+_DATA_SOURCE_MORE = ". See https://github.com/carbonplan/sai-downscaling for more information."
 
 
 @dataclass
@@ -60,9 +87,10 @@ class GroupPlan:
         Attrs absent from the group, which is all this plan would write.
     unchanged : dict of str to str
         Attrs already holding the wanted value.
-    conflicts : dict of str to tuple of str
+    conflicts : dict of str to tuple
         Attrs holding a foreign value, mapped to ``(current, wanted)``. Never written unless the
-        caller explicitly opts into overwriting.
+        caller explicitly opts into overwriting. ``current`` is None where the attr is absent and
+        withheld only because the attr it pairs with is itself in conflict.
     repairs : dict of str to tuple of str
         Attrs we wrote ourselves that are provably wrong, mapped to ``(current, corrected)``.
         Kept apart from ``conflicts`` because the correction is derived from the group's own
@@ -78,7 +106,7 @@ class GroupPlan:
     product: str
     to_set: dict[str, str] = field(default_factory=dict)
     unchanged: dict[str, str] = field(default_factory=dict)
-    conflicts: dict[str, tuple[str, str]] = field(default_factory=dict)
+    conflicts: dict[str, tuple[str | None, str]] = field(default_factory=dict)
     repairs: dict[str, tuple[str, str]] = field(default_factory=dict)
     removals: dict[str, str] = field(default_factory=dict)
 
@@ -92,7 +120,8 @@ def gcm_from_store(uri: str) -> str:
     """Infer the GCM from a store URI.
 
     Both layouts name the GCM in the store filename: ``CESM2-WACCM6.icechunk`` for input and
-    ``CESM2-WACCM6-ERA5-global.icechunk`` for output.
+    ``CESM2-WACCM6-ERA5-global.icechunk`` for output. Matching on the URI is therefore enough, and a
+    caller only has to name the GCM for a store whose path does not follow either convention.
 
     Parameters
     ----------
@@ -172,7 +201,91 @@ def describe_source(gcm: str, scenario: str, obs_dataset: str, method: str) -> s
     return f"{gcm} {scenario}, downscaled to the {obs_dataset} grid by the {method} method"
 
 
-def source_for(existing: dict[str, str], gcm: str) -> str | None:
+def scenario_attr_key(product: str) -> str:
+    """Return the attr that records the scenario for a product.
+
+    Output groups namespace their provenance, so the scenario lives under
+    :data:`~saidownscale.config.ATTR_PREFIX` there. Input groups carry a plain ``scenario``
+    inherited from the ETL, which predates the namespace and is what readers of those stores
+    already use.
+
+    Parameters
+    ----------
+    product : {"output", "input"}
+        Which product the group belongs to.
+
+    Returns
+    -------
+    str
+        The attr name.
+    """
+    return "scenario" if product == "input" else f"{ATTR_PREFIX}scenario"
+
+
+def published_name(scenario: str) -> str:
+    """Return the published spelling of a scenario name.
+
+    A name we do not recognize is handed back unchanged, so an unfamiliar value is reported as a
+    disagreement elsewhere rather than silently rewritten here. Guessing at a spelling would invent
+    provenance, which is worse than refusing the group and saying which one it was.
+
+    Parameters
+    ----------
+    scenario : str
+        A scenario name in any spelling :data:`~saidownscale.config.SCENARIO_TO_GROUP` accepts.
+
+    Returns
+    -------
+    str
+        The published spelling.
+    """
+    group = SCENARIO_TO_GROUP.get(scenario)
+    return PUBLISHED_SCENARIO_NAMES[group] if group else scenario
+
+
+def recorded_scenario(existing: dict[str, str], product: str) -> str | None:
+    """Return the scenario a group records, or None where it records none.
+
+    Parameters
+    ----------
+    existing : dict of str to str
+        The group's current attrs.
+    product : {"output", "input"}
+        Which product the group belongs to.
+
+    Returns
+    -------
+    str or None
+        The recorded scenario, read from whichever attr that product uses.
+    """
+    if product == "input":
+        return existing.get("scenario")
+    return read_attr(existing, "scenario")
+
+
+def describe_data_source(*, has_processing_steps: bool) -> str:
+    """Return the ``data_source`` description for an input group.
+
+    Input groups already carry a CF ``source`` naming the model that produced the simulation, such
+    as ``CAM`` or ``Data from Met Office Unified Model``. That is the upstream provenance and must
+    survive, so how we built the store goes in ``data_source`` beside it rather than over it.
+
+    Parameters
+    ----------
+    has_processing_steps : bool
+        Whether the group records a ``processing_steps`` attr. Where it does not, the clause that
+        would refer the reader to that attr is left out instead of dangling.
+
+    Returns
+    -------
+    str
+        A one-line description of how the store was built.
+    """
+    steps = _DATA_SOURCE_STEPS if has_processing_steps else ""
+    return f"{_DATA_SOURCE_INGEST}{steps}{_DATA_SOURCE_MORE}"
+
+
+def source_for(existing: dict[str, str], gcm: str, scenario: str | None = None) -> str | None:
     """Compose a CF ``source`` for a downscaled group from the provenance already on it.
 
     Parameters
@@ -181,6 +294,10 @@ def source_for(existing: dict[str, str], gcm: str) -> str | None:
         The group's current attrs.
     gcm : str
         GCM the store holds.
+    scenario : str, optional
+        Scenario to describe the data as, overriding what the group records. Used where the
+        recorded scenario is the run's rather than the data's, which is every published historical
+        group. Without it the description would call historical data ``G6-1.5K``.
 
     Returns
     -------
@@ -190,10 +307,10 @@ def source_for(existing: dict[str, str], gcm: str) -> str | None:
     """
     method = read_attr(existing, "downscaling_method")
     obs = read_attr(existing, "observation_dataset")
-    scenario = read_attr(existing, "scenario") or "historical"
+    recorded = scenario or read_attr(existing, "scenario") or "historical"
     if not method or not obs:
         return None
-    return describe_source(gcm, scenario, obs, method)
+    return describe_source(gcm, recorded, obs, method)
 
 
 def repair_history(existing: dict[str, str]) -> str | None:
@@ -225,7 +342,9 @@ def repair_history(existing: dict[str, str]) -> str | None:
     return f"{match.group('stamp')}{method}{match.group('rest')}"
 
 
-def _plan_provenance_namespace(plan: GroupPlan, existing: dict[str, str]) -> None:
+def _plan_provenance_namespace(
+    plan: GroupPlan, existing: dict[str, str], corrections: dict[str, str]
+) -> None:
     """Plan the move of v1.0.0 provenance onto the current namespace.
 
     v1.0.0 is fixed in place rather than regenerated, so its ``srm_downscaling:`` attrs are moved
@@ -236,8 +355,13 @@ def _plan_provenance_namespace(plan: GroupPlan, existing: dict[str, str]) -> Non
 
     Fields we have stopped writing are never copied forward. They go straight to removal under
     whichever namespace they appear. A legacy attr whose copy holds a different value is reported
-    as a conflict instead of being deleted, because one of the two was edited by hand and picking
+    as a conflict instead of being deleted, because one of the 2 was edited by hand and picking
     a winner would destroy the evidence.
+
+    ``corrections`` is what keeps that guard from firing on our own repairs. A field we correct ends
+    up with a copy that deliberately differs from the legacy original, which is indistinguishable
+    from a hand edit unless the value we meant to write is named. Where it is named, the stale
+    original is superseded rather than in dispute, so it is removable and is never copied forward.
 
     Parameters
     ----------
@@ -245,6 +369,9 @@ def _plan_provenance_namespace(plan: GroupPlan, existing: dict[str, str]) -> Non
         The plan being built, updated in place.
     existing : dict of str to str
         The group's current attrs.
+    corrections : dict of str to str
+        Current-namespace keys mapped to the value we consider authoritative, regardless of what
+        the group records.
     """
     for key, value in sorted(existing.items()):
         for prefix in (ATTR_PREFIX, LEGACY_ATTR_PREFIX):
@@ -255,15 +382,42 @@ def _plan_provenance_namespace(plan: GroupPlan, existing: dict[str, str]) -> Non
                 plan.removals[key] = value
             elif prefix == LEGACY_ATTR_PREFIX:
                 current = f"{ATTR_PREFIX}{field_name}"
+                superseded = current in corrections and corrections[current] != value
                 if current not in existing:
-                    plan.to_set[current] = value
-                elif existing[current] == value:
+                    # Copying a value a repair is about to correct would only have to be undone,
+                    # and the repair supplies the right one under the current namespace anyway.
+                    if not superseded:
+                        plan.to_set[current] = value
+                elif existing[current] == value or (
+                    current in corrections and existing[current] == corrections[current]
+                ):
                     plan.removals[key] = value
                 else:
                     # The copy disagrees with what it was copied from, so someone edited one of
                     # them. Report it rather than picking a winner and deleting the evidence.
                     plan.conflicts[key] = (value, existing[current])
             break
+
+
+def _hold_paired_attrs(plan: GroupPlan) -> None:
+    """Withhold one half of a paired attr while the other half is in conflict.
+
+    Without this, a group whose ``license`` we are leaving alone still gains our ``license_url``,
+    and the 2 then resolve to different licenses. The published CESM historical input group is
+    exactly that case: it inherits the CMIP6 CC BY-SA statement from its netCDF while our table
+    asserts CC BY 4.0. The withheld half moves into ``conflicts`` so it is written under the same
+    explicit opt-in as the half it depends on, never on its own.
+
+    Parameters
+    ----------
+    plan : GroupPlan
+        The plan being built, updated in place.
+    """
+    for pair in PAIRED_ATTRS:
+        if not pair & plan.conflicts.keys():
+            continue
+        for key in sorted(pair & plan.to_set.keys()):
+            plan.conflicts[key] = (None, plan.to_set.pop(key))
 
 
 def plan_group(path: str, existing: dict[str, str], gcm: str, product: str) -> GroupPlan:
@@ -298,23 +452,51 @@ def plan_group(path: str, existing: dict[str, str], gcm: str, product: str) -> G
     if scenario_group is None:
         raise ValueError(f"no scenario group in path {path!r}")
 
-    declared = read_attr(existing, "scenario")
+    declared = recorded_scenario(existing, product)
     if declared and SCENARIO_TO_GROUP.get(declared) not in (None, scenario_group):
-        raise ValueError(
-            f"{path}: path says {scenario_group!r} but attrs say {declared!r}. Refusing to guess."
-        )
+        # Stage 2 is cached per GCM, variable, method, and member with no scenario in the key, so
+        # whichever scenario's run wrote the historical leg first stamped its own config onto it.
+        # The path is the reliable witness there, and ``config_json`` still holds the run's own
+        # scenario, so nothing is lost by correcting the attr. Any other disagreement is one we
+        # cannot explain, so it still refuses rather than guessing.
+        if scenario_group != "historical":
+            raise ValueError(
+                f"{path}: path says {scenario_group!r} but attrs say {declared!r}. "
+                "Refusing to guess."
+            )
 
     target = metadata_attrs(gcm, scenario_group, product=product)
+    published = PUBLISHED_SCENARIO_NAMES[scenario_group]
     if product == "output":
-        source = source_for(existing, gcm)
+        source = source_for(existing, gcm, published)
         if source is not None:
             target["source"] = source
+    else:
+        target["data_source"] = describe_data_source(
+            has_processing_steps="processing_steps" in existing
+        )
 
     plan = GroupPlan(path=path, gcm=gcm, scenario_group=scenario_group, product=product)
     corrected = repair_history(existing)
     if corrected is not None:
         plan.repairs["history"] = (existing["history"], corrected)
-    _plan_provenance_namespace(plan, existing)
+    if declared is not None and declared != published:
+        # Either the group names a scenario it did not hold, which only happens on a historical
+        # group, or it names the right one by an older spelling. Both are corrections rather than
+        # additions, so both wait for an explicit flag.
+        plan.repairs[scenario_attr_key(product)] = (declared, published)
+    # The group's own path decides which scenario it holds, so the published name for that path is
+    # authoritative whether or not the group currently agrees with it.
+    corrections = {f"{ATTR_PREFIX}scenario": published}
+    # The parent names a different scenario than the group, so the path cannot settle it, but it
+    # still has to be spelled the published way or one group carries 2 conventions at once.
+    parent = read_attr(existing, "sai_parent_scenario")
+    if parent is not None:
+        parent_key = f"{ATTR_PREFIX}sai_parent_scenario"
+        corrections[parent_key] = published_name(parent)
+        if corrections[parent_key] != parent:
+            plan.repairs[parent_key] = (parent, corrections[parent_key])
+    _plan_provenance_namespace(plan, existing, corrections)
     for key, value in target.items():
         current = existing.get(key)
         if current is None:
@@ -323,4 +505,7 @@ def plan_group(path: str, existing: dict[str, str], gcm: str, product: str) -> G
             plan.unchanged[key] = value
         else:
             plan.conflicts[key] = (current, value)
+    for key in sorted(DROPPED_PLAIN_ATTRS & existing.keys()):
+        plan.removals[key] = existing[key]
+    _hold_paired_attrs(plan)
     return plan
