@@ -14,6 +14,14 @@ authors:
   - name: CarbonPlan
     website: "https://carbonplan.org"
     email: hello@carbonplan.org
+doi: 10.5281/zenodo.22932138
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.22932138
+    description: Concept DOI for all archived versions; resolves to the latest.
+  - type: doi
+    value: 10.5281/zenodo.22932139
+    description: Archived v1.0.0, the code used to create v1 of the dataset.
 repository-code: "https://github.com/carbonplan/sai-downscaling"
 url: "https://sai-downscaling.readthedocs.io"
 license: MIT

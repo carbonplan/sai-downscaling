@@ -1,3 +1,0 @@
-# GitHub builds release source archives with `git archive`, and Zenodo archives those, so
-# export-ignore keeps the working notebooks out of every release download and Zenodo record.
-/notebooks/ export-ignore
