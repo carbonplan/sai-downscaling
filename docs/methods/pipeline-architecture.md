@@ -4,7 +4,7 @@ This page explains how we structured the downscaling pipeline, why we designed i
 
 ## The three-stage pipeline
 
-The downscaling pipeline runs in 3 stages, each of which caches its artifacts and reuses them on a
+The downscaling pipeline runs in three stages, each of which caches its artifacts and reuses them on a
 later run. Every stage is keyed on the global climate model (GCM) it processes, among other things:
 
 ```mermaid
@@ -107,13 +107,13 @@ graph TB
 - **Stage 2 (fit_historical)**: Runs once per (GCM, obs_dataset, variable, downscaling_method,
   ensemble_member, spatial_subset) combination, and writes fine-res historical **and** debiased
   coarse historical to the output store (coarse only for `dtr`, see
-  [`dtr` is bias-corrected but not published](#dtr-is-bias-corrected-but-not-published)). The method
+  [`dtr` is bias-corrected, but not published](#dtr-is-bias-corrected-but-not-published)). The method
   belongs in the key because each one writes its own `{method}/historical/…` group.
 - **Stage 3 (transform_scenario)**: Runs for each scenario configuration, and writes fine-res
   scenario and debiased coarse scenario to the output store (coarse only for `dtr`).
-- **Green boxes**: Cached intermediate artifacts (observations regridded) in the scratch icechunk
+- **Green boxes**: Cached intermediate artifacts (observations regridded) in the scratch Icechunk
   store, on the active branch.
-- **Gold boxes**: Deliverables in the output icechunk store, on the active branch: fine-res
+- **Gold boxes**: Deliverables in the output Icechunk store, on the active branch: fine-res
   historical, fine-res scenario, and debiased coarse data.
 - **Dotted arrows**: Cache dependencies, validated automatically.
 
@@ -128,13 +128,13 @@ approach, and we implement it in the dedicated stage variants `fit_historical_ta
 write (see the
 [cache guide](https://github.com/carbonplan/sai-downscaling/blob/main/docs/how-to/manage-cache.md)
 in the repository). The reconstruction helper
-(`derive_tasmin`) requires its two inputs to share an identical time axis and raises if they do not,
-so a truncated or misaligned `dtr` fails loudly instead of silently NaN-filling the result
+(`derive_tasmin`) requires its two inputs to share an identical time axis, and raises if they do not,
+so a truncated or misaligned `dtr` fails loudly, instead of silently NaN-filling the result
 (issue #363).
 
 We still spatially disaggregate `tasmax` and `tasmin` independently, and that final
 interpolation can push a small number of fine cells to `tasmax < tasmin`. A dedicated reconcile step
-(`reconcile_temperature_extremes`) closes this gap: Once both fine fields exist it swaps the
+(`reconcile_temperature_extremes`) closes this gap: Once both fine fields exist, it swaps the
 offending cells so `tasmax >= tasmin` holds everywhere, then rewrites both corrected fields
 (issue #331). The swap is NaN-safe and structurally monotone, and the `saidownscale validate-output`
 gate blocks any run whose stored output still contains an inversion.
