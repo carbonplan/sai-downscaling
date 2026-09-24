@@ -39,8 +39,11 @@ INSTITUTION = "CarbonPlan"
 #: Where to write about the data. Set on our own output only, alongside ``institution``.
 CONTACT = "hello@carbonplan.org"
 
-#: TK: mint a DOI for the published dataset, then set this and re-run the metadata script.
-DOI: str | None = None
+#: The Zenodo record for this work, published on our output only. Stored as a resolvable URL, so
+#: it matches ``license_url`` and ``terms_of_data_access`` beside it and a reader can follow it
+#: without knowing to add a prefix. Input groups do not get it: they carry their own upstream
+#: identifiers inside ``attribution``, and ours would credit the wrong producer.
+DOI = "https://doi.org/10.5281/zenodo.22932138"
 
 #: Where we publish the Terms of Data Access. Set on both products, because the terms govern the
 #: input simulations we redistribute as much as the output we derive from them. Read the Docs serves

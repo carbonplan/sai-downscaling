@@ -711,17 +711,47 @@ def test_config_json_is_not_deprecated() -> None:
     assert plan_group("bcsd/ssp245/tas/001", existing, "CESM2-WACCM6", "output").removals == {}
 
 
-def test_doi_is_omitted_until_it_has_a_real_value() -> None:
-    """A placeholder in published metadata is worse than an absent attribute."""
+def test_the_doi_is_published_on_output() -> None:
+    """The DOI is how someone cites this work, so it travels with the data we produced."""
     plan = plan_group("bcsd/ssp245/tas/001", dict(OUTPUT_ATTRS), "CESM2-WACCM6", "output")
+    assert plan.to_set["doi"] == "https://doi.org/10.5281/zenodo.22932138"
+
+
+def test_the_doi_is_stored_as_a_resolvable_url() -> None:
+    """It sits beside ``license_url`` and ``terms_of_data_access``, which are both URLs.
+
+    Pinning the form matters because a reader who follows the attr directly should land on the
+    record, and a bare identifier there would need a prefix they have no reason to know.
+    """
+    from saidownscale.licenses import DOI
+
+    assert DOI is not None
+    assert DOI.startswith("https://doi.org/10.")
+
+
+def test_input_groups_do_not_carry_our_doi() -> None:
+    """Our DOI on an upstream simulation would credit us for work we only redistribute.
+
+    Input groups already carry their own identifiers inside ``attribution``, which is where a
+    reader citing the source simulation should look.
+    """
+    plan = plan_group("ssp245", {}, "UKESM1-1-LL", "input")
     assert "doi" not in plan.to_set
 
 
-def test_doi_appears_once_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Setting the constant is all it takes; the script needs no further change."""
+def test_a_changed_doi_flows_through_without_further_edits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Minting a new record should be one edit, so the constant is the only place it lives."""
     monkeypatch.setattr(licenses, "DOI", "10.5281/zenodo.123456")
     attrs = licenses.metadata_attrs("CESM2-WACCM6", "ssp245", product="output")
     assert attrs["doi"] == "10.5281/zenodo.123456"
+
+
+def test_an_unset_doi_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A placeholder in published metadata is worse than an absent attr, so None means absent."""
+    monkeypatch.setattr(licenses, "DOI", None)
+    assert "doi" not in licenses.metadata_attrs("CESM2-WACCM6", "ssp245", product="output")
 
 
 @pytest.mark.parametrize(
