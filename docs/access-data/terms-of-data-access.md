@@ -1,4 +1,4 @@
-# Terms of data access
+# Terms of Data Access
 
 ## Our Terms of Use apply to SAI Downscaling
 

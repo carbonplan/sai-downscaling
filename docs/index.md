@@ -23,7 +23,7 @@ interested in modifying or extending the pipeline for other use cases. We welcom
 contributions by [opening an issue](https://github.com/carbonplan/sai-downscaling/issues/new).
 
 :::{important}
-By downloading or accessing SAI Downscaling data, you agree to the [Terms of data access](./access-data/terms-of-data-access.md).
+By downloading or accessing SAI Downscaling data, you agree to the [Terms of Data Access](./access-data/terms-of-data-access.md).
 See the [licenses and citation](./access-data/licenses.md) section for guidance specific to each of the products in this data release.
 :::
 
