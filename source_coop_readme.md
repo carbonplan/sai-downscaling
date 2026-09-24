@@ -7,18 +7,18 @@
 </a>
 </p>
 
-## Stratospheric Aerosol Injection (SAI) model outputs
+## Downscaled stratospheric aerosol injection (SAI) scenarios
 
-This repository contains downscaled climate model output for Stratospheric Aerosol Injection (SAI) scenarios covering 2 GCMs, 2 downscaling methods, 4 scenarios and multiple ensemble members and variables, totaling ~21TB.
+This repository contains downscaled climate model output for Stratospheric Aerosol Injection (SAI) scenarios covering 2 GCMs, 2 downscaling methods, 4 scenarios and multiple ensemble members and variables. The full dataset is ~21TB.
 
 NetCDF files and harmonized Icechunk datacubes for `CESM2-WACCM6` and `UKESM1-1-LL` are stored in this repository under `/input`.
 
 - **GCMs:** `CESM2-WACCM6`, `UKESM1-1-LL`
-- **Scenarios:** `historical`, `SSP2-4.5`, `G6-1.5K` and `G6-1.5K-end` (termination-shock run for CESM2-WACCM6)
-- **Downscaling methods:** BCSD (Bias-Correction and Spatial-Disaggregation) and QDMSD (Quantile Delta-Mapped Spatial Disaggregation)
+- **Scenarios:** `historical`, `SSP2-4.5`, `G6-1.5K` and `G6-1.5K-end` (termination shock only available for CESM2-WACCM6)
+- **Downscaling methods:** BCSD (Bias-Correction and Spatial Disaggregation) and QDMSD (Quantile Delta-Mapped Spatial Disaggregation)
 - **Observations:** daily ERA5
  
-See our [documentation](https://sai-downscaling.readthedocs.io/methods/scientific-approach.html) for more details on our scientific approach.
+See our [documentation](https://sai-downscaling.readthedocs.io/en/latest/methods/scientific-approach.html) for more details on our scientific approach.
 
 ## Data access
 
@@ -51,7 +51,7 @@ dt = xr.open_datatree(session.store, engine="zarr")
 print(dt)
 ```
 
-See the store structure below for the full group layout without opening anything. Each GCM is a separate store, and group layouts differ between them.  See the [Data access](https://sai-downscaling.readthedocs.io/access-data/whats-available.html) documentation page for details.
+See the store structure below for the full group layout without opening anything. Each GCM is a separate store, and group layouts differ between them.  See the [Data access](https://sai-downscaling.readthedocs.io/en/latest/access-data/whats-available.html) documentation page for details.
 
 <details open>
 <summary><h3 style="display:inline;">CESM2-WACCM6</h3></summary>
@@ -101,18 +101,20 @@ See the store structure below for the full group layout without opening anything
 
 Project documentation: https://sai-downscaling.readthedocs.io
 
-- [Data access](https://sai-downscaling.readthedocs.io/access-data/whats-available.html) — how to list and open input datasets
-- [Scientific approach](https://sai-downscaling.readthedocs.io/methods/scientific-approach.html) — BCSD and QDMSD downscaling approaches
+- [Data access](https://sai-downscaling.readthedocs.io/en/latest/access-data/whats-available.html#) — how to list and open input datasets
+- [Scientific approach](https://sai-downscaling.readthedocs.io/en/latest/methods/scientific-approach.html) — BCSD and QDMSD downscaling approaches
 - [Explainer article](https://carbonplan.org/research/sai-downscaling-explainer)
 
-## Terms of use
-
-By viewing this data, you agree to CarbonPlan’s [Terms of Use](https://carbonplan.org/terms) and [Privacy Policy](https://carbonplan.org/privacy).
-> [!IMPORTANT]
-> Data associated with this repository are subject to additional [terms of data access](https://github.com/carbonplan/sai-downscaling/blob/main/TERMS_OF_DATA_ACCESS).
-
+## Licenses
 ### Output data
 Output data is licensed CC BY 4.0. Details are in [output/LICENSE.txt](https://data.source.coop/carbonplan/srm-downscaling/output/LICENSE.txt).
 
 ### Input data
-Input data is covered by multiple licenses. Details can be found in the [licenses](https://sai-downscaling.readthedocs.org/access-data/licenses.html) section of our documentation.
+Input data is covered by multiple licenses. Details can be found in the [licenses](https://sai-downscaling.readthedocs.io/en/latest/access-data/licenses.html) section of our documentation.
+
+> [!IMPORTANT]
+> Data associated with this repository are subject to additional [Terms of Data Access](https://github.com/carbonplan/sai-downscaling/blob/main/TERMS_OF_DATA_ACCESS).
+
+## About Us
+
+CarbonPlan is a nonprofit organization that uses data and science for climate action. We aim to improve the transparency and scientific integrity of climate solutions through open data and tools. Find out more at [carbonplan.org](https://carbonplan.org/) or get in touch by [opening an issue](https://github.com/carbonplan/sai-downscaling/issues/new) or [sending us an email](mailto:hello@carbonplan.org).
