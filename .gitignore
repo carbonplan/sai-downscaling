@@ -191,6 +191,8 @@ cython_debug/
 # Recorded IAM policy documents: the deploy role's grants are not managed as code,
 # so these are the only reviewable copy of what the account must have.
 !infra/iam/*.json
+# Zenodo's GitHub integration reads this file when a release is published.
+!/.zenodo.json
 
 # *input_data_old/
 qa_plots/
