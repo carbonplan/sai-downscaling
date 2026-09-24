@@ -298,10 +298,24 @@ def test_config_scenario_spellings_are_replaced_by_published_names(subtests) -> 
 
 
 def test_input_groups_drop_personal_and_lineage_attrs_but_keep_provenance(subtests) -> None:
-    with subtests.test("logname removed, host kept"):
+    with subtests.test("personal and machine run detail removed"):
         plan = _in("ssp245", {"scenario": "SSP245", "logname": "cmip6", "host": "cheyenne4"})
-        assert plan.removals["logname"] == "cmip6"
-        assert "host" not in plan.removals
+        assert plan.removals == {"logname": "cmip6", "host": "cheyenne4"}
+    with subtests.test("inherited CMIP6 run detail removed"):
+        # CESM historical came through the Pangeo CMIP6 archive, so it inherited the full global
+        # attr set: 3 times the attrs of its siblings, describing how the run executed.
+        inherited = {"table_id": "day", "grid_label": "gn", "forcing_index": 1, "realm": "atmos"}
+        plan = _in("historical", {"scenario": "historical", **inherited})
+        assert set(plan.removals) == set(inherited)
+    with subtests.test("the creator email goes with it"):
+        status = "2019-11-04;created;by someone@example.edu"
+        plan = _in("historical", {"scenario": "historical", "status": status})
+        assert plan.removals["status"] == status
+    with subtests.test("what a reader needs is kept"):
+        # Without these a group cannot be interpreted: scenario is the published experiment label
+        # and the one the path check reads, and source is the CF attr naming the model.
+        for key in ("scenario", "source", "model", "Conventions", "case", "model_doi_url"):
+            assert key not in DROPPED_PLAIN_ATTRS
     with subtests.test("experiment_lineage is a removal and nothing else"):
         lineage = "unknown_parent -> SSP245"
         plan = _in("ssp245", {"scenario": "SSP245", "experiment_lineage": lineage})

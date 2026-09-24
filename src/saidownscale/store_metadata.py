@@ -51,7 +51,43 @@ DEPRECATED_FIELDS = frozenset({"config_hash"})
 #: - ``ensemble_derivation_logic`` was rendered at ingest from the suite-to-member lookup tables in
 #:   the per-model ETL modules. Those tables are the record that cannot drift from what ran, while
 #:   a prose copy in a published store can, so the code is the reference now.
-DROPPED_PLAIN_ATTRS = frozenset({"experiment_lineage", "logname", "ensemble_derivation_logic"})
+#: Attrs we generated that restate what the code already records, or that name a person.
+_DROPPED_OURS = frozenset({"experiment_lineage", "ensemble_derivation_logic", "logname"})
+
+#: Run detail inherited from the source netCDFs, describing how and where a simulation was
+#: executed rather than what the data is. ``CESM2-WACCM6/historical`` came through the Pangeo
+#: CMIP6 archive and so carries the full CMIP6 global attr set, which is why it held 49 attrs
+#: while its siblings held 16. What a reader needs is kept: ``scenario``, ``source``, ``model``,
+#: ``Conventions``, ``processing_steps``, ``case`` and ``model_doi_url`` all stay. ``status`` is
+#: also a privacy fix, since it embeds the email address of whoever created the file.
+_DROPPED_INHERITED = frozenset(
+    {
+        "data_specs_version",
+        "ensemble_member_source",
+        "experiment",
+        "experiment_id",
+        "external_variables",
+        "forcing_index",
+        "frequency",
+        "grid",
+        "grid_label",
+        "host",
+        "initial_file",
+        "initialization_index",
+        "product",
+        "realm",
+        "source_id",
+        "source_type",
+        "status",
+        "sub_experiment",
+        "sub_experiment_id",
+        "table_id",
+        "time_period_freq",
+        "topography_file",
+    }
+)
+
+DROPPED_PLAIN_ATTRS = _DROPPED_OURS | _DROPPED_INHERITED
 
 #: Coordinate attrs that duplicate a group attr we drop, as ``(coord attr, group attr)``.
 #: ``apply_ensemble_provenance`` wrote the same sentence twice, to the group as

@@ -244,7 +244,6 @@ def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:
 
         ds = _attach_source_manifest(ds, zstore_url)
         ds = ds.expand_dims({"ensemble_member": [member_id]})
-        ds.attrs["ensemble_member_source"] = "variant_label"
         datasets.append(ds)
 
     # Combine all members into a single dataset
