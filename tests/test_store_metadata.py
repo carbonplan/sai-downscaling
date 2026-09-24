@@ -475,6 +475,93 @@ def test_the_real_parent_attr_is_left_alone() -> None:
     assert "parent_experiment_id" not in plan.removals
 
 
+#: The published CESM coordinate sentence, which is not derivation prose at all. It names which
+#: historical members are complete and which hold NaN, so it must survive the prune.
+CESM_HISTORICAL_COORD = (
+    "'001': corrected NCAR/ESGF historical run (all variables); r1/r2/r3i1p1f1: Pangeo CMIP6 "
+    "historical (NaN where a variable is missing)"
+)
+DERIVATION = "Ensemble member derived from filename case segment or variant_label"
+
+
+def test_the_derivation_prose_is_planned_for_removal() -> None:
+    """It was rendered at ingest from the suite-to-member lookups, which are the real record.
+
+    A prose copy in a published store can fall behind the tables it was rendered from, so the code
+    is the reference and the attr goes.
+    """
+    existing = {"scenario": "SSP245", "ensemble_derivation_logic": DERIVATION}
+    plan = plan_group("ssp245", existing, "CESM2-WACCM6", "input")
+    assert plan.removals["ensemble_derivation_logic"] == DERIVATION
+
+
+def test_the_duplicate_on_the_coordinate_goes_with_it() -> None:
+    """The same sentence was written twice under 2 different names, so both copies have to go.
+
+    Dropping only the group attr would leave the text published on the ``ensemble_member``
+    coordinate as ``derivation_method``, which defeats the point of removing it.
+    """
+    existing = {"scenario": "SSP245", "ensemble_derivation_logic": DERIVATION}
+    plan = plan_group(
+        "ssp245",
+        existing,
+        "CESM2-WACCM6",
+        "input",
+        coord_attrs={"ensemble_member": {"long_name": "x", "derivation_method": DERIVATION}},
+    )
+    assert plan.coord_removals["ensemble_member"] == {"derivation_method": DERIVATION}
+
+
+def test_a_coordinate_saying_something_else_is_left_alone() -> None:
+    """One published coordinate carries a data-quality fact rather than derivation prose.
+
+    It names which CESM historical members are complete and which hold NaN, which has no other
+    home, so the rule keys on the value matching the group attr rather than on the attr name.
+    """
+    existing = {"scenario": "historical", "ensemble_derivation_logic": DERIVATION}
+    plan = plan_group(
+        "historical",
+        existing,
+        "CESM2-WACCM6",
+        "input",
+        coord_attrs={"ensemble_member": {"derivation_method": CESM_HISTORICAL_COORD}},
+    )
+    assert plan.coord_removals == {}
+    assert plan.removals["ensemble_derivation_logic"] == DERIVATION
+
+
+def test_processing_steps_is_deliberately_kept() -> None:
+    """It is the only published record of the transformations applied to the values.
+
+    Longitude rotation, dropped duplicate timestamps, trimmed negative precipitation and the
+    calendar conversion all change how a reader interprets the data, and ``data_source`` points at
+    this attr by name, so a future sweep must not take it.
+    """
+    from saidownscale.store_metadata import DROPPED_PLAIN_ATTRS
+
+    assert "processing_steps" not in DROPPED_PLAIN_ATTRS
+    existing = {"scenario": "SSP245", "processing_steps": "lon_to_180, lat_lon_sort"}
+    plan = plan_group("ssp245", existing, "CESM2-WACCM6", "input")
+    assert "processing_steps" not in plan.removals
+    assert "`processing_steps` attribute" in plan.to_set["data_source"]
+
+
+def test_coord_removals_still_need_the_prune_flag() -> None:
+    """A coordinate attr is as irreversible as a group attr, so it gets no shortcut."""
+    existing = {"scenario": "SSP245", "ensemble_derivation_logic": DERIVATION}
+    plan = plan_group(
+        "ssp245",
+        existing,
+        "CESM2-WACCM6",
+        "input",
+        coord_attrs={"ensemble_member": {"derivation_method": DERIVATION}},
+    )
+    for attrs in plan.coord_removals.values():
+        for key in attrs:
+            assert key not in plan.to_set
+            assert key not in plan.repairs
+
+
 def test_unattributed_pair_raises_rather_than_defaulting() -> None:
     with pytest.raises(KeyError, match="no license or citation recorded"):
         plan_group("bcsd/esgf_ssp245/tas/001", dict(OUTPUT_ATTRS), "CESM2-WACCM6", "output")

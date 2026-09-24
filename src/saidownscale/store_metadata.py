@@ -48,7 +48,23 @@ DEPRECATED_FIELDS = frozenset({"config_hash"})
 #: - ``logname`` came from the source netCDF and is the personal account name of whoever ran the
 #:   simulation. The people behind each run are credited by name in ``attribution``, which is the
 #:   right place for it, so republishing a username adds nothing a reader needs.
-DROPPED_PLAIN_ATTRS = frozenset({"experiment_lineage", "logname"})
+#: - ``ensemble_derivation_logic`` was rendered at ingest from the suite-to-member lookup tables in
+#:   the per-model ETL modules. Those tables are the record that cannot drift from what ran, while
+#:   a prose copy in a published store can, so the code is the reference now.
+DROPPED_PLAIN_ATTRS = frozenset({"experiment_lineage", "logname", "ensemble_derivation_logic"})
+
+#: Coordinate attrs that duplicate a group attr we drop, as ``(coord attr, group attr)``.
+#: ``apply_ensemble_provenance`` wrote the same sentence twice, to the group as
+#: ``ensemble_derivation_logic`` and to the coordinate as ``derivation_method``, so dropping only
+#: the group copy would leave the text published.
+#:
+#: The copy is removed only where it matches the group value exactly. That matters: one published
+#: coordinate carries a different sentence naming which CESM historical members are complete and
+#: which hold NaN where a variable is missing. That is a data-quality fact with no other home, and
+#: a rule keyed on the attr name rather than its value would have deleted it.
+DUPLICATED_COORD_ATTRS: dict[str, tuple[str, str]] = {
+    "ensemble_member": ("derivation_method", "ensemble_derivation_logic"),
+}
 
 #: A ``history`` entry, split so the method can be corrected without touching the timestamp or the
 #: producer. Both are the true record of what ran and when, even where the method name is wrong.
@@ -98,6 +114,10 @@ class GroupPlan:
     removals : dict of str to str
         Deprecated attrs present on the group, mapped to their current value. Deleting cannot be
         undone by re-running, so these are kept apart from every other category.
+    coord_removals : dict of str to dict
+        Attrs to remove from a child coordinate, keyed by coordinate name. Held separately because
+        they live on an array rather than on the group, so the caller has to open a different node
+        to apply them.
     """
 
     path: str
@@ -109,6 +129,7 @@ class GroupPlan:
     conflicts: dict[str, tuple[str | None, str]] = field(default_factory=dict)
     repairs: dict[str, tuple[str, str]] = field(default_factory=dict)
     removals: dict[str, str] = field(default_factory=dict)
+    coord_removals: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @property
     def writes(self) -> bool:
@@ -420,7 +441,13 @@ def _hold_paired_attrs(plan: GroupPlan) -> None:
             plan.conflicts[key] = (None, plan.to_set.pop(key))
 
 
-def plan_group(path: str, existing: dict[str, str], gcm: str, product: str) -> GroupPlan:
+def plan_group(
+    path: str,
+    existing: dict[str, str],
+    gcm: str,
+    product: str,
+    coord_attrs: dict[str, dict[str, str]] | None = None,
+) -> GroupPlan:
     """Work out the attrs one group needs, without touching it.
 
     Parameters
@@ -433,6 +460,10 @@ def plan_group(path: str, existing: dict[str, str], gcm: str, product: str) -> G
         GCM the store holds.
     product : {"output", "input"}
         Which product this group belongs to.
+    coord_attrs : dict of str to dict, optional
+        Attrs of the group's child coordinates, keyed by coordinate name. Needed because a
+        coordinate can hold a duplicate of a group attr we drop, and the group's own attrs do not
+        reveal it.
 
     Returns
     -------
@@ -507,5 +538,9 @@ def plan_group(path: str, existing: dict[str, str], gcm: str, product: str) -> G
             plan.conflicts[key] = (current, value)
     for key in sorted(DROPPED_PLAIN_ATTRS & existing.keys()):
         plan.removals[key] = existing[key]
+    for coord, (coord_key, group_key) in DUPLICATED_COORD_ATTRS.items():
+        present = (coord_attrs or {}).get(coord, {})
+        if coord_key in present and present[coord_key] == existing.get(group_key):
+            plan.coord_removals.setdefault(coord, {})[coord_key] = present[coord_key]
     _hold_paired_attrs(plan)
     return plan

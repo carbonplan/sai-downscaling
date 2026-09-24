@@ -182,8 +182,6 @@ def _attach_source_manifest(ds: xr.Dataset, url: str) -> xr.Dataset:
 def _finalize_metadata(ds: xr.Dataset, scenario: str) -> xr.Dataset:
     """Records the parsing and the lineage chain"""
 
-    derivation_logic = "Ensemble member derived from filename case segment or variant_label"
-
     # No experiment lineage is recorded. It was derived from ``parent_experiment_id``, which only
     # CMORized CMIP6 output carries, so on the raw CAM deliveries it read "unknown_parent -> " plus
     # the scenario already recorded beside it. Where the parent is known it survives verbatim in
@@ -191,7 +189,6 @@ def _finalize_metadata(ds: xr.Dataset, scenario: str) -> xr.Dataset:
     etl_attrs = {
         "scenario": scenario,
         "model": "CESM2-WACCM",
-        "ensemble_derivation_logic": derivation_logic,  # ie, did it come from attrs / parsing the filepath.
         "processing_steps": (
             "time_drop_duplicates, lon_to_180, lat_lon_sort, trim_negative_precip, convert_calendar_to_proleptic_gregorian"
         ),
@@ -205,7 +202,7 @@ def _finalize_metadata(ds: xr.Dataset, scenario: str) -> xr.Dataset:
     if "_source_manifest" in ds.attrs:
         del ds.attrs["_source_manifest"]
 
-    return apply_ensemble_provenance(ds, derivation_logic)
+    return apply_ensemble_provenance(ds)
 
 
 def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:

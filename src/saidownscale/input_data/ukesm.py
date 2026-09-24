@@ -338,28 +338,6 @@ def _preprocess_ukesm(ds: xr.Dataset, scenario: str, subset: bool = False) -> xr
     return trim_negative_precipitation(ds)
 
 
-def _derivation_logic(scenario: str, variable: str | None = None) -> str:
-    if scenario == "historical":
-        return (
-            f"Single ensemble_member {HISTORICAL_MEMBER}; the ID is stored as the "
-            "'ensemble_member' value because the source files carry no CMIP6 ripf ID."
-        )
-    if scenario == "SSP245":
-        mapping_str = ", ".join(f"{k}->{v}" for k, v in SSP245_SUITE_TO_MEMBER.items())
-        return (
-            "Filenames are constructed from the UM suite ID, which is mapped to its CMIP6 "
-            f"ripf: {mapping_str}. Single-source 2026 delivery; no member ID is parsed out "
-            "of the filename."
-        )
-    if variable in T_PR_VARS and scenario in T_PR_INPUT_PREFIX:
-        mapping_str = ", ".join(f"{k}->{v}" for k, v in T_PR_MEMBER_RENAME[scenario].items())
-        return (
-            f"UM suite IDs extracted from filename and remapped to CMIP6 ripf: {mapping_str}. "
-            "Source files are private T/PR NetCDFs."
-        )
-    return "Extracted from CMIP6 filename: path.split('.nc')[0].split('_gn')[0].split('_')[-1]."
-
-
 def _update_attrs(
     ds: xr.Dataset, var_specs: dict, scenario: str, variable: str | None = None
 ) -> xr.Dataset:
@@ -378,7 +356,7 @@ def _update_attrs(
         for key in overwritten:
             ds.attrs[key] = MODEL
         ds.attrs["model_id_correction"] = MODEL_ATTR_NOTE
-    return apply_ensemble_provenance(ds, _derivation_logic(scenario, variable))
+    return apply_ensemble_provenance(ds)
 
 
 def _run_dry_run(

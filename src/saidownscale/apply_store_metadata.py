@@ -48,6 +48,7 @@ import zarr
 
 from saidownscale.config import _icechunk_storage_for_path
 from saidownscale.store_metadata import (
+    DUPLICATED_COORD_ATTRS,
     GCMS,
     GroupPlan,
     gcm_from_store,
@@ -110,9 +111,22 @@ def build_plans(
         if pattern and not re.search(pattern, path):
             continue
         group = zarr.open_group(root.store, path=path, mode="r")
+        # A coordinate can hold a duplicate of a group attr we drop, and the group's own attrs do
+        # not reveal it, so the coordinates named in DUPLICATED_COORD_ATTRS are read up front.
+        coord_attrs = {}
+        for coord in DUPLICATED_COORD_ATTRS:
+            node = group.get(coord)
+            if isinstance(node, zarr.Array):
+                coord_attrs[coord] = dict(node.attrs)
         try:
             plans.append(
-                plan_group(path, dict(group.attrs), gcm, product or product_from_path(path))
+                plan_group(
+                    path,
+                    dict(group.attrs),
+                    gcm,
+                    product or product_from_path(path),
+                    coord_attrs=coord_attrs,
+                )
             )
         except (ValueError, KeyError) as err:
             unresolved.append((path, str(err)))
@@ -164,7 +178,9 @@ def _report(
 ) -> None:
     """Print the plan for a human to read before anything is written."""
     for plan in plans:
-        if not (plan.writes or plan.conflicts or plan.repairs or plan.removals):
+        if not (
+            plan.writes or plan.conflicts or plan.repairs or plan.removals or plan.coord_removals
+        ):
             continue
         print(f"  {plan.path}")
         if plan.to_set:
@@ -180,6 +196,10 @@ def _report(
         for key, current in sorted(plan.removals.items()):
             verb = "delete" if prune else "SKIP"
             print(f"      - {key}: {current!r}  [{verb}]")
+        for coord, attrs in sorted(plan.coord_removals.items()):
+            for key, current in sorted(attrs.items()):
+                verb = "delete" if prune else "SKIP"
+                print(f"      - {coord}/{key}: {current!r}  [{verb}]  (duplicate)")
     for path, why in unresolved:
         print(f"  UNRESOLVED {path}: {why}")
 
@@ -212,7 +232,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"store    {args.store}")
     print(f"branch   {args.branch}")
     print(f"gcm      {gcm}")
-    changing = [p for p in plans if p.writes or p.conflicts or p.repairs or p.removals]
+    changing = [
+        p for p in plans if p.writes or p.conflicts or p.repairs or p.removals or p.coord_removals
+    ]
     print(f"groups   {len(plans)} planned, {len(changing)} with something to change\n")
     _report(plans, unresolved, args.overwrite, args.repair, args.prune)
 
@@ -230,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
             "They are left alone. Re-run with --repair to correct them."
         )
 
-    prunable = [p for p in plans if p.removals]
+    prunable = [p for p in plans if p.removals or p.coord_removals]
     if prunable and not args.prune:
         print(
             f"\n{len(prunable)} group(s) carry a deprecated attr. They are left alone. "
@@ -243,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         if p.writes
         or (p.conflicts and args.overwrite)
         or (p.repairs and args.repair)
-        or (p.removals and args.prune)
+        or ((p.removals or p.coord_removals) and args.prune)
     ]
     if not writers:
         print("\nnothing to write")
@@ -275,6 +297,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.prune:
                 for key in plan.removals:
                     del group.attrs[key]
+                for coord, attrs in plan.coord_removals.items():
+                    node = zarr.open_array(session.store, path=f"{plan.path}/{coord}", mode="a")
+                    for key in attrs:
+                        del node.attrs[key]
         snapshot = session.commit(args.message or f"add license and attribution attrs for {gcm}")
         print(f"\ncommitted {snapshot} to {args.branch}: {len(writers)} group(s)")
 

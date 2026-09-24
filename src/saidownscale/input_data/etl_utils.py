@@ -220,18 +220,34 @@ def add_cf_bounds(ds: xr.Dataset, coord_names: list[str] = None) -> xr.Dataset:
 
 def apply_ensemble_provenance(
     ds: xr.Dataset,
-    derivation_logic: str,
     member_provenance: dict | None = None,
     ensemble_coord: str = "ensemble_member",
 ) -> xr.Dataset:
-    """Set ensemble_member provenance on dataset global attrs and ensemble coord attrs."""
+    """Label the ensemble coordinate and record per-member source provenance.
 
-    ds.attrs["ensemble_derivation_logic"] = derivation_logic
+    How a member ID was derived is no longer written here. It used to be stored twice, as
+    ``ensemble_derivation_logic`` on the dataset and as ``derivation_method`` on the coordinate,
+    both rendered from the lookup tables in the per-model ETL modules. Those tables are the real
+    record and cannot drift from what ran, whereas a prose copy in a published store can, so the
+    prose is gone and the code is the reference.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        Dataset to label, modified in place and returned.
+    member_provenance : dict, optional
+        Per-member source detail, stored as JSON on the coordinate. Unlike the derivation prose
+        this is not derivable from the code, because it names the exact source file per member.
+    ensemble_coord : str, default "ensemble_member"
+        Name of the ensemble coordinate.
+
+    Returns
+    -------
+    xarray.Dataset
+        The labelled dataset.
+    """
     if ensemble_coord in ds.coords:
-        coord_attrs: dict = {
-            "long_name": "Ensemble Member Identifier",
-            "derivation_method": derivation_logic,
-        }
+        coord_attrs: dict = {"long_name": "Ensemble Member Identifier"}
         if member_provenance is not None:
             coord_attrs["member_specific_provenance"] = json.dumps(member_provenance)
         ds[ensemble_coord].attrs.update(coord_attrs)
