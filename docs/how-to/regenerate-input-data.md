@@ -1,60 +1,77 @@
-# Regenerate Input Data
+---
+orphan: true
+---
 
-Re-process raw source files into the icechunk stores the downscaling pipeline reads from. Run this when:
+# Regenerate input data
 
-- New ensemble members or variables were added to an existing scenario
-- A raw source file was corrected upstream and needs re-ingestion
-- An icechunk store is corrupted or accidentally deleted
+Re-process raw source files into the icechunk stores the downscaling pipeline reads from. Run this
+when:
 
-There are two workflows: one for GCM datasets (CESM2-WACCM, UKESM, NASA-NEX)
-and one for ERA5. Use the appropriate workflow for the dataset you want to regenerate.
+- new ensemble members or variables were added to an existing scenario
+- a raw source file was corrected upstream and needs re-ingestion
+- an icechunk store is corrupted or accidentally deleted
+
+We run 2 workflows, and which one you want depends on whether the dataset is global climate model
+(GCM) output or observations:
+
+| If you want to regenerate | Use |
+| --- | --- |
+| A GCM dataset: CESM2-WACCM, UKESM, or NASA-NEX | The `process input data` workflow |
+| ERA5 observations | The `process ERA5 input data` workflow |
 
 ---
 
-## GCM datasets — `process input data`
+## GCM datasets: the `process input data` workflow
 
-### Triggering the workflow
+### Trigger the workflow
 
 1. Go to **Actions → process input data → Run workflow**
 2. Select a **GCM** from the dropdown
-3. Enter one or more **scenarios** as a comma-separated string (see valid values below)
-4. Optionally pass **extra flags** to the processing command (e.g. `--subset`)
+3. Enter 1 or more **scenarios** as a comma-separated string (see valid values below)
+4. Optionally pass **extra flags** to the processing command, such as `--subset`
 5. Click **Run workflow**
 
 ### Inputs
 
+The workflow takes 3 inputs:
+
 | Input | Required | Description |
-|-------|----------|-------------|
+| --- | --- | --- |
 | `gcm` | yes | GCM to process. One of `CESM2-WACCM`, `UKESM`, `NASA-NEX` |
-| `scenario` | yes | Comma-separated scenario(s). See valid values below |
-| `extra_flags` | no | Additional flags passed to the processing script (e.g. `--subset`) |
+| `scenario` | yes | Comma-separated scenarios. See valid values below |
+| `extra_flags` | no | Additional flags passed to the processing script, such as `--subset` |
 
 ### Valid scenarios
 
+Each GCM accepts its own set of scenario names:
+
 | GCM | Valid scenarios |
-|-----|----------------|
+| --- | --- |
 | `CESM2-WACCM` | `historical`, `ssp245`, `G6-1.5K`, `G6-1.5K-END` |
 | `UKESM` | `historical`, `SSP245`, `G6-1.5K` |
 | `NASA-NEX` | `historical`, `SSP245` |
 
-Scenario names are case-sensitive and must match the values above exactly. To process multiple
-scenarios in one trigger, pass them comma-separated: e.g. `historical,ssp245`.
+Scenario names are case-sensitive and must match the values above exactly. To process several
+scenarios in one trigger, pass them comma-separated, such as `historical,ssp245`.
 
 ---
 
-## ERA5 — `process ERA5 input data`
+## ERA5: the `process ERA5 input data` workflow
 
-ERA5 has its own dedicated workflow with variable- and time-range controls.
+ERA5 has its own workflow, because it needs controls the GCM workflow does not: a variable list and
+a time range. The inputs below cover both.
 
-### Triggering the workflow
+### Trigger the workflow
 
 1. Go to **Actions → process ERA5 input data → Run workflow**
 2. Fill in the inputs below and click **Run workflow**
 
 ### Inputs
 
+Only `variables` is required, and the rest default to a full 1950 to 2014 run:
+
 | Input | Required | Default | Description |
-|-------|----------|---------|-------------|
+| --- | --- | --- | --- |
 | `variables` | yes | `all` | Comma-separated CMIP6 variable names, or `all`. Valid: `tas`, `tasmin`, `tasmax`, `pr`, `rsds`, `rlds`, `ps`, `hurs` |
 | `start_year` | no | `1950` | First year to include (inclusive) |
 | `end_year` | no | `2014` | Last year to include (inclusive) |
@@ -65,8 +82,9 @@ ERA5 has its own dedicated workflow with variable- and time-range controls.
 
 ## Job summary
 
-Once processing completes, the workflow opens the written icechunk store and appends the
-xarray `repr` to the [job summary](https://github.blog/news-insights/product-news/supercharging-github-actions-with-job-summaries/).
+Once processing completes, the workflow opens the written icechunk store and appends the xarray
+`repr` to the
+[job summary](https://github.blog/news-insights/product-news/supercharging-github-actions-with-job-summaries/).
 It looks something like this:
 
 ```text
@@ -85,5 +103,5 @@ Group: /
     ...
 ```
 
-This gives a quick sanity check on dimensions, ensemble members, and group structure without
-opening the store manually. NASA-NEX does not produce a summary (its output is a virtual store).
+That gives you a quick sanity check on dimensions, ensemble members, and group structure without
+opening the store yourself. NASA-NEX produces no summary, because its output is a virtual store.

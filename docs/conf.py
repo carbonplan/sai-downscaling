@@ -2,7 +2,7 @@ import datetime
 
 import saidownscale
 
-project = "SAI Downscale"
+project = "SAI Downscaling"
 this_year = datetime.datetime.now().year
 author = "CarbonPlan and contributors"
 copyright = f"{this_year}, {author}"
@@ -84,7 +84,28 @@ intersphinx_mapping = {
 }
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**/.ipynb_checkpoints"]
+
+# Developer documentation stays in the repository but is not published here. This site is for
+# people using the data; the guides below describe running the pipeline, and they are kept as
+# source files rather than as a published deliverable. Excluding them is what stops Sphinx
+# building them at all: a page left out of every toctree is still rendered and still appears in
+# the site search.
+_DEVELOPER_DOCS = [
+    "developer-resources.md",
+    "contributing.md",
+    "input-data.md",
+    "how-to/**",
+    "reference/**",
+    "explanation/**",
+]
+
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "**/.ipynb_checkpoints",
+    *_DEVELOPER_DOCS,
+]
 source_suffix = [".rst", ".md"]
 
 
@@ -92,14 +113,10 @@ source_suffix = [".rst", ".md"]
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = "sphinx_book_theme"
-html_title = "SAI Downscale"
+html_title = "SAI Downscaling"
 html_favicon = "assets/favicon-180x180-light.png"
 
 html_theme_options = {
-    "announcement": (
-        "<b>⚠️ Project in development</b> — This documentation describes a project that is "
-        "<em>actively under development</em>. We welcome feedback to help guide future updates."
-    ),
     "repository_url": "https://github.com/carbonplan/sai-downscaling",
     "repository_branch": "main",
     "path_to_docs": "docs",

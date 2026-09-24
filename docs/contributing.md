@@ -1,8 +1,16 @@
+---
+orphan: true
+---
+
 # Contributing
+
+If you want to change the pipeline, start by setting up a development environment, then run the
+linters and the tests before you open a pull request. This page covers all 3.
 
 ## Environment setup
 
-This project uses [uv](https://docs.astral.sh/uv/) for environment management.
+We manage the environment with [uv](https://docs.astral.sh/uv/), so `uv` is the only thing you
+install by hand:
 
 ```bash
 # Clone the repo
@@ -16,7 +24,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --all-groups
 ```
 
-`uv sync` installs only core dependencies. `uv sync --group dev` adds dev tooling. `uv sync --all-groups` installs everything.
+The 3 sync commands differ in how much they install. Pick the narrowest one that covers what you
+are about to do:
+
+| Command | Installs |
+| --- | --- |
+| `uv sync` | Core dependencies only |
+| `uv sync --group dev` | Core dependencies plus the development tooling |
+| `uv sync --all-groups` | Everything, including the documentation and QA groups |
 
 ## Guidelines
 
@@ -27,7 +42,8 @@ uv sync --all-groups
 
 ## Linting
 
-We use [`prek`](https://github.com/j178/prek) (a drop-in `pre-commit` replacement that reads the same `.pre-commit-config.yaml`) for linting and code formatting. Run the following command to check all files:
+We lint and format with [`prek`](https://github.com/j178/prek), a drop-in `pre-commit` replacement
+that reads the same `.pre-commit-config.yaml`. Run the command below to check every file:
 
 ```bash
 uv run prek run --all-files
@@ -46,16 +62,20 @@ uv run pytest 'tests/test_input_data.py::TestCatalogDatasets::test_variable_unit
 uv run pytest 'tests/test_input_data.py::TestCatalogDatasets::test_negative_precip[CESM2-WACCM6-historical-icechunk]' -vv -m slow
 ```
 
-Slow tests are decorated with `@pytest.mark.slow` and are intentionally excluded from the default run — only run them when source data is modified.
+We decorate slow tests with `@pytest.mark.slow` and exclude them from the default run, because they
+read source data from S3. Run them only when the source data itself changes.
 
 ## Cloud compute with Coiled
 
-[Coiled](https://docs.coiled.io/index.html) is used for cloud compute. It keeps compute co-located with S3 data (us-west-2) to avoid egress and improve performance.
+We use [Coiled](https://docs.coiled.io/index.html) for cloud compute, which keeps compute
+co-located with the S3 data in `us-west-2`. That avoids egress charges and is much faster than
+pulling the data to a laptop.
 
-Start a JupyterLab session on a cloud VM:
+Start a JupyterLab session on a cloud virtual machine (VM):
 
 ```bash
 uv run coiled notebook start --vm-type m8g.large --region 'us-west-2' --tag Project=SRM
 ```
 
-See the [AWS instance types page](https://aws.amazon.com/ec2/instance-types/m8g/) for available VM sizes. `m8g.large` is a good starting point.
+See the [AWS instance types page](https://aws.amazon.com/ec2/instance-types/m8g/) for the available
+VM sizes. `m8g.large` is a good starting point.
