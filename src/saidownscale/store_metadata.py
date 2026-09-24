@@ -57,14 +57,9 @@ _DROPPED_OURS = frozenset({"experiment_lineage", "ensemble_derivation_logic", "l
 #: Run detail inherited from the source netCDFs, describing how and where a simulation was
 #: executed rather than what the data is. ``CESM2-WACCM6/historical`` came through the Pangeo
 #: CMIP6 archive and so carries the full CMIP6 global attr set, which is why it held 49 attrs
-#: while its siblings held 16. What a reader needs is kept: ``scenario``, ``source``, ``model``,
-#: ``Conventions``, ``processing_steps``, ``case`` and ``model_doi_url`` all stay. ``status`` is
-#: also a privacy fix, since it embeds the email address of whoever created the file.
-#:
-#: ``contact`` is deliberately absent. On an input group it is the upstream institution's
-#: mailing list, which is who a reader should ask about that simulation, and this set applies
-#: to both products, so listing it would also delete our own ``contact`` from every output
-#: group.
+#: while its siblings held 16. ``status`` is also a privacy fix, since it embeds the email address
+#: of whoever created the file. Attrs we also write on our own output, such as ``contact``, are in
+#: :data:`_DROPPED_INPUT_ONLY` instead, because this set applies to both products.
 _DROPPED_INHERITED = frozenset(
     {
         "activity_id",
@@ -104,6 +99,50 @@ _DROPPED_INHERITED = frozenset(
 
 DROPPED_PLAIN_ATTRS = _DROPPED_OURS | _DROPPED_INHERITED
 
+#: Inherited attrs that add nothing a reader of an input group needs (#708 review). ``source``
+#: names only the model component (``CAM``, ``Data from Met Office Unified Model``) that ``model``
+#: and ``attribution`` already identify, ``Conventions`` claims a CF version for data we have
+#: since reprocessed, and the rest describe the run setup or the modeling center, which the
+#: citation in ``attribution`` covers. Output groups keep their own ``Conventions``, ``source``,
+#: ``institution`` and ``contact``, which is why these are dropped from input groups only.
+_DROPPED_INPUT_ONLY = frozenset(
+    {
+        "Conventions",
+        "case",
+        "contact",
+        "institution",
+        "institution_id",
+        "model_doi_url",
+        "nominal_resolution",
+        "parent_experiment_id",
+        "source",
+        "um_version",
+    }
+)
+
+#: ``references`` cited only the upstream simulation for the scenario, although a scenario leaf is
+#: also built from the historical run, and from the SSP2-4.5 bridge for a G6 leaf. Rather than
+#: list every input, output groups point to our dataset ``doi``, whose record cites them all.
+_DROPPED_OUTPUT_ONLY = frozenset({"references"})
+
+
+def dropped_attrs(product: str) -> frozenset[str]:
+    """Return the plain attrs a group of this product must not carry.
+
+    Parameters
+    ----------
+    product : {"output", "input"}
+        Which product the group belongs to.
+
+    Returns
+    -------
+    frozenset of str
+        Attr names to remove wherever they appear.
+    """
+    only = _DROPPED_INPUT_ONLY if product == "input" else _DROPPED_OUTPUT_ONLY
+    return DROPPED_PLAIN_ATTRS | only
+
+
 #: Coordinate attrs that duplicate a group attr we drop, as ``(coord attr, group attr)``.
 #: ``apply_ensemble_provenance`` wrote the same sentence twice, to the group as
 #: ``ensemble_derivation_logic`` and to the coordinate as ``derivation_method``, so dropping only
@@ -126,14 +165,31 @@ HISTORY_ENTRY = re.compile(r"^(?P<stamp>.*?: )(?P<method>\S+)(?P<rest> downscali
 #: would then name 2 different licenses, which is worse than the incomplete metadata we found.
 PAIRED_ATTRS: tuple[frozenset[str], ...] = (frozenset({"license", "license_url"}),)
 
-#: The ``data_source`` sentence for an input group, assembled from these 3 parts. The middle clause
-#: is dropped for a group that records no ``processing_steps``, which is every UKESM input group, so
-#: that we never point a reader at an attr that is not there.
-_DATA_SOURCE_INGEST = "This icechunk store was created by ingesting netCDF files"
-_DATA_SOURCE_STEPS = (
-    " and processing following the steps outlined in the `processing_steps` attribute"
+#: How we built an input store. Every input group records ``processing_steps``, so the sentence can
+#: always refer the reader to it.
+DATA_SOURCE = (
+    "This icechunk store was created by ingesting netCDF files and processing following the steps "
+    "outlined in the `processing_steps` attribute. See "
+    "https://github.com/carbonplan/sai-downscaling for more information."
 )
-_DATA_SOURCE_MORE = ". See https://github.com/carbonplan/sai-downscaling for more information."
+
+#: ``processing_steps`` for each UKESM input group, spelled the way the CESM ETL spells them. The
+#: UKESM ETL never recorded them, so they are written here, where both the ETL and the metadata
+#: pass read them. Historical files arrive without duplicate time steps, so that group skips the
+#: deduplication.
+UKESM_PROCESSING_STEPS: dict[str, str] = {
+    "historical": (
+        "lon_to_180, lat_lon_sort, trim_negative_precip, convert_calendar_to_proleptic_gregorian"
+    ),
+    "ssp245": (
+        "time_drop_duplicates, lon_to_180, lat_lon_sort, trim_negative_precip, "
+        "convert_calendar_to_proleptic_gregorian"
+    ),
+    "g6_1p5k": (
+        "time_drop_duplicates, lon_to_180, lat_lon_sort, trim_negative_precip, "
+        "convert_calendar_to_proleptic_gregorian"
+    ),
+}
 
 
 @dataclass
@@ -361,26 +417,28 @@ def recorded_scenario(existing: dict[str, str], product: str) -> str | None:
     return read_attr(existing, "scenario")
 
 
-def describe_data_source(*, has_processing_steps: bool) -> str:
-    """Return the ``data_source`` description for an input group.
+def input_attrs(gcm: str, scenario_group: str) -> dict[str, str]:
+    """Return every attr we write on an input group.
 
-    Input groups already carry a CF ``source`` naming the model that produced the simulation, such
-    as ``CAM`` or ``Data from Met Office Unified Model``. That is the upstream provenance and must
-    survive, so how we built the store goes in ``data_source`` beside it rather than over it.
+    Shared by the ETL and :func:`plan_group`, so a fresh ingest and the metadata pass agree.
 
     Parameters
     ----------
-    has_processing_steps : bool
-        Whether the group records a ``processing_steps`` attr. Where it does not, the clause that
-        would refer the reader to that attr is left out instead of dangling.
+    gcm : str
+        GCM key, as in :data:`GCMS`.
+    scenario_group : str
+        Scenario group as the stores spell it.
 
     Returns
     -------
-    str
-        A one-line description of how the store was built.
+    dict of str to str
+        License, citation and terms, plus ``data_source`` and, for UKESM, ``processing_steps``.
     """
-    steps = _DATA_SOURCE_STEPS if has_processing_steps else ""
-    return f"{_DATA_SOURCE_INGEST}{steps}{_DATA_SOURCE_MORE}"
+    attrs = metadata_attrs(gcm, scenario_group, product="input")
+    attrs["data_source"] = DATA_SOURCE
+    if gcm == "UKESM1-1-LL":
+        attrs["processing_steps"] = UKESM_PROCESSING_STEPS[scenario_group]
+    return attrs
 
 
 def source_for(existing: dict[str, str], gcm: str, scenario: str | None = None) -> str | None:
@@ -573,16 +631,14 @@ def plan_group(
                 "Refusing to guess."
             )
 
-    target = metadata_attrs(gcm, scenario_group, product=product)
     published = PUBLISHED_SCENARIO_NAMES[scenario_group]
     if product == "output":
+        target = metadata_attrs(gcm, scenario_group, product=product)
         source = source_for(existing, gcm, published)
         if source is not None:
             target["source"] = source
     else:
-        target["data_source"] = describe_data_source(
-            has_processing_steps="processing_steps" in existing
-        )
+        target = input_attrs(gcm, scenario_group)
 
     plan = GroupPlan(path=path, gcm=gcm, scenario_group=scenario_group, product=product)
     corrected = repair_history(existing)
@@ -613,7 +669,7 @@ def plan_group(
             plan.unchanged[key] = value
         else:
             plan.conflicts[key] = (current, value)
-    for key in sorted(DROPPED_PLAIN_ATTRS & existing.keys()):
+    for key in sorted(dropped_attrs(product) & existing.keys()):
         plan.removals[key] = existing[key]
     for coord, (coord_key, group_key) in DUPLICATED_COORD_ATTRS.items():
         present = (coord_attrs or {}).get(coord, {})

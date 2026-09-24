@@ -13,8 +13,9 @@ from saidownscale.config import PUBLISHED_SCENARIO_NAMES, read_attr
 from saidownscale.input_data.etl_utils import apply_published_metadata
 from saidownscale.licenses import metadata_attrs
 from saidownscale.store_metadata import (
-    DROPPED_PLAIN_ATTRS,
-    describe_data_source,
+    DATA_SOURCE,
+    UKESM_PROCESSING_STEPS,
+    dropped_attrs,
     gcm_from_store,
     plan_group,
     product_from_path,
@@ -111,7 +112,6 @@ def test_plan_sets_missing_keeps_matching_and_reports_differing(subtests) -> Non
     with subtests.test("sets missing"):
         plan = _out("bcsd/g6_1p5k/tas/001")
         assert plan.to_set["license"] == CC_BY
-        assert "Walker Lee" in plan.to_set["references"]
         assert plan.writes
     with subtests.test("leaves matching alone"):
         plan = _out("bcsd/g6_1p5k/tas/001", {"institution": "CarbonPlan"})
@@ -141,29 +141,30 @@ def test_plan_refuses_to_guess(subtests) -> None:
 def test_input_and_output_groups_get_different_attrs(subtests) -> None:
     out = _out()
     inp = _in("ssp245", gcm=UKESM)
-    with subtests.test("input keeps its own source"):
+    with subtests.test("inherited source dropped from input, ours set on output"):
         plan = _in("ssp245", {"source": "UM"}, gcm=UKESM)
+        assert plan.removals == {"source": "UM"}
         assert "source" not in plan.to_set
-        assert "source" not in plan.conflicts
+        assert _out(extra={"source": "x"}).conflicts["source"][0] == "x"
     with subtests.test("institution only on output"):
         assert out.to_set["institution"] == "CarbonPlan"
         for scenario in ("historical", "ssp245", "g6_1p5k"):
             assert "institution" not in _in(scenario, gcm=UKESM).to_set
-    with subtests.test("attribution on input, references on output"):
+    with subtests.test("attribution on input, no input citation on output"):
         assert "Andy Jones" in inp.to_set["attribution"]
-        assert "references" not in inp.to_set
-        assert "Danabasoglu" in out.to_set["references"]
-        assert "attribution" not in out.to_set
+        for key in ("attribution", "references"):
+            assert key not in out.to_set
+        assert _out(extra={"references": "Danabasoglu"}).removals == {"references": "Danabasoglu"}
     with subtests.test("contact only on output"):
         assert out.to_set["contact"] == "hello@carbonplan.org"
         assert "contact" not in inp.to_set
     with subtests.test("doi only on output"):
         assert out.to_set["doi"] == "https://doi.org/10.5281/zenodo.22932138"
         assert "doi" not in inp.to_set
-    with subtests.test("data_source only on input"):
-        plan = _in("ssp245", {"processing_steps": "lon_to_180"}, gcm=UKESM)
-        assert plan.to_set["data_source"].startswith("This icechunk store was created by ingesting")
-        assert "`processing_steps` attribute" in plan.to_set["data_source"]
+    with subtests.test("data_source only on input, and UKESM gains the steps it names"):
+        assert inp.to_set["data_source"] == DATA_SOURCE
+        assert inp.to_set["processing_steps"] == UKESM_PROCESSING_STEPS["ssp245"]
+        assert "processing_steps" not in _in("ssp245").to_set
         assert "data_source" not in out.to_set
     with subtests.test("terms_of_data_access on both"):
         assert _out(gcm=UKESM).to_set["terms_of_data_access"] == licenses.TERMS_OF_DATA_ACCESS
@@ -203,9 +204,6 @@ def test_mislabeled_historical_scenario_is_repaired(subtests) -> None:
     with subtests.test("repair, not set"):
         assert plan.repairs["sai_downscaling:scenario"] == ("G6-1.5K", "historical")
         assert "sai_downscaling:scenario" not in plan.to_set
-    with subtests.test("cited as its own simulation"):
-        assert "CMIP historical" in plan.to_set["references"]
-        assert "Walker Lee" not in plan.to_set["references"]
     with subtests.test("described as historical"):
         assert plan.to_set["source"].startswith("CESM2-WACCM6 historical, downscaled")
     with subtests.test("config_json survives"):
@@ -314,14 +312,29 @@ def test_input_groups_drop_personal_and_lineage_attrs_but_keep_provenance(subtes
     with subtests.test("nothing we write is also on the drop list"):
         for product in ("input", "output"):
             written = set(metadata_attrs("CESM2-WACCM6", "historical", product=product))
-            assert not written & DROPPED_PLAIN_ATTRS
-        assert "contact" not in DROPPED_PLAIN_ATTRS
+            assert not written & dropped_attrs(product)
+        assert not {"Conventions", "contact", "institution", "source"} & dropped_attrs("output")
     with subtests.test("the r/i/p/f decomposition goes as a set"):
         for key in ("forcing_index", "initialization_index", "physics_index"):
-            assert key in DROPPED_PLAIN_ATTRS
+            assert key in dropped_attrs("input")
     with subtests.test("what a reader needs is kept"):
-        for key in ("scenario", "source", "model", "Conventions", "case", "model_doi_url"):
-            assert key not in DROPPED_PLAIN_ATTRS
+        for key in ("scenario", "model", "processing_steps", "attribution"):
+            assert key not in dropped_attrs("input")
+    with subtests.test("run setup and modeling-center detail removed (#708)"):
+        inherited = {
+            "Conventions": "CF-1.7 CMIP-6.2",
+            "case": "b.e21.BWHISTcmip6.f09_g17.CMIP6-historical-WACCM.1980_2014.001",
+            "contact": "cesm_cmip6@ucar.edu",
+            "institution": "National Center for Atmospheric Research",
+            "institution_id": "NCAR",
+            "model_doi_url": "https://doi.org/10.5065/D67H1H0V",
+            "nominal_resolution": "100 km",
+            "parent_experiment_id": "piControl",
+            "source": "CAM",
+            "um_version": "11.7",
+        }
+        plan = _in("historical", {"scenario": "historical", **inherited})
+        assert plan.removals == inherited
     with subtests.test("experiment_lineage is a removal and nothing else"):
         lineage = "unknown_parent -> SSP245"
         plan = _in("ssp245", {"scenario": "SSP245", "experiment_lineage": lineage})
@@ -330,14 +343,9 @@ def test_input_groups_drop_personal_and_lineage_attrs_but_keep_provenance(subtes
             assert key not in plan.to_set
             assert key not in plan.conflicts
             assert key not in plan.repairs
-    with subtests.test("parent_experiment_id kept"):
-        plan = _in("historical", {"scenario": "historical", "parent_experiment_id": "piControl"})
-        assert "parent_experiment_id" not in plan.removals
     with subtests.test("processing_steps kept"):
-        assert "processing_steps" not in DROPPED_PLAIN_ATTRS
         plan = _in("ssp245", {"scenario": "SSP245", "processing_steps": "lon_to_180, lat_lon_sort"})
         assert "processing_steps" not in plan.removals
-        assert "`processing_steps` attribute" in plan.to_set["data_source"]
 
 
 def test_derivation_prose_is_removed_from_group_and_matching_coordinate(subtests) -> None:
@@ -365,17 +373,9 @@ def test_derivation_prose_is_removed_from_group_and_matching_coordinate(subtests
         assert plan.removals["ensemble_derivation_logic"] == DERIVATION
 
 
-def test_source_and_data_source_describe_real_provenance(subtests) -> None:
-    with subtests.test("source needs real provenance"):
-        assert source_for({}, CESM) is None
-        assert "ERA5" in source_for(OUTPUT_ATTRS, CESM)
-    with subtests.test("data_source processing_steps clause"):
-        without = describe_data_source(has_processing_steps=False)
-        assert "processing_steps" not in without
-        assert without.endswith(
-            "See https://github.com/carbonplan/sai-downscaling for more information."
-        )
-        assert "processing_steps" in describe_data_source(has_processing_steps=True)
+def test_source_needs_real_provenance() -> None:
+    assert source_for({}, CESM) is None
+    assert "ERA5" in source_for(OUTPUT_ATTRS, CESM)
 
 
 def test_history_naming_the_wrong_method_is_repaired_or_declined(subtests) -> None:
@@ -473,12 +473,10 @@ def test_pipeline_writes_labeled_licensed_attrs_in_one_pass(subtests) -> None:
     with subtests.test("historical write labeled historical"):
         hist = _output_attrs("G6-1.5K", "BCSD", for_historical=True)
         assert hist["sai_downscaling:scenario"] == "historical"
-        assert "CMIP historical" in hist["references"]
         assert hist["source"].startswith("CESM2-WACCM6 historical, downscaled")
     with subtests.test("scenario write labeled with the published name"):
         scenario_attrs = _output_attrs("G6-1.5K", "BCSD")
         assert scenario_attrs["sai_downscaling:scenario"] == "G6-1.5K-SAI"
-        assert "Walker Lee" in scenario_attrs["references"]
     for method in ("BCSD", "QDMSD"):
         with subtests.test(history_names_method=method):
             attrs = _output_attrs("SSP245", method)
@@ -488,7 +486,7 @@ def test_pipeline_writes_labeled_licensed_attrs_in_one_pass(subtests) -> None:
         assert attrs["license"] == CC_BY
         assert attrs["contact"] == "hello@carbonplan.org"
         assert attrs["institution"] == "CarbonPlan"
-        assert "Danabasoglu" in attrs["references"]
+        assert "references" not in attrs
         assert attrs["source"].endswith("by the QDMSD method")
         assert not any(k.startswith("srm_downscaling:") for k in attrs)
 
@@ -559,4 +557,4 @@ def test_a_fresh_ingest_needs_no_metadata_pass(subtests) -> None:
             assert not plan.removals
             assert not plan.conflicts
             assert ds.attrs["scenario"] == PUBLISHED_SCENARIO_NAMES[group]
-            assert not DROPPED_PLAIN_ATTRS & ds.attrs.keys()
+            assert not dropped_attrs("input") & ds.attrs.keys()

@@ -345,7 +345,6 @@ def _update_attrs(ds: xr.Dataset, var_specs: dict, scenario: str) -> xr.Dataset:
         {
             "scenario": scenario,
             "model": MODEL,
-            "Conventions": "CF-1.8",
         }
     )
     # See MODEL_ATTR_NOTE: the identity attrs carried in from the source NetCDFs are not

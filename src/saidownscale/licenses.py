@@ -64,8 +64,8 @@ class Attribution:
         License name as the docs table spells it, e.g. ``"CC BY 4.0"``. ``None`` where we assert
         no license.
     references : str
-        Citation text. Published as ``attribution`` on an input group and as the CF ``references``
-        on our own output.
+        Citation text, published as ``attribution`` on an input group. Our own output cites its
+        ``doi`` instead, whose record credits every input.
     """
 
     license: str | None
@@ -205,17 +205,17 @@ def metadata_attrs(gcm: str, scenario_group: str, *, product: str) -> dict[str, 
 
     Notes
     -----
-    The product decides which keys appear and what the citation is called. Input groups publish it
-    as ``attribution``, the name the licenses table uses, while our own output publishes the CF
-    ``references``. ``institution`` and ``contact`` are set only on output, because ACDD defines
-    ``institution`` as the producer of the data: on an input group that is the modeling center, not
-    us, and several input groups already record their own. Every group gets a license, a license
-    URL, a citation, and the terms, since a redistributed simulation needs crediting and governing
-    as much as our own product does.
+    The product decides which keys appear. Input groups publish the upstream citation as
+    ``attribution``, the name the licenses table uses. Output groups carry no citation of their own
+    inputs, since a scenario leaf is built from several simulations; they point to our ``doi``,
+    whose record cites them all. ``institution`` and ``contact`` are set only on output, because
+    ACDD defines ``institution`` as the producer of the data, and on an input group that is the
+    modeling center, not us. Every group gets a license, a license URL, and the terms, since a
+    redistributed simulation needs governing as much as our own product does.
     """
+    # Looked up for output too, so a scenario with no recorded provenance is never published.
     upstream = attribution_for(gcm, scenario_group)
-    citation_key = "attribution" if product == "input" else "references"
-    attrs = {citation_key: upstream.references, "terms_of_data_access": TERMS_OF_DATA_ACCESS}
+    attrs = {"terms_of_data_access": TERMS_OF_DATA_ACCESS}
     if product == "output":
         attrs["license"] = OUTPUT_LICENSE
         attrs["license_url"] = LICENSE_URLS[OUTPUT_LICENSE]
@@ -226,6 +226,7 @@ def metadata_attrs(gcm: str, scenario_group: str, *, product: str) -> dict[str, 
         if DOI:
             attrs["doi"] = DOI
     else:
+        attrs["attribution"] = upstream.references
         # Blank where we assert no license, never absent. The pair stays whole either way, so a
         # reader never finds a URL resolving a license the group does not name.
         attrs["license"] = upstream.license or ""

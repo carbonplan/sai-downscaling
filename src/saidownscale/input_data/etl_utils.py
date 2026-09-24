@@ -18,8 +18,7 @@ from rich.text import Text
 from virtualizarr.parsers import HDFParser
 
 from saidownscale.config import PUBLISHED_SCENARIO_NAMES, SCENARIO_TO_GROUP, VarSpec
-from saidownscale.licenses import metadata_attrs
-from saidownscale.store_metadata import DROPPED_PLAIN_ATTRS, describe_data_source
+from saidownscale.store_metadata import dropped_attrs, input_attrs
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -245,14 +244,10 @@ def apply_published_metadata(ds: xr.Dataset, gcm: str, scenario: str) -> xr.Data
         The stamped dataset.
     """
     group = SCENARIO_TO_GROUP[scenario]
-    for key in DROPPED_PLAIN_ATTRS & ds.attrs.keys():
+    for key in dropped_attrs("input") & ds.attrs.keys():
         del ds.attrs[key]
     ds.attrs["scenario"] = PUBLISHED_SCENARIO_NAMES[group]
-    ds.attrs.update(metadata_attrs(gcm, group, product="input"))
-    # Computed last, because it reports whether the group records processing steps.
-    ds.attrs["data_source"] = describe_data_source(
-        has_processing_steps="processing_steps" in ds.attrs
-    )
+    ds.attrs.update(input_attrs(gcm, group))
     return ds
 
 
