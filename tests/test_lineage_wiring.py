@@ -1,11 +1,4 @@
-"""Integration tests for ensemble member lineage wiring in pipeline and cache.
-
-Tests verify that:
-1. A G6 config with mismatched member labels (numeric G6 vs CMIP6-style historical)
-   passes the correct member to each .sel() call.
-2. Two G6 members sharing a historical parent produce the same historical_path,
-   enabling cache reuse.
-"""
+"""Tests that resolved lineage members reach pipeline loads, cache paths, and output attrs."""
 
 from __future__ import annotations
 
@@ -15,10 +8,6 @@ import pytest
 
 from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 from saidownscale.pipeline import DownscalingPipeline
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -31,324 +20,86 @@ def pipeline_options(tmp_path) -> PipelineOptions:
     )
 
 
-@pytest.fixture
-def g6_001_tas_config() -> DownscalingConfig:
-    """G6-1.5K member 001, tas — lineage: historical=r1i1p1f1, SSP245 bridge=001."""
+def _config(variable="tas", member="001", scenario="G6-1.5K") -> DownscalingConfig:
+    sai = scenario == "G6-1.5K"
     return DownscalingConfig(
         gcm="CESM2-WACCM6",
         downscaling_method="BCSD",
-        variable="tas",
-        ensemble_member="001",
-        scenario="G6-1.5K",
-        predict_period_start=2035,
-        predict_period_end=2084,
+        variable=variable,
+        ensemble_member=member,
+        scenario=scenario,
+        predict_period_start=2035 if sai else 2015,
+        predict_period_end=2084 if sai else 2100,
     )
 
 
-@pytest.fixture
-def g6_002_tas_config() -> DownscalingConfig:
-    """G6-1.5K member 002, tas — lineage: historical=r2i1p1f1, SSP245 bridge=002."""
-    return DownscalingConfig(
-        gcm="CESM2-WACCM6",
-        downscaling_method="BCSD",
-        variable="tas",
-        ensemble_member="002",
-        scenario="G6-1.5K",
-        predict_period_start=2035,
-        predict_period_end=2084,
-    )
-
-
-@pytest.fixture
-def g6_001_tasmax_config() -> DownscalingConfig:
-    """G6-1.5K member 001, tasmax — lineage: historical=001, SSP245 bridge=009."""
-    return DownscalingConfig(
-        gcm="CESM2-WACCM6",
-        downscaling_method="BCSD",
-        variable="tasmax",
-        ensemble_member="001",
-        scenario="G6-1.5K",
-        predict_period_start=2035,
-        predict_period_end=2084,
-    )
-
-
-@pytest.fixture
-def g6_002_tasmax_config() -> DownscalingConfig:
-    """G6-1.5K member 002, tasmax — lineage: historical=001, SSP245 bridge=007."""
-    return DownscalingConfig(
-        gcm="CESM2-WACCM6",
-        downscaling_method="BCSD",
-        variable="tasmax",
-        ensemble_member="002",
-        scenario="G6-1.5K",
-        predict_period_start=2035,
-        predict_period_end=2084,
-    )
-
-
-def _make_mock_da(name: str = "data") -> MagicMock:
-    """Return a MagicMock that behaves enough like a DataArray for pipeline loading."""
+def _make_mock_da() -> MagicMock:
     da = MagicMock()
     da.sel.return_value = da
     da.drop_vars.return_value = da
     return da
 
 
-# ---------------------------------------------------------------------------
-# Member selection: _load_gcm_obs uses resolved historical member
-# ---------------------------------------------------------------------------
-
-
-class TestLoadGcmObsMemberSelection:
-    def test_historical_member_used_for_hist_sel(self, g6_001_tas_config, pipeline_options):
-        """_load_gcm_obs must call get_historical_experiment with member='r1i1p1f1', not '001'."""
-        pipeline = DownscalingPipeline(g6_001_tas_config, pipeline_options)
-        assert pipeline._hist_member == "r1i1p1f1"
-
-        with (
-            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
-            patch(
-                "saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()
-            ) as mock_get_hist,
-            patch.object(pipeline.cache, "check_dependencies") as mock_deps,
-            patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
-        ):
-            mock_deps.return_value = {"obs_regridded": (True, "/fake/obs")}
-            pipeline._load_gcm_obs()
-
-        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM6", member="r1i1p1f1", var="tas")
-
-    def test_falls_back_to_ensemble_member_when_no_lineage(self, tmp_path, pipeline_options):
-        """For an unknown scenario, _hist_member falls back to ensemble_member."""
-        config = DownscalingConfig(
-            gcm="CESM2-WACCM6",
-            downscaling_method="BCSD",
-            variable="tas",
-            ensemble_member="r1i1p1f1",
-            scenario="ssp245",  # lowercase — not in lineage table
-            predict_period_start=2015,
-            predict_period_end=2100,
-        )
-        pipeline = DownscalingPipeline(config, pipeline_options)
-        assert pipeline._hist_member == "r1i1p1f1"
-
-        with (
-            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
-            patch(
-                "saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()
-            ) as mock_get_hist,
-            patch.object(pipeline.cache, "check_dependencies") as mock_deps,
-            patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
-        ):
-            mock_deps.return_value = {"obs_regridded": (True, "/fake/obs")}
-            pipeline._load_gcm_obs()
-
-        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM6", member="r1i1p1f1", var="tas")
-
-
-# ---------------------------------------------------------------------------
-# Member selection: _load_scenario_data uses correct members
-# ---------------------------------------------------------------------------
-
-
-class TestLoadScenarioDataMemberSelection:
-    def _run_load_scenario(self, pipeline, mock_get_experiment):
-        with (
-            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
-            patch("saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()),
-            patch("saidownscale.pipeline.get_experiment", side_effect=mock_get_experiment),
-            patch.object(pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()),
-            patch.object(pipeline.cache, "check_dependencies") as mock_deps,
-            patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
-        ):
-            mock_deps.return_value = {
-                "obs_regridded": (True, "/fake/obs"),
-                "historical": (True, "/fake/hist"),
-            }
-            pipeline._load_scenario_data()
-
-    def test_historical_sel_uses_historical_ensemble_member(
-        self, g6_001_tas_config, pipeline_options
+def _load(pipeline, method, scenario_da=None):
+    """Run a pipeline loader with all I/O patched; return the (hist, bridge) mocks."""
+    deps = {"obs_regridded": (True, "/fake/obs"), "historical": (True, "/fake/hist")}
+    with (
+        patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
+        patch(
+            "saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()
+        ) as mock_hist,
+        patch("saidownscale.pipeline.get_experiment", return_value=scenario_da or _make_mock_da()),
+        patch.object(pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()) as mock_bridge,
+        patch.object(pipeline.cache, "check_dependencies", return_value=deps),
+        patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
     ):
-        """Historical load must use get_historical_experiment with resolved member."""
-        pipeline = DownscalingPipeline(g6_001_tas_config, pipeline_options)
-
-        with (
-            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
-            patch(
-                "saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()
-            ) as mock_get_hist,
-            patch("saidownscale.pipeline.get_experiment", return_value=_make_mock_da()),
-            patch.object(pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()),
-            patch.object(pipeline.cache, "check_dependencies") as mock_deps,
-            patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
-        ):
-            mock_deps.return_value = {
-                "obs_regridded": (True, "/fake/obs"),
-                "historical": (True, "/fake/hist"),
-            }
-            pipeline._load_scenario_data()
-
-        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM6", member="r1i1p1f1", var="tas")
-
-    def test_falls_back_to_ensemble_member_when_no_lineage(self, pipeline_options):
-        """For unknown scenario, _hist_member falls back to ensemble_member."""
-        config = DownscalingConfig(
-            gcm="CESM2-WACCM6",
-            downscaling_method="BCSD",
-            variable="tas",
-            ensemble_member="r1i1p1f1",
-            scenario="ssp245",
-            predict_period_start=2015,
-            predict_period_end=2100,
-        )
-        pipeline = DownscalingPipeline(config, pipeline_options)
-        assert pipeline._hist_member == "r1i1p1f1"
-
-        with (
-            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
-            patch(
-                "saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()
-            ) as mock_get_hist,
-            patch("saidownscale.pipeline.get_experiment", return_value=_make_mock_da()),
-            patch.object(pipeline.cache, "check_dependencies") as mock_deps,
-            patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
-        ):
-            mock_deps.return_value = {"obs_regridded": (True, "/fake/obs")}
-            pipeline._load_scenario_data()
-
-        mock_get_hist.assert_called_once_with(gcm="CESM2-WACCM6", member="r1i1p1f1", var="tas")
-
-    def test_scenario_sel_uses_ensemble_member(self, g6_001_tas_config, pipeline_options):
-        """G6 scenario data load must use ensemble_member (not hist override)."""
-        pipeline = DownscalingPipeline(g6_001_tas_config, pipeline_options)
-        scenario_da = _make_mock_da()
-
-        self._run_load_scenario(pipeline, lambda **kw: scenario_da)
-        scenario_da.sel.assert_any_call(ensemble_member="001")
-
-    def test_ssp245_bridge_loaded_via_load_ssp245_bridge(self, g6_001_tas_config, pipeline_options):
-        """_load_scenario_data must call _load_ssp245_bridge for SAI scenarios."""
-        pipeline = DownscalingPipeline(g6_001_tas_config, pipeline_options)
-
-        with (
-            patch("saidownscale.pipeline.get_obs", return_value=_make_mock_da()),
-            patch("saidownscale.pipeline.get_historical_experiment", return_value=_make_mock_da()),
-            patch("saidownscale.pipeline.get_experiment", return_value=_make_mock_da()),
-            patch.object(
-                pipeline, "_load_ssp245_bridge", return_value=_make_mock_da()
-            ) as mock_bridge,
-            patch.object(pipeline.cache, "check_dependencies") as mock_deps,
-            patch.object(pipeline, "_open_from_icechunk", return_value=MagicMock()),
-        ):
-            mock_deps.return_value = {
-                "obs_regridded": (True, "/fake/obs"),
-                "historical": (True, "/fake/hist"),
-            }
-            pipeline._load_scenario_data()
-
-        mock_bridge.assert_called_once()
-
-    def test_ssp245_bridge_tasmax_member_resolved(self, g6_001_tasmax_config, pipeline_options):
-        """tasmax G6-001 resolves ssp245_member=009 (not 001)."""
-        pipeline = DownscalingPipeline(g6_001_tasmax_config, pipeline_options)
-        assert pipeline._ssp245_member == "009"
+        getattr(pipeline, method)()
+    return mock_hist, mock_bridge
 
 
-# ---------------------------------------------------------------------------
-# Cache path: shared historical parent → same historical_path
-# ---------------------------------------------------------------------------
+def test_loaders_select_the_resolved_historical_member(subtests, pipeline_options):
+    configs = {
+        "g6_lineage": _config(),
+        "no_lineage_fallback": _config(member="r1i1p1f1", scenario="ssp245"),
+    }
+    for name, config in configs.items():
+        for method in ("_load_gcm_obs", "_load_scenario_data"):
+            with subtests.test(config=name, method=method):
+                pipeline = DownscalingPipeline(config, pipeline_options)
+                assert pipeline._hist_member == "r1i1p1f1"
+                mock_hist, _ = _load(pipeline, method)
+                mock_hist.assert_called_once_with(gcm="CESM2-WACCM6", member="r1i1p1f1", var="tas")
 
 
-class TestHistoricalPathSharedParent:
-    def test_g6_members_sharing_historical_parent_produce_same_path(
-        self, g6_001_tasmax_config, g6_002_tasmax_config, pipeline_options
-    ):
-        """G6 members 001 and 002 (tasmax) both map to historical member '001'.
-
-        They must produce identical historical_loc values so the cached artifact
-        is reused without recomputing.
-        """
-        p1 = DownscalingPipeline(g6_001_tasmax_config, pipeline_options)
-        p2 = DownscalingPipeline(g6_002_tasmax_config, pipeline_options)
-        assert p1._hist_member == "001"
-        assert p2._hist_member == "001"
-        loc_001 = p1.cache.historical_loc(p1._hist_member)
-        loc_002 = p2.cache.historical_loc(p2._hist_member)
-        assert loc_001 == loc_002
-
-    def test_g6_members_with_different_historical_parents_produce_different_paths(
-        self, g6_001_tas_config, g6_002_tas_config, pipeline_options
-    ):
-        """G6 tas members 001 and 002 map to r1i1p1f1 and r2i1p1f1 respectively."""
-        p1 = DownscalingPipeline(g6_001_tas_config, pipeline_options)
-        p2 = DownscalingPipeline(g6_002_tas_config, pipeline_options)
-        loc_001 = p1.cache.historical_loc(p1._hist_member)
-        loc_002 = p2.cache.historical_loc(p2._hist_member)
-        assert loc_001 != loc_002
-
-    def test_historical_path_contains_resolved_hist_member(
-        self, g6_001_tas_config, pipeline_options
-    ):
-        """historical group must embed the resolved historical member label."""
-        pipeline = DownscalingPipeline(g6_001_tas_config, pipeline_options)
-        assert pipeline._hist_member == "r1i1p1f1"
-        loc = pipeline.cache.historical_loc(pipeline._hist_member)
-        assert "r1i1p1f1" in loc.group
-        assert "001" not in loc.group
-
-    def test_historical_path_fallback_uses_ensemble_member(self, pipeline_options):
-        """When no lineage is registered, ensemble_member fills the group."""
-        config = DownscalingConfig(
-            gcm="CESM2-WACCM6",
-            downscaling_method="BCSD",
-            variable="tas",
-            ensemble_member="r1i1p1f1",
-            scenario="SSP245",
-            predict_period_start=2015,
-            predict_period_end=2100,
-        )
-        pipeline = DownscalingPipeline(config, pipeline_options)
-        assert pipeline._hist_member == "r1i1p1f1"
-        loc = pipeline.cache.historical_loc(pipeline._hist_member)
-        assert "r1i1p1f1" in loc.group
+def test_scenario_load_uses_ensemble_member_and_loads_the_bridge(pipeline_options):
+    pipeline = DownscalingPipeline(_config(), pipeline_options)
+    scenario_da = _make_mock_da()
+    _, mock_bridge = _load(pipeline, "_load_scenario_data", scenario_da)
+    scenario_da.sel.assert_any_call(ensemble_member="001")
+    mock_bridge.assert_called_once()
 
 
-# ---------------------------------------------------------------------------
-# Output attrs: resolved members written to metadata
-# ---------------------------------------------------------------------------
+def test_historical_loc_follows_the_resolved_parent(pipeline_options):
+    def loc(config):
+        p = DownscalingPipeline(config, pipeline_options)
+        return p.cache.historical_loc(p._hist_member)
+
+    assert loc(_config("tasmax", "001")) == loc(_config("tasmax", "002"))
+    assert loc(_config("tas", "001")) != loc(_config("tas", "002"))
+    g6_group = loc(_config()).group
+    assert "r1i1p1f1" in g6_group and "001" not in g6_group
+    assert "r1i1p1f1" in loc(_config(member="r1i1p1f1", scenario="SSP245")).group
 
 
-class TestBuildOutputAttrs:
-    def test_historical_ensemble_member_in_attrs(self, g6_001_tas_config, pipeline_options):
-        pipeline = DownscalingPipeline(g6_001_tas_config, pipeline_options)
-        attrs = pipeline._build_output_attrs()
-        assert attrs["sai_downscaling:historical_ensemble_member"] == "r1i1p1f1"
-
-    def test_ssp245_ensemble_member_in_attrs(self, g6_001_tas_config, pipeline_options):
-        pipeline = DownscalingPipeline(g6_001_tas_config, pipeline_options)
-        attrs = pipeline._build_output_attrs()
-        assert attrs["sai_downscaling:ssp245_ensemble_member"] == "001"
-
-    def test_attrs_fall_back_to_ensemble_member_when_no_lineage(self, pipeline_options):
-        config = DownscalingConfig(
-            gcm="CESM2-WACCM6",
-            downscaling_method="BCSD",
-            variable="tas",
-            ensemble_member="r1i1p1f1",
-            scenario="SSP245",
-            predict_period_start=2015,
-            predict_period_end=2100,
-        )
-        pipeline = DownscalingPipeline(config, pipeline_options)
-        attrs = pipeline._build_output_attrs()
-        assert attrs["sai_downscaling:historical_ensemble_member"] == "r1i1p1f1"
-        assert attrs["sai_downscaling:ssp245_ensemble_member"] == "r1i1p1f1"
-
-    def test_tasmax_g6_002_attrs(self, g6_002_tasmax_config, pipeline_options):
-        """tasmax G6-002: historical=001, ssp245=007."""
-        pipeline = DownscalingPipeline(g6_002_tasmax_config, pipeline_options)
-        attrs = pipeline._build_output_attrs()
-        assert attrs["sai_downscaling:historical_ensemble_member"] == "001"
-        assert attrs["sai_downscaling:ssp245_ensemble_member"] == "007"
+def test_output_attrs_carry_resolved_members(subtests, pipeline_options):
+    cases = [
+        (_config(), "r1i1p1f1", "001"),
+        (_config("tasmax", "001"), "001", "009"),
+        (_config("tasmax", "002"), "001", "007"),
+        (_config(member="r1i1p1f1", scenario="SSP245"), "r1i1p1f1", "r1i1p1f1"),
+    ]
+    for config, hist, ssp245 in cases:
+        with subtests.test(variable=config.variable, member=config.ensemble_member):
+            attrs = DownscalingPipeline(config, pipeline_options)._build_output_attrs()
+            assert attrs["sai_downscaling:historical_ensemble_member"] == hist
+            assert attrs["sai_downscaling:ssp245_ensemble_member"] == ssp245
