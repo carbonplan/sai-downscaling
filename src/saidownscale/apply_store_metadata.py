@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Add license and attribution metadata to an icechunk store without rewriting the data.
 
 Writing group attrs touches only each group's ``zarr.json``, so this commits a new snapshot whose
@@ -13,19 +12,29 @@ only removed once its replacement is present. The first run copies ``srm_downsca
 ``sai_downscaling:`` and leaves both in place, so every reader keeps working. Update anything that
 reads the old names, then run again with ``--prune`` to drop them.
 
+This lives in the package rather than in ``scripts/`` so that the AWS Batch image carries it: the
+image copies ``src/`` and ``configs/`` only, and every remote task is invoked as
+``python -m saidownscale.<module>``. Writes to the published stores need the Source Cooperative
+write principal, which the job definition supplies, so a real run belongs on Batch rather than on a
+laptop.
+
 Examples
 --------
 See what would change, without writing::
 
-    uv run python scripts/add_store_metadata.py --store <store-uri> --branch v1.0.0 --dry-run
+    uv run python -m saidownscale.apply_store_metadata --store <uri> --branch v1.0.0 --dry-run
 
 Run 1, add metadata and copy provenance onto the current namespace::
 
-    uv run python scripts/add_store_metadata.py --store <store-uri> --branch v1.0.0 --repair --yes
+    uv run python -m saidownscale.apply_store_metadata --store <uri> --branch v1.0.0 --repair --yes
 
 Run 2, once nothing reads the old names, drop them::
 
-    uv run python scripts/add_store_metadata.py --store <store-uri> --branch v1.0.0 --prune --yes
+    uv run python -m saidownscale.apply_store_metadata --store <uri> --branch v1.0.0 --prune --yes
+
+An input store needs only one run, because it carries no namespaced provenance to migrate::
+
+    uv run python -m saidownscale.apply_store_metadata --store <uri> --branch main --repair --prune --yes
 """
 
 from __future__ import annotations
@@ -165,7 +174,9 @@ def _report(
             print(f"      ~ {key}: {current!r} -> {corrected!r}  [{verb}]")
         for key, (current, wanted) in sorted(plan.conflicts.items()):
             verb = "overwrite" if overwrite else "KEEP"
-            print(f"      ! {key}: {current!r} -> {wanted!r}  [{verb}]")
+            # A None current means the attr is absent and held back only because its pair disagrees.
+            shown = "<withheld, pairs with a conflict>" if current is None else repr(current)
+            print(f"      ! {key}: {shown} -> {wanted!r}  [{verb}]")
         for key, current in sorted(plan.removals.items()):
             verb = "delete" if prune else "SKIP"
             print(f"      - {key}: {current!r}  [{verb}]")
