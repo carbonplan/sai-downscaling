@@ -37,7 +37,7 @@ jobs:
             - uses: actions/checkout@v7
               with:
                   # setuptools_scm derives the version from history, and that version is
-                  # stamped into every output store as srm_downscaling:version.
+                  # stamped into every output store as sai_downscaling:version.
                   fetch-depth: 0
 
             - uses: aws-actions/configure-aws-credentials@v4
@@ -78,7 +78,7 @@ jobs:
                   # feature-branch code.
                   #
                   # The version tag closes the trace from data back to image: every output
-                  # store is stamped srm_downscaling:version and written to an icechunk
+                  # store is stamped sai_downscaling:version and written to an icechunk
                   # branch of that version, so the tag lets you go straight from a store to
                   # the image that produced it. "+" is legal in a version but not in a
                   # Docker tag.

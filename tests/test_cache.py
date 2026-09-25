@@ -487,7 +487,7 @@ def _provenance(config, **variable_config_updates) -> dict:
                 "variable_config": config.variable_config.model_copy(update=variable_config_updates)
             }
         )
-    return {"srm_downscaling:config_json": config.model_dump_json()}
+    return {"sai_downscaling:config_json": config.model_dump_json()}
 
 
 class TestVariableConfigVerification:

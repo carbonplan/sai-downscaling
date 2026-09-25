@@ -97,9 +97,10 @@ def test_output_attrs_carry_resolved_members(subtests, pipeline_options):
         (_config("tasmax", "001"), "001", "009"),
         (_config("tasmax", "002"), "001", "007"),
         (_config(member="r1i1p1f1", scenario="SSP245"), "r1i1p1f1", "r1i1p1f1"),
+        (_config(member="003", scenario="SSP245"), "r3i1p1f1", "003"),
     ]
     for config, hist, ssp245 in cases:
         with subtests.test(variable=config.variable, member=config.ensemble_member):
             attrs = DownscalingPipeline(config, pipeline_options)._build_output_attrs()
-            assert attrs["srm_downscaling:historical_ensemble_member"] == hist
-            assert attrs["srm_downscaling:ssp245_ensemble_member"] == ssp245
+            assert attrs["sai_downscaling:historical_ensemble_member"] == hist
+            assert attrs["sai_downscaling:ssp245_ensemble_member"] == ssp245

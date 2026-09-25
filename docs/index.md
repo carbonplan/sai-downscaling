@@ -42,6 +42,5 @@ access-data/terms-of-data-access
 :maxdepth: 2
 :caption: Methods
 methods/scientific-approach
-methods/pipeline-architecture
 Convenings summary <https://github.com/carbonplan/sai-downscaling/blob/main/docs/assets/convenings-summary.pdf>
 ```

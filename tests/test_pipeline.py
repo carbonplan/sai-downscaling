@@ -908,8 +908,12 @@ def test_tasmin_persists_raw_then_reconciles_store_to_store(tasmin_pipeline, sub
                 writes.append((loc.group, da))
                 return "snap"
 
-            def capture_reconcile(tasmin_loc, tasmax_loc, *, tasmin_fine="_unset", force=False):
-                reconcile.update(tasmin_fine=tasmin_fine, group=tasmin_loc.group)
+            def capture_reconcile(
+                tasmin_loc, tasmax_loc, *, tasmin_fine="_unset", force=False, for_historical=False
+            ):
+                reconcile.update(
+                    tasmin_fine=tasmin_fine, group=tasmin_loc.group, for_historical=for_historical
+                )
 
             with (
                 _patch_tasmin_load(stage),
@@ -927,7 +931,11 @@ def test_tasmin_persists_raw_then_reconciles_store_to_store(tasmin_pipeline, sub
             ):
                 getattr(p, stage)()
             assert any(g == fine.group and da is sentinel for g, da in writes)
-            assert reconcile == {"tasmin_fine": None, "group": fine.group}
+            assert reconcile == {
+                "tasmin_fine": None,
+                "group": fine.group,
+                "for_historical": stage.startswith("fit_historical"),
+            }
 
 
 def test_cached_tasmin_served_without_upstream_deps(tasmin_pipeline):
@@ -1139,16 +1147,15 @@ def test_scenario_model_hist_stops_at_train_period_end(pipeline_options, subtest
 
 
 _RUN_SPECIFIC_ATTRS = (
-    "srm_downscaling:downscaling_method",
-    "srm_downscaling:bias_correction_method",
-    "srm_downscaling:disaggregation_method",
-    "srm_downscaling:config_json",
-    "srm_downscaling:config_hash",
-    "srm_downscaling:scenario",
-    "srm_downscaling:ensemble_member",
-    "srm_downscaling:historical_ensemble_member",
-    "srm_downscaling:ssp245_ensemble_member",
-    "srm_downscaling:train_period",
+    "sai_downscaling:downscaling_method",
+    "sai_downscaling:bias_correction_method",
+    "sai_downscaling:disaggregation_method",
+    "sai_downscaling:config_json",
+    "sai_downscaling:scenario",
+    "sai_downscaling:ensemble_member",
+    "sai_downscaling:historical_ensemble_member",
+    "sai_downscaling:ssp245_ensemble_member",
+    "sai_downscaling:train_period",
 )
 
 
@@ -1162,16 +1169,16 @@ def test_obs_attrs_hold_only_shared_provenance(subtests):
         with subtests.test(attr=key):
             assert key not in attrs
     with subtests.test(attr="keyed-on fields"):
-        assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM6"
-        assert attrs["srm_downscaling:gcm_description"] == "CESM2.1.5-WACCM6(TSMLT)"
-        assert attrs["srm_downscaling:variable"] == "tas"
+        assert attrs["sai_downscaling:gcm"] == "CESM2-WACCM6"
+        assert attrs["sai_downscaling:gcm_description"] == "CESM2.1.5-WACCM6(TSMLT)"
+        assert attrs["sai_downscaling:variable"] == "tas"
         for key in ("observation_dataset", "version", "creation_date"):
-            assert f"srm_downscaling:{key}" in attrs
+            assert f"sai_downscaling:{key}" in attrs
     with subtests.test(attr="identical across methods and members"):
         other = _attrs_pipeline(
             downscaling_method="QDMSD", ensemble_member="r2i1p1f1", scenario="G6-1.5K"
         )._build_obs_attrs()
-        volatile = {"history", "srm_downscaling:creation_date"}
+        volatile = {"history", "sai_downscaling:creation_date"}
         assert {k: v for k, v in attrs.items() if k not in volatile} == {
             k: v for k, v in other.items() if k not in volatile
         }
@@ -1179,15 +1186,17 @@ def test_obs_attrs_hold_only_shared_provenance(subtests):
 
 def test_output_attrs_carry_method_and_gcm_description():
     attrs = _attrs_pipeline(downscaling_method="QDMSD")._build_output_attrs()
-    assert attrs["srm_downscaling:downscaling_method"] == "QDMSD"
-    assert attrs["srm_downscaling:gcm"] == "CESM2-WACCM6"
-    assert attrs["srm_downscaling:gcm_description"] == "CESM2.1.5-WACCM6(TSMLT)"
+    assert attrs["sai_downscaling:downscaling_method"] == "QDMSD"
+    assert attrs["sai_downscaling:gcm"] == "CESM2-WACCM6"
+    assert attrs["sai_downscaling:gcm_description"] == "CESM2.1.5-WACCM6(TSMLT)"
 
 
-def test_attrs_omit_description_for_unknown_gcm():
+def test_unknown_gcm_gets_no_description_and_no_output_attrs():
+    """Output attrs carry the license and citation, so an unattributed GCM must fail loudly."""
     pipeline = _attrs_pipeline(gcm="SOME-OTHER-GCM")
-    assert "srm_downscaling:gcm_description" not in pipeline._build_obs_attrs()
-    assert "srm_downscaling:gcm_description" not in pipeline._build_output_attrs()
+    assert "sai_downscaling:gcm_description" not in pipeline._build_obs_attrs()
+    with pytest.raises(KeyError, match="no license or citation recorded"):
+        pipeline._build_output_attrs()
 
 
 def _qdm_da(start: str, end: str, value: float = 280.0) -> xr.DataArray:

@@ -28,7 +28,12 @@ from ibicus.utils import PrecipitationHurdleModelGamma
 from icechunk.xarray import to_icechunk
 
 from saidownscale.cache import COARSE_ONLY_VARIABLES, ArtifactCache, StoreLocation
-from saidownscale.config import _ensure_root_group, _icechunk_storage_for_path
+from saidownscale.config import (
+    PUBLISHED_SCENARIO_NAMES,
+    SCENARIO_TO_GROUP,
+    _ensure_root_group,
+    _icechunk_storage_for_path,
+)
 from saidownscale.datasets import catalog as _catalog
 from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 from saidownscale.downscaling_utils import (
@@ -55,7 +60,9 @@ from saidownscale.encoding import (
     make_coarse_encoding,
     make_encoding,
 )
+from saidownscale.licenses import metadata_attrs
 from saidownscale.qa_checks import assert_no_nans
+from saidownscale.store_metadata import SCENARIO_ONLY_FIELDS, describe_source, published_name
 from saidownscale.utils import get_variable
 
 if TYPE_CHECKING:
@@ -553,7 +560,10 @@ class DownscalingPipeline:
                 pass
             else:
                 self._hist_member = lineage.historical
-                self._ssp245_member = lineage.ssp245_bridge
+                # A run with no bridge is SSP2-4.5 itself, so the SSP2-4.5 member it draws on is
+                # its own. Recording that rather than null keeps the attr meaning the same on
+                # every scenario group.
+                self._ssp245_member = lineage.ssp245_bridge or config.ensemble_member
                 self._ssp245_esgf_member = lineage.ssp245_esgf_bridge
                 self._sai_parent = lineage.sai_parent
 
@@ -592,46 +602,81 @@ class DownscalingPipeline:
         entry = _catalog.datasets.get(self.config.gcm)
         return None if entry is None else entry.description
 
-    def _build_output_attrs(self) -> dict:
-        """Build dataset-level attributes for pipeline output artifacts."""
+    def _build_output_attrs(self, *, for_historical: bool = False) -> dict:
+        """Build dataset-level attributes for pipeline output artifacts.
+
+        Parameters
+        ----------
+        for_historical : bool, default False
+            True for a write into the ``{method}/historical/`` group. Stage 2 is cached per GCM,
+            variable, method, and member, so a historical artifact is produced inside whichever
+            scenario run reached it first. Recording that run's scenario would label historical
+            data ``G6-1.5K`` and cite the wrong upstream simulation, so the scenario is pinned to
+            ``historical`` here while ``config_json`` keeps the full run config. For the same
+            reason the member is the historical one, and the fields in
+            :data:`~saidownscale.store_metadata.SCENARIO_ONLY_FIELDS` are left out, since the
+            historical fit reads neither the SSP2-4.5 bridge nor a parent SAI run.
+
+        Returns
+        -------
+        dict
+            Dataset-level attributes for the artifact.
+        """
         version = importlib.metadata.version("saidownscale")
+        scenario = "historical" if for_historical else (self.config.scenario or "historical")
+        scenario_group = SCENARIO_TO_GROUP[scenario]
+        # Stores publish the CMIP6 and GeoMIP experiment name, not our config spelling.
+        published_scenario = PUBLISHED_SCENARIO_NAMES[scenario_group]
         attrs = {
             # CF-standard — flat
             "Conventions": "CF-1.8",
             "institution": "CarbonPlan",
             "history": (
                 f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}: "
-                f"BCSD downscaling by srm v{version}"
+                f"{self.config.downscaling_method} downscaling by saidownscale v{version}"
             ),
             # Pipeline provenance — namespaced
-            "srm_downscaling:version": version,
-            "srm_downscaling:gcm": self.config.gcm,
-            "srm_downscaling:scenario": self.config.scenario or "historical",
-            "srm_downscaling:variable": self.config.variable,
-            "srm_downscaling:ensemble_member": self.config.ensemble_member,
-            "srm_downscaling:historical_ensemble_member": self._hist_member,
-            "srm_downscaling:ssp245_ensemble_member": self._ssp245_member,
-            "srm_downscaling:observation_dataset": self.config.obs_dataset,
-            "srm_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
-            "srm_downscaling:downscaling_method": self.config.downscaling_method,
-            "srm_downscaling:disaggregation_method": (
+            "sai_downscaling:version": version,
+            "sai_downscaling:gcm": self.config.gcm,
+            "sai_downscaling:scenario": published_scenario,
+            "sai_downscaling:variable": self.config.variable,
+            "sai_downscaling:ensemble_member": self.config.ensemble_member,
+            "sai_downscaling:historical_ensemble_member": self._hist_member,
+            "sai_downscaling:ssp245_ensemble_member": self._ssp245_member,
+            "sai_downscaling:observation_dataset": self.config.obs_dataset,
+            "sai_downscaling:bias_correction_method": self.config.variable_config.debias_approach,
+            "sai_downscaling:downscaling_method": self.config.downscaling_method,
+            "sai_downscaling:disaggregation_method": (
                 self.config.variable_config.disaggregation_method
             ),
-            "srm_downscaling:train_period": (
+            "sai_downscaling:train_period": (
                 f"{self.config.train_period_start}-{self.config.train_period_end}"
             ),
-            "srm_downscaling:config_hash": self.config.config_hash,
-            "srm_downscaling:config_json": self.config.model_dump_json(),
-            "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+            "sai_downscaling:config_json": self.config.model_dump_json(),
+            "sai_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
+        # License, attribution and contact, so a run from scratch publishes data that is already
+        # correctly labeled rather than waiting on a metadata pass afterwards.
+        attrs.update(metadata_attrs(self.config.gcm, scenario_group, product="output"))
+        attrs["source"] = describe_source(
+            self.config.gcm,
+            published_scenario,
+            self.config.obs_dataset,
+            self.config.downscaling_method,
+        )
+
         description = self._gcm_description()
         if description is not None:
-            attrs["srm_downscaling:gcm_description"] = description
+            attrs["sai_downscaling:gcm_description"] = description
         # Only present on scenarios that continue an earlier SAI run, so readers can tell
         # which run supplied the pre-scenario years of the bridge.
         if self._sai_parent is not None:
-            attrs["srm_downscaling:sai_parent_scenario"] = self._sai_parent.scenario
-            attrs["srm_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
+            attrs["sai_downscaling:sai_parent_scenario"] = published_name(self._sai_parent.scenario)
+            attrs["sai_downscaling:sai_parent_ensemble_member"] = self._sai_parent.member
+        if for_historical:
+            attrs["sai_downscaling:ensemble_member"] = self._hist_member
+            for field_name in SCENARIO_ONLY_FIELDS:
+                attrs.pop(f"sai_downscaling:{field_name}", None)
         return attrs
 
     def _build_obs_attrs(self) -> dict:
@@ -646,7 +691,7 @@ class DownscalingPipeline:
         method, a scenario, a member, a train period, and a config hash, each fixed to
         whatever run happened to write the artifact first. Only the fields the artifact
         is actually keyed on are recorded, which makes the presence of
-        ``srm_downscaling:downscaling_method`` a reliable signal that a group depends
+        ``sai_downscaling:downscaling_method`` a reliable signal that a group depends
         on the method.
 
         Returns
@@ -661,18 +706,18 @@ class DownscalingPipeline:
             "institution": "CarbonPlan",
             "history": (
                 f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}: "
-                f"observations regridded to the model grid by srm v{version}"
+                f"observations regridded to the model grid by saidownscale v{version}"
             ),
             # Pipeline provenance — namespaced. Only what this artifact is keyed on.
-            "srm_downscaling:version": version,
-            "srm_downscaling:gcm": self.config.gcm,
-            "srm_downscaling:variable": self.config.variable,
-            "srm_downscaling:observation_dataset": self.config.obs_dataset,
-            "srm_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
+            "sai_downscaling:version": version,
+            "sai_downscaling:gcm": self.config.gcm,
+            "sai_downscaling:variable": self.config.variable,
+            "sai_downscaling:observation_dataset": self.config.obs_dataset,
+            "sai_downscaling:creation_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
         description = self._gcm_description()
         if description is not None:
-            attrs["srm_downscaling:gcm_description"] = description
+            attrs["sai_downscaling:gcm_description"] = description
         return attrs
 
     def _write_to_icechunk(
@@ -795,6 +840,7 @@ class DownscalingPipeline:
         *,
         tasmin_fine: xr.DataArray | None = None,
         force: bool = False,
+        for_historical: bool = False,
     ) -> None:
         """Dedicated reconcile step: enforce ``tasmax >= tasmin`` on the fine outputs.
 
@@ -903,7 +949,7 @@ class DownscalingPipeline:
                 tasmin_corrected,
                 tasmin_loc,
                 encoding=make_encoding(self.config.variable),
-                dataset_attrs=self._build_output_attrs(),
+                dataset_attrs=self._build_output_attrs(for_historical=for_historical),
                 force=force,
             )
 
@@ -1181,7 +1227,7 @@ class DownscalingPipeline:
             ),
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
+            dataset_attrs=self._build_output_attrs(for_historical=True),
         )
         logger.info(
             "✓ Saved debiased coarse historical: %s/%s (%.2fs)",
@@ -1206,7 +1252,7 @@ class DownscalingPipeline:
             model_hist_downscaled,
             loc,
             encoding=make_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
+            dataset_attrs=self._build_output_attrs(for_historical=True),
             force=False,
         )
         logger.info(
@@ -1216,7 +1262,9 @@ class DownscalingPipeline:
         # Dedicated reconcile step: swap any tasmax < tasmin left by independent
         # disaggregation and write both corrected fields (issue #331).
         t0 = time.perf_counter()
-        self.reconcile_temperature_extremes(loc, tasmax_fine_loc, tasmin_fine=None, force=force)
+        self.reconcile_temperature_extremes(
+            loc, tasmax_fine_loc, tasmin_fine=None, force=force, for_historical=True
+        )
         logger.info(
             "✓ Reconciled + saved historical: %s/%s (%.2fs)",
             loc.store_path,
@@ -1315,7 +1363,7 @@ class DownscalingPipeline:
             model_hist_debiased,
             coarse_loc,
             encoding=make_coarse_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
+            dataset_attrs=self._build_output_attrs(for_historical=True),
         )
         logger.info(
             "✓ Saved debiased coarse historical: %s/%s (%.2fs)",
@@ -1344,7 +1392,7 @@ class DownscalingPipeline:
             da=model_hist_downscaled,
             loc=loc,
             encoding=make_encoding(self.config.variable),
-            dataset_attrs=self._build_output_attrs(),
+            dataset_attrs=self._build_output_attrs(for_historical=True),
             force=force,
         )
         logger.info(

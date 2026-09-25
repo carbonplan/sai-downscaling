@@ -70,8 +70,7 @@ class LineageEntry:
 # The one SAI run that another scenario continues.
 _G6_002 = ScenarioMember(scenario="G6-1.5K", member="002")
 
-# UKESM1-1-LL historical is a single UM suite, not a CMIP6 realization, so its ID is the suite name
-# rather than a ripf label. Every UKESM1-1-LL scenario member and variable branches from this one run.
+# A Met Office suite name, not a CMIP6 ripf label.
 _UKESM_HIST = "u-by791"
 
 
@@ -154,7 +153,7 @@ def _build_lineage() -> dict[tuple[str, str, str, str], LineageEntry]:
     # UKESM1-0-LL / UKESM1-1 are supplier labelling typos (confirmed by email), corrected on
     # ingest in saidownscale.input_data.ukesm.
     # SSP245 and G6-1.5K are each a single icechunk (r2/r3/r12i1p1f2) covering all variables.
-    # The Historical scenario has a single ensemble_member: u-by791, so scenario members share that single historical parent.
+    # Scenario members all resolve to u-by791, the only UKESM historical we hold.
     # SSP245 has no hurs.
     _ukesm_ssp245 = tuple(v for v in _all if v != "hurs")
     for _m in ("r2i1p1f2", "r3i1p1f2", "r12i1p1f2"):

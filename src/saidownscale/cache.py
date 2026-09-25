@@ -17,7 +17,12 @@ from pathlib import Path
 import icechunk
 import zarr
 
-from saidownscale.config import _ROOT_MESSAGES, SCENARIO_TO_GROUP, _icechunk_storage_for_path
+from saidownscale.config import (
+    _ROOT_MESSAGES,
+    SCENARIO_TO_GROUP,
+    _icechunk_storage_for_path,
+    read_attr,
+)
 from saidownscale.downscaling_config import DownscalingConfig, PipelineOptions
 
 logger = logging.getLogger(__name__)
@@ -490,7 +495,7 @@ class ArtifactCache:
         the second run reports a hit, skips the stage, and every downstream stage
         silently consumes artifacts built with different bias-correction settings.
 
-        The comparison reads the ``srm_downscaling:config_json`` provenance attribute
+        The comparison reads the ``sai_downscaling:config_json`` provenance attribute
         written by ``DownscalingPipeline._build_attrs`` and compares only its nested
         ``variable_config``. Other config differences are out of scope here: they
         either already appear in the path or are legitimate (a wider predict period
@@ -529,7 +534,7 @@ class ArtifactCache:
         try:
             session = repo.readonly_session(branch=branch)
             attrs = dict(zarr.open_group(session.store, path=loc.group, mode="r").attrs)
-            raw = attrs.get("srm_downscaling:config_json")
+            raw = read_attr(attrs, "config_json")
             stored = json.loads(raw)["variable_config"] if raw else None
         except CacheConfigMismatchError:
             raise

@@ -33,7 +33,7 @@ class VirtualChunkContainerConfig:
 @dataclass(kw_only=True)
 class BaseCatalogEntry:
     name: str
-    # Model description written to outputs as ``srm_downscaling:gcm_description`` (#598).
+    # Model description written to outputs as ``sai_downscaling:gcm_description`` (#598).
     description: str | None = None
 
 

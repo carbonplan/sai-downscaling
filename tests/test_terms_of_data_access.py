@@ -1,20 +1,14 @@
-"""Guard the Terms of Data Access copies against drift.
+"""Guard the Terms of Data Access and licenses docs against drift from their sources."""
 
-``TERMS_OF_DATA_ACCESS`` at the repository root is the canonical text. Every other copy, in the
-docs site and anywhere else we publish it, is generated from that file and must match it byte for
-byte. Edit the canonical file and copy it outward, never the other way round.
-"""
-
+import re
 from pathlib import Path
 
-import pytest
+from saidownscale.licenses import INPUT_ATTRIBUTION, LICENSE_URLS, TERMS_OF_DATA_ACCESS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = REPO_ROOT / "TERMS_OF_DATA_ACCESS"
 COPIES = [REPO_ROOT / "docs" / "access-data" / "terms-of-data-access.md"]
-
-# The clauses the CarbonPlan Terms of Data Access guidance requires verbatim. They are listed
-# separately from the whole-file comparison so a reworded canonical file fails loudly too.
+LICENSES_PAGE = REPO_ROOT / "docs" / "access-data" / "licenses.md"
 REQUIRED_CLAUSES = [
     "## Our Terms of Use Apply to SAI Downscaling",
     "you agree to CarbonPlan’s Terms Of Use",
@@ -25,51 +19,23 @@ REQUIRED_CLAUSES = [
     "without warranty of any kind",
     "accuracy, completeness, merchantability, fitness for a particular purpose, or noninfringement",
 ]
+MIN_ATTRIBUTION_CHARS = 40
 
 
-def test_canonical_file_exists() -> None:
-    assert CANONICAL.is_file(), f"{CANONICAL.name} is the single source of truth and must exist"
-
-
-@pytest.mark.parametrize("clause", REQUIRED_CLAUSES)
-def test_canonical_keeps_required_clauses(clause: str) -> None:
-    """The legal wording is quoted text"""
-    assert clause in CANONICAL.read_text(), (
-        f"{CANONICAL.name} no longer contains the required clause: {clause!r}"
-    )
-
-
-@pytest.mark.parametrize("copy", COPIES, ids=lambda p: str(p.relative_to(REPO_ROOT)))
-def test_copies_match_canonical(copy: Path) -> None:
-    assert copy.is_file(), f"{copy.relative_to(REPO_ROOT)} is missing"
-    assert copy.read_text() == CANONICAL.read_text(), (
-        f"{copy.relative_to(REPO_ROOT)} has drifted from {CANONICAL.name}. "
-        f"Re-sync with: cp {CANONICAL.name} {copy.relative_to(REPO_ROOT)}"
-    )
-
-
-LICENSES_PAGE = REPO_ROOT / "docs" / "access-data" / "licenses.md"
-
-
-def _documented_license_rows() -> set[tuple[str, str]]:
-    """Return the (gcm, scenario_group) pairs the licenses page attributes."""
-    rows: set[tuple[str, str]] = set()
+def _license_table_rows() -> list[tuple[str, str, str, str]]:
+    rows = []
     for line in LICENSES_PAGE.read_text().split("\n"):
         if not line.startswith("|"):
             continue
         cells = [c.strip().strip("`") for c in line.strip("|").split("|")]
-        if len(cells) < 4 or cells[0] in {"GCM", "---"}:
+        if len(cells) != 4 or cells[0] == "GCM" or set(cells[0]) <= {"-", ":"}:
             continue
-        rows.add((cells[0], cells[1]))
+        rows.append(tuple(cells))
     return rows
 
 
 def _published_pairs() -> set[tuple[str, str]]:
-    """Return every (gcm, scenario_group) the pipeline publishes, historical included.
-
-    ``all_lineage_keys`` covers the scenario legs only, because historical has no SAI parent to
-    resolve, so we add a historical leg per GCM to match what the output stores actually hold.
-    """
+    """Every published (gcm, scenario_group); lineage keys omit historical, so add it per GCM."""
     from saidownscale.config import SCENARIO_TO_GROUP
     from saidownscale.lineage import all_lineage_keys
 
@@ -77,10 +43,59 @@ def _published_pairs() -> set[tuple[str, str]]:
     return pairs | {(gcm, "historical") for gcm, _ in pairs}
 
 
-def test_every_published_scenario_is_attributed() -> None:
-    """A new GCM or scenario must not ship without a license and citation."""
-    missing = _published_pairs() - _documented_license_rows()
-    assert not missing, (
-        "These published (GCM, scenario) pairs have no row in "
-        f"{LICENSES_PAGE.relative_to(REPO_ROOT)}: {sorted(missing)}"
+def test_canonical_terms_keep_required_clauses_and_copies_match(subtests) -> None:
+    assert CANONICAL.is_file(), f"{CANONICAL.name} is the single source of truth and must exist"
+    canonical = CANONICAL.read_text()
+    for clause in REQUIRED_CLAUSES:
+        with subtests.test(clause=clause):
+            assert clause in canonical, (
+                f"{CANONICAL.name} no longer contains the required clause: {clause!r}"
+            )
+    for copy in COPIES:
+        rel = copy.relative_to(REPO_ROOT)
+        with subtests.test(copy=str(rel)):
+            assert copy.is_file(), f"{rel} is missing"
+            assert copy.read_text() == canonical, (
+                f"{rel} has drifted from {CANONICAL.name}. Re-sync with: cp {CANONICAL.name} {rel}"
+            )
+
+
+def test_terms_url_matches_where_the_page_is_published() -> None:
+    """Read the Docs is multi-version, so the ``/en/latest/`` segment is required."""
+    page = COPIES[0].relative_to(REPO_ROOT / "docs").with_suffix(".html").as_posix()
+    assert TERMS_OF_DATA_ACCESS == f"https://sai-downscaling.readthedocs.io/en/latest/{page}"
+
+
+def test_every_published_scenario_is_attributed_under_a_known_license(subtests) -> None:
+    rows = _license_table_rows()
+    with subtests.test("every published scenario is attributed"):
+        missing = _published_pairs() - {(gcm, scenario) for gcm, scenario, _, _ in rows}
+        assert not missing, (
+            "These published (GCM, scenario) pairs have no row in "
+            f"{LICENSES_PAGE.relative_to(REPO_ROOT)}: {sorted(missing)}"
+        )
+    for gcm, scenario, license_name, attribution in rows:
+        with subtests.test(gcm=gcm, scenario=scenario):
+            assert len(attribution) > MIN_ATTRIBUTION_CHARS, (
+                f"{gcm}/{scenario} has no usable attribution text: {attribution!r}"
+            )
+            if license_name:
+                assert license_name in LICENSE_URLS, (
+                    f"{gcm}/{scenario} names an unrecognized license: {license_name!r}"
+                )
+
+
+def test_module_and_docs_table_agree() -> None:
+    documented = {
+        (gcm, scenario): (license_name or None, attribution)
+        for gcm, scenario, license_name, attribution in _license_table_rows()
+    }
+    assert set(documented) == set(INPUT_ATTRIBUTION), (
+        "the licenses table and saidownscale.licenses cover different simulations"
     )
+    for key, (license_id, attribution) in documented.items():
+        entry = INPUT_ATTRIBUTION[key]
+        assert entry.license == license_id, f"{key}: license differs from the docs table"
+        assert entry.references == re.sub(r"<(https?://[^>]+)>", r"\1", attribution), (
+            f"{key}: citation text differs from the docs table (autolinks stripped)"
+        )

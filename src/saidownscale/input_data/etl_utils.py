@@ -1,4 +1,3 @@
-import json
 import logging
 from collections.abc import Callable, Iterable
 from concurrent.futures import CancelledError
@@ -18,7 +17,8 @@ from rich.table import Table
 from rich.text import Text
 from virtualizarr.parsers import HDFParser
 
-from saidownscale.config import VarSpec
+from saidownscale.config import PUBLISHED_SCENARIO_NAMES, SCENARIO_TO_GROUP, VarSpec
+from saidownscale.store_metadata import dropped_attrs, input_attrs
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -218,23 +218,59 @@ def add_cf_bounds(ds: xr.Dataset, coord_names: list[str] = None) -> xr.Dataset:
     return ds
 
 
-def apply_ensemble_provenance(
-    ds: xr.Dataset,
-    derivation_logic: str,
-    member_provenance: dict | None = None,
-    ensemble_coord: str = "ensemble_member",
-) -> xr.Dataset:
-    """Set ensemble_member provenance on dataset global attrs and ensemble coord attrs."""
+def apply_published_metadata(ds: xr.Dataset, gcm: str, scenario: str) -> xr.Dataset:
+    """Stamp the attrs an input store publishes, and strip the ones it does not.
 
-    ds.attrs["ensemble_derivation_logic"] = derivation_logic
-    if ensemble_coord in ds.coords:
-        coord_attrs: dict = {
-            "long_name": "Ensemble Member Identifier",
-            "derivation_method": derivation_logic,
-        }
-        if member_provenance is not None:
-            coord_attrs["member_specific_provenance"] = json.dumps(member_provenance)
-        ds[ensemble_coord].attrs.update(coord_attrs)
+    Without this a re-ingest silently reverts a store to its pre-publication state: the license,
+    citation and terms disappear, the scenario reverts to our config spelling, and the run detail
+    inherited from the source netCDFs comes back. Running it here means the ETL and
+    :mod:`saidownscale.apply_store_metadata` agree, so the out-of-band pass is a no-op on a freshly
+    ingested store rather than a required follow-up.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        Dataset to stamp, modified in place and returned.
+    gcm : str
+        GCM key as :data:`saidownscale.licenses.INPUT_ATTRIBUTION` spells it, which is not always
+        what the ``model`` attr says: CESM publishes ``CESM2-WACCM`` there but is keyed on
+        ``CESM2-WACCM6``.
+    scenario : str
+        Config spelling of the scenario, such as ``"SSP245"``.
+
+    Returns
+    -------
+    xarray.Dataset
+        The stamped dataset.
+    """
+    group = SCENARIO_TO_GROUP[scenario]
+    for key in dropped_attrs("input") & ds.attrs.keys():
+        del ds.attrs[key]
+    ds.attrs["scenario"] = PUBLISHED_SCENARIO_NAMES[group]
+    ds.attrs.update(input_attrs(gcm, group))
+    return ds
+
+
+def label_ensemble_coord(ds: xr.Dataset) -> xr.Dataset:
+    """Give the ``ensemble_member`` coordinate its long name.
+
+    How a member ID was derived is no longer recorded. It used to be stored twice, on the dataset
+    and on the coordinate, both rendered from the lookup tables in the per-model ETL modules.
+    Those tables are the real record and cannot drift from what ran, whereas a prose copy in a
+    published store can.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        Dataset to label, modified in place and returned.
+
+    Returns
+    -------
+    xarray.Dataset
+        The labeled dataset.
+    """
+    if "ensemble_member" in ds.coords:
+        ds["ensemble_member"].attrs["long_name"] = "Ensemble Member Identifier"
     return ds
 
 
