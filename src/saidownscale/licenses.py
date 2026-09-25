@@ -107,7 +107,7 @@ INPUT_ATTRIBUTION: dict[tuple[str, str], Attribution] = {
             "maintained by the National Center for Atmospheric Research. See also: Lee, W. "
             "R., Visioni, D., Wagman, B. M., Wentland, C. R., Kravitz, B., Watanabe, S., "
             "Sekiya, T., Jones, A., Haywood, J., Henry, M., and Bednarz, E. M.: G6-1.5K-SAI "
-            "and G6sulfur: changes in impacts and uncertainty depending on stratospheric "
+            "and G6sulfur: Changes in impacts and uncertainty depending on stratospheric "
             "aerosol injection strategy in the Geoengineering Model Intercomparison Project, "
             "Atmos. Chem. Phys., 26, 7463–7483, https://doi.org/10.5194/acp-26-7463-2026, "
             "2026."
@@ -133,7 +133,7 @@ INPUT_ATTRIBUTION: dict[tuple[str, str], Attribution] = {
     ("UKESM1-1-LL", "ssp245"): Attribution(
         license=OGL_V3,
         references=(
-            "These simulations were run by Andy Jones in collaboration with Jim Haywood and "
+            "These simulations were run by Andy Jones, in collaboration with Jim Haywood and "
             "Matthew Henry, and provided by Matthew Henry. The UK Earth System Model is "
             "developed and maintained by the Met Office Hadley Centre."
         ),
@@ -141,12 +141,12 @@ INPUT_ATTRIBUTION: dict[tuple[str, str], Attribution] = {
     ("UKESM1-1-LL", "g6_1p5k"): Attribution(
         license=OGL_V3,
         references=(
-            "These simulations were run by Andy Jones in collaboration with Jim Haywood and "
+            "These simulations were run by Andy Jones, in collaboration with Jim Haywood and "
             "Matthew Henry, and provided by Matthew Henry. The UK Earth System Model is "
             "developed and maintained by the Met Office Hadley Centre. See also: Lee, W. R., "
             "Visioni, D., Wagman, B. M., Wentland, C. R., Kravitz, B., Watanabe, S., Sekiya, "
             "T., Jones, A., Haywood, J., Henry, M., and Bednarz, E. M.: G6-1.5K-SAI and "
-            "G6sulfur: changes in impacts and uncertainty depending on stratospheric aerosol "
+            "G6sulfur: Changes in impacts and uncertainty depending on stratospheric aerosol "
             "injection strategy in the Geoengineering Model Intercomparison Project, Atmos. "
             "Chem. Phys., 26, 7463–7483, https://doi.org/10.5194/acp-26-7463-2026, 2026."
         ),

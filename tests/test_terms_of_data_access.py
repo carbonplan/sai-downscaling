@@ -10,7 +10,7 @@ CANONICAL = REPO_ROOT / "TERMS_OF_DATA_ACCESS"
 COPIES = [REPO_ROOT / "docs" / "access-data" / "terms-of-data-access.md"]
 LICENSES_PAGE = REPO_ROOT / "docs" / "access-data" / "licenses.md"
 REQUIRED_CLAUSES = [
-    "## Our Terms of Use Apply to SAI Downscaling",
+    "## Our Terms of Use apply to SAI Downscaling",
     "you agree to CarbonPlan’s Terms Of Use",
     "https://carbonplan.org/terms",
     "data provided by CarbonPlan may originate from third parties",

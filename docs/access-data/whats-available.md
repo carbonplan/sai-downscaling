@@ -1,7 +1,7 @@
 # What's available
 
-We are publishing statistically downscaled, daily climate model output to support the regional evaluation of the potential impacts of stratospheric aerosol injection (SAI). The outputs cover 4
-scenarios, 2 global climate models (GCMs), all available ensemble members, and 5 variables. We bias-correct GCM output against ERA5 and downscale it to a global 0.25° grid with 2 methods.
+We are publishing statistically downscaled, daily climate model output to support the regional evaluation of the potential impacts of stratospheric aerosol injection (SAI). The outputs cover four
+scenarios, two global climate models (GCMs), all available ensemble members, and five variables. We bias-correct GCM output against ERA5, and downscale it to a global 0.25° grid with two methods.
 
 | Property | Value |
 | --- | --- |
@@ -32,8 +32,8 @@ data they were built from. The table below summarizes all three.
 | Product | Description | Grid | Variables |
 | --- | --- | --- | --- |
 | Downscaled | Bias-corrected and spatially disaggregated. This is the main product. | 0.25° | `tas`, `tasmax`, `tasmin`, `pr`, `rsds` |
-| Coarse bias-corrected | Bias-corrected, but not spatially disaggregated. | Native GCM grid, about 1° to 2° | The same five, plus `dtr` (diurnal temperature range) |
-| Processed input | Daily GCM output that the pipeline started from, before bias correction. | Native GCM grid, about 1° to 2° | The same five |
+| Coarse bias-corrected | Bias-corrected, but not spatially disaggregated | Native GCM grid, about 1° to 2° | The same five, plus `dtr` (diurnal temperature range) |
+| Processed input | Daily GCM output that the pipeline started from, before bias correction | Native GCM grid, about 1° to 2° | The same five |
 
 ## Data location
 
@@ -46,7 +46,7 @@ All data lives in CarbonPlan's
 [Source Cooperative repository](https://source.coop/carbonplan/srm-downscaling). The bucket is
 public in AWS `us-west-2`, so you don't need AWS credentials to read it. Each store is an
 Icechunk repository under
-`s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/`, at the paths below.
+`s3://us-west-2.opendata.source.coop/carbonplan/srm-downscaling/`, at the paths below:
 
 | Data | Path | Branch |
 | --- | --- | --- |
@@ -62,7 +62,7 @@ only `v1.0.0`, which is the branch the example below opens. The input stores kee
 ### Data access
 
 We offer two ways to access the data from the Source Cooperative repository. Which one fits best
-depends on how much data you need and whether you want a local copy.
+depends on how much data you need, and whether you want a local copy.
 
 - **Download a local copy.** If you want to work with a small amount of data on your own machine,
   or you prefer netCDF files, we built a set of [access utilities](./access-utilities.md). You can
@@ -70,9 +70,9 @@ depends on how much data you need and whether you want a local copy.
   environment without writing code yourself.
 - **Stream data from the cloud.** If you're comfortable working with data in the cloud without
   keeping a local copy, you can use tools like
-  [zarr-python](https://zarr.readthedocs.io/en/latest/),
+  [Zarr-Python](https://zarr.readthedocs.io/en/latest/),
   [Icechunk](https://icechunk.io/en/stable/getting-started/quickstart/), or
-  [xarray](https://xarray.dev). The following example opens one downscaled group from the current
+  [Xarray](https://xarray.dev). The following example opens one downscaled group from the current
   release.
 
 ```python
@@ -153,7 +153,7 @@ against it.
 The groups described above tell you which part of the data you're reading. Within a group, each
 variable is an array that is physically split into chunks: fixed-size blocks
 that are compressed and read as a single unit. A read fetches whole chunks, so how much data a
-request moves depends on how many chunks it touches rather than how many values it returns. For this
+request moves depends on how many chunks it touches, rather than how many values it returns. For this
 dataset, a time series at a single point reads about one chunk per year, while a wide region reads
 many chunks for every year.
 

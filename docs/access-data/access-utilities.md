@@ -13,12 +13,12 @@ start to finish.
 
 | What do you want to do? | Use |
 | --- | --- |
-| Try a short example that loads data for one region and season and saves it to a file | [`notebooks/quickstart.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/quickstart.ipynb) |
-| Inspect the data interactively in a Jupyter notebook, with more detail on each step, including quality flags and the bias-corrected data | [`notebooks/subsetting-and-exporting.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb) |
-| Run a global (huge!) analysis without running out of memory | [`notebooks/compute-resources.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/compute-resources.ipynb) |
-| Explore the GCM input data that the downscaling started from | [`notebooks/input-data.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/input-data.ipynb) |
-| Download a subset of the data with Python | [`scripts/download.py`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/scripts/download.py) |
-| Download a subset of the data with Bash | [`scripts/download.sh`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/scripts/download.sh) |
+| Try a short example that loads data for one region and season and saves it to a file. | [`notebooks/quickstart.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/quickstart.ipynb) |
+| Inspect the data interactively in a Jupyter notebook, with more detail on each step, including quality flags and the bias-corrected data. | [`notebooks/subsetting-and-exporting.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/subsetting-and-exporting.ipynb) |
+| Run a global (huge!) analysis without running out of memory. | [`notebooks/compute-resources.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/compute-resources.ipynb) |
+| Explore the GCM input data that the downscaling started from. | [`notebooks/input-data.ipynb`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/notebooks/input-data.ipynb) |
+| Download a subset of the data with Python. | [`scripts/download.py`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/scripts/download.py) |
+| Download a subset of the data with Bash. | [`scripts/download.sh`](https://github.com/carbonplan/sai-downscaling-data-utils/blob/main/scripts/download.sh) |
 
 If you come across a term you don't know, check the
 [glossary](https://github.com/carbonplan/sai-downscaling/blob/main/GLOSSARY.md) in the repository.
