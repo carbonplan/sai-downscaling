@@ -14,8 +14,8 @@ established starting point, and quantile delta mapping with spatial disaggregati
 the climate trend through its own quantile mapping instead of a separate detrending step. We
 publish both for every scenario, variable, and ensemble member.
 
-If you want the data, start with [What's available](./access-data/whats-available.md). If you want
-to know how we produced it, start with [Scientific methods](./methods/scientific-approach.md).
+If you want the data, start with [What's Available](./access-data/whats-available.md). If you want
+to know how we produced it, start with [Scientific Methods](./methods/scientific-approach.md).
 
 We also encourage developers to explore the extensive explanatory information in our
 [GitHub repo](https://github.com/carbonplan/sai-downscaling). These resources will help anyone
@@ -24,7 +24,7 @@ contributions by [opening an issue](https://github.com/carbonplan/sai-downscalin
 
 :::{important}
 By downloading or accessing SAI Downscaling data, you agree to the [Terms of Data Access](./access-data/terms-of-data-access.md).
-See the [licenses and citation](./access-data/licenses.md) section for guidance specific to each of the products in this data release.
+See the [Licenses and Citation](./access-data/licenses.md) section for guidance specific to each of the products in this data release.
 :::
 
 ```{toctree}
