@@ -1,15 +1,60 @@
 """
-Canonical variable specifications, units, and icechunk client configuration.
+Canonical variable specifications, units, store attribute names, and icechunk client
+configuration.
 
-Defines :class:`VarStandards` with per-variable metadata (:class:`VarSpec`) and the
-:data:`SCENARIO_TO_GROUP` mapping used to derive S3 output path segments from scenario
-names.
+Defines :class:`VarStandards` with per-variable metadata (:class:`VarSpec`), the
+:data:`SCENARIO_TO_GROUP` mapping used to derive S3 output path segments from scenario names,
+and the :data:`ATTR_PREFIX` namespace that provenance attrs are written under. Those live here
+rather than alongside the writer because both the pipeline and the cache read them.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 import icechunk
 from distributed import Client
+
+#: Namespace for the provenance attrs we write. Single-sourced here so a future rename is one
+#: edit rather than a sweep.
+ATTR_PREFIX = "sai_downscaling:"
+
+#: The namespace used before the project was renamed. Data published as v1.0.0 carries it, and is
+#: fixed in place rather than regenerated, so every reader accepts it. Nothing writes it.
+LEGACY_ATTR_PREFIX = "srm_downscaling:"
+
+
+def read_attr(attrs: Mapping[str, Any], field_name: str, default: Any = None) -> Any:
+    """Read one of our provenance attrs, accepting the pre-rename namespace.
+
+    Parameters
+    ----------
+    attrs : mapping
+        A group's attributes.
+    field_name : str
+        The attr name without its namespace, e.g. ``"config_json"``.
+    default : Any, optional
+        Returned when neither namespace carries the attr.
+
+    Returns
+    -------
+    Any
+        The stored value, or ``default``.
+
+    Notes
+    -----
+    The fallback to :data:`LEGACY_ATTR_PREFIX` is what keeps provenance checks working against
+    v1.0.0. A reader that looked only for the current namespace would find nothing there and
+    quietly skip the check rather than fail, which is the more dangerous outcome.
+
+    Presence decides which namespace answers, not truthiness. A null under the current namespace
+    is still the current answer, such as the ``ssp245_ensemble_member`` that SSP2-4.5 groups
+    carried before it recorded their own member.
+    """
+    current = f"{ATTR_PREFIX}{field_name}"
+    if current in attrs:
+        return attrs[current]
+    return attrs.get(f"{LEGACY_ATTR_PREFIX}{field_name}", default)
 
 
 @dataclass(frozen=True)
@@ -48,6 +93,18 @@ SCENARIO_TO_GROUP: dict[str, str] = {
     "esgf-SSP245": "esgf_ssp245",
     "esgf-ssp245": "esgf_ssp245",  # lowercase alias
     "esgf_ssp245": "esgf_ssp245",  # group-name pass-through
+}
+
+#: The scenario name we publish in store attrs, keyed on the group. These are the CMIP6 and GeoMIP
+#: experiment names, which is what a reader outside this project recognizes. They are deliberately
+#: not the config spellings above: a config scenario names a slice of input data and appears in
+#: every cache path, so renaming those would move every artifact we have already written.
+PUBLISHED_SCENARIO_NAMES: dict[str, str] = {
+    "historical": "historical",
+    "ssp245": "SSP2-4.5",
+    "g6_1p5k": "G6-1.5K-SAI",
+    "g6_1p5k_end": "G6-1.5K-SAI-END",
+    "esgf_ssp245": "SSP2-4.5",
 }
 
 GROUP_TO_SCENARIO: dict[str, str] = {

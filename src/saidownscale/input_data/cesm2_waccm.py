@@ -20,12 +20,13 @@ from saidownscale.input_data.etl_utils import (
     CMORIZE_pr,
     _display_dry_run_result,
     _init_repo_from_uri,
-    apply_ensemble_provenance,
+    apply_published_metadata,
     build_encoding_dict,
     console,
     determine_write_mode,
     get_aws_creds,
     group_paths_by_member,
+    label_ensemble_coord,
     open_netcdf_from_s3,
     raw_netcdf_prefix,
     setup_logging,
@@ -179,19 +180,19 @@ def _attach_source_manifest(ds: xr.Dataset, url: str) -> xr.Dataset:
     return ds
 
 
+#: Key into the licenses table, which is not the ``model`` attr: that still says CESM2-WACCM.
+GCM_KEY = "CESM2-WACCM6"
+
+
 def _finalize_metadata(ds: xr.Dataset, scenario: str) -> xr.Dataset:
     """Records the parsing and the lineage chain"""
 
-    derivation_logic = "Ensemble member derived from filename case segment or variant_label"
-
-    parent_exp = ds.attrs.get("parent_experiment_id", "unknown_parent")
-    lineage = f"{parent_exp} -> {scenario}"
-
+    # No experiment lineage is recorded. It was derived from ``parent_experiment_id``, which only
+    # CMORized CMIP6 output carries, so on the raw CAM deliveries it read "unknown_parent -> " plus
+    # the scenario already recorded beside it.
     etl_attrs = {
         "scenario": scenario,
         "model": "CESM2-WACCM",
-        "experiment_lineage": lineage,
-        "ensemble_derivation_logic": derivation_logic,  # ie, did it come from attrs / parsing the filepath.
         "processing_steps": (
             "time_drop_duplicates, lon_to_180, lat_lon_sort, trim_negative_precip, convert_calendar_to_proleptic_gregorian"
         ),
@@ -205,7 +206,7 @@ def _finalize_metadata(ds: xr.Dataset, scenario: str) -> xr.Dataset:
     if "_source_manifest" in ds.attrs:
         del ds.attrs["_source_manifest"]
 
-    return apply_ensemble_provenance(ds, derivation_logic)
+    return label_ensemble_coord(apply_published_metadata(ds, GCM_KEY, scenario))
 
 
 def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:
@@ -247,7 +248,6 @@ def get_CESM_WACCM_ds(scenario: str) -> xr.Dataset:
 
         ds = _attach_source_manifest(ds, zstore_url)
         ds = ds.expand_dims({"ensemble_member": [member_id]})
-        ds.attrs["ensemble_member_source"] = "variant_label"
         datasets.append(ds)
 
     # Combine all members into a single dataset

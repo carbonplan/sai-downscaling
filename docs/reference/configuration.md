@@ -180,7 +180,7 @@ saidownscale run-matrix --gcm CESM2-WACCM6 \
 
 :::{note}
 `dtr` overrides propagate into `tasmin`, which we reconstruct as `tasmax - dtr`. The `tasmin`
-output's `srm_downscaling:bias_correction_method` attribute reports only `tasmin`'s own approach.
+output's `sai_downscaling:bias_correction_method` attribute reports only `tasmin`'s own approach.
 :::
 
 ## Overrides and the artifact cache
@@ -190,7 +190,7 @@ Store paths key on `(gcm, obs_dataset, subset)` and group paths on
 in a `variable_overrides` entry resolve to exactly the same location on the same branch.
 
 We detect that collision rather than prevent it. On a cache hit, the pipeline compares the
-artifact's `srm_downscaling:config_json` provenance attribute against the current run's
+artifact's `sai_downscaling:config_json` provenance attribute against the current run's
 `variable_config` and raises `CacheConfigMismatchError` when they differ, naming both values.
 Without the check, the second run would report a hit, skip the stage, and feed artifacts built under
 different bias-correction settings to every downstream stage.
@@ -369,7 +369,7 @@ downscaling_method: "BCSD"
 ```
 
 The key selects which per-variable defaults table `VariableConfig.for_variable` reads. It
-is recorded in the store metadata as `srm_downscaling:downscaling_method`, and it also
+is recorded in the store metadata as `sai_downscaling:downscaling_method`, and it also
 namespaces the store layout: every group except the shared `obs/{variable}` lives under a
 `bcsd/` or `qdmsd/` segment. Both methods can therefore write to one store and share a
 single observation regrid.

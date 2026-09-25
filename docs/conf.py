@@ -97,6 +97,7 @@ _DEVELOPER_DOCS = [
     "how-to/**",
     "reference/**",
     "explanation/**",
+    "methods/pipeline-architecture.md",
 ]
 
 exclude_patterns = [
