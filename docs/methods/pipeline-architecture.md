@@ -8,6 +8,7 @@ The downscaling pipeline runs in three stages, each of which caches its artifact
 later run. Every stage is keyed on the global climate model (GCM) it processes, among other things:
 
 ```mermaid
+%%{init: {"flowchart": {"subGraphTitleMargin": {"top": 8, "bottom": 24}}}}%%
 graph TB
     subgraph "Input Data"
         ERA5[ERA5 observations<br/>0.25° resolution<br/>1950-present]
@@ -228,7 +229,7 @@ executor-agnostic, so the table below is the whole of the difference.
 | Executor | Mechanism | Cost per vCPU-hour |
 | --- | --- | --- |
 | `aws-batch` | AWS Batch array jobs on Graviton instances | $0.0589 (EC2 only) |
-| `coiled` | [Coiled](https://coiled.io) batch API | $0.1089 (EC2 plus a $0.05 platform fee) |
+| `coiled` | [Coiled](https://coiled.io) batch API | \$0.1089 (EC2 plus a \$0.05 platform fee) |
 | `local` | Sequential, in the current process | none |
 
 Our deploys use `aws-batch`. The output is identical either way, because both remote executors run
