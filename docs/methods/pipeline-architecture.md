@@ -30,13 +30,13 @@ graph TB
         direction TB
         S2A[Load obs_regridded from cache]
         S2B[Load fine ERA5 observations]
-        S2C[Load GCM Historical data]
+        S2C[Load GCM historical data]
         S2D[Apply spatial subset if specified]
         S2E[Time subset to training period<br/>1978-2014]
         S2F[Quantile mapping bias correction<br/>GCM historical → observations]
         S2FC[Write method/debiased_coarse/historical<br/>to output store]
         S2G[Spatial disaggregation<br/>coarse → fine resolution]
-        S2H[Output: historical<br/>Deliverable + scenario gate]
+        S2H[Output: historical<br/>deliverable + scenario gate]
         
         S2A --> S2B --> S2C --> S2D --> S2E
         S2E --> S2F --> S2FC
@@ -48,8 +48,8 @@ graph TB
         S3A[Load obs_regridded from cache]
         S3B[Check historical exists<br/>completion gate]
         S3C[Load fine ERA5 observations]
-        S3D[Load GCM Historical for training]
-        S3E[Load GCM Scenario data]
+        S3D[Load GCM historical for training]
+        S3E[Load GCM scenario data]
         S3F[Apply spatial subset if specified]
         S3G[Time subset to prediction period<br/>2015-2100]
         
