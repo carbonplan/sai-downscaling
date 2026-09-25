@@ -70,9 +70,9 @@ depends on how much data you need, and whether you want a local copy.
   environment without writing code yourself.
 - **Stream data from the cloud.** If you're comfortable working with data in the cloud without
   keeping a local copy, you can use tools like
-  [zarr-python](https://zarr.readthedocs.io/en/latest/),
+  [Zarr-Python](https://zarr.readthedocs.io/en/latest/),
   [Icechunk](https://icechunk.io/en/stable/getting-started/quickstart/), or
-  [xarray](https://xarray.dev). The following example opens one downscaled group from the current
+  [Xarray](https://xarray.dev). The following example opens one downscaled group from the current
   release.
 
 ```python

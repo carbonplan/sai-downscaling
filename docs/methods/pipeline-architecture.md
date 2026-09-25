@@ -219,7 +219,7 @@ current store paths and release branch, see
 
 Every stage task is one `(gcm, scenario, ensemble member, variable)` leaf that reads a config, runs
 a stage, writes to S3, and exits. The tasks never talk to each other, so the pipeline needs task
-placement rather than a distributed scheduler.
+placement, rather than a distributed scheduler.
 
 `DownscalingOrchestrator.submit_stage` dispatches through an executor seam, and all three executors
 share the signature `(stage, configs) -> list[str]`. Everything upstream of that seam is
@@ -240,7 +240,7 @@ Coiled Batch sets a distinct `CONFIG_JSON` per task through `map_over_task_var_d
 array jobs cannot vary the environment per child, since every child shares one job definition and
 one set of container overrides, and only `AWS_BATCH_JOB_ARRAY_INDEX` differs.
 
-The AWS Batch path therefore writes one manifest to S3 per submission and has each child read its
+The AWS Batch path therefore writes one manifest to S3 per submission, and has each child read its
 own entry by index. Manifest entries are byte-identical to the `CONFIG_JSON` payload, so
 `batch_runner` needs a new way to obtain the dict, not a new way to parse it. A wave of exactly one
 task skips the manifest and carries `CONFIG_JSON` directly, because `arrayProperties.size` must be
@@ -249,7 +249,7 @@ at least two.
 ### Success is decided by the cache, never the exit code
 
 A task can exit zero without producing output, so both remote executors sweep `ArtifactCache` after
-the job finishes and raise if any config is missing its artifact. Cache presence is proof only for
+the job finishes, and raise if any config is missing its artifact. Cache presence is proof only for
 artifacts the run itself created, which is every one of them unless `--force` is set. Under
 `--force` the artifacts found may predate the job, so those additionally require the job to have
 reported success.
@@ -303,7 +303,7 @@ sequenceDiagram
 
 We select the VM type per pipeline stage to match resource requirements. A spatially subset run uses
 a smaller ladder, because every stage applies `subset_space` before any heavy compute, so the box
-size rather than the source grid sets the working set:
+size, rather than the source grid, sets the working set:
 
 | Stage | Global | Regional | Notes |
 | --- | --- | --- | --- |
@@ -311,14 +311,14 @@ size rather than the source grid sets the working set:
 | `fit_historical` | `r8g.12xlarge` | `r8g.2xlarge` | Memory-intensive quantile mapping fits |
 | `transform_scenario` | `r8g.24xlarge` | `r8g.4xlarge` | 768GB RAM, 96 vCPUs, AWS Graviton |
 
-AWS Batch takes resource requirements rather than instance types and picks the instance itself.
+AWS Batch takes resource requirements, rather than instance types, and picks the instance itself.
 `_resources_for` derives those requirements from this same table, asking for the vCPU count of the
 chosen instance and 7680 MiB per vCPU, which fills the instance while leaving the ECS agent and the
-OS their share. Deriving rather than tabulating keeps the Batch request and the cost estimate from
+OS their share. Deriving, rather than tabulating, keeps the Batch request and the cost estimate from
 drifting apart.
 
-- **region**: `us-west-2`, the same region as the S3 data
-- **keepalive**: VMs stay alive briefly after a task completes, for follow-up work
+- **`region`**: `us-west-2`, the same region as the S3 data.
+- **`keepalive`**: VMs stay alive briefly after a task completes, for follow-up work.
 - **AWS credentials**: Not forwarded to VMs, which use an instance profile or environment-level credentials instead.
 
 ## Code organization
@@ -385,7 +385,7 @@ module that implements it.
 ## Batch execution flow (Coiled)
 
 The diagram below is the detailed flow when you run
-`uv run saidownscale run --config-path configs/ --executor coiled`. Under `--executor aws-batch` the
+`uv run saidownscale run --config-path configs/ --executor coiled`. Under `--executor aws-batch`, the
 middle of this flow changes shape: The orchestrator writes one S3 manifest instead of per-task
 variables, submits a single array job instead of N VMs, and each child reads its entry by
 `AWS_BATCH_JOB_ARRAY_INDEX`. The cache verification at the end is identical.
