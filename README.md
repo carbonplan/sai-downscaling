@@ -59,6 +59,8 @@ Project documentation: https://sai-downscaling.readthedocs.io
 - [Data access](https://sai-downscaling.readthedocs.io/en/latest/access-data/access-utilities.html) — how to list and open input datasets
 - [Scientific approach](https://sai-downscaling.readthedocs.io/en/latest/methods/scientific-approach.html) — input dataset descriptions, downscaling methodology, and QA/QC utilities
 
+We used large language models to develop portions of this repository and take responsibility for any errors.
+
 ## Installation
 
 > [!NOTE]
