@@ -40,7 +40,7 @@ jobs:
                   # stamped into every output store as sai_downscaling:version.
                   fetch-depth: 0
 
-            - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+            - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
               with:
                   role-to-assume: arn:aws:iam::631969445205:role/gha-sai-downscaling-deploy
                   role-session-name: srm-build-image
@@ -95,9 +95,9 @@ jobs:
                     echo "__TAGS__"
                   } >> "$GITHUB_OUTPUT"
 
-            - uses: docker/setup-buildx-action@v3
+            - uses: docker/setup-buildx-action@v4
 
-            - uses: docker/build-push-action@v6
+            - uses: docker/build-push-action@v7
               with:
                   context: .
                   platforms: linux/arm64
