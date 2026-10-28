@@ -244,14 +244,16 @@ item below says where it lives and what depends on it.
   | --- | --- |
   | `coiled-carbonplan` trusts `ecs-tasks.amazonaws.com` | a Batch job role is assumed by ECS, and the role originally trusted only `ec2.amazonaws.com` |
   | It still trusts `ec2.amazonaws.com` | Coiled clusters assume it as an instance role; removing this breaks them |
-  | `github-action-role` can `iam:PassRole` it | the job role is passed at `register-job-definition` time |
+  | `gha-sai-downscaling-deploy` can `iam:PassRole` it | the job role is passed at `register-job-definition` time |
 
   The tradeoff is real: `coiled-carbonplan` carries `AmazonS3FullAccess`, so QA and snapshot jobs
   run broader than they need to. Registering a second job definition that keeps
   `srm-batch-job-role` for the non-publishing queues would restore least privilege, at the cost of
   routing 2 definitions through the deploy workflow.
-- **Batch permissions on the deploy role**: granted by the `SrmAwsBatchDeployPolicy` inline policy
-  on `github-action-role`. ECR push comes from the role's pre-existing inline policy.
+- **Batch permissions on the deploy role**: granted by the inline policy on
+  `gha-sai-downscaling-deploy`, recorded in
+  [`infra/iam/gha-sai-downscaling-deploy.policy.json`](../../infra/iam/gha-sai-downscaling-deploy.policy.json).
+  The same policy grants ECR push to `srm-downscaling` and read and write on `carbonplan-srm`.
 
   | Sid | Actions | Resource |
   | --- | --- | --- |
@@ -292,7 +294,7 @@ item below says where it lives and what depends on it.
   correct.
 
   ```bash
-  ROLE=arn:aws:iam::631969445205:role/github-action-role
+  ROLE=arn:aws:iam::631969445205:role/gha-sai-downscaling-deploy
   DECISION="EvaluationResults[0].EvalDecision"
 
   aws iam simulate-principal-policy --policy-source-arn "$ROLE" \
@@ -312,7 +314,7 @@ item below says where it lives and what depends on it.
   ```
 
   Run these checks by hand after any change to the role. They are not automated: an in-workflow
-  preflight would need `iam:SimulatePrincipalPolicy`, which `github-action-role` does not have and
+  preflight would need `iam:SimulatePrincipalPolicy`, which `gha-sai-downscaling-deploy` does not have and
   which would be a wider grant than the thing it checks. We record the policy documents under
   [`infra/iam/`](../../infra/iam/) as a reviewable copy, not as something applied automatically.
 
@@ -320,11 +322,24 @@ item below says where it lives and what depends on it.
   indefinitely. Retention only affects storage at $0.03/GB-month; ingestion at $0.50/GB dominates
   and is unchanged.
 
-  Note that a local `aws` session usually authenticates as the `github-action` IAM **user**, which
-  is a different principal with a different policy set. A run that works locally says nothing about
-  whether the deploy role can do the same, and the role cannot be assumed from a workstation because
-  its trust policy admits only the GitHub OIDC provider. `simulate-principal-policy` is the way to
-  check it.
-- **AWS OIDC role**: `arn:aws:iam::631969445205:role/github-action-role`, assumed through the
-  [setup action](../../.github/actions/setup/action.yml). The role must trust this repository's
-  GitHub Actions OIDC provider.
+  Local `aws` sessions authenticate through IAM Identity Center (SSO), not through an IAM user or
+  access keys. Sign in once with `aws sso login --sso-session carbonplan`, then pick a profile:
+  `carbonplan-readonly` (permission set `readonly-billing`) is enough for the
+  `simulate-principal-policy` checks above, and `carbonplan-dev` (permission set `developer`) for
+  hands-on work such as inspecting Batch jobs or reading the bucket. Set it with
+  `export AWS_PROFILE=carbonplan-readonly` or pass `--profile`.
+
+  Your SSO session is a different principal with a different policy set from the deploy role. A
+  run that works locally says nothing about whether the deploy role can do the same, and the role
+  cannot be assumed from a workstation because its trust policy admits only this repository's
+  GitHub OIDC subjects. `simulate-principal-policy` is the way to check it.
+- **AWS OIDC roles**: assumed through the [setup action](../../.github/actions/setup/action.yml)
+  and `build-image.yml`. Both trust only this repository's GitHub Actions OIDC subjects.
+
+  | Role | Used by | Trusts | Max session |
+  | --- | --- | --- | --- |
+  | `gha-sai-downscaling-ci` | `test.yml`, `test_input_data.yml` (the setup action's default) | pull requests, any branch | 1 hour |
+  | `gha-sai-downscaling-deploy` | `deploy.yml`, `build-image.yml`, `process-*.yml` | any branch, tag or environment, not pull requests | 6 hours |
+
+  The CI role is read-only. A job that passes the deploy role to the setup action must also pass
+  `role-duration-seconds`, because the default (3600) is for the CI role.

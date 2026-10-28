@@ -40,9 +40,9 @@ jobs:
                   # stamped into every output store as sai_downscaling:version.
                   fetch-depth: 0
 
-            - uses: aws-actions/configure-aws-credentials@v4
+            - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
               with:
-                  role-to-assume: arn:aws:iam::631969445205:role/github-action-role
+                  role-to-assume: arn:aws:iam::631969445205:role/gha-sai-downscaling-deploy
                   role-session-name: srm-build-image
                   aws-region: ${{ env.AWS_REGION }}
                   # Above this job's 60-minute timeout: the credentials are static for the

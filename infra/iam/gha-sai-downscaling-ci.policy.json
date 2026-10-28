@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListInputBuckets",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": [
+        "arn:aws:s3:::carbonplan-srm",
+        "arn:aws:s3:::nex-gddp-cmip6",
+        "arn:aws:s3:::us-west-2.opendata.source.coop"
+      ]
+    },
+    {
+      "Sid": "ReadInputData",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::carbonplan-srm/*",
+        "arn:aws:s3:::nex-gddp-cmip6/*",
+        "arn:aws:s3:::us-west-2.opendata.source.coop/carbonplan/*"
+      ]
+    }
+  ]
+}

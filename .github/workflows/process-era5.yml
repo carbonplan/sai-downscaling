@@ -46,6 +46,9 @@ jobs:
         steps:
             - uses: actions/checkout@v7
             - uses: ./.github/actions/setup
+              with:
+                  role-to-assume: arn:aws:iam::631969445205:role/gha-sai-downscaling-deploy
+                  role-duration-seconds: "21600"
 
             - name: Process ERA5 variables
               env:
