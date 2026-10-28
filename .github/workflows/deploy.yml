@@ -80,6 +80,9 @@ jobs:
               with:
                   fetch-depth: 0
             - uses: ./.github/actions/setup
+              with:
+                  role-to-assume: arn:aws:iam::631969445205:role/gha-sai-downscaling-deploy
+                  role-duration-seconds: "21600"
 
             - name: Validate input datasets (QA)
               uses: ./.github/actions/batch-run
@@ -172,6 +175,9 @@ jobs:
                   # head does not, and the run would write to a branch literally named v999.
                   fetch-depth: 0
             - uses: ./.github/actions/setup
+              with:
+                  role-to-assume: arn:aws:iam::631969445205:role/gha-sai-downscaling-deploy
+                  role-duration-seconds: "21600"
 
             - name: Run BCSD pipeline (snapshot baseline)
               # At a release tag the default branch is the package version, which is the name
@@ -327,6 +333,9 @@ jobs:
                   ref: ${{ github.event.release.tag_name || github.ref }}
                   fetch-depth: 0
             - uses: ./.github/actions/setup
+              with:
+                  role-to-assume: arn:aws:iam::631969445205:role/gha-sai-downscaling-deploy
+                  role-duration-seconds: "21600"
 
             - name: Estimate cost
               run: |
@@ -397,6 +406,9 @@ jobs:
                   # branch literally named 999.
                   fetch-depth: 0
             - uses: ./.github/actions/setup
+              with:
+                  role-to-assume: arn:aws:iam::631969445205:role/gha-sai-downscaling-deploy
+                  role-duration-seconds: "21600"
 
             - name: Validate input datasets (production)
               uses: ./.github/actions/batch-run
