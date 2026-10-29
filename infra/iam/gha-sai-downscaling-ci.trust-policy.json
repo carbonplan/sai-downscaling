@@ -14,7 +14,7 @@
         "StringLike": {
           "token.actions.githubusercontent.com:sub": [
             "repo:carbonplan@58278235/sai-downscaling@1040924222:pull_request",
-            "repo:carbonplan@58278235/sai-downscaling@1040924222ef:refs/heads/*"
+            "repo:carbonplan@58278235/sai-downscaling@1040924222:ref:refs/heads/*"
           ]
         }
       }
